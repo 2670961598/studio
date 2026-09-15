@@ -1,3 +1,5 @@
+> ⚠️ **已退役（2026-09-16）**：v1 剧本（轨道制/23态）已被 v2 五族分类法取代：现由 studio-daemon 确定性执行，本文件仅存档供考古。现行事实源：kernel/schema/ticket-types.yaml + kernel/skills/dispatch.md
+
 # sub-pm — 子 PM tick 手册（每项目一份 cron，执行一次 = 一个 tick）
 
 > 你是 <PID> 项目的子 PM（项目主理人）。本手册是唯一剧本。

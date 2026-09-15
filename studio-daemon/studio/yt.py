@@ -62,7 +62,7 @@ class YT:
         return self.get(issue)["fields"].get(name)
 
     def new(self, pid: str, summary: str, desc: str, lane: str | None = "core", prio="normal",
-            typ="业务", track="B 常规", state="新单") -> str:
+            typ="需求", track="L2 常规", state="新单") -> str:
         cfs = [
             {"name": "State", "$type": "StateIssueCustomField", "value": {"name": state}},
             {"name": "Priority", "$type": "SingleEnumIssueCustomField", "value": {"name": prio}},
@@ -119,9 +119,12 @@ class YT:
 
     def comments(self, issue: str) -> list[dict]:
         rows = self._get(f"/api/issues/{issue}/comments",
-                         params={"fields": "author(login),text,created", "$top": "50", "reverse": "true"})
-        return [{"author": (c.get("author") or {}).get("login", "?"),
-                 "text": c.get("text", ""), "created": c.get("created")} for c in rows]
+                         params={"fields": "author(login),text,created",
+                                 "$top": "50", "reverse": "true"})
+        cs = [{"author": (c.get("author") or {}).get("login", "?"),
+               "text": c.get("text", ""), "created": c.get("created")} for c in rows]
+        cs.sort(key=lambda c: c["created"] or 0)   # 统一时间序（旧→新），消费方按此假设
+        return cs
 
 
 _FIELDS = ("idReadable,summary,description,created,"

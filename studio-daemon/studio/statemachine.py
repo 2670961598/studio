@@ -17,14 +17,16 @@ BUILTIN_LEVEL_FLOWS = {
                "复验通过", "待批", "已交付"],
 }
 BUILTIN_TYPE_EDGES = {
+    "技术债": [("草稿", "新单")],
     "疑问": [("新单", "待答"), ("待答", "已答"), ("已答", "已沉淀")],
-    "情报": [("发现", "评估中"), ("评估中", "已归档")],
+    "情报": [("草稿", "发现"), ("发现", "评估中"), ("评估中", "已归档")],
     "提案": [("草稿", "待批"), ("待批", "实施中"), ("实施中", "观察窗"), ("观察窗", "结案")],
     "复盘": [("新单", "分析中"), ("分析中", "决议"), ("决议", "结案")],
     "战役": [("新单", "运行中"), ("运行中", "暂停"), ("暂停", "运行中")],
     "事故": [("发现", "止血中"), ("止血中", "复盘中"), ("复盘中", "已关闭")],
 }
-BUILTIN_ROLLBACK = [("证据就绪", "已派发"), ("复验通过", "已派发")]
+BUILTIN_ROLLBACK = [("证据就绪", "已派发"), ("复验通过", "已派发"),
+                    ("已派发", "待批")]   # 断路边：仅 attempt≥3 时代码触发
 BUILTIN_TYPES = {"需求", "缺陷", "技术债"}   # 交付族（走级别流）
 
 
@@ -105,21 +107,3 @@ def next_states(frm: str, track, typ) -> list[str]:
 # daemon 视角的活动态集合（pm_tick 轮询范围）
 PM_ACTIONABLE = ["新单", "待批", "已派发", "证据就绪", "复验通过", "草稿", "发现"]
 QA_CLAIMABLE = []   # v2 无独立待测试态：复验由 daemon 在"证据就绪"收割时内联执行
-
-# 制作人批示 → 按位置语义映射（v2：待批在流中的位置决定它批的是什么）
-def directive_target(frm: str, track, typ, directive: str) -> str | None:
-    """返回批示应迁移到的目标态；None=指令不适用当前位置。"""
-    flow = _flow(track, typ)
-    if not flow or frm != "待批":
-        return None
-    idx = flow.index("待批")          # 第一个待批（立项/方案类）
-    if directive == "approve-plan":
-        return flow[flow.index("待批") + 1]
-    if directive == "approve-merge":
-        # L2/L3 的最后一个待批 → 已交付
-        last = len(flow) - 1 - flow[::-1].index("待批")
-        return flow[last + 1] if flow.index("待批") == last and frm == "待批" else None
-    if directive == "approve-design":  # L3 第二个待批（方案）
-        return flow[flow.index("待批", flow.index("待批") + 1) + 1] \
-            if flow.count("待批") > 1 else None
-    return None

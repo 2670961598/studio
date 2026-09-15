@@ -12,6 +12,8 @@
 - 情报库：kernel/intel/ ｜ 宪章：/Volumes/BigDisk/Studio/CHARTER.md
 
 ## 拓展权（自进化入口）
-发现现有类型覆盖不了的重复需求时：开内部改进单，评论 `evolve-schema <需求描述>` 提议新类型；
+发现现有类型覆盖不了的重复需求时：开**提案单**（Type=提案，v2），并提请制作人评论 `evolve-schema <需求描述>`；
+**指令评论必须由制作人 opengames 本人发出**（agent 代发无效——代码强制校验作者）。
 制作人 approve 后 daemon 自动更新单子知识库并 git commit，全工作室即刻生效。
 禁自批：提案与执行之间必须隔制作人一次 approve。
+编制变更（增删岗位）暂以 `kb-propose TEAM.md`（G3 重量）实现。

@@ -1,4 +1,4 @@
-"""patrol — 战役巡逻引擎（Type=战役 · 研究中 的永驻母亲单）
+"""patrol — 战役巡逻引擎（Type=战役 · 运行中 的永驻母亲单）
 每轮：到点检查 → （可选）跑基准命令存快照 → LLM 岛带 WebFetch 巡逻源清单/对比快照
 → 战役单贴进展 → 值得做的孵化成子单（正常轨道，制作人审批）。
 spec 文件 kernel/campaigns/<单号>.yaml 是战役的大脑，制作人随时可改。"""
@@ -15,8 +15,8 @@ every_h: 24            # 巡逻间隔（小时）
 sources: []            # 巡逻源清单（URL，LLM 会用 WebFetch 逐个抓取）
 baseline_cmd: ""       # 可选：基准命令（跑分/统计），输出追加进快照序列
 repo: ""               # baseline_cmd 的执行目录
-child_type: 业务       # 孵化子单的 Type
-child_track: "B 常规"  # 孵化子单的轨道
+child_type: 需求       # 孵化子单的 Type（v2）
+child_track: "L2 常规"  # 孵化子单的级别（L0/L1 会被强制升 L2）
 patrol_brief: ""       # 巡逻任务书补充（对比什么、什么值得开单）
 """
 
@@ -136,9 +136,11 @@ def _patrol_one(yt, row) -> str:
         if not gate:
             note.append(f"跳过子单「{ch['summary'][:30]}」：验收命令未过消毒")
             continue
+        child_type = spec.get("child_type", "需求")
+        entry = "发现" if child_type == "情报" else "新单"   # H3: 情报流起点是"发现"，否则出生即死
         kid = yt.new(iid.split("-")[0], f"[{iid}] {ch['summary'][:60]}", ch.get("description", ""),
-                     lane=row["lane"], typ=spec.get("child_type", "需求"),
-                     track=child_track)
+                     lane=row["lane"], typ=child_type,
+                     track=child_track, state=entry)
         yt.gate_freeze(kid, gate)
         yt.comment(kid, f"来源：战役 {iid} 巡逻孵化")
         kids.append(kid)

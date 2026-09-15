@@ -1,7 +1,7 @@
 """daemon — 入口：APScheduler 装配 + uvicorn 仪表盘
 用法:
   python -m studio.daemon run          # 常驻（launchd KeepAlive 拉起）
-  python -m studio.daemon tick pm|qa|selfeval   # 手动跑一岗（调试/冒烟）
+  python -m studio.daemon tick pm|selfeval|patrol|evolve-scan  # 手动跑一岗（调试/冒烟）
   python -m studio.daemon board        # 打印板面快照
 错峰表照宪章 §4：pm 0 分位、qa 7 分位；max_instances=1 防自身重叠。"""
 import sys, threading, time

@@ -2,7 +2,7 @@
 状态 = 机器事实：已派发(进程存在) / 证据就绪(REPORT+gate) / 复验通过(QA复验绿) / 已交付(merge+verify)。
 v2 变化：QA 内联进收割链（证据就绪→复验通过），独立 qa 队列退役；L0 全自动；L3 两段派发。
 派发前置/失败兜底全部按 kernel/skills/dispatch.md 执行。"""
-import json, subprocess, time
+import json, re, subprocess, time
 from pathlib import Path
 from . import statemachine as sm
 from .config import CONFIG
@@ -99,6 +99,22 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
     lv = _level(row)
     flow = sm._flow(lv, typ)
 
+    # ---- 草稿：等制作人 promote/kill（Inspector/Scout/自评 的产出位）----
+    if st == "草稿":
+        for c in yt.comments(iid):
+            if c["author"] != CONFIG.producer:
+                continue
+            w = c["text"].strip().split()
+            d0 = w[0] if w else ""
+            if d0 == "promote":
+                to = "发现" if typ == "情报" else "新单"
+                yt.transition(iid, to)
+                return f"PROMOTED {iid} →{to}"
+            if d0 in ("kill", "reject"):
+                yt.transition(iid, "已取消")
+                return f"{d0.upper()}-DRAFT {iid}"
+        return None
+
     # ---- 新单：DoD 冻结 + 级别分流 ----
     if st == "新单":
         if not yt.f(iid, "验收命令"):
@@ -191,6 +207,7 @@ def _redispatch(yt, pid, row, lv, typ) -> str:
         if flow and "待批" in flow:
             try:
                 yt.transition(iid, "待批")
+                yt.comment(iid, "断路退审：回到第1批位（制作人可重批授权或 kill）")
             except ValueError:
                 pass
         yt.comment(iid, f"@{CONFIG.producer} attempt≥3 断路，等待批示")
@@ -254,6 +271,7 @@ def _harvest(yt, pid, iid, lane, w: Worker, lv) -> str:
         if n >= CONFIG.max_attempts:
             if flow and "待批" in flow:
                 yt.transition(iid, "待批")      # 有审批位的级别 → 断路进待批
+                yt.comment(iid, "断路退审：回到第1批位（制作人可重批授权或 kill）")
             yt.comment(iid, f"@{CONFIG.producer} attempt={n}≥3 断路，evidence {res['log']}")
             _event(pid, iid, "GATE_FAIL", "agent-pm", n, "断路")
         else:
@@ -361,8 +379,26 @@ def _directives(yt, iid, lv, typ) -> str | None:
     slot = sm._flow(lv, typ)
     if not slot or "待批" not in slot:
         return None
-    idxs = [i for i, s in enumerate(slot) if s == "待批"]
-    cur = idxs[min(applied, len(idxs) - 1)]
+    idxs = [i for i, st_ in enumerate(slot) if st_ == "待批"]
+    # 槽位定位：看最新路标——断路退审=重消费同位；批示已执行=前进一位；无路标=第1位
+    cur = 0
+    for c in cs:                               # cs 为时间序
+        t_ = c["text"].strip()
+        if c["author"] == "agent-pm" and t_.startswith("断路退审：回到第"):
+            try:
+                cur = max(0, int(re.search(r"第(\d+)批", t_).group(1)) - 1)
+            except Exception:
+                cur = 0
+        elif c["author"] == "agent-pm" and t_.startswith("批示已执行"):
+            m_ = re.search(r"第(\d+)批", t_)
+            if m_:
+                cur = min(int(m_.group(1)), len(idxs) - 1)   # 已消费N批(1基) → 下一位=N(0基)
+    cur = min(cur, len(idxs) - 1)
+    # 制作人的批准=新授权：断路计数清零（否则 attempt≥3 与重派判定死循环振荡）
+    if int(yt.f(iid, "attempt") or 0) >= CONFIG.max_attempts:
+        yt.set_field(iid, "attempt", 0, "SimpleIssueCustomField")
+        yt.comment(iid, f"制作人批示即新授权，attempt 已清零（原值≥{CONFIG.max_attempts}）")
+    cur = idxs[cur]
     nxt = slot[cur + 1] if cur + 1 < len(slot) else "已交付"
     note = f"{d} → {nxt} (第{applied + 1}批)"
     if nxt == "已交付":
@@ -372,6 +408,6 @@ def _directives(yt, iid, lv, typ) -> str | None:
         yt.transition(iid, nxt)
     if lv.startswith("L3") and d == "approve-design":
         yt.comment(iid, "方案已批，重新派发实现段")
-    yt.comment(iid, f"批示已执行 {d} → {nxt}")
+    yt.comment(iid, f"批示已执行 {d} → {nxt} (第{cur + 1}批)")
     _event(iid.split("-")[0], iid, "APPROVE", "opengames", 0, note)
     return f"APPROVED {iid} {note}"

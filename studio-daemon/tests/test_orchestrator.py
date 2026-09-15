@@ -117,9 +117,9 @@ class TestL2两批:
 
 
 def fake_yt_backend_comment(yt, iid, author, text):
-    """以任意身份直写假后端评论（模拟 opengames 批示）。"""
+    """以任意身份直写假后端评论（模拟 opengames 批示；单调时间戳保证排序）。"""
     yt._backend.issues[iid]["comments"].append(
-        {"author": author, "text": text, "created": 999})
+        {"author": author, "text": text, "created": yt._backend.now_ms()})
 
 
 class Test复验退回与重派:
@@ -153,3 +153,54 @@ class Test断路:
         r = orch.pm_tick()
         assert not any(a.startswith("DISPATCH") for a in r["actions"]), r
         assert any("BREAK" in a for a in r["actions"]), r
+
+
+class Test断路恢复:
+    def test_制作人批准后_attempt清零_不再振荡(self, env, lanes):
+        """盲区2：断路→待批→approve-plan→必须真派发而不是弹回待批。"""
+        yt = env
+        iid = yt.new("POLY", "L2断路恢复", "d", lane="core", typ="需求", track="L2 常规")
+        fake_yt_backend_comment(yt, iid, "opengames", "approve-plan")
+        orch.pm_tick(); orch.pm_tick(); orch.pm_tick()   # 新单→待批 / 批示拍 / 派发拍
+        assert state(yt, iid) == "已派发"
+        for _ in range(3):                       # 三连红到断路
+            simulate_worker(yt, iid, lanes, ok=False)
+            orch.pm_tick()
+        assert state(yt, iid) == "待批" and int(yt.f(iid, "attempt") or 0) >= 3
+        fake_yt_backend_comment(yt, iid, "opengames", "approve-plan")   # 制作人再给机会
+        r = orch.pm_tick()
+        assert any("APPROVED" in a for a in r["actions"]), r
+        assert int(yt.f(iid, "attempt") or 0) == 0, "批准必须清零断路计数"
+        r2 = orch.pm_tick()
+        assert any(a.startswith("DISPATCH") for a in r2["actions"]), r2  # 真派发而非振荡
+        assert state(yt, iid) == "已派发"
+
+
+class TestMerge冲突自愈:
+    def test_冲突残局_下轮隔离并退回(self, env, lanes):
+        """盲区1：merge 冲突中断留下 unmerged index → 下轮 reset 自愈、单有归宿。"""
+        yt = env
+        iid = yt.new("POLY", "冲突单", "d", lane="core", typ="需求", track="L0 自动")
+        orch.pm_tick()
+        simulate_worker(yt, iid, lanes)          # 改 docs/out.md
+        repo = Path(CONFIG.lane("core")["path"])
+        # base 上制造同文件冲突提交
+        subprocess.run(["git", "-C", str(repo), "checkout", "main"], check=True, capture_output=True)
+        (repo / "docs" / "out.md").write_text("# base 冲突版本\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-m", "base move"],
+                       check=True, capture_output=True)
+        # 推到 复验通过 → 触发 merge（会冲突）
+        orch.pm_tick(); orch.pm_tick()           # harvest→证据就绪→复验通过
+        orch.pm_tick()                           # merge 尝试（冲突 → 异常被吞或失败路径）
+        dirty = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"],
+                               capture_output=True, text=True).stdout
+        if dirty.strip():
+            # 冲突残局存在：下一轮 pm_tick 必须能自愈（reset 隔离）
+            orch2 = orch.pm_tick()
+            dirty2 = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"],
+                                    capture_output=True, text=True).stdout
+            assert not dirty2.strip(), f"残局未自愈: {dirty2}"
+        # 无论冲突与否，单据不允许漂在空中
+        st = state(yt, iid)
+        assert st in ("已交付", "已派发", "复验通过"), st

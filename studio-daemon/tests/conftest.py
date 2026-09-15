@@ -48,10 +48,6 @@ FIELD_TYPE = {"State": "StateIssueCustomField", "Type": "SingleEnumIssueCustomFi
 class FakeBackend:
     """内存 YouTrack：只实现 yt.py 用到的端点语义。"""
 
-    def __init__(self):
-        self.issues = {}       # id -> {summary, description, created, fields{}, comments[]}
-        self.counters = {"POLY": 100, "STUDIO": 10}
-
     def _cf_api(self, name, v):
         t = FIELD_TYPE.get(name, "SingleEnumIssueCustomField")
         if isinstance(v, bool):
@@ -69,10 +65,19 @@ class FakeBackend:
                 "created": it.get("created", 0),
                 "customFields": [self._cf_api(n, v) for n, v in it["fields"].items()]}
 
+    def __init__(self):
+        self.issues = {}
+        self.counters = {"POLY": 100, "STUDIO": 10}
+        self._clock = 1000                     # 单调时钟，评论排序用
+
+    def now_ms(self):
+        self._clock += 1
+        return self._clock
+
     def create(self, pid, summary, desc, fields):
         self.counters[pid] += 1
         iid = f"{pid}-{self.counters[pid]}"
-        self.issues[iid] = {"summary": summary, "description": desc, "created": int(time.time() * 1000),
+        self.issues[iid] = {"summary": summary, "description": desc, "created": self.now_ms(),
                             "fields": dict(fields), "comments": []}
         return iid
 
@@ -80,10 +85,14 @@ class FakeBackend:
         import re
         states = re.search(r"状态:([\w,、]+)", q)
         types = re.search(r"Type:(\S+)", q)
+        proj = re.search(r"project:(\S+)", q)
         want_s = states.group(1).split(",") if states else None
         want_t = types.group(1) if types else None
+        want_p = proj.group(1) if proj else None
         out = []
         for iid, it in self.issues.items():
+            if want_p and not iid.lower().startswith(want_p.lower() + "-"):
+                continue
             if want_s and it["fields"].get("State") not in want_s:
                 continue
             if want_t and it["fields"].get("Type") != want_t:
@@ -145,13 +154,16 @@ def fake_yt(tmp_config, requests_mock):
 
     def _comments_get(request, ctx):
         iid = _iid(request)
+        cs = be.issues[iid]["comments"]
+        if str(request.qs.get("reverse", ["false"])[0]).lower() == "true":
+            cs = list(reversed(cs))            # 对齐真实 API：reverse=最新在前
         return [{"id": i, "author": {"login": c["author"]}, "text": c["text"], "created": c["created"]}
-                for i, c in enumerate(be.issues[iid]["comments"])]
+                for i, c in enumerate(cs)]
 
     def _comments_post(request, ctx):
         iid = _iid(request)
         be.issues[iid]["comments"].append({"author": "agent-pm", "text": request.json()["text"],
-                                           "created": int(time.time() * 1000)})
+                                           "created": be.now_ms()})
         return {"id": len(be.issues[iid]["comments"])}
 
     import re as _re
