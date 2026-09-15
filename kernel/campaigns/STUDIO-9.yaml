@@ -7,5 +7,5 @@ sources:
 repo: ""
 baseline_cmd: ""
 child_type: 情报
-child_track: "C 轻轨"
+child_track: "L0 自动"
 patrol_brief: 对比我方 Unity 6000.5 + DOTween 技术栈，找值得跟进的引擎特性/依赖更新/工作流实践；确凿可跟进的开子单（含链接与建议动作），纯噪音不开单。

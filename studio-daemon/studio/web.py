@@ -12,7 +12,6 @@ STATIC = CONFIG._root / "static"
 
 TRIGGER_MAP = {  # 立即执行的路由表（job id → 可调用）
     "pm-poly": ("studio.orchestrator", "pm_tick", {"pid": "POLY"}),
-    "qa": ("studio.orchestrator", "qa_tick", {}),
     "self-eval": ("studio.metrics", "self_eval", {}),
     "patrol": ("studio.patrol", "patrol_tick", {}),
     "evolve-scan": ("studio.evolve", "scan", {}),
@@ -205,6 +204,7 @@ def api_schema():
         return {"error": str(e)}
     return {"updated": data.get("updated"), "types": data.get("types", {}),
             "type_edges": {k: [list(e) for e in v] for k, v in sm.TYPE_EDGES.items()},
+            "team": (CONFIG._root.parent / "kernel" / "TEAM.md").read_text(encoding="utf-8"),
             "agents_kb": {f.stem: f.read_text(encoding="utf-8")[:400]
                           for f in sorted((CONFIG._root.parent / "kernel" / "agents").glob("*.md"))}}
 

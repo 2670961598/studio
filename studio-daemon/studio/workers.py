@@ -8,7 +8,8 @@ from pathlib import Path
 from .config import CONFIG
 
 WORKER_TEMPLATE = """你是虚拟工作室的 {title}（身份 {role}），以独立 Claude Code 进程完成单据 {issue}，一单一命。
-先读手册 /Volumes/BigDisk/Studio/kernel/skills/worker-common.md（唯一规范），再读目标仓库的 AGENTS.md（如有）。
+先读团队公约 /Volumes/BigDisk/Studio/kernel/TEAM.md（目标/名册/红线，尤其"成员名册"中你的权限边界），
+再读手册 /Volumes/BigDisk/Studio/kernel/skills/worker-common.md（唯一规范），再读目标仓库的 AGENTS.md（如有）。
 
 ## 单据
 - 标题: {summary}

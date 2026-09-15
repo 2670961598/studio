@@ -69,7 +69,7 @@ def patrol_tick() -> dict:
     try:
         camps = []
         for pid in CONFIG.projects:
-            camps += [c for c in yt.list(pid, "Type:战役 状态:新单,研究中")]
+            camps += [c for c in yt.list(pid, "Type:战役 状态:新单,运行中")]
         if not camps:
             return out
         out["result"] = "OK"
@@ -87,8 +87,8 @@ def patrol_tick() -> dict:
 
 def _patrol_one(yt, row) -> str:
     iid = row["id"]
-    if row["state"] == "新单":  # 激活：进研究中（战役专用边）
-        yt.transition(iid, "研究中")
+    if row["state"] == "新单":  # 激活：进运行中（战役专属边）
+        yt.transition(iid, "运行中")
         yt.comment(iid, "战役激活，巡逻引擎接管。spec 见 kernel/campaigns/ 对应文件。")
         return f"ACTIVATED {iid}"
     if not _due(iid, _spec(iid)):

@@ -42,8 +42,6 @@ def _sched():
     # 文本引用保证 job 可序列化进 SQLite jobstore
     sched.add_job("studio.orchestrator:pm_tick", CronTrigger.from_crontab("0,10,20,30,40,50 * * * *"),
                   kwargs={"pid": "POLY"}, id="pm-poly", replace_existing=True)
-    sched.add_job("studio.orchestrator:qa_tick", CronTrigger.from_crontab("7,17,27,37,47,57 * * * *"),
-                  id="qa", replace_existing=True)
     sched.add_job("studio.metrics:self_eval", CronTrigger.from_crontab("50 8 * * *"),
                   id="self-eval", replace_existing=True)
     sched.add_job("studio.patrol:patrol_tick", CronTrigger.from_crontab("5 * * * *"),

@@ -1,14 +1,17 @@
-"""evolve — 单子知识库自进化循环（PM 可拓展类型，制作人批准后生效）
-流程：内部改进单上 opengames 评论 `evolve-schema <需求描述>` → LLM 起草案
-→ 评论贴出 SCHEMA-PROPOSED 补丁 → opengames 回 `approve` → 应用：
-YouTrack 类型枚举注册 + ticket-types.yaml 更新 + git commit + 事件留痕。
-红线：无 approve 绝不应用；补丁过不了机器校验绝不应用。"""
+"""evolve — 知识库自进化循环（一切规则变更走 YouTrack：提案 → 制作人 approve → 应用）
+两类指令（都发在 STUDIO 内部改进单的评论里，仅 opengames 有效）：
+  evolve-schema <需求描述>  → 新单子类型（枚举+schema yaml+git）
+  kb-propose <文件> <说明>  → 修改团队知识库（TEAM/agent档案/战役spec，白名单内，git）
+红线：无 approve 绝不应用；校验不过绝不应用；提案与执行必须隔制作人一次 approve。"""
 import json, re, subprocess, time, yaml
 from pathlib import Path
 from .config import CONFIG
 from .llm import ask
 
 SCHEMA = CONFIG._root.parent / "kernel" / "schema" / "ticket-types.yaml"
+KB_ROOT = CONFIG._root.parent / "kernel"
+KB_ALLOW = [KB_ROOT / "TEAM.md"] + sorted((KB_ROOT / "agents").glob("*.md")) + \
+           sorted((KB_ROOT / "campaigns").glob("*.yaml"))
 MARK_PROPOSED, MARK_APPLIED = "SCHEMA-PROPOSED", "SCHEMA-APPLIED"
 
 
@@ -24,11 +27,11 @@ def _log(line: str):
 
 
 def scan(yt=None) -> list[str]:
-    """扫内部改进单上的 evolve-schema 提案；返回本轮动作摘要（由 pm_tick 调用）。"""
+    """扫治理族提案单（Type=提案）：草稿→草案(待批)；待批+approve→应用(观察窗)。"""
     yt = yt or _yt()
     actions = []
     try:
-        tickets = yt.list("STUDIO", "Type:内部改进 状态:草稿,新单,已排期,开发中")
+        tickets = yt.list("STUDIO", "Type:提案 状态:草稿,待批")
     except Exception:
         return actions
     for row in tickets:
@@ -40,22 +43,94 @@ def scan(yt=None) -> list[str]:
     return [a for a in actions if a]
 
 
+def close_windows():
+    """观察窗（7天）到期 → 结案。由 pm_tick 每轮调用。"""
+    yt = _yt()
+    for row in yt.list("STUDIO", "Type:提案 状态:观察窗"):
+        cs = yt.comments(row["id"])
+        last = max((c["created"] or 0) for c in cs) if cs else 0
+        if (time.time() * 1000 - last) / 86400000 >= 7:
+            yt.transition(row["id"], "结案")
+            yt.comment(row["id"], "观察窗 7 天期满，指标无恶化，结案。")
+            _log(f"WINDOW-CLOSED {row['id']}")
+
+
 def _process(yt, iid: str) -> str | None:
     cs = yt.comments(iid)
     producer_txt = [c["text"].strip() for c in cs if c["author"] == CONFIG.producer]
-    proposed = any(c.startswith(MARK_PROPOSED) for c in cs)
+    proposed = any(c.startswith((MARK_PROPOSED, "KB-PROPOSED")) for c in cs)
     applied = any(c.startswith(MARK_APPLIED) for c in cs)
     if applied:
         return None
     desc = next((t[len("evolve-schema"):].strip() for t in producer_txt
                  if t.startswith("evolve-schema")), None)
-    if desc is None:
-        return None
-    if not proposed:
-        return _propose(yt, iid, desc)
-    if any(t.split()[0] == "approve" for t in producer_txt):
-        return _apply(yt, iid, desc)
-    return f"PENDING-APPROVE {iid}"
+    kb = next((t[len("kb-propose"):].strip() for t in producer_txt
+               if t.startswith("kb-propose")), None)
+    if desc is not None:
+        if not proposed:
+            return _propose(yt, iid, desc)
+        if any(t.split()[0] == "approve" for t in producer_txt):
+            return _apply(yt, iid, desc)
+        return f"PENDING-APPROVE {iid}"
+    if kb:
+        if not proposed:
+            return _propose_kb(yt, iid, kb)
+        if any(t.split()[0] == "approve" for t in producer_txt):
+            return _apply_kb(yt, iid)
+        return f"PENDING-KB-APPROVE {iid}"
+    return None
+
+
+def _resolve_kb_target(desc: str) -> Path | None:
+    """从 kb-propose 说明里猜目标文件（含文件名片段即可），必须在白名单内。"""
+    for p in KB_ALLOW:
+        if p.name in desc or (p.parent.name != "kernel" and p.parent.name in desc):
+            return p
+    if "公约" in desc or "TEAM" in desc.upper():
+        return KB_ROOT / "TEAM.md"
+    return None
+
+
+def _propose_kb(yt, iid: str, desc: str) -> str:
+    target = _resolve_kb_target(desc)
+    if not target or not target.exists():
+        yt.comment(iid, f"kb-propose 找不到白名单内的目标文件（{desc[:60]}）。"
+                        f"可用目标：{', '.join(str(p.relative_to(KB_ROOT)) for p in KB_ALLOW)}")
+        return f"KB-TARGET-MISS {iid}"
+    cur = target.read_text(encoding="utf-8")
+    res = ask(
+        f"你是虚拟工作室的知识库编辑。目标文件 {target.relative_to(KB_ROOT)} 当前内容：\n"
+        f"```\n{cur}\n```\n制作人修改说明：{desc}\n\n"
+        "产出修改后的文件完整内容。保持既有结构与语气，只改说明涉及的部分，其余原样保留。只输出文件内容。", 420)
+    if not res or len(res) < 20:
+        yt.comment(iid, "kb 草案生成失败，请补充说明后重发 kb-propose")
+        return f"KB-PROPOSE-FAIL {iid}"
+    body = res.strip()
+    if body.startswith("```"):
+        body = body.split("\n", 1)[1].rsplit("```", 1)[0]
+    yt.comment(iid, f"KB-PROPOSED {target.relative_to(KB_ROOT)}\n修改后的完整内容：\n"
+                    f"```\n{body}\n```\n制作人回 `approve` 生效。")
+    _to_pending(yt, iid, f"G1 知识/{target.name}")
+    return f"KB-PROPOSED {iid} {target.name}"
+
+
+def _apply_kb(yt, iid: str) -> str:
+    cs = yt.comments(iid)
+    mark = next(c["text"] for c in cs if c["text"].startswith("KB-PROPOSED"))
+    rel = mark.split()[1]
+    target = KB_ROOT / rel
+    if target not in KB_ALLOW or not target.exists():
+        return f"KB-APPLY-REJECT {iid} 目标不在白名单"
+    body = mark.split("```", 1)[1].rsplit("```", 1)[0].strip()
+    target.write_text(body + "\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(KB_ROOT.parent), "add", "-A"], check=False)
+    subprocess.run(["git", "-C", str(KB_ROOT.parent), "commit", "-q", "-m",
+                    f"kb-update: {rel}（{iid} 制作人已批准）"], check=False)
+    from .metrics import append_event
+    append_event("STUDIO", iid, "KB_UPDATE", "agent-pm", 0, rel)
+    yt.comment(iid, f"{MARK_APPLIED} {rel} 已更新并 git 提交，全员即刻生效。")
+    _to_window(yt, iid)
+    return f"KB-APPLIED {iid} {rel}"
 
 
 def _propose(yt, iid: str, desc: str) -> str:
@@ -85,7 +160,28 @@ def _propose(yt, iid: str, desc: str) -> str:
         f"流转：{block.get('流转', '')}\n理由：{data.get('rationale', '')}{edge_note}\n"
         f"types 条目：\n```yaml\n{name}: {data['yaml']}\n```\n"
         f"制作人回复 `approve` 生效；回复其它内容则作废重提。")
+    _to_pending(yt, iid, f"G2 类型/{name}")
     return f"PROPOSED {iid} {name}"
+
+
+def _to_pending(yt, iid, level_note):
+    """提案单：定级 + 草稿→待批。"""
+    if "G" not in (yt.f(iid, "轨道") or ""):
+        g = "G2 类型" if "类型" in level_note else "G1 知识"
+        yt.set_field(iid, "轨道", g)
+    if yt.f(iid, "State") == "草稿":
+        yt.transition(iid, "待批")
+
+
+def _to_window(yt, iid):
+    """应用完成 → 实施中 → 观察窗（7 天后自动结案）。"""
+    try:
+        if yt.f(iid, "State") == "待批":
+            yt.transition(iid, "实施中")
+        yt.transition(iid, "观察窗")
+        yt.comment(iid, "进入 7 日观察窗：自评引擎盯指标，恶化将回滚（git revert）并记教训。")
+    except ValueError:
+        pass
 
 
 def _validate(name: str, block: dict, edges: list):
@@ -144,6 +240,7 @@ def _apply(yt, iid: str, desc: str) -> str:
     append_event("STUDIO", iid, "SCHEMA_EVOLVE", "agent-pm", 0, f"新增类型 {name}")
     append_run("evolve", "ok", 0, f"注册类型 {name}")
     yt.comment(iid, f"{MARK_APPLIED} {name} 已注册：枚举+知识库+git 提交完成，全工作室即刻生效。")
+    _to_window(yt, iid)
     # 热重载状态机
     from . import statemachine as sm
     sm._S = sm._load_schema()
