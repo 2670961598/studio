@@ -208,6 +208,26 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);
     </div>
   </div>
 
+  <!-- 单子知识库 -->
+  <div v-if="tab==='sc'">
+    <div class="panel">
+      <h3>单子类型（唯一事实源 kernel/schema/ticket-types.yaml · PM 经 evolve-schema 提案、制作人 approve 后生效）</h3>
+      <table v-if="sc.types">
+        <tr><th>类型</th><th>定位</th><th>目的</th><th>流转</th><th>执行</th></tr>
+        <tr v-for="(t,k) in sc.types" :key="k">
+          <td class="mono"><b>{{k}}</b><div v-if="sc.type_edges[k]" style="color:var(--acc2);font-size:11px">专用流</div></td>
+          <td>{{t['定位']}}</td><td>{{t['目的']}}</td>
+          <td class="mono" style="font-size:12px">{{t['流转']}}<span v-if="sc.type_edges[k]"><br>{{sc.type_edges[k].map(e=>e[0]+'→'+e[1]).join('，')}}</span></td>
+          <td>{{t['执行']||'—'}}</td></tr>
+      </table>
+      <div v-else class="empty">加载中…</div>
+    </div>
+    <div class="panel" v-for="(txt,role) in sc.agents_kb" :key="role">
+      <h3>agent · {{role}}</h3>
+      <pre style="white-space:pre-wrap;font-size:12px;color:var(--tx2);margin:0;font-family:inherit">{{txt}}</pre>
+    </div>
+  </div>
+
   <!-- 对话记录弹窗 -->
   <transition name="fade">
   <div class="modal-bg" v-if="tr" @click.self="tr=null">
@@ -234,8 +254,8 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);
 const {createApp,ref,reactive,onMounted} = Vue
 createApp({
   setup(){
-    const tab=ref('ov'), tabs=[{k:'ov',n:'总览'},{k:'jobs',n:'定时任务'},{k:'runs',n:'运行历史'},{k:'wk',n:'工人'},{k:'se',n:'自评'}]
-    const ov=reactive({}), jobs=ref([]), runs=ref([]), workers=ref([]), tr=ref(null), runFilter=ref('')
+    const tab=ref('ov'), tabs=[{k:'ov',n:'总览'},{k:'jobs',n:'定时任务'},{k:'runs',n:'运行历史'},{k:'wk',n:'工人'},{k:'sc',n:'单子知识库'},{k:'se',n:'自评'}]
+    const ov=reactive({}), jobs=ref([]), runs=ref([]), workers=ref([]), tr=ref(null), runFilter=ref(''), sc=reactive({})
     const ytIssue=id=>`http://localhost:8080/issue/${id}`
     const jName=id=>({ 'pm-poly':'子PM·POLY','qa':'全局QA','self-eval':'自评引擎'}[id]||id)
     async function j(){try{Object.assign(ov,await (await fetch('/api/overview')).json())}catch(e){ov.now='⚠ '+e}}
@@ -244,6 +264,7 @@ createApp({
       try{jobs.value=await (await fetch('/api/jobs')).json()}catch(e){}
       try{runs.value=await (await fetch('/api/runs?job='+runFilter.value+'&limit=150')).json()}catch(e){}
       try{workers.value=await (await fetch('/api/workers')).json()}catch(e){}
+      try{Object.assign(sc,await (await fetch('/api/schema')).json())}catch(e){}
     }
     async function ctl(id,act){await fetch(`/api/jobs/${id}/${act}`,{method:'POST'});refresh()}
     async function openTr(issue){tr.value=await (await fetch('/api/transcript/'+issue)).json()}
@@ -252,7 +273,7 @@ createApp({
     const wStatus=s=>s.split(' ')[0]
     const msgCls=m=>m.role==='sys'?'m-sys':m.kind==='tool'?'m-tool':m.kind==='result'?(m.ok===false?'m-res m-err':'m-res'):'m-ai'
     onMounted(()=>{refresh();setInterval(refresh,5000)})
-    return {tab,tabs,ov,jobs,runs,workers,tr,runFilter,ytIssue,jName,ctl,openTr,outCls,wCls,wStatus,msgCls}
+    return {tab,tabs,ov,jobs,runs,workers,tr,runFilter,sc,ytIssue,jName,ctl,openTr,outCls,wCls,wStatus,msgCls}
   }
 }).mount('#app')
 </script>

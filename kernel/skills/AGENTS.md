@@ -1,12 +1,18 @@
 # 虚拟工作室 · 编制与手册总索引（kernel/skills/AGENTS.md）
 
-> **架构 v2（2026-09-15 起）**：ZCode 会话 = 监督验收层（子PM 派发/收割、主程=G2 核验、主策=DoD 校验、QA=独立终验）；
-> **执行层 = 独立 Claude Code 进程**（`claude -p` + GLM，由 `~/bin/studio-worker` 机器派发，一单一命，REPORT 落盘交付）。
-> worker 不占对话名额、上下文天然隔离、多泳道真并行；详见 kernel/intel/claude-code-worker.md。
+> **架构 v4（2026-09-16 起）**：studio-daemon（Python 常驻，launchd 看护）承载全部循环——
+> 确定性状态机 + claude 执行层 + 自评元循环 + **战役巡逻** + **schema 自进化**。
+> 控制台 http://127.0.0.1:8787（Vue）。ZCode = 制作人驾驶舱。
 >
-> 定时任务的提示词一律写薄：**一行身份 + 一句"读哪本手册"**，细则全部以手册文件为准。
-> 平台铁律（详见 kernel/intel/zcode-cron-binding.md）：①每个定时任务绑定创建它的会话，到点把提示词投回该会话执行；②一个会话只能绑一个定时任务。
-> 所以：**每上一个岗，就开一个全新对话，发下面"建岗指令"里的一句话即可。**
+> **三份共享知识库（改文件即改行为，全部 git 版本管理）**：
+> 1. 单子知识库（类型×流转唯一事实源）：`kernel/schema/ticket-types.yaml` —— 所有 agent 与 daemon 每次读取
+> 2. 各 agent 定位/目的/知识库：`kernel/agents/<角色>.md`
+> 3. 战役大脑：`kernel/campaigns/<单号>.yaml`（制作人随时改）
+>
+> **自进化入口**：内部改进单评论 `evolve-schema <需求描述>` → PM 起草案 → 制作人回 `approve` →
+> daemon 自动注册 YouTrack 枚举 + 更新单子知识库 + git commit，全工作室即刻生效。禁自批。
+>
+> 旧 ZCode 会话 cron 已退役；手册库（kernel/skills/）仍为 LLM 岛与人工参考服务。
 
 ## 编制一览（手册 = 唯一剧本）
 

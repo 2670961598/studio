@@ -14,6 +14,8 @@ TRIGGER_MAP = {  # 立即执行的路由表（job id → 可调用）
     "pm-poly": ("studio.orchestrator", "pm_tick", {"pid": "POLY"}),
     "qa": ("studio.orchestrator", "qa_tick", {}),
     "self-eval": ("studio.metrics", "self_eval", {}),
+    "patrol": ("studio.patrol", "patrol_tick", {}),
+    "evolve-scan": ("studio.evolve", "scan", {}),
 }
 
 
@@ -166,13 +168,22 @@ def api_job_ctl(job_id: str, action: str):
         SCHED.resume_job(job_id); return {"ok": f"{job_id} resumed"}
     if action == "trigger":
         import importlib
+        import threading
         if job_id not in TRIGGER_MAP:
             raise HTTPException(404, "未知 job")
-        mod, fn, kw = TRIGGER_MAP[job_id]
-        r = getattr(importlib.import_module(mod), fn)(**kw)
-        s = "; ".join(r.get("actions", []))[:200] if isinstance(r, dict) else str(r)[:200]
-        append_run(job_id, "ok", 0, "[手动] " + (s or "完成"))
-        return r if isinstance(r, dict) else {"ok": str(r)}
+
+        def _run():
+            mod, fn, kw = TRIGGER_MAP[job_id]
+            try:
+                r = getattr(importlib.import_module(mod), fn)(**kw)
+                s = "; ".join(r.get("actions", []))[:200] if isinstance(r, dict) else str(r)[:200]
+                from .runs import append_run
+                append_run(job_id, "ok", 0, "[手动] " + (s or "完成"))
+            except Exception as e:
+                from .runs import append_run
+                append_run(job_id, "error", 0, f"[手动] {type(e).__name__}: {e}"[:200])
+        threading.Thread(target=_run, daemon=True).start()
+        return {"ok": f"{job_id} 已后台触发，结果稍后见运行历史"}
     raise HTTPException(400, "action?")
 
 
@@ -180,6 +191,22 @@ def api_job_ctl(job_id: str, action: str):
 def api_runs(job: str = "", limit: int = 100):
     from .runs import list_runs
     return list_runs(job or None, limit)
+
+
+@app.get("/api/schema")
+def api_schema():
+    """单子知识库（类型×流转唯一事实源）供前端展示。"""
+    import yaml as _y
+    from . import statemachine as sm
+    p = CONFIG._root.parent / "kernel" / "schema" / "ticket-types.yaml"
+    try:
+        data = _y.safe_load(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        return {"error": str(e)}
+    return {"updated": data.get("updated"), "types": data.get("types", {}),
+            "type_edges": {k: [list(e) for e in v] for k, v in sm.TYPE_EDGES.items()},
+            "agents_kb": {f.stem: f.read_text(encoding="utf-8")[:400]
+                          for f in sorted((CONFIG._root.parent / "kernel" / "agents").glob("*.md"))}}
 
 
 @app.get("/api/workers")

@@ -61,18 +61,19 @@ class YT:
     def f(self, issue: str, name: str):
         return self.get(issue)["fields"].get(name)
 
-    def new(self, pid: str, summary: str, desc: str, lane="core", prio="normal",
+    def new(self, pid: str, summary: str, desc: str, lane: str | None = "core", prio="normal",
             typ="业务", track="B 常规", state="新单") -> str:
-        body = {
-            "project": {"id": CONFIG.proj_id(pid)}, "summary": summary, "description": desc,
-            "customFields": [
-                {"name": "State", "$type": "StateIssueCustomField", "value": {"name": state}},
-                {"name": "Priority", "$type": "SingleEnumIssueCustomField", "value": {"name": prio}},
-                {"name": "泳道", "$type": "SingleEnumIssueCustomField", "value": {"name": lane}},
-                {"name": "Type", "$type": "SingleEnumIssueCustomField", "value": {"name": typ}},
-                {"name": "轨道", "$type": "SingleEnumIssueCustomField", "value": {"name": track}},
-                {"name": "attempt", "$type": "SimpleIssueCustomField", "value": 0},
-            ]}
+        cfs = [
+            {"name": "State", "$type": "StateIssueCustomField", "value": {"name": state}},
+            {"name": "Priority", "$type": "SingleEnumIssueCustomField", "value": {"name": prio}},
+            {"name": "Type", "$type": "SingleEnumIssueCustomField", "value": {"name": typ}},
+            {"name": "轨道", "$type": "SingleEnumIssueCustomField", "value": {"name": track}},
+            {"name": "attempt", "$type": "SimpleIssueCustomField", "value": 0},
+        ]
+        if lane:  # 泳道是项目级字段（POLY 有，STUDIO 无）
+            cfs.append({"name": "泳道", "$type": "SingleEnumIssueCustomField", "value": {"name": lane}})
+        body = {"project": {"id": CONFIG.proj_id(pid)}, "summary": summary,
+                "description": desc, "customFields": cfs}
         return self._post("/api/issues?fields=idReadable", body)["idReadable"]
 
     # ---- 字段与状态 ----

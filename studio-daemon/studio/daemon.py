@@ -46,6 +46,10 @@ def _sched():
                   id="qa", replace_existing=True)
     sched.add_job("studio.metrics:self_eval", CronTrigger.from_crontab("50 8 * * *"),
                   id="self-eval", replace_existing=True)
+    sched.add_job("studio.patrol:patrol_tick", CronTrigger.from_crontab("5 * * * *"),
+                  id="patrol", replace_existing=True)
+    sched.add_job("studio.evolve:scan", CronTrigger.from_crontab("3,13,23,33,43,53 * * * *"),
+                  id="evolve-scan", replace_existing=True)
     from . import runtime
     runtime.SCHED = sched
     runtime.STARTED = time.time()

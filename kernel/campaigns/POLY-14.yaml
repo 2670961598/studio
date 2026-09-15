@@ -1,0 +1,10 @@
+theme: 游戏性能优化（Match-GLM game 泳道）
+every_h: 48
+sources:
+  - https://blog.unity.com/technology
+  - https://unity.com/how-to/advanced/optimization
+repo: /Volumes/BigDisk/UnityProject/Match-GLM/Match3
+baseline_cmd: ""   # TODO 制作人：可填 bench-sync.sh 风格的基准命令，快照将自动序列化对比
+child_type: 业务
+child_track: "B 常规"
+patrol_brief: 结合仓库 Assets/Presenter/Benchmark 与 .kimi_tmp 历史跑分，抓渲染/动画/板逻辑热点；每轮最多孵化 1-2 张优化子单，gate_cmd 必须是可机器复跑的断言（如单测/基准阈值）。
