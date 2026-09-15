@@ -23,6 +23,7 @@ STATIC = CONFIG._root / "static"
 
 TRIGGER_MAP = {  # 立即执行的路由表（job id → 可调用）
     "pm-poly": ("studio.orchestrator", "pm_tick", {"pid": "POLY"}),
+    "pm-studio": ("studio.orchestrator", "pm_tick", {"pid": "STUDIO"}),
     "self-eval": ("studio.metrics", "self_eval", {}),
     "patrol": ("studio.patrol", "patrol_tick", {}),
     "evolve-scan": ("studio.evolve", "scan", {}),

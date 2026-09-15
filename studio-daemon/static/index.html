@@ -261,7 +261,7 @@ createApp({
     const tab=ref('ov'), tabs=[{k:'ov',n:'总览'},{k:'jobs',n:'定时任务'},{k:'runs',n:'运行历史'},{k:'wk',n:'工人'},{k:'sc',n:'单子知识库'},{k:'se',n:'自评'}]
     const ov=reactive({}), jobs=ref([]), runs=ref([]), workers=ref([]), tr=ref(null), runFilter=ref(''), sc=reactive({})
     const ytIssue=id=>`http://localhost:8080/issue/${id}`
-    const jName=id=>({ 'pm-poly':'子PM·POLY','qa':'全局QA','self-eval':'自评引擎'}[id]||id)
+    const jName=id=>({ 'pm-poly':'子PM·POLY','pm-studio':'子PM·STUDIO','qa':'全局QA','self-eval':'自评引擎','patrol':'战役巡逻','evolve-scan':'schema自进化'}[id]||id)
     async function j(){try{Object.assign(ov,await (await fetch('/api/overview')).json())}catch(e){ov.now='⚠ '+e}}
     async function refresh(){
       j()
