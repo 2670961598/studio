@@ -57,25 +57,32 @@ def close_windows():
 
 def _process(yt, iid: str) -> str | None:
     cs = yt.comments(iid)
-    producer_txt = [c["text"].strip() for c in cs if c["author"] == CONFIG.producer]
-    proposed = any(c.startswith((MARK_PROPOSED, "KB-PROPOSED")) for c in cs)
-    applied = any(c.startswith(MARK_APPLIED) for c in cs)
-    if applied:
+    all_texts = [c["text"].strip() for c in cs]                   # P1-6：迭代文本而非 dict
+    prod = [(c["created"], c["text"].strip()) for c in cs
+            if c["author"] == CONFIG.producer and c["text"].strip()]
+    proposed_at = next((c["created"] for c, t in zip(cs, all_texts)
+                        if t.startswith((MARK_PROPOSED, "KB-PROPOSED"))), None)
+    if any(t.startswith(MARK_APPLIED) for t in all_texts):
         return None
-    desc = next((t[len("evolve-schema"):].strip() for t in producer_txt
-                 if t.startswith("evolve-schema")), None)
-    kb = next((t[len("kb-propose"):].strip() for t in producer_txt
-               if t.startswith("kb-propose")), None)
+    directives = [t for _, t in prod if t.startswith(("evolve-schema", "kb-propose"))
+                  and len(t.split()) > 1]
+    desc = directives[-1][len("evolve-schema"):].strip() if any(
+        d.startswith("evolve-schema") for d in directives) else None
+    kb = directives[-1][len("kb-propose"):].strip() if any(
+        d.startswith("kb-propose") for d in directives) else None
+    # approve：制作人精确首 token，且必须晚于提案（禁预埋批准；P2-8 空评论安全）
+    approved = any(t.split()[:1] == ["approve"] and proposed_at and created >= proposed_at
+                   for created, t in prod)
     if desc is not None:
-        if not proposed:
+        if proposed_at is None:
             return _propose(yt, iid, desc)
-        if any(t.split()[0] == "approve" for t in producer_txt):
+        if approved:
             return _apply(yt, iid, desc)
         return f"PENDING-APPROVE {iid}"
     if kb:
-        if not proposed:
+        if proposed_at is None:
             return _propose_kb(yt, iid, kb)
-        if any(t.split()[0] == "approve" for t in producer_txt):
+        if approved:
             return _apply_kb(yt, iid)
         return f"PENDING-KB-APPROVE {iid}"
     return None
@@ -207,13 +214,14 @@ def _ensure_enum(name: str):
     url = f"{CONFIG.yt_url}/api/admin/customFieldSettings/bundles/enum/{bundle}/values"
     r = requests.post(url, headers={"Authorization": f"Bearer {CONFIG.token('admin')}"},
                       json={"name": name}, params={"fields": "id,name"}, timeout=30)
-    _log(f"enum-register {name} -> HTTP {r.status_code}")
-    return r.status_code in (200, 201)
+    ok = r.status_code in (200, 201, 409)        # 409=已存在，视为成功
+    _log(f"enum-register {name} -> HTTP {r.status_code} ok={ok}")
+    return ok
 
 
 def _apply(yt, iid: str, desc: str) -> str:
     cs = yt.comments(iid)
-    mark = next(c for c in cs if c["text"].startswith(MARK_PROPOSED))["text"]
+    mark = next(c["text"] for c in cs if c["text"].startswith(MARK_PROPOSED))
     m = re.match(rf"{MARK_PROPOSED} (\S+)", mark)
     name = m.group(1)
     yml_block = mark.split("```yaml", 1)[1].split("```", 1)[0].strip() if "```yaml" in mark else ""
@@ -222,9 +230,17 @@ def _apply(yt, iid: str, desc: str) -> str:
     data = yaml.safe_load(SCHEMA.read_text(encoding="utf-8"))
     if name in data["types"]:
         return f"ALREADY {iid}"
-    block = yaml.safe_load(yml_block) if yml_block else {}
+    try:                                          # P1-4：评论里贴的是 "名字: {…}" 外层包裹
+        raw = yaml.safe_load(yml_block)
+        block = raw.get(name) if isinstance(raw, dict) and name in raw else raw
+        assert isinstance(block, dict) and block
+    except Exception as e:
+        yt.comment(iid, f"草案 YAML 解析失败（{e}），请重发 evolve-schema 重新提案")
+        return f"APPLY-PARSE-FAIL {iid}"
     _validate(name, block, edges)
-    _ensure_enum(name)
+    if not _ensure_enum(name):
+        yt.comment(iid, f"{name} 枚举注册失败（YouTrack bundle），应用中止——检查 admin 权限后重试")
+        return f"ENUM-FAIL {iid} {name}"
     data["types"][name] = block
     if edges:
         data.setdefault("type_edges", {})[name] = edges
@@ -241,8 +257,6 @@ def _apply(yt, iid: str, desc: str) -> str:
     append_run("evolve", "ok", 0, f"注册类型 {name}")
     yt.comment(iid, f"{MARK_APPLIED} {name} 已注册：枚举+知识库+git 提交完成，全工作室即刻生效。")
     _to_window(yt, iid)
-    # 热重载状态机
     from . import statemachine as sm
-    sm._S = sm._load_schema()
-    sm.TYPE_EDGES = sm._type_edges()
+    sm.recompute()                               # P1-5：统一热重载（重算全部派生表）
     return f"APPLIED {iid} {name}"

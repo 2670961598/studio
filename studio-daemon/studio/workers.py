@@ -48,16 +48,21 @@ class Worker:
         t = YT("agent-pm")
         lane = lane or ticket["fields"].get("泳道") or "core"
         lc = CONFIG.lane(lane)
-        role, title = _role(ticket["fields"].get("Type") or "业务")
+        role, title = _role(ticket["fields"].get("Type") or "需求")
         prompt = WORKER_TEMPLATE.format(
             issue=self.issue, title=title, role=role, summary=ticket["summary"],
-            desc=ticket["description"], track=ticket["fields"].get("轨道") or "B 常规",
-            lane=lane, type=ticket["fields"].get("Type") or "业务",
+            desc=ticket["description"], track=ticket["fields"].get("轨道") or "L2 常规",
+            lane=lane, type=ticket["fields"].get("Type") or "需求",
             attempt=ticket["fields"].get("attempt") or 0,
             gate=ticket["fields"].get("验收命令"), repo=lc["path"],
             branch=f"feature/{self.issue}", wacct=lc.get("yt_acct", "agent-core"),
             report=self.report)
         self.prompt.write_text(prompt)
+        # 清上一轮残留（退回重派时旧 REPORT 会被误判 DONE）
+        att = int(ticket["fields"].get("attempt") or 0)
+        for f in (self.report, self.stream):
+            if f.exists():
+                f.rename(f.with_name(f"{f.stem}.a{att}{f.suffix}"))
         self.wrap.write_text(f"""#!/bin/bash
 cd "{lc['path']}"
 git checkout feature/{self.issue} >/dev/null 2>&1
@@ -65,18 +70,15 @@ claude -p --dangerously-skip-permissions --output-format stream-json --verbose <
 echo "WORKER-EXIT=$?" >> "{self.stream}"
 """)
         self.wrap.chmod(0o755)
-        subprocess.Popen(["nohup", "bash", str(self.wrap)], stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, start_new_session=True)
-        time.sleep(0.5)
-        # 找 wrap 的 pid（pgrep 按 wrap 文件名匹配，足够唯一）
-        pid = subprocess.run(["pgrep", "-f", str(self.wrap)], capture_output=True,
-                             text=True).stdout.split()
-        reg = {"issue": self.issue, "pid": int(pid[0]) if pid else -1, "lane": lane,
+        proc = subprocess.Popen(["nohup", "bash", str(self.wrap)], stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, start_new_session=True)
+        pid = proc.pid                            # wrap 即 session leader（pgid=pid）
+        reg = {"issue": self.issue, "pid": pid, "lane": lane,
                "branch": f"feature/{self.issue}", "repo": lc["path"],
                "base": lc["base_branch"], "report": str(self.report),
                "stream": str(self.stream), "started": time.strftime("%F %T")}
         self.reg.write_text(json.dumps(reg, ensure_ascii=False))
-        return reg["pid"]
+        return pid
 
     def reg_data(self) -> dict | None:
         if self.reg.exists():
@@ -87,11 +89,16 @@ echo "WORKER-EXIT=$?" >> "{self.stream}"
         return None
 
     def status(self) -> str:
-        reg = self.reg_data()
-        if not reg:
-            return "UNKNOWN"
+        """DONE=REPORT 落盘｜RUNNING=wrap 进程活｜ARCHIVED=本轮已收割（待重派）｜DEAD=进程亡未交卷。"""
         if self.report.exists():
             return f"DONE {self.report}"
+        if not self.reg.exists():
+            if self.reg.with_name(f"{self.issue}.done.json").exists():
+                return "ARCHIVED"                  # 已收割处理过：等编排器重派
+            return "UNKNOWN"
+        reg = json.loads(self.reg.read_text())
+        if reg.get("pid", -1) <= 0:
+            return "DEAD pid=invalid"
         try:
             os.kill(reg["pid"], 0)
             m = int((time.time() - self.reg.stat().st_mtime) // 60)
@@ -115,5 +122,10 @@ echo "WORKER-EXIT=$?" >> "{self.stream}"
                 return f"NOT-ALIVE {self.issue}"
 
     def archive(self):
+        """收割处理完毕：reg 与产物全部归档（防旧 REPORT 反复触发 DONE）。"""
         if self.reg.exists():
             self.reg.rename(CONFIG.workers_dir / f"{self.issue}.done.json")
+        att = time.strftime("%H%M%S")
+        for f in (self.report, self.stream):
+            if f.exists():
+                f.rename(f.with_name(f"{f.stem}.archived-{att}{f.suffix}"))

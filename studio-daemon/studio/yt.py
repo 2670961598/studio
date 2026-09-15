@@ -119,7 +119,7 @@ class YT:
 
     def comments(self, issue: str) -> list[dict]:
         rows = self._get(f"/api/issues/{issue}/comments",
-                         params={"fields": "author(login),text,created", "$top": "50"})
+                         params={"fields": "author(login),text,created", "$top": "50", "reverse": "true"})
         return [{"author": (c.get("author") or {}).get("login", "?"),
                  "text": c.get("text", ""), "created": c.get("created")} for c in rows]
 

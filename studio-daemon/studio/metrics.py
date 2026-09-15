@@ -70,8 +70,8 @@ def self_eval() -> dict:
     for f in findings[:2]:
         iid = yt.new("STUDIO", f"[自评] {f[:40]}", f"来源：studio-daemon 每日自评\n\n{f}\n\n"
                      f"指标窗口：{m['window_days']} 天\n处理建议：分析 events.jsonl 对应事件，"
-                     f"改进对应手册/模板/参数；若需改宪章走内部改进流程。",
-                     lane="core", typ="内部改进", track="C 轻轨", state="草稿")
+                     f"改进对应手册/模板/参数。",
+                     lane=None, typ="提案", track="G1 知识", state="草稿")
         yt.set_text(iid, "来源", "self-eval " + time.strftime("%F %T"))
         created.append(iid)
         append_event("STUDIO", iid, "SELF_EVAL", "studio-daemon", 0, f[:60])

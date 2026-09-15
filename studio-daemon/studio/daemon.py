@@ -73,9 +73,6 @@ def main():
         if role == "pm":
             from .orchestrator import pm_tick
             print(pm_tick("POLY"))
-        elif role == "qa":
-            from .orchestrator import qa_tick
-            print(qa_tick())
         elif role == "selfeval":
             from .metrics import self_eval
             import json

@@ -8,6 +8,17 @@ from .config import CONFIG
 from . import statemachine
 
 app = FastAPI(title="studio-daemon")
+
+
+@app.middleware("http")
+async def _guard(request, call_next):
+    """本机防护（P1-8）：拒 DNS rebinding（Host 白名单）与跨站 POST（CSRF）。"""
+    host = (request.headers.get("host") or "").lower()
+    if host not in ("127.0.0.1:8787", "localhost:8787"):
+        return JSONResponse({"error": "bad host"}, status_code=421)
+    if request.method == "POST" and request.headers.get("sec-fetch-site") not in (None, "same-origin", "same-site", "none"):
+        return JSONResponse({"error": "cross-site blocked"}, status_code=403)
+    return await call_next(request)
 STATIC = CONFIG._root / "static"
 
 TRIGGER_MAP = {  # 立即执行的路由表（job id → 可调用）
@@ -75,8 +86,13 @@ def _jobs() -> list[dict]:
 def _workers() -> list[dict]:
     from .workers import Worker
     out = []
-    for p in sorted(CONFIG.workers_dir.glob("*.json")) + sorted(CONFIG.workers_dir.glob("*.done.json")):
+    seen = set()
+    files = sorted(CONFIG.workers_dir.glob("*.done.json")) + sorted(CONFIG.workers_dir.glob("*.json"))
+    for p in files:
         issue = p.name.replace(".done.json", "").replace(".json", "")
+        if issue in seen:
+            continue
+        seen.add(issue)
         try:
             w = Worker(issue)
             d = w.reg_data() or {}
@@ -147,6 +163,16 @@ def api_overview():
         return _overview()
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/state")
+def api_state_alias():
+    """看护脚本的健康检查入口（含调度器活性）。"""
+    from . import runtime
+    import json as _j
+    return {"now": time.strftime("%F %T"),
+            "sched_alive": runtime.SCHED is not None and runtime.SCHED.running,
+            "started": runtime.STARTED}
 
 
 @app.get("/api/jobs")

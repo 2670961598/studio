@@ -39,6 +39,20 @@ def _load_schema() -> dict:
 
 
 _S = _load_schema()
+
+
+def recompute():
+    """schema 变更后热重载（evolve._apply 调用；原子化重算全部派生表）。"""
+    global _S, DELIVERY_TYPES, LEVEL_FLOWS, TYPE_EDGES, ROLLBACK
+    _S = _load_schema()
+    DELIVERY_TYPES = ({k for k, v in (_S.get("types") or {}).items()
+                       if (v or {}).get("族") == "交付"} or BUILTIN_TYPES)
+    LEVEL_FLOWS = {k: list(v) for k, v in (_S.get("flow_by_level") or BUILTIN_LEVEL_FLOWS).items()}
+    TYPE_EDGES = {k: [tuple(e) for e in v]
+                  for k, v in (_S.get("type_edges") or BUILTIN_TYPE_EDGES).items()}
+    ROLLBACK = [tuple(e) for e in (_S.get("rollback_edges") or BUILTIN_ROLLBACK)]
+
+
 DELIVERY_TYPES = {k for k, v in (_S.get("types") or {}).items()
                   if (v or {}).get("族") == "交付"} or BUILTIN_TYPES
 LEVEL_FLOWS = {k: list(v) for k, v in (_S.get("flow_by_level") or BUILTIN_LEVEL_FLOWS).items()}

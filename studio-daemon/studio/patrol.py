@@ -39,7 +39,10 @@ def _state(iid: str) -> dict:
 
 
 def _save_state(iid, st):
-    (CAMP / f"{iid}.state.json").write_text(json.dumps(st, ensure_ascii=False))
+    tmp = CAMP / f"{iid}.state.json.tmp"
+    tmp.write_text(json.dumps(st, ensure_ascii=False))
+    import os as _os
+    _os.replace(tmp, CAMP / f"{iid}.state.json")   # 原子写（P2-15）
 
 
 def _snap_path(iid) -> Path:
@@ -105,8 +108,8 @@ def _patrol_one(yt, row) -> str:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         snaps = _snap_path(iid).read_text(encoding="utf-8").splitlines()[-3:]
         snap_text = "\n".join(snaps)
-    from .llm import ask
-    res = ask(
+    from .llm import ask, _sanitize_cmd
+    res = ask(allow_web=True, prompt=
         f"你是虚拟工作室的战役巡逻员，负责永驻战役「{spec.get('theme', iid)}」。\n"
         f"任务书：{spec.get('patrol_brief', '')}\n"
         f"巡逻源（用 WebFetch 逐个抓取，失败就跳过）：{json.dumps(spec.get('sources', []), ensure_ascii=False)}\n"
@@ -114,7 +117,7 @@ def _patrol_one(yt, row) -> str:
         "产出（只输出 JSON）：{\"progress\":\"≤120字进展\",\"findings\":[\"≤80字发现\"...],"
         "\"children\":[{\"summary\":\"子单标题\",\"description\":\"需求描述\","
         "\"gate_cmd\":\"一条 bash 冻结验收命令\"}]}（children 最多2条，没有确凿可做的就空数组）",
-        600)
+        timeout_sec=600)
     try:
         data = json.loads(res[res.index("{"):res.rindex("}") + 1])
     except Exception:
@@ -123,13 +126,20 @@ def _patrol_one(yt, row) -> str:
             f"进展：{data.get('progress', '')}"]
     note += [f"发现：{f}" for f in data.get("findings", [])]
     kids = []
+    child_track = spec.get("child_track", "L2 常规")
+    if child_track.startswith(("L0", "L1")):
+        child_track = "L2 常规"          # 安全红线：巡逻孵化的子单一律 ≥L2（必经制作人批）
     for ch in (data.get("children") or [])[:2]:
         if not (ch.get("summary") and ch.get("gate_cmd")):
             continue
+        gate = _sanitize_cmd(str(ch["gate_cmd"]).strip())
+        if not gate:
+            note.append(f"跳过子单「{ch['summary'][:30]}」：验收命令未过消毒")
+            continue
         kid = yt.new(iid.split("-")[0], f"[{iid}] {ch['summary'][:60]}", ch.get("description", ""),
-                     lane=row["lane"], typ=spec.get("child_type", "业务"),
-                     track=spec.get("child_track", "B 常规"))
-        yt.gate_freeze(kid, ch["gate_cmd"])
+                     lane=row["lane"], typ=spec.get("child_type", "需求"),
+                     track=child_track)
+        yt.gate_freeze(kid, gate)
         yt.comment(kid, f"来源：战役 {iid} 巡逻孵化")
         kids.append(kid)
         note.append(f"孵化子单：{kid}")

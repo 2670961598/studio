@@ -1,5 +1,6 @@
 """locks — 目录锁原生实现（与 ~/bin/studio-lock 完全互操作：同一锁目录、同一语义）
-mkdir 原子获取；存活 = ts 新鲜度(TTL) + 显式 release；长任务 beat 续期。"""
+mkdir 原子获取；过期锁 rmtree 后接管（对齐 bash 版）；release 校验 owner 防误删他人锁；
+长任务 beat 续期。（P0-1/P1-5 修复：过期接管不再抛 FileExistsError）"""
 import os, shutil, time
 from pathlib import Path
 
@@ -21,6 +22,7 @@ class DirLock:
             return 1 << 30
 
     def _read(self, ttl_min: int):
+        """有效锁返回 (owner, age)，过期/不存在返回 None。"""
         if not self.path.is_dir() or self._age_min() >= ttl_min:
             return None
         try:
@@ -29,21 +31,27 @@ class DirLock:
             owner = "?"
         return owner, self._age_min()
 
-    def acquire(self, owner: str, ttl_min: int = 120) -> None:
-        cur = self._read(ttl_min)
-        if cur:
-            raise LockBusy(f"{cur[0]} {cur[1]}min")
-        try:
-            self.path.mkdir(parents=True)
-        except FileExistsError:
-            cur = self._read(ttl_min)  # 并发败者复查一次
-            if cur:
-                raise LockBusy(f"{cur[0]} {cur[1]}min")
-            self.path.mkdir(parents=True)
+    def _take(self, owner: str):
         self.path.joinpath("owner").write_text(owner)
         self.path.joinpath("pid").write_text(str(os.getpid()))
         self.path.joinpath("ts").write_text(str(int(time.time())))
         self.owner, self.held = owner, True
+
+    def acquire(self, owner: str, ttl_min: int = 120) -> None:
+        for _ in range(3):                       # 过期接管重试（并发败者各清各的）
+            cur = self._read(ttl_min)
+            if cur:
+                raise LockBusy(f"{cur[0]} {cur[1]}min")
+            try:
+                self.path.mkdir(parents=True)
+                self._take(owner)
+                return
+            except FileExistsError:
+                cur = self._read(ttl_min)        # 复查：真并发 → HELD；过期 → 清尸重试
+                if cur:
+                    raise LockBusy(f"{cur[0]} {cur[1]}min")
+                shutil.rmtree(self.path, ignore_errors=True)
+        raise LockBusy("takeover-race")
 
     def check(self, ttl_min: int = 120):
         cur = self._read(ttl_min)
@@ -57,14 +65,17 @@ class DirLock:
 
     def release(self, owner: str | None = None):
         if self.path.is_dir():
-            if owner:
-                try:
-                    cur = self.path.joinpath("owner").read_text().strip()
-                except FileNotFoundError:
-                    cur = "?"
-                if cur != owner:
-                    raise PermissionError(f"DENIED owner={cur}")
-            shutil.rmtree(self.path)
+            cur = None
+            try:
+                cur = self.path.joinpath("owner").read_text().strip()
+            except FileNotFoundError:
+                cur = "?"
+            # 只放自己的锁：显式 owner 或本实例持有；他人锁拒绝（防 TTL 接管后误删）
+            if owner and cur != owner:
+                raise PermissionError(f"DENIED owner={cur}")
+            if not owner and not self.held:
+                raise PermissionError(f"DENIED owner={cur}（非本实例所持，需传 owner）")
+            shutil.rmtree(self.path, ignore_errors=True)
         self.held = False
         return "RELEASED"
 
