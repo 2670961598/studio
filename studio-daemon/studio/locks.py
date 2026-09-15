@@ -35,6 +35,12 @@ class DirLock:
         self.path.joinpath("owner").write_text(owner)
         self.path.joinpath("pid").write_text(str(os.getpid()))
         self.path.joinpath("ts").write_text(str(int(time.time())))
+        # 自校验：并发双胜者时，读回 owner 不一致的一方视为丢锁（防双持窗口）
+        try:
+            if self.path.joinpath("owner").read_text().strip() != owner:
+                raise LockBusy("lost-takeover-race")
+        except FileNotFoundError:
+            raise LockBusy("lost-takeover-race")
         self.owner, self.held = owner, True
 
     def acquire(self, owner: str, ttl_min: int = 120) -> None:
@@ -57,11 +63,19 @@ class DirLock:
         cur = self._read(ttl_min)
         return f"HELD {cur[0]} {cur[1]}min" if cur else "FREE"
 
-    def beat(self):
-        if self.held:
-            self.path.joinpath("ts").write_text(str(int(time.time())))
-            return "BEAT"
-        return "NOT-HELD"
+    def beat(self, owner: str | None = None):
+        """续期：按盘上 owner 校验（修复 held 标志在跨实例场景失效的死代码问题）。"""
+        owner = owner or self.owner
+        try:
+            cur = self.path.joinpath("owner").read_text().strip()
+        except FileNotFoundError:
+            return "NOT-HELD"
+        if cur != owner:
+            return "DENIED"
+        self.path.joinpath("ts").write_text(str(int(time.time())))
+        self.held = True
+        self.owner = owner
+        return "BEAT"
 
     def release(self, owner: str | None = None):
         if self.path.is_dir():
@@ -70,10 +84,10 @@ class DirLock:
                 cur = self.path.joinpath("owner").read_text().strip()
             except FileNotFoundError:
                 cur = "?"
-            # 只放自己的锁：显式 owner 或本实例持有；他人锁拒绝（防 TTL 接管后误删）
+            # 只放自己的锁：显式 owner 或盘上 owner 与本实例一致；他人/被接管的锁拒绝
             if owner and cur != owner:
                 raise PermissionError(f"DENIED owner={cur}")
-            if not owner and not self.held:
+            if not owner and (not self.held or cur != self.owner):
                 raise PermissionError(f"DENIED owner={cur}（非本实例所持，需传 owner）")
             shutil.rmtree(self.path, ignore_errors=True)
         self.held = False

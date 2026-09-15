@@ -32,8 +32,9 @@ def run_gate(issue: str, attempt_tag: str, lane: str, acct: str = "agent-pm") ->
         proc = subprocess.run(["bash", "-c", cmd], cwd=repo, capture_output=True,
                               text=True, timeout=600)
     except subprocess.TimeoutExpired as e:
-        log.write_text(f"GATE-TIMEOUT 600s\n{e}")
-        proc = subprocess.CompletedProcess([], 124, "", "GATE-TIMEOUT")
+        proc = subprocess.CompletedProcess([], 124,
+                                           (e.stdout or "") + f"\n[GATE-TIMEOUT 600s]",
+                                           e.stderr or "")
     log.write_text(proc.stdout + proc.stderr)
     res = GateResult({
         "issue": issue, "project": pid, "attempt": attempt_tag, "lane": lane,

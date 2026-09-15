@@ -68,3 +68,22 @@ class TestSanitize:
     def test_三段以上拒绝(self):
         from studio.llm import _sanitize_cmd
         assert _sanitize_cmd("test -f a && grep -q b c && grep -q d e && grep -q f g") is None
+
+
+class TestSanitizeHardened:
+    def test_find删除通道封死(self):
+        from studio.llm import _sanitize_cmd
+        assert _sanitize_cmd('find . -name "*.log" -delete') is None
+        assert _sanitize_cmd("find . -type f -exec rm {} ;") is None
+
+    def test_词元精确(self):
+        from studio.llm import _sanitize_cmd
+        assert _sanitize_cmd("testX -f a") is None          # 前缀混淆
+        assert _sanitize_cmd("grepped foo") is None
+        assert _sanitize_cmd("test -f a") == "test -f a"
+
+    def test_git只读子命令(self):
+        from studio.llm import _sanitize_cmd
+        assert _sanitize_cmd("git log --oneline -3") == "git log --oneline -3"
+        assert _sanitize_cmd("git push origin main") is None
+        assert _sanitize_cmd("git checkout evil") is None

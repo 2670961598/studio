@@ -140,10 +140,8 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
         if s.startswith("DONE"):
             return _harvest(yt, pid, iid, lane, w, lv)
         if s.startswith("RUNNING"):
-            try:                                   # 长任务续锁（lane TTL 120min < 大单耗时）
-                lock(CONFIG, f"lane-{pid}-{lane}").beat()
-            except Exception:
-                pass
+            # 长任务续锁（lane TTL 120min < 大单耗时；按盘上 owner 校验）
+            lock(CONFIG, f"lane-{pid}-{lane}").beat(f"worker-{iid}")
             hb = yt.f(iid, "心跳") or 0
             if hb and (time.time() * 1000 - hb) / 60000 > CONFIG.heartbeat_timeout_min:
                 w.kill()
@@ -210,7 +208,9 @@ def _redispatch(yt, pid, row, lv, typ) -> str:
                 yt.comment(iid, "断路退审：回到第1批位（制作人可重批授权或 kill）")
             except ValueError:
                 pass
-        yt.comment(iid, f"@{CONFIG.producer} attempt≥3 断路，等待批示")
+        cs2 = [c["text"] for c in yt.comments(iid)][-3:]
+        if not any("断路" in t for t in cs2):     # 幂等：不每 tick 刷屏
+            yt.comment(iid, f"@{CONFIG.producer} attempt≥3 断路，等待批示")
         return f"BREAK {iid}"
     r = _dispatch(yt, pid, iid, lane, already=True)
     return r or f"REDISPATCH-DEFERRED {iid}"
@@ -269,9 +269,12 @@ def _harvest(yt, pid, iid, lane, w: Worker, lv) -> str:
         n = yt.attempt_inc(iid)
         flow = sm._flow(lv, yt.f(iid, "Type"))
         if n >= CONFIG.max_attempts:
-            if flow and "待批" in flow:
-                yt.transition(iid, "待批")      # 有审批位的级别 → 断路进待批
-                yt.comment(iid, "断路退审：回到第1批位（制作人可重批授权或 kill）")
+            try:
+                if flow and "待批" in flow:
+                    yt.transition(iid, "待批")  # 有审批位的级别 → 断路进待批
+                    yt.comment(iid, "断路退审：回到第1批位（制作人可重批授权或 kill）")
+            except ValueError:
+                pass                             # 迁移异常不吞掉断路评论
             yt.comment(iid, f"@{CONFIG.producer} attempt={n}≥3 断路，evidence {res['log']}")
             _event(pid, iid, "GATE_FAIL", "agent-pm", n, "断路")
         else:
@@ -296,8 +299,20 @@ def _merge(yt, pid, iid, lane) -> str:
             _git(lc["path"], "reset", "--hard", "HEAD")
             _git(lc["path"], "clean", "-fd")
         _git(lc["path"], "checkout", lc["base_branch"])
-        _git(lc["path"], "merge", "--no-ff", f"feature/{iid}", "-m",
-             f"merge({iid}): {yt.get(iid)['summary']}")
+        try:
+            _git(lc["path"], "merge", "--no-ff", f"feature/{iid}", "-m",
+                 f"merge({iid}): {yt.get(iid)['summary']}")
+        except RuntimeError as e:                # 冲突：隔离+退回重做，不留无限重试循环
+            _git(lc["path"], "reset", "--hard", "HEAD", check=False)
+            _git(lc["path"], "clean", "-fd", check=False)
+            n = yt.attempt_inc(iid)
+            yt.comment(iid, f"merge 冲突已隔离退回重做 attempt={n}: {str(e)[:120]}")
+            _event(pid, iid, "GATE_FAIL", "agent-pm", n, "merge-conflict")
+            try:
+                yt.transition(iid, "已派发")
+            except ValueError:
+                pass
+            return f"MERGE-CONFLICT {iid} attempt={n}"
         res = run_gate(iid, f"verify-{int(time.time())}", lane)
         if res.ok:
             yt.transition(iid, "已交付")
@@ -400,10 +415,18 @@ def _directives(yt, iid, lv, typ) -> str | None:
         yt.comment(iid, f"制作人批示即新授权，attempt 已清零（原值≥{CONFIG.max_attempts}）")
     cur = idxs[cur]
     nxt = slot[cur + 1] if cur + 1 < len(slot) else "已交付"
+    # 名实校验：合并批位只认 approve-merge/approve-design/裸 approve（防重复 approve-plan 误触合并）
+    if nxt == "已交付" and slot.count("待批") > 1 and d.startswith("approve-plan"):
+        yt.comment(iid, f"指令 {d} 与当前批位（合并批）不符，未消费；请用 approve-merge 或 kill")
+        return f"DIRECTIVE-MISMATCH {iid} {d}"
     note = f"{d} → {nxt} (第{applied + 1}批)"
     if nxt == "已交付":
-        # 合并批：必须走真实 merge+verify（禁只翻状态）
-        _merge(yt, iid.split("-")[0], iid, lane_of(yt, iid))
+        # 合并批：必须走真实 merge+verify（禁只翻状态）；失败如实留痕
+        m = _merge(yt, iid.split("-")[0], iid, lane_of(yt, iid))
+        if "DELIVERED" not in m:
+            yt.comment(iid, f"批示已执行 {d}（合并未成：{m}，已回退重做；复验通过后需重新批准合并） (第{cur + 1}批)")
+            _event(iid.split("-")[0], iid, "APPROVE", "opengames", 0, f"{d} 合并失败回退: {m}")
+            return f"APPROVED-MERGE-FAILED {iid} {m}"
     else:
         yt.transition(iid, nxt)
     if lv.startswith("L3") and d == "approve-design":

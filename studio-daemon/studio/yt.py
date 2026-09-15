@@ -119,8 +119,7 @@ class YT:
 
     def comments(self, issue: str) -> list[dict]:
         rows = self._get(f"/api/issues/{issue}/comments",
-                         params={"fields": "author(login),text,created",
-                                 "$top": "50", "reverse": "true"})
+                         params={"fields": "author(login),text,created"})
         cs = [{"author": (c.get("author") or {}).get("login", "?"),
                "text": c.get("text", ""), "created": c.get("created")} for c in rows]
         cs.sort(key=lambda c: c["created"] or 0)   # 统一时间序（旧→新），消费方按此假设

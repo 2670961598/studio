@@ -74,7 +74,13 @@ def _process(yt, iid: str) -> str | None:
     approved = any(t.split()[:1] == ["approve"] and proposed_at and created >= proposed_at
                    for created, t in prod)
     if desc is not None:
-        if proposed_at is None:
+        newer = next((c["created"] for c, t in zip(cs, all_texts)
+                      if c["author"] == CONFIG.producer
+                      and t.startswith("evolve-schema")
+                      and proposed_at and c["created"] > proposed_at), None)
+        if proposed_at is None or newer:
+            if newer:                            # 作废旧提案重提（批的必须就是看的）
+                yt.comment(iid, "检测到新指令，旧提案作废，重新起草。")
             return _propose(yt, iid, desc)
         if approved:
             return _apply(yt, iid, desc)

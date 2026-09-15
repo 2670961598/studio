@@ -10,7 +10,11 @@ CMD_WHITELIST_FIRST = ("test", "grep", "wc", "cat", "ls", "find", "diff", "head"
                        "git diff", "git log", "git status", "git rev-parse", "git show",
                        "git grep", "git ls-files")
 CMD_BLACKLIST = ("rm ", "curl", "wget", "push", "sudo", "base64", "eval", "exec",
+                 "-delete", "-exec", "-execdir", "-ok", "-fprintf", "-fprintf0",
                  ";", "`", "$(", "|", ">", "<")
+GIT_READONLY = {"diff", "log", "status", "rev-parse", "show", "grep", "ls-files", "blame", "shortlog"}
+FIRST_WORDS = {"test", "grep", "wc", "cat", "ls", "find", "diff", "head", "tail",
+               "dotnet", "python", "python3", "npm", "cargo", "make"}
 
 
 def _sanitize_cmd(cmd: str | None) -> str | None:
@@ -26,8 +30,14 @@ def _sanitize_cmd(cmd: str | None) -> str | None:
     if any(b in c for b in CMD_BLACKLIST):
         return None
     for seg in c.split("&&"):
-        seg = seg.strip()
-        if not seg or not any(seg.startswith(w) for w in CMD_WHITELIST_FIRST):
+        toks = seg.strip().split()
+        if not toks:
+            return None
+        w = toks[0]                            # 词元精确匹配（防 testX/grepped 前缀混淆）
+        if w == "git":
+            if len(toks) < 2 or toks[1] not in GIT_READONLY:
+                return None
+        elif w not in FIRST_WORDS:
             return None
     return c
 
