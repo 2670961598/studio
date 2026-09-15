@@ -1,0 +1,13 @@
+# 运行时产物（可再生，不入库）
+kernel/logs/
+kernel/evidence/
+kernel/workers/
+kernel/locks/
+kernel/heartbeats/
+kernel/metrics/events.jsonl
+kernel/metrics/digest/
+studio-daemon/.venv/
+studio-daemon/jobs.sqlite
+**/__pycache__/
+*.pyc
+.DS_Store

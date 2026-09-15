@@ -1,0 +1,84 @@
+{
+  "updated": "2026-09-15",
+  "projects": {
+    "POLY": "0-1",
+    "STUDIO": "0-2"
+  },
+  "state_bundle": "161-2",
+  "type_bundle": "159-1",
+  "track_bundle": "159-7",
+  "confidence_bundle": "159-8",
+  "fields": {
+    "轨道": "157-15",
+    "置信度": "157-16",
+    "attempt": "157-17",
+    "验收命令": "157-18",
+    "期望输出哈希": "157-19",
+    "来源": "157-20",
+    "单件成本": "157-21"
+  },
+  "states": [
+    "新单",
+    "排期待审",
+    "方案待审",
+    "已排期",
+    "开发中",
+    "待测试",
+    "测试中",
+    "代码待审",
+    "待合并",
+    "已批准",
+    "合并中",
+    "合并验证",
+    "待终验收",
+    "已关闭",
+    "已取消",
+    "研究中",
+    "报告待审",
+    "已归档",
+    "触发",
+    "止血中",
+    "待复盘",
+    "复盘中"
+  ],
+  "types": [
+    "核心",
+    "业务",
+    "策划",
+    "美术",
+    "缺陷",
+    "技术债",
+    "情报",
+    "内部改进",
+    "事故",
+    "Epic"
+  ],
+  "tracks": [
+    "A 特护",
+    "B 常规",
+    "C 轻轨"
+  ],
+  "new_accounts_no_token_yet": [
+    "agent-designer",
+    "agent-inspector",
+    "agent-scout",
+    "agent-artist"
+  ],
+  "notes": "text字段赋值需 TextFieldValue 结构；枚举挂载需 bundle $type；看板 API 不可用(404)，看板需 UI 建",
+  "groups": {
+    "Studio Agents": {
+      "hub": "c5e2f307-0e9b-43e0-8c3c-fec1d5a9fcc4",
+      "yt": "4-1",
+      "members": [
+        "agent-pm",
+        "agent-core",
+        "agent-game",
+        "agent-qa",
+        "agent-designer",
+        "agent-artist",
+        "agent-inspector",
+        "agent-scout"
+      ]
+    }
+  }
+}
