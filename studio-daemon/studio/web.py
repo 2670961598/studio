@@ -1,38 +1,41 @@
-"""web — 一页仪表盘（只读 v1 + 手动 tick 入口，127.0.0.1）
-板面 / 工人(含直播流尾部) / 事件流 / 自评报告 / 指标。"""
+"""web — 管理平台 API（运维驾驶舱；板面只读快照并外链 YouTrack，不重复建设）"""
 import json, time
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from .config import CONFIG
 from . import statemachine
 
 app = FastAPI(title="studio-daemon")
+STATIC = CONFIG._root / "static"
+
+TRIGGER_MAP = {  # 立即执行的路由表（job id → 可调用）
+    "pm-poly": ("studio.orchestrator", "pm_tick", {"pid": "POLY"}),
+    "qa": ("studio.orchestrator", "qa_tick", {}),
+    "self-eval": ("studio.metrics", "self_eval", {}),
+}
 
 
-def _state() -> dict:
+def _yt_url(issue: str) -> str:
+    return f"{CONFIG.yt_url}/issue/{issue}"
+
+
+# ---------------------------------------------------------------- 数据组装
+def _overview() -> dict:
     from .yt import YT
     from .metrics import compute
-    from .workers import Worker
-    yt = YT("agent-pm")
     board = []
     for pid in CONFIG.projects:
-        board += yt.list(pid, "状态:" + ",".join(statemachine.PM_ACTIONABLE))
-    workers = []
-    for p in sorted(CONFIG.workers_dir.glob("POLY-*.json")) + sorted(CONFIG.workers_dir.glob("STUDIO-*.json")):
-        try:
-            w = Worker(p.stem.replace(".done", ""))
-            d = w.reg_data() or {}
-            workers.append({"issue": d.get("issue", p.stem), "status": w.status(),
-                            "started": d.get("started", "?"), "branch": d.get("branch", "?")})
-        except Exception as e:
-            workers.append({"issue": p.name, "status": f"ERR {e}", "started": "?", "branch": "?"})
+        board += YT("agent-pm").list(pid, "状态:" + ",".join(statemachine.PM_ACTIONABLE))
+    for b in board:
+        b["yt"] = _yt_url(b["id"])
     evs = []
     if CONFIG.events_path.exists():
         evs = [json.loads(x) for x in
-               CONFIG.events_path.read_text(encoding="utf-8").splitlines()[-30:] if x.strip()]
+               CONFIG.events_path.read_text(encoding="utf-8").splitlines()[-40:] if x.strip()]
     se = {}
-    files = sorted(CONFIG.digest_dir.glob("self-eval-*.json"))
+    files = sorted((CONFIG.events_path.parent / "digest").glob("self-eval-*.json"))
     if files:
         try:
             se = json.loads(files[-1].read_text())
@@ -40,77 +43,164 @@ def _state() -> dict:
             pass
     locks = {p.name.replace(".lock", ""): (p / "owner").read_text().strip()
              for p in CONFIG.locks_dir.glob("*.lock") if (p / "owner").exists()}
-    hb = {p.name: time.strftime("%m-%d %H:%M", time.localtime(p.stat().st_mtime))
-          for p in CONFIG.heartbeats_dir.glob("*.hb")}
-    return {"now": time.strftime("%F %T"), "board": board, "workers": workers,
-            "events": evs, "metrics": {k: v for k, v in compute(7).items() if k != "recent"},
-            "self_eval": se, "locks": locks, "heartbeats": hb}
+    hbs = {p.name: time.strftime("%m-%d %H:%M", time.localtime(p.stat().st_mtime))
+           for p in CONFIG.heartbeats_dir.glob("*.hb")}
+    return {"now": time.strftime("%F %T"), "board": board, "events": evs[::-1],
+            "metrics": {k: v for k, v in compute(7).items() if k != "recent"},
+            "self_eval": se, "locks": locks, "heartbeats": hbs,
+            "youtrack": CONFIG.yt_url}
 
 
-@app.get("/api/state")
-def api_state():
+def _jobs() -> list[dict]:
+    from . import runtime
+    from .runs import last_run
+    SCHED = runtime.SCHED
+    if not SCHED:
+        return []
+    out = []
+    for j in SCHED.get_jobs():
+        lr = last_run(j.id) or {}
+        out.append({
+            "id": j.id, "trigger": str(j.trigger),
+            "next_run": j.next_run_time.strftime("%F %T") if j.next_run_time else None,
+            "state": "paused" if j.next_run_time is None else "active",
+            "last_ts": lr.get("ts"), "last_outcome": lr.get("outcome"),
+            "last_summary": lr.get("summary", ""), "last_duration_ms": lr.get("duration_ms", 0),
+        })
+    out.sort(key=lambda x: x["id"])
+    return out
+
+
+def _workers() -> list[dict]:
+    from .workers import Worker
+    out = []
+    for p in sorted(CONFIG.workers_dir.glob("*.json")) + sorted(CONFIG.workers_dir.glob("*.done.json")):
+        issue = p.name.replace(".done.json", "").replace(".json", "")
+        try:
+            w = Worker(issue)
+            d = w.reg_data() or {}
+            rd = _result_data(w)
+            out.append({"issue": issue, "status": w.status(), "started": d.get("started", "?"),
+                        "branch": d.get("branch", "?"), "has_stream": w.stream.exists(),
+                        "done": p.name.endswith(".done.json"), **rd})
+        except Exception as e:
+            out.append({"issue": issue, "status": f"ERR {e}", "started": "?",
+                        "branch": "?", "has_stream": False, "done": False})
+    return out[::-1]
+
+
+def _result_data(w) -> dict:
+    """从 stream.jsonl 的 result 事件提取 cost/turns/session_id。"""
+    if not w.stream.exists():
+        return {}
     try:
-        return _state()
-    except Exception as e:
-        return {"error": str(e), "now": time.strftime("%F %T")}
+        for ln in reversed(w.stream.read_text(encoding="utf-8", errors="replace").splitlines()[-10:]):
+            e = json.loads(ln)
+            if e.get("type") == "result":
+                return {"cost_usd": e.get("total_cost_usd"), "turns": e.get("num_turns"),
+                        "duration_ms": e.get("duration_ms"), "session_id": e.get("session_id"),
+                        "is_error": e.get("is_error", False)}
+    except Exception:
+        pass
+    return {}
 
 
-@app.get("/api/stream/{issue}")
-def api_stream(issue: str, lines: int = 40):
+def _transcript(issue: str) -> dict:
     f = CONFIG.workers_dir / f"{issue}.stream.jsonl"
     if not f.exists():
-        raise HTTPException(404, f"no stream for {issue}")
-    tail = f.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:]
-    out = []
-    for ln in tail:
+        raise HTTPException(404, f"无对话记录 {issue}")
+    msgs = []
+    for ln in f.read_text(encoding="utf-8", errors="replace").splitlines():
         try:
             e = json.loads(ln)
-            t = e.get("type", "?")
-            if t == "assistant":
-                parts = [c.get("message", {}).get("content") if isinstance(c, dict) else c
-                         for c in (e.get("message") or {}).get("content", [])]
-                out.append({"t": t, "text": str(parts)[:300]})
-            elif t == "result":
-                out.append({"t": "RESULT", "text": e.get("result", "")[:300],
-                            "cost_usd": e.get("total_cost_usd"), "turns": e.get("num_turns")})
-            else:
-                out.append({"t": t, "text": ""})
         except Exception:
-            out.append({"t": "raw", "text": ln[:200]})
-    return {"issue": issue, "events": out}
+            continue
+        t = e.get("type")
+        if t == "assistant":
+            for c in (e.get("message") or {}).get("content", []):
+                if not isinstance(c, dict):
+                    continue
+                if c.get("type") == "text":
+                    msgs.append({"role": "ai", "kind": "text", "text": c.get("text", "")})
+                elif c.get("type") == "tool_use":
+                    msgs.append({"role": "ai", "kind": "tool", "name": c.get("name"),
+                                 "input": json.dumps(c.get("input", {}), ensure_ascii=False)[:400]})
+        elif t == "user":
+            for c in (e.get("message") or {}).get("content", []):
+                if isinstance(c, dict) and c.get("type") == "tool_result":
+                    content = c.get("content")
+                    txt = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+                    msgs.append({"role": "tool", "kind": "result", "text": str(txt)[:400],
+                                 "ok": not c.get("is_error")})
+        elif t == "result":
+            msgs.append({"role": "sys", "kind": "result",
+                         "text": e.get("result", "")[:600], "cost_usd": e.get("total_cost_usd"),
+                         "turns": e.get("num_turns")})
+    return {"issue": issue, "messages": msgs, "count": len(msgs)}
 
 
-@app.post("/api/tick/{role}")
-def api_tick(role: str):
-    from .orchestrator import pm_tick, qa_tick
-    from .metrics import self_eval
-    fn = {"pm": lambda: pm_tick("POLY"), "qa": qa_tick, "selfeval": self_eval}.get(role)
-    if not fn:
-        raise HTTPException(404, "role?")
-    return fn()
+# ---------------------------------------------------------------- API
+@app.get("/api/overview")
+def api_overview():
+    try:
+        return _overview()
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
-PAGE = """<!doctype html><html><head><meta charset=utf-8><title>虚拟工作室</title>
-<style>body{font:13px/1.5 -apple-system,Menlo,monospace;background:#111;color:#cde;margin:2em}
-h2{color:#8cf;border-bottom:1px solid #333}table{border-collapse:collapse;margin-bottom:2em}
-td,th{border:1px solid #2a2a3a;padding:3px 8px}th{color:#8cf}tr:hover{background:#1a1a2e}
-.tag{padding:0 6px;border-radius:8px;background:#2a3a5a}.bad{background:#5a2a2a}.good{background:#2a5a2a}
-#hd{display:flex;gap:2em}a{color:#8cf}</style></head><body>
-<h1>虚拟工作室 · studio-daemon</h1><div id=hd></div><div id=bd></div><div id=wk></div>
-<div id=ev></div><div id=se></div>
-<script>let S;async function r(){S=await (await fetch('/api/state')).json();render();setTimeout(r,5000)}
-function tb(rows,head){return '<table><tr>'+head.map(h=>'<th>'+h+'</th>').join('')+'</tr>'+
-rows.map(x=>'<tr>'+x.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</table>'}
-function render(){if(S.error){document.body.innerHTML='<h1>⚠ '+S.error+'</h1>';return}
-document.getElementById('hd').innerHTML='<b>'+S.now+'</b> 锁:'+JSON.stringify(S.locks)+' 心跳:'+JSON.stringify(S.heartbeats)+' 7日: 派'+S.metrics.dispatch+' 过闸'+S.metrics.gate_pass+' 打回'+S.metrics.qa_back+' 关'+S.metrics.close;
-document.getElementById('bd').innerHTML='<h2>板面（活动单）</h2>'+tb(S.board.map(t=>[t.id,t.state,t.track,t.lane,t.type,t.summary]),['单号','状态','轨道','泳道','Type','标题']);
-document.getElementById('wk').innerHTML='<h2>工人</h2>'+tb(S.workers.map(w=>['<a href=# onclick="stream(\\''+w.issue+'\\');return false">'+w.issue+'</a>',w.status,w.started,w.branch]),['单号','状态','开工','分支']);
-document.getElementById('ev').innerHTML='<h2>事件（最近30）</h2>'+tb(S.events.reverse().map(e=>[e.ts,e.pid,e.issue,e.event,e.actor,e.note]),['时间','项目','单','事件','角色','备注']);}
-async function stream(i){const r=await (await fetch('/api/stream/'+i)).json();
-alert(i+'\\n'+r.events.map(e=>e.t+': '+String(e.text).slice(0,120)).join('\\n'))}
-r()</script></body></html>"""
+@app.get("/api/jobs")
+def api_jobs():
+    return _jobs()
+
+
+@app.post("/api/jobs/{job_id}/{action}")
+def api_job_ctl(job_id: str, action: str):
+    from . import runtime
+    from .runs import append_run
+    SCHED = runtime.SCHED
+    if not SCHED:
+        raise HTTPException(503, "调度器未运行（手动模式）")
+    if action == "pause":
+        SCHED.pause_job(job_id); return {"ok": f"{job_id} paused"}
+    if action == "resume":
+        SCHED.resume_job(job_id); return {"ok": f"{job_id} resumed"}
+    if action == "trigger":
+        import importlib
+        if job_id not in TRIGGER_MAP:
+            raise HTTPException(404, "未知 job")
+        mod, fn, kw = TRIGGER_MAP[job_id]
+        r = getattr(importlib.import_module(mod), fn)(**kw)
+        s = "; ".join(r.get("actions", []))[:200] if isinstance(r, dict) else str(r)[:200]
+        append_run(job_id, "ok", 0, "[手动] " + (s or "完成"))
+        return r if isinstance(r, dict) else {"ok": str(r)}
+    raise HTTPException(400, "action?")
+
+
+@app.get("/api/runs")
+def api_runs(job: str = "", limit: int = 100):
+    from .runs import list_runs
+    return list_runs(job or None, limit)
+
+
+@app.get("/api/workers")
+def api_workers():
+    return _workers()
+
+
+@app.get("/api/transcript/{issue}")
+def api_transcript(issue: str):
+    return _transcript(issue)
+
+
+# ---------------------------------------------------------------- 静态与首页
+@app.get("/vendor/{name}")
+def vendor(name: str):
+    f = STATIC / "vendor" / name
+    if not f.exists():
+        raise HTTPException(404)
+    return FileResponse(f)
 
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return PAGE
+    return FileResponse(STATIC / "index.html")

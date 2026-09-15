@@ -5,6 +5,7 @@ kernel/workers/
 kernel/locks/
 kernel/heartbeats/
 kernel/metrics/events.jsonl
+kernel/metrics/runs.jsonl
 kernel/metrics/digest/
 studio-daemon/.venv/
 studio-daemon/jobs.sqlite

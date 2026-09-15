@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>虚拟工作室 · 控制台</title>
+<script src="/vendor/vue.global.prod.js"></script>
+<style>
+:root{
+  --bg:#0d1117;--panel:#161b27;--panel2:#1c2333;--line:#252d40;--line2:#303a55;
+  --tx:#d7e0f0;--tx2:#8a97b5;--tx3:#5a6684;
+  --acc:#6ea8fe;--acc2:#8b5cf6;--ok:#3fb950;--warn:#d29922;--err:#f85149;--idle:#58a6ff;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);
+  font:14px/1.6 -apple-system,"PingFang SC","Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:20px 24px 60px}
+.mono{font-family:ui-monospace,Menlo,monospace}
+h1{font-size:19px;margin:0;letter-spacing:.5px}
+h1 small{color:var(--tx2);font-weight:400;font-size:12px;margin-left:10px}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+.clock{color:var(--tx2);font-size:13px}.clock b{color:var(--tx)}
+nav{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:20px}
+nav button{background:none;border:none;color:var(--tx2);padding:9px 16px;font-size:14px;
+  cursor:pointer;border-bottom:2px solid transparent;transition:.15s}
+nav button:hover{color:var(--tx)}
+nav button.on{color:var(--acc);border-bottom-color:var(--acc)}
+.grid{display:grid;gap:14px}
+.cards{grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.card .k{color:var(--tx2);font-size:12px}
+.card .v{font-size:24px;font-weight:600;margin-top:2px}
+.card .s{font-size:12px;color:var(--tx2)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  padding:16px 18px;margin-bottom:16px}
+.panel h3{margin:0 0 12px;font-size:14px;color:var(--acc);font-weight:600;letter-spacing:.3px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{color:var(--tx2);text-align:left;font-weight:500;padding:6px 10px;border-bottom:1px solid var(--line);
+  white-space:nowrap}
+td{padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:hover td{background:var(--panel2)}
+.badge{display:inline-block;padding:1px 9px;border-radius:10px;font-size:12px;white-space:nowrap}
+.b-ok{background:#1d3323;color:var(--ok)}.b-err{background:#3a1d1f;color:var(--err)}
+.b-warn{background:#3a301d;color:var(--warn)}.b-idle{background:#1c2b3f;color:var(--idle)}
+.b-mut{background:#232a3d;color:var(--tx2)}
+.pulse{animation:pu 1.6s infinite}@keyframes pu{50%{opacity:.45}}
+.btn{background:var(--panel2);border:1px solid var(--line2);color:var(--tx);border-radius:6px;
+  padding:4px 12px;font-size:12px;cursor:pointer;transition:.15s;margin-right:6px}
+.btn:hover{border-color:var(--acc);color:var(--acc)}
+.btn.warn:hover{border-color:var(--warn);color:var(--warn)}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+  padding:4px 12px;font-size:12px;color:var(--tx2)}
+.chip b{color:var(--tx);font-weight:500}
+a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
+.modal-bg{position:fixed;inset:0;background:rgba(5,8,15,.72);display:flex;
+  align-items:center;justify-content:center;z-index:50;padding:24px}
+.modal{background:var(--panel);border:1px solid var(--line2);border-radius:12px;
+  max-width:860px;width:100%;max-height:84vh;display:flex;flex-direction:column}
+.modal header{padding:14px 20px;border-bottom:1px solid var(--line);margin:0}
+.chat{overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:10px}
+.msg{max-width:92%;border-radius:10px;padding:9px 13px;font-size:13px;white-space:pre-wrap;
+  word-break:break-word}
+.m-ai{background:#182238;align-self:flex-start;border:1px solid #24304d}
+.m-tool{background:#141a28;align-self:flex-start;border:1px dashed var(--line2);color:var(--tx2);
+  font-family:ui-monospace,Menlo,monospace;font-size:12px}
+.m-res{background:#131c17;align-self:flex-start;border:1px solid #23402a;
+  font-family:ui-monospace,Menlo,monospace;font-size:12px;max-height:130px;overflow-y:auto}
+.m-sys{background:#2a2140;align-self:center;border:1px solid var(--acc2);text-align:center}
+.m-err{background:#3a1d1f}
+details summary{cursor:pointer;color:var(--acc);font-size:12px;user-select:none}
+.fade-enter-active{transition:.2s}.fade-enter-from{opacity:0}
+.kpi-bad{color:var(--err)}.kpi-warn{color:var(--warn)}
+select{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);
+  border-radius:6px;padding:4px 8px;font-size:12px}
+.empty{color:var(--tx2);text-align:center;padding:30px 0;font-size:13px}
+</style>
+</head>
+<body>
+<div id="app" class="wrap">
+  <header>
+    <h1>虚拟工作室 控制台<small>studio-daemon · 运维驾驶舱（板面以 <a :href="ov.youtrack" target="_blank">YouTrack</a> 为准）</small></h1>
+    <div class="clock mono"><b>{{ov.now||'…'}}</b></div>
+  </header>
+
+  <nav>
+    <button v-for="t in tabs" :key="t.k" :class="{on:tab===t.k}" @click="tab=t.k">{{t.n}}</button>
+  </nav>
+
+  <!-- 总览 -->
+  <div v-if="tab==='ov'">
+    <div class="grid cards">
+      <div class="card"><div class="k">7日派工</div><div class="v">{{ov.metrics?.dispatch??'—'}}</div><div class="s">DISPATCH</div></div>
+      <div class="card"><div class="k">过闸 / 失败</div><div class="v">{{ov.metrics?.gate_pass??'—'}} <span :class="{'kpi-bad':ov.metrics?.gate_fail>0}" style="font-size:15px">/ {{ov.metrics?.gate_fail??'—'}}</span></div><div class="s">run-gate</div></div>
+      <div class="card"><div class="k">QA 通过 / 打回</div><div class="v">{{ov.metrics?.qa_pass??'—'}} <span :class="{'kpi-bad':ov.metrics?.qa_back>0}" style="font-size:15px">/ {{ov.metrics?.qa_back??'—'}}</span></div><div class="s">独立验收线</div></div>
+      <div class="card"><div class="k">合并 / 关闭</div><div class="v">{{ov.metrics?.merge??'—'}} / {{ov.metrics?.close??'—'}}</div><div class="s">MERGE / CLOSE</div></div>
+      <div class="card"><div class="k">断路 / 滞留</div><div class="v" :class="{'kpi-warn':(ov.metrics?.breaker_hits||0)+(ov.metrics?.stall||0)>0}">{{ov.metrics?.breaker_hits??0}} / {{ov.metrics?.stall??0}}</div><div class="s">attempt≥3 / STALL</div></div>
+    </div>
+
+    <div class="panel">
+      <h3>活动单（只读快照 · 点击进 YouTrack）</h3>
+      <table v-if="ov.board?.length">
+        <tr><th>单号</th><th>状态</th><th>轨道</th><th>泳道</th><th>Type</th><th>标题</th></tr>
+        <tr v-for="b in ov.board"><td class="mono"><a :href="b.yt" target="_blank">{{b.id}}</a></td>
+          <td><span class="badge b-mut">{{b.state}}</span></td>
+          <td>{{b.track}}</td><td>{{b.lane}}</td><td>{{b.type}}</td><td>{{b.summary}}</td></tr>
+      </table>
+      <div v-else class="empty">板面无活动单 —— 全部关闭或等待中</div>
+    </div>
+
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div class="panel"><h3>锁</h3>
+        <div class="chips"><span v-for="(o,k) in ov.locks" :key="k" class="chip mono">{{k}} → <b>{{o}}</b></span>
+        <span v-if="!Object.keys(ov.locks||{}).length" class="empty">全部空闲</span></div>
+        <h3 style="margin-top:16px">心跳</h3>
+        <div class="chips"><span v-for="(t,k) in ov.heartbeats" :key="k" class="chip mono">{{k}} <b>{{t}}</b></span></div>
+      </div>
+      <div class="panel"><h3>业务事件流（最近40）</h3>
+        <div style="max-height:300px;overflow-y:auto">
+        <table><tr v-for="e in ov.events"><td class="mono" style="color:var(--tx2);white-space:nowrap">{{e.ts?.slice(5)}}</td>
+          <td><a v-if="e.issue" :href="ytIssue(e.issue)" target="_blank">{{e.issue}}</a></td>
+          <td class="mono">{{e.event}}</td><td style="color:var(--tx2)">{{e.note}}</td></tr></table></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 定时任务 -->
+  <div v-if="tab==='jobs'">
+    <div class="panel" v-for="j in jobs" :key="j.id">
+      <h3 style="display:flex;justify-content:space-between;align-items:center">
+        <span>{{jName(j.id)}} <span class="mono" style="color:var(--tx2);font-size:12px">{{j.trigger}}</span></span>
+        <span>
+          <button class="btn" @click="ctl(j.id,'trigger')">立即执行</button>
+          <button class="btn warn" v-if="j.state==='active'" @click="ctl(j.id,'pause')">暂停</button>
+          <button class="btn" v-else @click="ctl(j.id,'resume')">恢复</button>
+        </span>
+      </h3>
+      <table>
+        <tr><th style="width:130px">状态</th><td>
+          <span class="badge" :class="j.state==='active'?'b-ok':'b-warn'">{{j.state==='active'?'● 运行中':'‖ 已暂停'}}</span></td></tr>
+        <tr><th>下次运行</th><td class="mono">{{j.next_run||'—（暂停）'}}</td></tr>
+        <tr><th>上次运行</th>
+          <td><span v-if="j.last_ts" class="mono">{{j.last_ts}}</span><span v-else style="color:var(--tx2)">尚无记录</span>
+            <span v-if="j.last_outcome" class="badge" :class="outCls(j.last_outcome)">{{j.last_outcome}}</span>
+            <div v-if="j.last_summary" style="color:var(--tx2);font-size:12px;margin-top:3px">{{j.last_summary}}</div></td></tr>
+      </table>
+    </div>
+    <div v-if="!jobs.length" class="empty">调度器未运行（daemon 手动模式下不可管理）</div>
+  </div>
+
+  <!-- 运行历史 -->
+  <div v-if="tab==='runs'">
+    <div class="panel">
+      <h3>运行历史 <select v-model="runFilter" style="float:right">
+        <option value="">全部任务</option>
+        <option v-for="j in jobs" :value="j.id">{{jName(j.id)}}</option></select></h3>
+      <table v-if="runs.length">
+        <tr><th>时间</th><th>任务</th><th>结果</th><th>摘要</th></tr>
+        <tr v-for="(r,i) in runs" :key="i">
+          <td class="mono" style="white-space:nowrap">{{r.ts}}</td>
+          <td>{{r.name}}</td>
+          <td><span class="badge" :class="outCls(r.outcome)">{{r.outcome}}</span></td>
+          <td style="color:var(--tx2)">{{r.summary}}</td></tr>
+      </table>
+      <div v-else class="empty">暂无运行记录</div>
+    </div>
+  </div>
+
+  <!-- 工人 -->
+  <div v-if="tab==='wk'">
+    <div class="panel">
+      <h3>Claude 工人（执行层 · 对话记录已归档到本工程）</h3>
+      <table v-if="workers.length">
+        <tr><th>单号</th><th>状态</th><th>开工</th><th>分支</th><th>成本$</th><th>轮次</th><th></th></tr>
+        <tr v-for="w in workers">
+          <td class="mono"><a :href="ytIssue(w.issue)" target="_blank">{{w.issue}}</a></td>
+          <td><span class="badge" :class="wCls(w.status)">{{wStatus(w.status)}}</span></td>
+          <td class="mono" style="white-space:nowrap">{{w.started}}</td>
+          <td class="mono">{{w.branch}}</td>
+          <td class="mono">{{w.cost_usd!=null?w.cost_usd.toFixed(3):'—'}}</td>
+          <td class="mono">{{w.turns??'—'}}</td>
+          <td><button class="btn" v-if="w.has_stream" @click="openTr(w.issue)">对话记录</button></td>
+        </tr>
+      </table>
+      <div v-else class="empty">尚无工人记录</div>
+    </div>
+  </div>
+
+  <!-- 自评 -->
+  <div v-if="tab==='se'">
+    <div class="panel">
+      <h3>自评引擎（元循环：指标 → 异常 → 内部改进草稿单）</h3>
+      <div v-if="ov.self_eval?.ts">
+        <p style="color:var(--tx2);font-size:13px">最近一次：{{ov.self_eval.ts}} · 窗口 {{ov.self_eval.metrics?.window_days}} 天</p>
+        <div v-if="ov.self_eval.findings?.length">
+          <p v-for="f in ov.self_eval.findings" style="color:var(--warn)">⚠ {{f}}</p>
+        </div>
+        <p v-else style="color:var(--ok)">✓ 无异常模式</p>
+        <div class="chips" style="margin-top:8px">
+          <span v-for="d in ov.self_eval.drafts" :key="d" class="chip">
+            草稿单 <a :href="ytIssue(d)" target="_blank">{{d}}</a>（待制作人 promote）</span>
+        </div>
+      </div>
+      <div v-else class="empty">自评引擎尚未产出报告（每日 08:50 或手动触发）</div>
+    </div>
+    <div class="panel"><h3>原始指标</h3>
+      <table><tr v-for="(v,k) in ov.metrics" v-if="k!=='window_days'"><th>{{k}}</th><td class="mono">{{v}}</td></tr></table>
+    </div>
+  </div>
+
+  <!-- 对话记录弹窗 -->
+  <transition name="fade">
+  <div class="modal-bg" v-if="tr" @click.self="tr=null">
+    <div class="modal">
+      <header><h1 style="font-size:16px">工人对话 · {{tr.issue}}
+        <button class="btn" style="float:right" @click="tr=null">关闭</button></h1></header>
+      <div class="chat">
+        <div v-for="(m,i) in tr.messages" :key="i" :class="msgCls(m)">
+          <template v-if="m.kind==='tool'">
+            <details><summary>🔧 {{m.name}}</summary><div class="mono" style="margin-top:4px">{{m.input}}</div></details>
+          </template>
+          <template v-else-if="m.kind==='result'">{{m.text}}<div v-if="m.ok===false" style="color:var(--err)">（工具报错）</div></template>
+          <template v-else-if="m.role==='sys'">🏁 结果 · 成本 ${{m.cost_usd??'?'}} · {{m.turns??'?'}} 轮<br>{{m.text}}</template>
+          <template v-else>{{m.text}}</template>
+        </div>
+        <div v-if="!tr.messages.length" class="empty">无内容</div>
+      </div>
+    </div>
+  </div>
+  </transition>
+</div>
+
+<script>
+const {createApp,ref,reactive,onMounted} = Vue
+createApp({
+  setup(){
+    const tab=ref('ov'), tabs=[{k:'ov',n:'总览'},{k:'jobs',n:'定时任务'},{k:'runs',n:'运行历史'},{k:'wk',n:'工人'},{k:'se',n:'自评'}]
+    const ov=reactive({}), jobs=ref([]), runs=ref([]), workers=ref([]), tr=ref(null), runFilter=ref('')
+    const ytIssue=id=>`http://localhost:8080/issue/${id}`
+    const jName=id=>({ 'pm-poly':'子PM·POLY','qa':'全局QA','self-eval':'自评引擎'}[id]||id)
+    async function j(){try{Object.assign(ov,await (await fetch('/api/overview')).json())}catch(e){ov.now='⚠ '+e}}
+    async function refresh(){
+      j()
+      try{jobs.value=await (await fetch('/api/jobs')).json()}catch(e){}
+      try{runs.value=await (await fetch('/api/runs?job='+runFilter.value+'&limit=150')).json()}catch(e){}
+      try{workers.value=await (await fetch('/api/workers')).json()}catch(e){}
+    }
+    async function ctl(id,act){await fetch(`/api/jobs/${id}/${act}`,{method:'POST'});refresh()}
+    async function openTr(issue){tr.value=await (await fetch('/api/transcript/'+issue)).json()}
+    const outCls=o=>({ok:'b-ok',idle:'b-idle',error:'b-err',missed:'b-warn'}[o]||'b-mut')
+    const wCls=s=>s.startsWith('RUNNING')?'b-ok pulse':s.startsWith('DONE')?'b-idle':s.startsWith('UNKNOWN')?'b-mut':'b-err'
+    const wStatus=s=>s.split(' ')[0]
+    const msgCls=m=>m.role==='sys'?'m-sys':m.kind==='tool'?'m-tool':m.kind==='result'?(m.ok===false?'m-res m-err':'m-res'):'m-ai'
+    onMounted(()=>{refresh();setInterval(refresh,5000)})
+    return {tab,tabs,ov,jobs,runs,workers,tr,runFilter,ytIssue,jName,ctl,openTr,outCls,wCls,wStatus,msgCls}
+  }
+}).mount('#app')
+</script>
+</body>
+</html>
