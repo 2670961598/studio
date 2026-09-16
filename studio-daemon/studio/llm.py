@@ -2,7 +2,8 @@
 安全纪律（安全审查 P0-1/P1-3）：
 - 文本岛禁 Bash（默认还禁网络抓取）；patrol 岛保留 WebFetch、禁 Bash/WebSearch
 - 一切将被 bash 执行的岛输出必须过 _sanitize_cmd（&& 分段白名单）
-- 失败返回 None，调用方确定性兜底——循环不因岛失败而停摆"""
+- 失败返回 None，调用方确定性兜底——循环不因岛失败而停摆
+- reviewed_ask：主 LLM 出稿 → Flash 语义审查兜底（dod_gen/加测/批示解析走它）"""
 import json, subprocess
 
 CMD_WHITELIST_FIRST = ("test", "grep", "wc", "cat", "ls", "find", "diff", "head", "tail",
@@ -55,7 +56,7 @@ def _sanitize_cmd(cmd: str | None) -> str | None:
     return c
 
 
-FLASH = "GLM-5.3-Flash"       # 小模型：批示解析/DoD生成/加测——快、便宜、多模态
+FLASH = "GLM-5.3-Flash"       # 小模型：批示解析/DoD生成/加测/输出审查——快、便宜、多模态
 FULL = "GLM-5.3"              # 大模型：Epic拆解/巡逻/知识编辑——需要推理
 
 
@@ -79,6 +80,69 @@ def ask(prompt: str, timeout_sec: int = 240, allow_web: bool = False,
         return None
 
 
+def review_output(prompt: str, output: str, timeout_sec: int = 60) -> dict | None:
+    """Flash 审查岛：用 GLM-5.3-Flash 审查主 LLM 输出的语义正确性（STUDIO-12）。
+    四查：与 prompt 要求一致 / 内容自洽（说做了X就真的做了X）/ 格式符合（JSON完整字段齐全）/ 明显幻觉。
+    返回 {"verdict": "pass|fail", "issues": [str], "corrected": str|None}；
+    审查自身失败（超时/非JSON/verdict不可识别）返回 None——调用方放行原稿，宁可放过不可误杀。"""
+    try:
+        res = ask(
+            f"你是语义审查器，审查一份 LLM 输出是否合格。四查："
+            f"1)输出是否与任务要求一致 2)内容是否自洽（说做了X就真的做了X）"
+            f"3)格式是否符合要求（JSON完整、字段齐全）4)是否有明显幻觉（与上下文矛盾的事实）。\n"
+            f"\n任务要求：\n{prompt}\n\n被审查输出：\n{output}\n\n"
+            f'只输出 JSON（无其他文字）：{{"verdict":"pass或fail","issues":["问题",...],'
+            f'"corrected":"修正后的完整输出，无把握就给空字符串"}}\n'
+            "规则：合格必须 pass；只有发现确凿问题时才 fail，并尽量给 corrected"
+            "（corrected 必须是完整可用的输出，不是片段）；issues 没有就空数组。",
+            timeout_sec, model=FLASH)
+    except Exception:
+        return None
+    if not res:
+        return None
+    try:
+        d = json.loads(res[res.index("{"):res.rindex("}") + 1])
+        verdict = str(d.get("verdict", "")).strip().lower()
+        assert verdict in ("pass", "fail")            # 不可识别 = 审查不可信 = 审查失败
+        issues = d.get("issues")
+        corrected = d.get("corrected")
+        corrected = corrected.strip() if isinstance(corrected, str) else None
+        return {"verdict": verdict,
+                "issues": [i for i in issues if isinstance(i, str)] if isinstance(issues, list) else [],
+                "corrected": corrected or None}
+    except Exception:
+        return None
+
+
+def reviewed_ask(prompt: str, timeout_sec: int = 240, allow_web: bool = False,
+                 model: str = FULL) -> str | None:
+    """ask() 的 Flash 语义审查兜底版（纯函数：不写板面不写文件，STUDIO-12）。
+    主 LLM 出稿（timeout_sec，默认240s）→ review_output 审查（Flash，60s）→
+    pass 放行原稿 / fail+corrected 用修正稿 / fail 无 corrected 重试一次（重试稿同样过审，
+    仍无修正则放行重试稿）/ 审查自身失败放行原稿——宁可放过不可误杀。
+    主 LLM 失败仍返回 None，调用方走确定性兜底（与 ask() 契约一致）。"""
+    kw = {}                    # 只传非默认项，兼容 ask(prompt, timeout) 形状的调用替身
+    if allow_web:
+        kw["allow_web"] = True
+    if model != FULL:
+        kw["model"] = model
+    out = ask(prompt, timeout_sec, **kw)
+    if out is None:
+        return None
+    review = review_output(prompt, out)
+    if review is None or review.get("verdict") == "pass":
+        return out
+    if review.get("corrected"):
+        return review["corrected"]
+    retry = ask(prompt, timeout_sec, **kw)   # fail 无修正 → 重试一次
+    if retry is None:
+        return out                           # 重试主调用失败 → 放行原稿
+    review2 = review_output(prompt, retry)
+    if review2 is None or review2.get("verdict") == "pass" or not review2.get("corrected"):
+        return retry                         # 重试预算用尽 → 放行重试稿
+    return review2["corrected"]
+
+
 def _one_line(res: str | None) -> str | None:
     """从回复中抽出真正的命令行：跳过围栏/标题/解释行，必须有命令特征。"""
     if not res:
@@ -100,7 +164,7 @@ def _one_line(res: str | None) -> str | None:
 def dod_gen(ticket: dict) -> str | None:
     """为无验收命令的新单生成冻结验收命令（一行 bash，退出码即判据）——过消毒白名单。"""
     typ = ticket["fields"].get("Type") or "需求"
-    res = ask(
+    res = reviewed_ask(
         f"为下述 YouTrack 单据生成**一条冻结验收命令**（bash 单行，可机器执行、退出码0=过，"
         f"路径用仓库相对路径，测试类优先项目既有测试命令，文档类用 test -f + grep）。"
         f"命令只允许 test/grep/wc/cat/ls/diff/git 子命令，禁止 ; && || $() 反引号 重定向。"
@@ -111,7 +175,7 @@ def dod_gen(ticket: dict) -> str | None:
 
 def extra_test_gen(ticket: dict, frozen_gate: str) -> str | None:
     """QA 加测：生成一条 worker 没跑过、与冻结命令不同的验证命令——同样过消毒。"""
-    res = ask(
+    res = reviewed_ask(
         f"QA 复测加测命令生成。单据: {ticket['summary']}\n冻结验收命令(工人已跑): {frozen_gate}\n"
         f"生成**一条不同角度**的 bash 验证命令（检查冻结命令没覆盖的点），"
         f"命令只允许 test/grep/wc/cat/ls/diff，禁止 ; && || $() 反引号 重定向。"
@@ -142,7 +206,7 @@ def parse_directive(comment_text: str, context: str = "") -> dict | None:
     返回 {"directive": "approve-plan|approve-merge|approve-design|approve|reject|kill|promote|track|none",
           "level": "L0|L1|L2|L3|A|B|C", "confidence": 0.95}
     失败返回 None（调用方回退到字符串匹配兜底）。"""
-    res = ask(
+    res = reviewed_ask(
         f"你是工作室批示解析器。制作人(opengames)在单据上写了这条评论：\n"
         f"「{comment_text}」\n"
         f"单据上下文：{context}\n"
