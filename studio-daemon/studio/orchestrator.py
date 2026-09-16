@@ -399,10 +399,16 @@ def _directives(yt, iid, lv, typ) -> str | None:
     for c in cs:
         if c["author"] != CONFIG.producer or not c["text"].strip():
             continue
-        w0 = c["text"].strip().split()[0]
-        norm = _normalize_directive(w0)
-        if norm.startswith("approve"):
-            approvals.append(norm)
+        # LLM 岛优先理解自然语言批示；失败回退字符串匹配兜底
+        from .llm import parse_directive
+        parsed = parse_directive(c["text"], f"{iid} 级别={lv} 类型={typ} 当前态={yt.f(iid, 'State')}")
+        if parsed and parsed.get("directive", "").startswith("approve"):
+            approvals.append(parsed["directive"])
+        else:
+            w0 = c["text"].strip().split()[0]
+            norm = _normalize_directive(w0)
+            if norm.startswith("approve"):
+                approvals.append(norm)
     if len(approvals) <= applied:
         # 没有新批示；查非 approve 指令（reject/kill/track）
         for c in cs[-10:]:

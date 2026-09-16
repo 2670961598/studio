@@ -116,3 +116,27 @@ def epic_split(ticket: dict) -> list[dict] | None:
         return data
     except Exception:
         return None
+
+
+def parse_directive(comment_text: str, context: str = "") -> dict | None:
+    """批示理解岛：让 LLM 读制作人评论，返回结构化指令 JSON。
+    返回 {"directive": "approve-plan|approve-merge|approve-design|approve|reject|kill|promote|track|none",
+          "level": "L0|L1|L2|L3|A|B|C", "confidence": 0.95}
+    失败返回 None（调用方回退到字符串匹配兜底）。"""
+    res = ask(
+        f"你是工作室批示解析器。制作人(opengames)在单据上写了这条评论：\n"
+        f"「{comment_text}」\n"
+        f"单据上下文：{context}\n"
+        f"判断这是什么指令，只输出 JSON（无其他文字）：\n"
+        '{{"directive":"approve-plan|approve-merge|approve-design|approve|reject|kill|promote|track|none",'
+        '"level":"L0|L1|L2|L3|none","confidence":0.95}}\n'
+        "规则：批准/同意/通过→approve 或 approve-plan/approve-merge/approve-design（按上下文判断是哪一批）；"
+        "否决/取消/杀→reject/kill；转正→promote；改级别→track+level；无法判断→none。", 120)
+    if not res:
+        return None
+    try:
+        d = json.loads(res[res.index("{"):res.rindex("}") + 1])
+        assert d.get("directive")
+        return d
+    except Exception:
+        return None
