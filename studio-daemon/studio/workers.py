@@ -18,6 +18,9 @@ WORKER_TEMPLATE = """你是虚拟工作室的 {title}（身份 {role}），以�
 - 轨道: {track} ｜ 泳道: {lane} ｜ Type: {type} ｜ attempt: {attempt}
 - 冻结验收命令（完成判据，禁止改动）: {gate}
 
+## 制作人批注（来自评论区，优先级高于描述）
+{producer_notes}
+
 ## 执行要求
 1. 仓库: {repo} ｜ 工作分支: {branch}（已建好，先 checkout）。只在此分支提交，提交信息格式照手册。
 2. 心跳：每完成一个阶段执行一次 `YT_ACCT={wacct} ~/bin/yt heartbeat {issue}`。
@@ -49,6 +52,22 @@ class Worker:
         lane = lane or ticket["fields"].get("泳道") or "core"
         lc = CONFIG.lane(lane)
         role, title = _role(ticket["fields"].get("Type") or "需求")
+        # 拉制作人评论（过滤掉纯指令词，保留有内容的批注）
+        comments = t.comments(self.issue)
+        directive_words = {"approve", "approve-plan", "approve-merge", "approve-design",
+                          "reject", "kill", "promote", "track", "批准", "同意", "通过",
+                          "否决", "取消", "杀", "转正", "开始吧"}
+        producer_notes = []
+        for c in comments:
+            if c["author"] != "opengames":
+                continue
+            text = c["text"].strip()
+            first = text.split("，")[0].split(",")[0].split("。")[0].strip()
+            if first in directive_words:
+                continue  # 纯指令，worker 不需要
+            producer_notes.append(f"- {text}")
+        notes = "\n".join(producer_notes) if producer_notes else "（无额外批注）"
+
         prompt = WORKER_TEMPLATE.format(
             issue=self.issue, title=title, role=role, summary=ticket["summary"],
             desc=ticket["description"], track=ticket["fields"].get("轨道") or "L2 常规",
@@ -56,7 +75,7 @@ class Worker:
             attempt=ticket["fields"].get("attempt") or 0,
             gate=ticket["fields"].get("验收命令"), repo=lc["path"],
             branch=f"feature/{self.issue}", wacct=lc.get("yt_acct", "agent-core"),
-            report=self.report)
+            report=self.report, producer_notes=notes)
         self.prompt.write_text(prompt)
         # 清上一轮残留（退回重派时旧 REPORT 会被误判 DONE）
         att = int(ticket["fields"].get("attempt") or 0)
