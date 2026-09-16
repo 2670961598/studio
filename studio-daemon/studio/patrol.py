@@ -63,8 +63,10 @@ def _log(line):
 def patrol_tick() -> dict:
     from .locks import lock, LockBusy
     from . import statemachine as sm
+    lk = lock(CONFIG, "patrol")
+    _owner = f"patrol-{int(time.time())}"
     try:
-        lock(CONFIG, "patrol").acquire(f"patrol-{int(time.time())}", 120)
+        lk.acquire(_owner, 120)
     except LockBusy:
         return {"result": "LOCK-HELD", "actions": []}
     yt = _yt()
@@ -84,7 +86,7 @@ def patrol_tick() -> dict:
                 out["actions"].append(f"ERROR {row['id']} {e}")
         return out
     finally:
-        lock(CONFIG, "patrol").release()
+        lk.release(_owner)
         _log("TICK " + json.dumps(out, ensure_ascii=False))
 
 
@@ -118,10 +120,17 @@ def _patrol_one(yt, row) -> str:
         "\"children\":[{\"summary\":\"子单标题\",\"description\":\"需求描述\","
         "\"gate_cmd\":\"一条 bash 冻结验收命令\"}]}（children 最多2条，没有确凿可做的就空数组）",
         timeout_sec=600)
+    # 剥 code fence 再提取 JSON（LLM 常用 ```json ... ``` 包裹）
+    _body = (res or "").strip()
+    if _body.startswith("```"):
+        _body = _body.split("\n", 1)[1] if "\n" in _body else _body[3:]
+        if _body.rstrip().endswith("```"):
+            _body = _body.rstrip()[:-3]
     try:
-        data = json.loads(res[res.index("{"):res.rindex("}") + 1])
-    except Exception:
-        data = {"progress": f"巡逻解析失败：{(res or '')[:100]}", "findings": [], "children": []}
+        data = json.loads(_body[_body.index("{"):_body.rindex("}") + 1])
+    except Exception as e:
+        data = {"progress": f"巡逻解析失败({type(e).__name__}: {str(e)[:80]})：{(_body or '')[:100]}",
+                "findings": [], "children": []}
     note = [f"巡逻 #{_state(iid)['count'] + 1} {time.strftime('%F %T')}",
             f"进展：{data.get('progress', '')}"]
     note += [f"发现：{f}" for f in data.get("findings", [])]
