@@ -367,22 +367,49 @@ def _has(yt, iid, word) -> bool:
     return False
 
 
+DIRECTIVE_ALIASES = {
+    "approve": "approve", "approve-plan": "approve-plan", "approve-merge": "approve-merge",
+    "approve-design": "approve-design", "approve-push": "approve-push",
+    "批准": "approve", "同意": "approve", "通过": "approve", "批": "approve",
+    "reject": "reject", "kill": "kill", "否决": "reject", "取消": "kill", "杀": "kill",
+    "promote": "promote", "转正": "promote",
+    "track": "track",
+}
+
+
+def _normalize_directive(word: str) -> str:
+    """中英文批示词归一化——中文无空格分词，先按标点切首段再查表。"""
+    import re as _re
+    clean = _re.sub(r"[，,。.!！？?；;\s]+$", "", word.strip())
+    # 中文标点切分取首段（"批准，仔细审核" → "批准"）
+    first_seg = _re.split(r"[，,。.!！？?；;\s]", clean)[0].strip()
+    for candidate in (first_seg, clean, clean.lower()):
+        if candidate in DIRECTIVE_ALIASES:
+            return DIRECTIVE_ALIASES[candidate]
+    return word
+
+
 def _directives(yt, iid, lv, typ) -> str | None:
     """位置感知批示：第 k 个未消费的 approve 指令作用于流的第 k 个待批位。
     消费留痕（PM 评论"批示已执行"）保证幂等——同一评论不会二次执行。"""
     cs = yt.comments(iid)
     applied = sum(1 for c in cs if c["author"] == "agent-pm"
                   and c["text"].startswith("批示已执行"))
-    approvals = [c["text"].strip().split()[0] for c in cs
-                 if c["author"] == CONFIG.producer and c["text"].strip()
-                 and c["text"].strip().split()[0].startswith("approve")]
+    approvals = []
+    for c in cs:
+        if c["author"] != CONFIG.producer or not c["text"].strip():
+            continue
+        w0 = c["text"].strip().split()[0]
+        norm = _normalize_directive(w0)
+        if norm.startswith("approve"):
+            approvals.append(norm)
     if len(approvals) <= applied:
         # 没有新批示；查非 approve 指令（reject/kill/track）
         for c in cs[-10:]:
             if c["author"] != CONFIG.producer:
                 continue
             w = c["text"].strip().split()
-            d = w[0] if w else ""
+            d = _normalize_directive(w[0]) if w else ""
             if d in ("reject", "kill"):
                 yt.transition(iid, "已取消")
                 return f"{d.upper()} {iid}"
@@ -416,7 +443,7 @@ def _directives(yt, iid, lv, typ) -> str | None:
     cur = idxs[cur]
     nxt = slot[cur + 1] if cur + 1 < len(slot) else "已交付"
     # 名实校验：合并批位只认 approve-merge/approve-design/裸 approve（防重复 approve-plan 误触合并）
-    if nxt == "已交付" and slot.count("待批") > 1 and d.startswith("approve-plan"):
+    if nxt == "已交付" and slot.count("待批") > 1 and d == "approve-plan":
         yt.comment(iid, f"指令 {d} 与当前批位（合并批）不符，未消费；请用 approve-merge 或 kill")
         return f"DIRECTIVE-MISMATCH {iid} {d}"
     note = f"{d} → {nxt} (第{applied + 1}批)"
