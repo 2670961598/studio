@@ -11,7 +11,7 @@ CMD_WHITELIST_FIRST = ("test", "grep", "wc", "cat", "ls", "find", "diff", "head"
                        "git grep", "git ls-files")
 CMD_BLACKLIST = ("rm ", "curl", "wget", "push", "sudo", "base64", "eval", "exec",
                  "-delete", "-exec", "-execdir", "-ok", "-fprintf", "-fprintf0",
-                 ";", "`", "$(", "|", ">", "<")
+                 "`", "$(", "|", ">", "<")
 GIT_READONLY = {"diff", "log", "status", "rev-parse", "show", "grep", "ls-files", "blame", "shortlog"}
 FIRST_WORDS = {"test", "grep", "wc", "cat", "ls", "find", "diff", "head", "tail",
                "dotnet", "python", "python3", "npm", "cargo", "make"}
@@ -29,7 +29,20 @@ def _sanitize_cmd(cmd: str | None) -> str | None:
         return None
     if any(b in c for b in CMD_BLACKLIST):
         return None
-    for seg in c.split("&&"):
+    # 按 && 和 ; 分段——先用占位符保护双引号内的 ;（--logger "a;b" 类参数），切完还原
+    import re as _re
+    _protected = c
+    _quotes = []
+    for m in _re.finditer(r'"[^"]*"', _protected):
+        _quotes.append(m.group())
+        _protected = _protected.replace(m.group(), f"__Q{len(_quotes)-1}__", 1)
+    _protected = _re.split(r"&&|;", _protected)
+    segs = []
+    for seg in _protected:
+        for i, q in enumerate(_quotes):
+            seg = seg.replace(f"__Q{i}__", q)
+        segs.append(seg)
+    for seg in segs:
         toks = seg.strip().split()
         if not toks:
             return None
