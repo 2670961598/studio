@@ -42,13 +42,19 @@ def _sanitize_cmd(cmd: str | None) -> str | None:
     return c
 
 
-def ask(prompt: str, timeout_sec: int = 240, allow_web: bool = False) -> str | None:
-    """单次 claude 调用。prompt 经 stdin 直传（P1-7：路径当提示词会浪费轮次）；
-    文本岛默认禁 Bash/WebFetch/WebSearch；patrol 岛 allow_web=True 只开 WebFetch。"""
+FLASH = "GLM-5.3-Flash"       # 小模型：批示解析/DoD生成/加测——快、便宜、多模态
+FULL = "GLM-5.3"              # 大模型：Epic拆解/巡逻/知识编辑——需要推理
+
+
+def ask(prompt: str, timeout_sec: int = 240, allow_web: bool = False,
+        model: str = FULL) -> str | None:
+    """单次 claude 调用。prompt 经 stdin 直传（P1-7）；
+    文本岛默认禁 Bash/WebFetch/WebSearch；model=FLASH 用小模型。"""
     dis = ["Bash", "WebSearch", "WebFetch"] if not allow_web else ["Bash", "WebSearch"]
     try:
         p = subprocess.run(
             ["claude", "-p", "--dangerously-skip-permissions",
+             "--model", model,
              "--disallowedTools", *dis, "--output-format", "json"],
             input=prompt, capture_output=True, text=True,
             timeout=timeout_sec)
@@ -96,7 +102,7 @@ def extra_test_gen(ticket: dict, frozen_gate: str) -> str | None:
         f"QA 复测加测命令生成。单据: {ticket['summary']}\n冻结验收命令(工人已跑): {frozen_gate}\n"
         f"生成**一条不同角度**的 bash 验证命令（检查冻结命令没覆盖的点），"
         f"命令只允许 test/grep/wc/cat/ls/diff，禁止 ; && || $() 反引号 重定向。"
-        f"只输出命令本身一行。")
+        f"只输出命令本身一行。", 240, model=FLASH)
     return _sanitize_cmd(_one_line(res))
 
 
@@ -131,7 +137,7 @@ def parse_directive(comment_text: str, context: str = "") -> dict | None:
         '{{"directive":"approve-plan|approve-merge|approve-design|approve|reject|kill|promote|track|none",'
         '"level":"L0|L1|L2|L3|none","confidence":0.95}}\n'
         "规则：批准/同意/通过→approve 或 approve-plan/approve-merge/approve-design（按上下文判断是哪一批）；"
-        "否决/取消/杀→reject/kill；转正→promote；改级别→track+level；无法判断→none。", 120)
+        "否决/取消/杀→reject/kill；转正→promote；改级别→track+level；无法判断→none。", 120, model=FLASH)
     if not res:
         return None
     try:
