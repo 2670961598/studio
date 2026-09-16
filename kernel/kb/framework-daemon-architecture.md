@@ -7,7 +7,7 @@
 
 studio-daemon 是工作室的常驻大脑：**Python 单进程**承载全部循环——确定性状态机 + claude 执行层 + 自评元循环 + 战役巡逻 + schema 自进化（源：kernel/skills/AGENTS.md 架构 v4 头注）。技术栈：APScheduler（SQLite jobstore，`max_instances=1` 防重叠）+ FastAPI 控制台（:8787）+ uvicorn。由 launchd 拉起、bash 循环看护（见 [framework-deploy-ops.md](framework-deploy-ops.md)）。
 
-模块地图（studio/ 下 16 个 .py）：
+模块地图（studio/ 下 16 个 .py = 15 个实质模块 + `__init__.py`）：
 
 | 模块 | 职责 |
 |---|---|
@@ -23,6 +23,7 @@ studio-daemon 是工作室的常驻大脑：**Python 单进程**承载全部循�
 | evolve.py | 知识库自进化（evolve-schema / kb-propose → 制作人 approve → 应用） |
 | metrics.py | events.jsonl 记账 + 自评引擎（每日指标 → 异常模式 → STUDIO 草稿提案单） |
 | runs.py / web.py / yt.py | 调度运行历史 / 控制 API / YouTrack REST 客户端 |
+| runtime.py | 全局运行时句柄（SCHED 调度器实例、STARTED 启动时刻）——独立小模块避免 `python -m` 方式下双重导入产生两份实例 |
 
 调度错峰表（daemon.py:43-52）：pm-poly `0,10,…,50 * * * *`、pm-studio `4,14,…,54`、evolve-scan `3,13,…,53`、patrol `5 * * * *`、self-eval `50 8 * * *`。
 

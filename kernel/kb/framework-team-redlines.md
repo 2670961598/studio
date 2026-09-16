@@ -45,8 +45,10 @@
 3. attempt≥3 断路，只等制作人（制作人批示=新授权，attempt 清零）。
 4. **永不自动 push**（push 只凭 approve-push / approve-push-batch 评论记录）。
 5. 禁自批：提案与执行之间必须隔制作人一次 approve。
-6. worker 不写板面、不动验收命令；QB/验收范围外文件禁触碰（超范围=升轨）。
+6. worker 不写板面、不 push、不动验收命令；验收范围外文件禁触碰（超范围=升轨）。
 7. LLM 岛输出将被 bash 执行的，必须过消毒白名单；循环不因岛失败停摆。
+
+> 出处口径：第 1-5 条 = TEAM.md §四"红线"；第 6 条 = TEAM.md §二名册（worker 行"不能做"）+ kernel/agents/worker.md；第 7 条 = kernel/skills/dispatch.md（岛输出一律过 `_sanitize_cmd` 消毒）。
 
 ## 6. 修改公约的途径
 

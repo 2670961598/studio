@@ -14,7 +14,7 @@ launchd（com.studio.daemon，RunAtLoad + KeepAlive）
               └── uvicorn + FastAPI 控制台 http://127.0.0.1:8787（Vue 静态页）
 ```
 
-选型理由（宪章 §4 / 看护脚本注释）：bash 在 launchd 下稳定，Python 挂死也能靠健康检查重启——**看护层不用被看护的东西**。
+选型理由：看护脚本头注原文"bash 在 launchd 下稳定；Python 挂死也能靠健康检查重启"（~/bin/studio-daemon-launch.sh:2）；同理念见宪章 §1/§4 看门狗行（launchd·**非 LLM**，四查只告警不行动）与 dispatch.md 兜底 #8——**看护层不依赖被看护的东西**（此句为归纳，非宪章原文）。
 
 ## 2. launchd 配置（com.studio.daemon.plist）
 
@@ -48,7 +48,7 @@ launchd（com.studio.daemon，RunAtLoad + KeepAlive）
 |---|---|
 | `~/Library/Logs/studio-daemon.log/.err` | daemon stdout/stderr + 看护循环日志 |
 | `kernel/logs/daemon-<日期>.log` | pm_tick / patrol / evolve 每 tick 的 TICK 行与 ERROR |
-| `kernel/workers/<单号>.{json,REPORT.md,prompt.md,stream.jsonl,wrap.sh}` | 工人注册/报告/任务书/直播流；归档后缀 `.done.json` / `.archived-*` / `.a<attempt>` |
+| `kernel/workers/<单号>.{json,REPORT.md,prompt.md,stream.jsonl,wrap.sh,claude.log}` | 工人注册/报告/任务书/直播流/claude 原始输出；归档后缀 `.done.json` / `.archived-*` / `.a<attempt>` |
 | `kernel/evidence/<PID>/<单号>-<tag>.{json,log}` | run-gate 证据（G2~G5 唯一依据，含 log_sha256_16） |
 | `kernel/locks/*.lock/`、`kernel/heartbeats/*.hb` | 目录锁（owner/pid/ts）与心跳 |
 | `kernel/metrics/events.jsonl`、`runs.jsonl`、`digest/` | 记账流水 / 调度历史 / 日报与自评产物 |
@@ -57,13 +57,13 @@ launchd（com.studio.daemon，RunAtLoad + KeepAlive）
 
 - **手动跑一岗**（调试/冒烟）：`python -m studio.daemon tick pm|selfeval`；`board` 打印板面快照（daemon.py main）。
 - **看锁**：`~/bin/studio-lock list` 或控制台 /api/overview 的 locks 节。
-- **杀工人**：`~/bin/studio-worker kill <单号>`（进程组 SIGTERM）或控制台；PM 会按兜底自动 attempt+1 重派。
+- **杀工人**：`~/bin/studio-worker kill <单号>`（进程树 SIGTERM：`pkill -TERM -P` 杀 claude 子进程 + `kill` 包装进程）或控制台；PM 会按兜底自动 attempt+1 重派。
 - **脏树清扫**：`~/bin/studio-clean <lane>`（只动无锁脏树，stash 隔离可恢复）。
 - 上列动作中，改板面类的手动操作仍受红线约束（状态迁移只走矩阵；完成只认 run-gate）。
 
 ## 源
 
-- /Users/xieqingxin/Library/LaunchAgents/com.studio.daemon.plist（全文）
-- /Users/xieqingxin/bin/studio-daemon-launch.sh（全文 30 行）
+- ~/Library/LaunchAgents/com.studio.daemon.plist（全文）
+- ~/bin/studio-daemon-launch.sh（全文 30 行）
 - /Volumes/BigDisk/Studio/studio-daemon/studio/daemon.py、web.py
 - /Volumes/BigDisk/Studio/kernel/skills/dispatch.md（兜底 #8）

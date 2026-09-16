@@ -46,6 +46,7 @@
 
 ### 其他
 - `logs/`：bash 内核期 tick 日志与 quarantine.log（历史考古用；现行日志在 `kernel/logs/daemon-<日期>.log`）。
+- `locks/`：bash 内核期锁目录遗留（现行锁在 `kernel/locks/`，studio.json 的 locks_dir 已不被 daemon 读取）。
 
 ## 4. 项目注册表
 
