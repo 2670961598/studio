@@ -371,6 +371,9 @@ DIRECTIVE_ALIASES = {
     "approve": "approve", "approve-plan": "approve-plan", "approve-merge": "approve-merge",
     "approve-design": "approve-design", "approve-push": "approve-push",
     "批准": "approve", "同意": "approve", "通过": "approve", "批": "approve",
+    # 口语批准（LLM 岛不可用时的兜底；首段精确匹配，"好像不对"之类不会被误判）
+    "可以": "approve", "可以的": "approve", "好": "approve", "好的": "approve",
+    "行": "approve", "嗯": "approve", "没问题": "approve", "ok": "approve",
     "reject": "reject", "kill": "kill", "否决": "reject", "取消": "kill", "杀": "kill",
     "promote": "promote", "转正": "promote",
     "track": "track",
