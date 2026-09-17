@@ -1,6 +1,6 @@
 # [框架] 操作手册索引
 
-> 状态：草稿 ｜ 采集：STUDIO-14，2026-09-17 ｜ 源：kernel/skills/*.md（9 份）
+> 状态：草稿 ｜ 采集：STUDIO-14，2026-09-17 ｜ 源：kernel/skills/*.md（目录共 9 文件 = 8 份手册 + AGENTS.md 总索引）
 > 手册 = 唯一剧本：各岗位按手册执行，不即兴发挥。**手册更新 = 改文件即可，cron 提示词不用动**。
 
 ## 总入口
@@ -40,5 +40,5 @@
 
 ## 源
 
-- /Volumes/BigDisk/Studio/kernel/skills/（全部 9 文件 + AGENTS.md 总索引）
+- /Volumes/BigDisk/Studio/kernel/skills/（目录共 9 文件：8 份手册——现行 6 + 退役 2，含 AGENTS.md 总索引；2026-09-17 复核 `ls` 实数）
 - /Volumes/BigDisk/Studio/studio-daemon/studio/workers.py（WORKER_TEMPLATE）
