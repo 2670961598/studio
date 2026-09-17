@@ -1,7 +1,7 @@
 # [框架] 路线图与决策记录
 
 > 状态：草稿 ｜ 采集：STUDIO-14，2026-09-17
-> 源：studio-daemon/ROADMAP.md、git 提交史（master@ed49a28 时点；2026-09-17 增补至 15cf624）、kernel/intel/、docs/STUDIO-AUDIT.md
+> 源：studio-daemon/ROADMAP.md、git 提交史（master@ed49a28 时点；2026-09-17 依次增补至 15cf624、416d626）、kernel/intel/、docs/STUDIO-AUDIT.md
 
 ## 1. 路线图（studio-daemon/ROADMAP.md）
 
@@ -44,6 +44,7 @@
 | 2026-09-17 | LLM 岛输出加 Flash 语义审查兜底（reviewed_ask：宁可放过不可误杀）；消毒器分号改分段符+双引号内容保护 | git 094e1ee（STUDIO-12）、18bd758 |
 | 2026-09-17 | 制作人评论区批注注入 worker prompt（关键缺口修复） | git ed49a28 |
 | 2026-09-17 | **P0 修复**：launchd PATH 缺 ~/.local/bin → 守护进程内 claude 不可达（LLM 岛全灭且静默、worker exit 127 必死）；叠加恒真 gate 误用 `test -f /dev/null`（字符设备恒假）→ 必然 GATE-FAIL 断路。修复：`_claude_bin()` 候选位解析 + 失败限速日志、wrap 脚本写 claude 绝对路径、DIRECTIVE_ALIASES 补口语批准词、dod_gen 明令恒真断言用 `test -e`、plist PATH 前置 ~/.local/bin（bootout/bootstrap 重载；plist 在仓库外，此项仅提交信息留痕） | git 15cf624 |
+| 2026-09-17 | **收割飞线判定自愈**：P0 热修 cherry-pick 直入 master 后，base 期中前进不再误判"飞线"退回——收割先 `git merge base --no-edit` 自动同步（成功即放行并留痕评论），真冲突才 merge --abort + ORPHAN 退回；终结 STUDIO-14 式"退回→制作人重批→再退回"死循环（attempt 1→2→3 循环） | git 416d626（master，采集时点未并入本分支；附 test_orchestrator.py 全文件 9 用例） |
 
 ## 3. 情报库现状（kernel/intel/，采集时点 4 份）
 
@@ -64,5 +65,5 @@
 ## 源
 
 - /Volumes/BigDisk/Studio/studio-daemon/ROADMAP.md（全 27 行）
-- git log master（ed49a28 及此前 15 笔）
+- git log master（ed49a28 及此前 15 笔；复核轮增核 15cf624/416d626）
 - /Volumes/BigDisk/Studio/kernel/intel/*.md、/Volumes/BigDisk/Studio/docs/STUDIO-AUDIT.md
