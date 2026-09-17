@@ -22,4 +22,4 @@
 | 框架 | 路线图与决策记录 | [framework-roadmap-decisions.md](framework-roadmap-decisions.md) | studio-daemon/ROADMAP.md、git 史、kernel/intel/ |
 | 框架 | 部署与运维（launchd/看护/控制台） | [framework-deploy-ops.md](framework-deploy-ops.md) | launchd plist、~/bin/studio-daemon-launch.sh |
 
-采集批次：STUDIO-14（2026-09-17；同日 attempt2 做了三路并行交叉核验，修正 8 处：模块表补 runtime.py、部署篇引用出处与术语、红线出处口径、配置遗留目录等。制作人修正冻结验收命令后重派复核，基线增补至 15cf624：部署篇 plist PATH/launchctl 语法、架构篇 LLM 岛可执行解析与 DoD 纪律、路线图篇补 P0 决策记录）。敏感值（token/password/URL）一律脱敏，只记结构。
+采集批次：STUDIO-14（2026-09-17；同日 attempt2 做了三路并行交叉核验，修正 8 处：模块表补 runtime.py、部署篇引用出处与术语、红线出处口径、配置遗留目录等。制作人修正冻结验收命令后重派复核，基线增补至 15cf624：部署篇 plist PATH/launchctl 语法、架构篇补 LLM 岛可执行解析/失败限速日志/DoD 纪律与口语批准兜底、路线图篇补 P0 决策记录）。敏感值（token/password/URL）一律脱敏，只记结构。

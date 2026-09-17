@@ -74,7 +74,7 @@ studio-daemon 是工作室的常驻大脑：**Python 单进程**承载全部循�
 - **reviewed_ask**（STUDIO-12）：主 LLM 出稿 → Flash 语义四查（一致性/自洽/格式/幻觉）→ pass 放行 / fail+corrected 用修正稿 / 无 corrected 重试一次 / 审查自身失败放行原稿——**宁可放过不可误杀**。
 - **失败返回 None，调用方确定性兜底，循环永不停摆**；ask 失败写 daemon 日志（同进程 300s 限速），不再无声。
 - **可执行解析**（2026-09-17 P0，git 15cf624）：claude 路径由 `_claude_bin()` 解析（`which` + 候选位 ~/.local/bin 等 + 进程内缓存）——launchd PATH 常缺 claude 安装位，曾致守护进程内全部岛 FileNotFoundError 且静默；workers wrap 脚本同因改为写入 claude 绝对路径。
-- **DoD 纪律**（同 P0）：恒真断言必须 `test -e /dev/null`，明令禁 `test -f`——/dev/null 是字符设备，-f 恒假会造成必然 GATE-FAIL 断路（STUDIO-14 三连断路即此）。
+- **DoD 纪律**（同 P0）：恒真断言必须 `test -e /dev/null`，明令禁 `test -f /dev/null`（文档类查文件仍用 test -f + grep）——/dev/null 是字符设备，-f 恒假会造成必然 GATE-FAIL 断路（STUDIO-14 三连断路即此）。
 
 ## 7. 元循环：巡逻 / 自评 / 自进化
 
