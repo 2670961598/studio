@@ -258,8 +258,14 @@ def _harvest(yt, pid, iid, lane, w: Worker, lv) -> str:
         _git(lc["path"], "checkout", f"feature/{iid}")
         if _git(lc["path"], "merge-base", "--is-ancestor", lc["base_branch"],
                 f"feature/{iid}", check=False).returncode != 0:
-            _recycle(yt, pid, iid, "飞线: base 非 feature 祖先")
-            return f"ORPHAN {iid}"
+            # base 期中前进（框架热修直入 master 等）≠ 飞线：先自动同步合并，冲突才是真飞线
+            m = _git(lc["path"], "merge", lc["base_branch"], "--no-edit", check=False)
+            if m.returncode == 0:
+                yt.comment(iid, f"base 期中前进，已自动同步合并 {lc['base_branch']} → feature/{iid}（非飞线）")
+            else:
+                _git(lc["path"], "merge", "--abort", check=False)
+                _recycle(yt, pid, iid, "飞线: base 非 feature 祖先且同步合并冲突")
+                return f"ORPHAN {iid}"
         res = run_gate(iid, str(int(yt.f(iid, "attempt") or 0) + 1), lane)
         if res.ok:
             yt.transition(iid, "证据就绪")
