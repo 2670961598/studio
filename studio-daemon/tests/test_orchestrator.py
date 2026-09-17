@@ -122,6 +122,48 @@ def fake_yt_backend_comment(yt, iid, author, text):
         {"author": author, "text": text, "created": yt._backend.now_ms()})
 
 
+class TestBase前进自愈:
+    def _hotfix_on_base(self, lanes, path="hotfix.txt", content="框架热修\n"):
+        repo = Path(CONFIG.lane("core")["path"])
+        base = CONFIG.lane("core")["base_branch"]
+        subprocess.run(["git", "-C", str(repo), "checkout", base],
+                       check=True, capture_output=True)
+        (repo / path).write_text(content, encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-m", "hotfix: base 前进"],
+                       check=True, capture_output=True)
+
+    def test_热修入base_收割自动同步合并非飞线(self, env, lanes):
+        """框架热修直入 base（不经 feature）后收割：自动同步合并放行，不退回。"""
+        yt = env
+        iid = yt.new("POLY", "h", "d", lane="core", typ="需求", track="L0 自动")
+        orch.pm_tick()                              # 派发
+        simulate_worker(yt, iid, lanes)             # worker 完成，feature 领先
+        self._hotfix_on_base(lanes)                 # base 期中前进（与 feature 无冲突）
+        r = orch.pm_tick()
+        assert any(a.startswith("HARVEST") for a in r["actions"]), r
+        repo = Path(CONFIG.lane("core")["path"])
+        mb = subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor",
+                             CONFIG.lane("core")["base_branch"], f"feature/{iid}"],
+                            capture_output=True)
+        assert mb.returncode == 0, "同步合并后 base 必须重新成为 feature 祖先"
+
+    def test_同步合并真冲突_仍按飞线退回(self, env, lanes):
+        """base 改了 feature 也改的文件且内容冲突：merge --abort，ORPHAN 退回。"""
+        yt = env
+        iid = yt.new("POLY", "c", "d", lane="core", typ="需求", track="L0 自动")
+        orch.pm_tick()
+        simulate_worker(yt, iid, lanes)
+        # 热修改 docs/out.md 本体（worker 也改了它 → 内容冲突）
+        self._hotfix_on_base(lanes, path="docs/out.md", content="# base 改的\n没关键词\n")
+        r = orch.pm_tick()
+        assert any(a.startswith("ORPHAN") for a in r["actions"]), r
+        assert state(yt, iid) == "已派发"           # 退回重做位
+        dirty = subprocess.run(["git", "-C", str(Path(CONFIG.lane('core')['path'])),
+                                "status", "--porcelain"], capture_output=True, text=True).stdout
+        assert not dirty.startswith("UU"), "冲突必须被 abort 干净"
+
+
 class Test复验退回与重派:
     def test_gate_fail_退回后重派_分支复用(self, env, lanes):
         yt = env
