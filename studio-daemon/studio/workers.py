@@ -48,9 +48,11 @@ class Worker:
 
     def launch(self, ticket: dict, lane: str | None = None) -> int:
         from .yt import YT
+        from .llm import _claude_bin
         t = YT("agent-pm")
         lane = lane or ticket["fields"].get("泳道") or "core"
         lc = CONFIG.lane(lane)
+        claude_bin = _claude_bin()                # wrap 在守护进程环境跑，PATH 里没有 claude，必须写绝对路径
         role, title = _role(ticket["fields"].get("Type") or "需求")
         # 拉制作人评论（过滤掉纯指令词，保留有内容的批注）
         comments = t.comments(self.issue)
@@ -85,7 +87,7 @@ class Worker:
         self.wrap.write_text(f"""#!/bin/bash
 cd "{lc['path']}"
 git checkout feature/{self.issue} >/dev/null 2>&1
-claude -p --dangerously-skip-permissions --output-format stream-json --verbose < "{self.prompt}" > "{self.stream}" 2>&1
+{claude_bin} -p --dangerously-skip-permissions --output-format stream-json --verbose < "{self.prompt}" > "{self.stream}" 2>&1
 echo "WORKER-EXIT=$?" >> "{self.stream}"
 """)
         self.wrap.chmod(0o755)

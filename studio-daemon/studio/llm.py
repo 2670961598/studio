@@ -4,7 +4,10 @@
 - 一切将被 bash 执行的岛输出必须过 _sanitize_cmd（&& 分段白名单）
 - 失败返回 None，调用方确定性兜底——循环不因岛失败而停摆
 - reviewed_ask：主 LLM 出稿 → Flash 语义审查兜底（dod_gen/加测/批示解析走它）"""
-import json, subprocess
+import json, shutil, subprocess, time
+from pathlib import Path
+
+from .config import CONFIG
 
 CMD_WHITELIST_FIRST = ("test", "grep", "wc", "cat", "ls", "find", "diff", "head", "tail",
                        "dotnet", "python", "python3", "npm", "cargo", "make",
@@ -59,6 +62,35 @@ def _sanitize_cmd(cmd: str | None) -> str | None:
 FLASH = "GLM-5.3-Flash"       # 小模型：批示解析/DoD生成/加测/输出审查——快、便宜、多模态
 FULL = "GLM-5.3"              # 大模型：Epic拆解/巡逻/知识编辑——需要推理
 
+_CLAUDE_CANDIDATES = ("~/.local/bin/claude", "/usr/local/bin/claude", "/opt/homebrew/bin/claude")
+_CLAUDE_BIN = None            # 进程内缓存解析结果
+
+
+def _claude_bin() -> str:
+    """解析 claude 可执行路径。launchd 环境的 PATH 常缺 ~/.local/bin（claude 实际安装位），
+    仅靠 PATH 查找会让守护进程里所有 LLM 岛 FileNotFoundError 且不可见——P0 事故根因。"""
+    global _CLAUDE_BIN
+    if _CLAUDE_BIN is None:
+        _CLAUDE_BIN = shutil.which("claude") or next(
+            (str(p) for p in (Path(c).expanduser() for c in _CLAUDE_CANDIDATES) if p.exists()),
+            "claude")
+    return _CLAUDE_BIN
+
+
+_llm_fail_ts = 0.0            # 失败日志限速：同进程每 300s 至多记一条，防刷屏
+
+
+def _llm_fail_log(note: str):
+    global _llm_fail_ts
+    if time.time() - _llm_fail_ts < 300:
+        return
+    _llm_fail_ts = time.time()
+    try:
+        with open(CONFIG.logs_dir / f"daemon-{time.strftime('%F')}.log", "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%F %T')} [llm] ask FAILED bin={_claude_bin()} {note}\n")
+    except Exception:
+        pass
+
 
 def ask(prompt: str, timeout_sec: int = 240, allow_web: bool = False,
         model: str = FULL) -> str | None:
@@ -67,16 +99,18 @@ def ask(prompt: str, timeout_sec: int = 240, allow_web: bool = False,
     dis = ["Bash", "WebSearch", "WebFetch"] if not allow_web else ["Bash", "WebSearch"]
     try:
         p = subprocess.run(
-            ["claude", "-p", "--dangerously-skip-permissions",
+            [_claude_bin(), "-p", "--dangerously-skip-permissions",
              "--model", model,
              "--disallowedTools", *dis, "--output-format", "json"],
             input=prompt, capture_output=True, text=True,
             timeout=timeout_sec)
         if p.returncode != 0:
+            _llm_fail_log(f"model={model} rc={p.returncode} stderr={p.stderr[:200]!r}")
             return None
         data = json.loads(p.stdout)
         return data.get("result") or None
-    except Exception:
+    except Exception as e:
+        _llm_fail_log(f"model={model} {type(e).__name__}: {e}")
         return None
 
 
@@ -166,7 +200,9 @@ def dod_gen(ticket: dict) -> str | None:
     typ = ticket["fields"].get("Type") or "需求"
     res = reviewed_ask(
         f"为下述 YouTrack 单据生成**一条冻结验收命令**（bash 单行，可机器执行、退出码0=过，"
-        f"路径用仓库相对路径，测试类优先项目既有测试命令，文档类用 test -f + grep）。"
+        f"路径用仓库相对路径，测试类优先项目既有测试命令，文档类用 test -f + grep，"
+        f"确实无文件可查的恒真断言用 test -e /dev/null——严禁 test -f /dev/null，"
+        f"/dev/null 是字符设备，test -f 对它恒假，会造成必然 GATE-FAIL 死循环）。"
         f"命令只允许 test/grep/wc/cat/ls/diff/git 子命令，禁止 ; && || $() 反引号 重定向。"
         f"只输出命令本身一行，不要解释。\nType={typ}\n标题: {ticket['summary']}\n"
         f"描述: {ticket['description']}")
