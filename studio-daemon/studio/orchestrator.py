@@ -460,13 +460,13 @@ def _directives(yt, iid, lv, typ) -> str | None:
         # 合并批：必须走真实 merge+verify（禁只翻状态）；失败如实留痕
         m = _merge(yt, iid.split("-")[0], iid, lane_of(yt, iid))
         if "DELIVERED" not in m:
-            yt.comment(iid, f"批示已执行 {d}（合并未成：{m}，已回退重做；复验通过后需重新批准合并） (第{cur + 1}批)")
+            yt.comment(iid, f"批示已执行 {d}（合并未成：{m}，已回退重做；复验通过后需重新批准合并） (第{applied + 1}批)")
             _event(iid.split("-")[0], iid, "APPROVE", "opengames", 0, f"{d} 合并失败回退: {m}")
             return f"APPROVED-MERGE-FAILED {iid} {m}"
     else:
         yt.transition(iid, nxt)
     if lv.startswith("L3") and d == "approve-design":
         yt.comment(iid, "方案已批，重新派发实现段")
-    yt.comment(iid, f"批示已执行 {d} → {nxt} (第{cur + 1}批)")
+    yt.comment(iid, f"批示已执行 {d} → {nxt} (第{applied + 1}批)")
     _event(iid.split("-")[0], iid, "APPROVE", "opengames", 0, note)
     return f"APPROVED {iid} {note}"
