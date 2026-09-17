@@ -20,9 +20,9 @@ launchd（com.studio.daemon，RunAtLoad + KeepAlive）
 
 - Label `com.studio.daemon`；ProgramArguments 指向 ~/bin/studio-daemon-launch.sh；`RunAtLoad=true`、`KeepAlive=true`（进程退出即重拉）。
 - 日志：`~/Library/Logs/studio-daemon.log`（stdout+看护日志）/ `.err`。
-- EnvironmentVariables：PATH 含 /opt/homebrew/bin 与 ~/bin；HOME 显式注入。
+- EnvironmentVariables：PATH 首位 `~/.local/bin`（claude 实际安装位；2026-09-17 P0 修复前置——此前缺该路径致守护进程内 claude 不可达，LLM 岛全灭且静默、worker exit 127，git 15cf624），其后 /usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:~/bin；HOME 显式注入。
 
-加载/卸载（运维常规）：`launchctl load|unload ~/Library/LaunchAgents/com.studio.daemon.plist`。
+重载（P0 修复实际使用，提交信息留痕）：`launchctl bootout` + `launchctl bootstrap gui/<uid> ~/Library/LaunchAgents/com.studio.daemon.plist`；旧式 `load|unload` 亦可。
 
 ## 3. bash 看护循环（studio-daemon-launch.sh）
 
