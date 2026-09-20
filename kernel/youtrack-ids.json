@@ -1,8 +1,9 @@
 {
-  "updated": "2026-09-15",
+  "updated": "2026-09-20",
   "projects": {
     "POLY": "0-1",
-    "STUDIO": "0-2"
+    "STUDIO": "0-2",
+    "GAMES": "0-3"
   },
   "state_bundle": "161-2",
   "type_bundle": "159-1",

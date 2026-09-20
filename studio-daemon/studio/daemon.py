@@ -44,6 +44,8 @@ def _sched():
                   kwargs={"pid": "POLY"}, id="pm-poly", replace_existing=True)
     sched.add_job("studio.orchestrator:pm_tick", CronTrigger.from_crontab("4,14,24,34,44,54 * * * *"),
                   kwargs={"pid": "STUDIO"}, id="pm-studio", replace_existing=True)
+    sched.add_job("studio.orchestrator:pm_tick", CronTrigger.from_crontab("7,17,27,37,47,57 * * * *"),
+                  kwargs={"pid": "GAMES"}, id="pm-games", replace_existing=True)
     sched.add_job("studio.metrics:self_eval", CronTrigger.from_crontab("50 8 * * *"),
                   id="self-eval", replace_existing=True)
     sched.add_job("studio.patrol:patrol_tick", CronTrigger.from_crontab("5 * * * *"),
