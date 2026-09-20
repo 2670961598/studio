@@ -12,3 +12,4 @@ studio-daemon/jobs.sqlite
 **/__pycache__/
 *.pyc
 .DS_Store
+kernel/campaigns/*.state.json
