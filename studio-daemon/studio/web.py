@@ -221,19 +221,26 @@ def api_runs(job: str = "", limit: int = 100):
 
 @app.get("/api/schema")
 def api_schema():
-    """单子知识库（类型×流转唯一事实源）供前端展示。"""
+    """单子知识库（类型×流转唯一事实源）+ 团队公约/编制档案（YouTrack Articles）供前端展示。"""
     import yaml as _y
     from . import statemachine as sm
+    from .yt import YT
     p = CONFIG._root.parent / "kernel" / "schema" / "ticket-types.yaml"
     try:
         data = _y.safe_load(p.read_text(encoding="utf-8"))
     except Exception as e:
         return {"error": str(e)}
+    team, agents_kb = "", {}
+    try:                                              # 知识库已迁 Articles（STUDIO-13）；不可达时降级为空
+        t = YT("agent-pm")
+        team = t.wiki_get("全局/团队公约")
+        agents_kb = {path.split("/", 1)[1]: a["content"][:400]
+                     for path, a in t.wiki_all().items() if path.startswith("编制/")}
+    except Exception:
+        pass
     return {"updated": data.get("updated"), "types": data.get("types", {}),
             "type_edges": {k: [list(e) for e in v] for k, v in sm.TYPE_EDGES.items()},
-            "team": (CONFIG._root.parent / "kernel" / "TEAM.md").read_text(encoding="utf-8"),
-            "agents_kb": {f.stem: f.read_text(encoding="utf-8")[:400]
-                          for f in sorted((CONFIG._root.parent / "kernel" / "agents").glob("*.md"))}}
+            "team": team, "agents_kb": agents_kb}
 
 
 @app.get("/api/workers")
