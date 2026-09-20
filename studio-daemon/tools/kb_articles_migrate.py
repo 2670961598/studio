@@ -8,7 +8,6 @@
 用法: cd studio-daemon && .venv/bin/python tools/kb_articles_migrate.py [--check]
 """
 import sys
-import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent        # studio-daemon/
@@ -47,7 +46,22 @@ MANIFEST = [
     ("studio-daemon/ROADMAP.md", "框架/路线图"),
 ]
 
-STAMP = time.strftime("%F")
+STAMP = "2026-09-20"                                 # 迁移日（钉死：--check 任何一天重跑都可比对）
+
+
+def _src_text(rel: str) -> str:
+    """源文件正文：工作树优先；已删（迁移后）从 git 删除提交的父提交取快照。"""
+    p = STUDIO / rel
+    if p.exists():
+        return p.read_text(encoding="utf-8")
+    import subprocess
+    r = subprocess.run(["git", "-C", str(STUDIO), "log", "-n", "1", "--format=%H",
+                        "--diff-filter=D", "--", rel], capture_output=True, text=True)
+    sha = r.stdout.strip().split("\n")[0] if r.stdout.strip() else ""
+    if not sha:
+        raise FileNotFoundError(f"{rel}（工作树与 git 历史均无）")
+    return subprocess.run(["git", "-C", str(STUDIO), "show", f"{sha}^:{rel}"],
+                          capture_output=True, text=True, check=True).stdout
 
 
 def render(rel: str, text: str) -> str:
@@ -96,7 +110,7 @@ def main(argv: list[str]) -> int:
     if check:
         arts = t.wiki_all()
         bad = 0
-        plan = [(rel, path, render(rel, (STUDIO / rel).read_text(encoding="utf-8")))
+        plan = [(rel, path, render(rel, _src_text(rel)))
                 for rel, path in MANIFEST] + [
             ("~/.config/polymatch3/studio.json", "全局/项目-仓库映射", project_repo_map()),
             ("(generated)", "项目", project_stub())]
@@ -111,8 +125,7 @@ def main(argv: list[str]) -> int:
         return 1 if bad else 0
     n = 0
     for rel, path in MANIFEST:
-        src = STUDIO / rel
-        t.wiki_create(path, render(rel, src.read_text(encoding="utf-8")))
+        t.wiki_create(path, render(rel, _src_text(rel)))
         print(f"migrated {path} <- {rel}")
         n += 1
     t.wiki_create("全局/项目-仓库映射", project_repo_map())
