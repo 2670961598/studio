@@ -1,0 +1,31 @@
+{
+  "meta": {
+    "framework": "studio-v2",
+    "version": "1.0-final",
+    "decided_at": "2026-09-20",
+    "decided_by": "opengames（口头决策，逐条与 Kimi 对齐）",
+    "note": "决策页 studio-v2-decisions.html 为过程工具；最终决策以本文件与 CHARTER-V2.md 为准"
+  },
+  "decisions": {
+    "state_model": "按单型分状态族（需求/bug/知识/探索/长期/merge/内部改进），YouTrack state-machine workflow 按 Type 强制，不做状态并集挑选",
+    "dispatch_rule": "派单只看单子当前状态，与来源无关；agent 拿到该单全部上下文（流转史+批注+KB+教训）后自行决定如何推进，并自己把单拖到下一站",
+    "tracks": {"需求单": "中装", "bug单": "轻装", "知识单": "重装", "探索单": "轻装(默认重装纠偏: 探索单轻装)", "track_def": "轻装=只批策划案(1触点); 中装=批准+验收我来(2触点); 重装=批准+测试+验收都有我且我亲自关单(3+触点)"},
+    "note_tracks_correction": "制作人口头: 知识探索单默认重装；探索单流程上偏轻（我大概看一眼+agent核实真伪）——以 CHARTER-V2 §2.4/§3 为准",
+    "roles": "策划(产品方案+对齐验收)/开发(只能拖到测试中)/QA(独立上下文,可拖到待验收)/艺术家·探索家(知识单+探索单)/agent-pm(daemon调度)/Kimi=主PM(可直接派ClaudeCode干活并验收)",
+    "close_rights": "轻装/中装验收后 agent 可关单；重装必须制作人亲自关",
+    "permissions": "YouTrack 账号权限+workflow guard 尽力限制；限制不了不强求；agent 尽量管理自己的单",
+    "qa": "独立 QA，上下文与开发隔离（防自己骗自己）",
+    "kb": "YouTrack Articles 为 agent 主要上下文(分项目，不支持则前缀)；项目文档+git历史为项目上下文；笔记教训全部由长期单定时整理入库，干活 agent 不直接写；QA 必读 KB",
+    "onboarding": "一条命令全建",
+    "concurrency": "每个本地项目(泳道)1 个 worker，全局不限并发",
+    "panel": "面板跟随项目：agent 运行状态/会话下载/定时任务=执行追踪；YouTrack=需求抽象追踪；日报周报月报入 Articles",
+    "budget": "干活不计成本但不浪费：每次派工前 Flash 小 agent 预查输出 JSON {pass,reason}，解析失败重派一次，不通过则不开始；单次派工带 --max-budget-usd 帽与 45min 看门狗",
+    "models": {"main": "glm-5.3", "small": "glm-5.3-flash", "fast": "glm-5.3-flashx"},
+    "network": "本机 127.0.0.1，局域网不考虑",
+    "git": "开发拉新分支，测试验收都在分支上；关单时 flashx 快速模型 merge；merge 困难→派 merge 单→制作人定取舍→glm-5.3 主力执行",
+    "remote": "GitHub 私有仓（已建 github.com/2670961598/studio 并首推）",
+    "notify": "面板置顶 + 必要时自动开 bug 单",
+    "migration": "存量单全部映射进新状态族；审核发现的已有 bug 全部修复（P0 包已完成）",
+    "charter": "新宪章 CHARTER-V2.md 已固化"
+  }
+}

@@ -1,0 +1,25 @@
+# AGENTS.md — 给所有在本园区干活的 AI（含 Kimi）
+
+> 生效：2026-09-20 ｜ 事实源：CHARTER-V2.md（先读它）
+
+## 角色约定
+
+- **Kimi = 主 PM（常驻）**：框架治理、需求澄清、验收。制作人（opengames）授权：可直接派 Claude Code（`claude -p`，GLM 端点）完成实现类需求，**Kimi 亲自验收**后才算完成。Kimi 的上下文专注单件事，效果优于让 GLM 长链路自治。
+- **Claude Code = 实施工人**：daemon 按 YouTrack 单据状态派发；一单一命；REPORT 落盘是唯一完成信号。
+- **制作人 = opengames**：唯一人类，批准/验收/重装关单。
+
+## 干活守则（摘要）
+
+1. 状态是唯一控制面：看单据状态行动，批注只是上下文。
+2. 完成只认落盘证据；空证据 = 无证据。
+3. 项目仓永不自动 push（版本日批量授权除外）；框架仓由主 PM 同步远端。
+4. 验收命令冻结后禁改。
+5. 不浪费：不重复劳动、不无断路重试、不空转。
+6. 知识库在 YouTrack Articles（分项目）；干活不直接写，长期单定时整理入库。
+
+## 关键路径
+
+- 宪章：`CHARTER-V2.md`（老宪章 CHARTER.md 存档备查）
+- daemon：`studio-daemon/`（测试：`cd studio-daemon && .venv/bin/python -m pytest tests/ -q`）
+- 审核基线：`docs/STUDIO-AUDIT-2026-09-20.md`
+- 决策记录：`docs/studio-v2-decisions.final.json`
