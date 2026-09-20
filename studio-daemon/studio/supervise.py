@@ -142,9 +142,75 @@ def _anomalies_loops(out):
         out.append({"sev": "low", "issue": "-", "kind": "check-error", "detail": f"loops: {e!r}"})
 
 
+def _anomalies_conformance(out):
+    """框架符合性：不只查故障，还查行为是否符合设计预期。
+    - 自评草稿重复（同模式 >1 张 = 查重失效/自评刷屏）
+    - gate 审计：在途单验收命令为空 / 恒假形态 / 过不了消毒白名单
+    - 交付完整性：已交付单必须能在泳道仓找到 merge(iid) 提交
+    - 批注注入：RUNNING worker 的任务书必须含制作人批注节"""
+    from .yt import YT
+    from . import statemachine as sm
+    from .metrics import _finding_key
+    from .llm import _sanitize_cmd
+    yt = YT("agent-pm")
+    BAD_GATES = {"test -f /dev/null"}            # 历史事故形态：字符设备上 -f 恒假
+    for pid in ("POLY", "STUDIO"):
+        try:
+            board = yt.list(pid, "State:" + ",".join(sm.PM_ACTIONABLE))
+        except Exception as e:
+            out.append({"sev": "mid", "issue": pid, "kind": "board-query-fail", "detail": repr(e)})
+            continue
+        # 自评草稿查重
+        keys = {}
+        for r in board:
+            if r["state"] == "草稿" and r["type"] == "提案" and r["summary"].startswith("[自评]"):
+                keys.setdefault(_finding_key(r["summary"]), []).append(r["id"])
+        for k, iids in keys.items():
+            if len(iids) > 1:
+                out.append({"sev": "mid", "issue": ",".join(iids), "kind": "duplicate-drafts",
+                            "detail": f"自评同模式草稿 ×{len(iids)}（{k}…）——需去重"})
+        for row in board:
+            iid, st = row["id"], row["state"]
+            try:
+                if st in ("新单", "待批", "已派发"):
+                    gate = (yt.f(iid, "验收命令") or "").strip()
+                    if not gate:
+                        out.append({"sev": "high", "issue": iid, "kind": "gate-missing",
+                                    "detail": "在途单无冻结验收命令（DoD 生成链可能故障）"})
+                    elif gate in BAD_GATES or _sanitize_cmd(gate) is None:
+                        out.append({"sev": "high", "issue": iid, "kind": "gate-invalid",
+                                    "detail": f"验收命令不可用/恒假形态: {gate[:60]}"})
+                if st == "已派发":
+                    from .workers import Worker
+                    if Worker(iid).status().startswith("RUNNING"):
+                        prompt = CONFIG.workers_dir / f"{iid}.prompt.md"
+                        if prompt.exists() and "## 制作人批注" not in prompt.read_text(encoding="utf-8"):
+                            out.append({"sev": "high", "issue": iid, "kind": "producer-notes-missing",
+                                        "detail": "任务书缺制作人批注节（注入链回归）"})
+            except Exception as e:
+                out.append({"sev": "low", "issue": iid, "kind": "check-error", "detail": repr(e)})
+        # 交付完整性：已交付单必有真实 merge 提交
+        try:
+            for r in yt.list(pid, "State:已交付"):
+                iid, lane = r["id"], yt.f(r["id"], "泳道") or "core"
+                try:
+                    lc = CONFIG.lane(lane)
+                except Exception:
+                    continue
+                g = subprocess.run(["git", "-C", lc["path"], "log", "--oneline",
+                                    f"--grep=merge({iid})", lc["base_branch"]],
+                                   capture_output=True, text=True, timeout=30)
+                if g.returncode == 0 and f"merge({iid})" not in g.stdout:
+                    out.append({"sev": "mid", "issue": iid, "kind": "merge-missing",
+                                "detail": f"已交付但 {lc['base_branch']} 上无 merge({iid}) 提交"})
+        except Exception as e:
+            out.append({"sev": "low", "issue": pid, "kind": "check-error", "detail": f"delivered: {e!r}"})
+
+
 def run() -> dict:
     out = []
-    for fn in (_anomalies_daemon, _anomalies_llm, _anomalies_tickets, _anomalies_loops):
+    for fn in (_anomalies_daemon, _anomalies_llm, _anomalies_tickets, _anomalies_loops,
+               _anomalies_conformance):
         try:
             fn(out)
         except Exception as e:

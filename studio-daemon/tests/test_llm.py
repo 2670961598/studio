@@ -71,6 +71,24 @@ class TestSanitize:
 
 
 class TestSanitizeHardened:
+    def test_引号内字面量不误杀(self):
+        """STUDIO-13 事故形态：grep 正则或语法（引号内）被当管道/分隔符误杀。
+        引号内的 | ; 是字面量——先保护引段再扫黑名单/分段。"""
+        from studio.llm import _sanitize_cmd
+        ok = [
+            'test -f w.py && grep -q "yt_wiki\\|fetch_profile\\|YouTrack" w.py',
+            'grep -q "a;b" f.txt',
+            'dotnet test X --logger "console;verbosity=detailed"',
+            'grep -q "a|b" f.txt',
+        ]
+        for c in ok:
+            assert _sanitize_cmd(c) == c, c
+
+    def test_引号内替换仍封死(self):
+        from studio.llm import _sanitize_cmd
+        assert _sanitize_cmd('grep "$(evil)" f') is None      # 引号挡不住 $() 逃逸
+        assert _sanitize_cmd('grep "`evil`" f') is None
+
     def test_find删除通道封死(self):
         from studio.llm import _sanitize_cmd
         assert _sanitize_cmd('find . -name "*.log" -delete') is None

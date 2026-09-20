@@ -23,29 +23,27 @@ FIRST_WORDS = {"test", "grep", "wc", "cat", "ls", "find", "diff", "head", "tail"
 
 def _sanitize_cmd(cmd: str | None) -> str | None:
     """将被 bash -c 执行的命令消毒：按 && 分段，每段首词白名单 + 危险特征黑名单 + 长度。
-    语义：允许 test -f a && grep -q x a（链式断言），拒绝替换/管道/重定向/后台/网络/删除。"""
+    语义：允许 test -f a && grep -q x a（链式断言），拒绝替换/管道/重定向/后台/网络/删除。
+    引号内是字面量：grep "a\\|b" 的 |、--logger "a;b" 的 ; 不是管道/分隔符，先保护再扫描。"""
+    import re as _re
     if not cmd or not isinstance(cmd, str):
         return None
     c = cmd.strip()
     if len(c) > 300 or "\n" in c or c.count("&&") > 2:
         return None
-    if "&" in c.replace("&&", ""):            # 单 & = 后台执行，禁
-        return None
-    if any(b in c for b in CMD_BLACKLIST):
-        return None
-    # 按 && 和 ; 分段——先用占位符保护双引号内的 ;（--logger "a;b" 类参数），切完还原
-    import re as _re
+    # 双引号段 → 占位符（黑名单与分段都在"引号外"的文本上判定）
     _protected = c
     _quotes = []
     for m in _re.finditer(r'"[^"]*"', _protected):
+        if "$" in m.group() or "`" in m.group():      # 引号内变量/命令替换仍可逃逸，禁
+            return None
         _quotes.append(m.group())
         _protected = _protected.replace(m.group(), f"__Q{len(_quotes)-1}__", 1)
-    _protected = _re.split(r"&&|;", _protected)
-    segs = []
-    for seg in _protected:
-        for i, q in enumerate(_quotes):
-            seg = seg.replace(f"__Q{i}__", q)
-        segs.append(seg)
+    if "&" in _protected.replace("&&", ""):         # 单 & = 后台执行，禁
+        return None
+    if any(b in _protected for b in CMD_BLACKLIST):
+        return None
+    segs = _re.split(r"&&|;", _protected)
     for seg in segs:
         toks = seg.strip().split()
         if not toks:

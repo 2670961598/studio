@@ -1,6 +1,6 @@
 """metrics — 记账 + 自评引擎（元循环：工作室评估自己的表现，给自己开内部改进单）
 events.jsonl append-only，与 bash 内核格式兼容；自评每日跑，异常模式 → STUDIO 草稿单。"""
-import json, time
+import json, re, time
 from pathlib import Path
 from .config import CONFIG
 
@@ -51,8 +51,14 @@ def compute(days: int = 7) -> dict:
     }
 
 
+def _finding_key(f: str) -> str:
+    """异常模式归一键：剥掉数字/百分比/括号——'闸门失败率 55%' 与 '46%' 同键，跨天可查重。"""
+    return re.sub(r"[\d%（）()．.]+", "", f)[:16]
+
+
 def self_eval() -> dict:
-    """元循环：指标 → 异常模式 → 内部改进草稿单（≤2/日，量化证据，制作人择优 promote）。"""
+    """元循环：指标 → 异常模式 → 内部改进草稿单（≤2/日，量化证据，制作人择优 promote）。
+    查重：同模式草稿未结案（State=草稿）不重复建——否则每天一跑就堆一摞重复提案。"""
     m = compute(7)
     findings = []
     if m["gate_fail_rate"] > 0.3 and m["gate_fail"] >= 3:
@@ -66,8 +72,17 @@ def self_eval() -> dict:
         findings.append(f"STALL {m['stall']} 次——审批等待或卡单回收策略需调")
     from .yt import YT
     yt = YT("agent-pm")
+    open_keys = set()
+    try:
+        for r in yt.list("STUDIO", "State:草稿"):
+            if r["type"] == "提案" and r["summary"].startswith("[自评]"):
+                open_keys.add(_finding_key(r["summary"]))
+    except Exception:
+        pass                                    # 查重失败不阻断（宁可重复不可漏报）
     created = []
     for f in findings[:2]:
+        if _finding_key(f) in open_keys:
+            continue                            # 同模式草稿已在板上等制作人，不刷屏
         iid = yt.new("STUDIO", f"[自评] {f[:40]}", f"来源：studio-daemon 每日自评\n\n{f}\n\n"
                      f"指标窗口：{m['window_days']} 天\n处理建议：分析 events.jsonl 对应事件，"
                      f"改进对应手册/模板/参数。",

@@ -6,6 +6,30 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from studio import supervise as sv
 
 
+class TestConformance:
+    def test_自评重复草稿报警(self, fake_yt):
+        from studio.yt import YT
+        yt = YT("agent-pm")
+        for i in range(2):
+            yt.new("STUDIO", "[自评] 闸门失败率 55%（11/20）——检查 DoD", "d",
+                   lane=None, typ="提案", track="G1 知识", state="草稿")
+        out = []
+        sv._anomalies_conformance(out)
+        assert any(a["kind"] == "duplicate-drafts" for a in out), out
+
+    def test_恒假gate与空gate报警(self, fake_yt):
+        from studio.yt import YT
+        yt = YT("agent-pm")
+        i1 = yt.new("STUDIO", "a", "d", lane=None, typ="需求", track="L1 首批", state="待批")
+        yt.set_text(i1, "验收命令", "test -f /dev/null")
+        i2 = yt.new("STUDIO", "b", "d", lane=None, typ="需求", track="L1 首批", state="待批")
+        # i2 不设 gate → gate-missing
+        out = []
+        sv._anomalies_conformance(out)
+        kinds = {a["kind"] for a in out}
+        assert "gate-invalid" in kinds and "gate-missing" in kinds, out
+
+
 class TestFirstSeg:
     def test_中文无空格_标点切分(self):
         assert sv._first_seg("可以的，排查仔细哈") == "可以的"
