@@ -68,6 +68,8 @@ class FakeBackend:
     def __init__(self):
         self.issues = {}
         self.counters = {"POLY": 100, "STUDIO": 10}
+        self.articles = {}                     # idReadable -> {summary, content, parent, project}
+        self.acounters = {"POLY": 0, "STUDIO": 0}
         self._clock = 1000                     # 单调时钟，评论排序用
 
     def now_ms(self):
@@ -99,6 +101,19 @@ class FakeBackend:
                 continue
             out.append(self._issue_api(iid))
         return sorted(out, key=lambda x: x["idReadable"])
+
+    # ---------- Articles（知识库） ----------
+    def article_create(self, pid, summary, content, parent=None):
+        self.acounters[pid] = self.acounters.get(pid, 0) + 1
+        aid = f"{pid}-A-{self.acounters[pid]}"
+        self.articles[aid] = {"summary": summary, "content": content,
+                              "parent": parent, "project": pid}
+        return aid
+
+    def article_api(self, aid):
+        a = self.articles[aid]
+        return {"idReadable": aid, "summary": a["summary"], "content": a["content"],
+                "parentArticle": {"idReadable": a["parent"]} if a["parent"] else None}
 
 
 CURRENT_BACKEND = None   # 供测试以任意身份直写评论（opengames 批示模拟）
@@ -169,6 +184,40 @@ def fake_yt(tmp_config, requests_mock):
     import re as _re
     issue_re = _re.compile(r"/api/issues/[A-Z0-9]+-\d+([?/].*)?$")
     comments_re = _re.compile(r"/api/issues/[A-Z0-9]+-\d+/comments([?/].*)?$")
+
+    def _aid(request):
+        raw = request.path.split("/api/articles/")[1].split("/")[0].split("?")[0]
+        for k in be.articles:                       # 大小写不敏感回查（对齐 issues 的做法）
+            if k.lower() == raw.lower():
+                return k
+        return raw
+
+    def _articles_list(request, ctx):
+        q = request.qs.get("query", [""])[0]
+        proj = _re.search(r"project:(\S+)", q)      # qs 已被 requests_mock 转小写
+        rows = [be.article_api(a) for a, ar in be.articles.items()
+                if not proj or ar["project"].lower() == proj.group(1).lower()]
+        return sorted(rows, key=lambda r: r["idReadable"])
+
+    def _articles_create(request, ctx):
+        body = request.json()
+        pid = [p for p, i in CONFIG.projects.items() if i == body["project"]["id"]][0]
+        parent = (body.get("parentArticle") or {}).get("idReadable")
+        ctx.status_code = 200
+        return {"idReadable": be.article_create(pid, body["summary"],
+                                                body.get("content") or "", parent)}
+
+    def _articles_update(request, ctx):
+        aid = _aid(request)
+        if aid not in be.articles:
+            ctx.status_code = 404
+            return {"error": "not found"}
+        body = request.json()
+        if "content" in body:
+            be.articles[aid]["content"] = body["content"]
+        return {"idReadable": aid}
+
+    article_re = _re.compile(r"/api/articles/[^/?]+([?/].*)?$")
     requests_mock.get(f"{U}/api/users/me", json={"login": "agent-pm", "name": "Agent PM"})
     requests_mock.get(f"{U}/api/issues", json=_list)
     requests_mock.post(f"{U}/api/issues", json=_create)
@@ -176,6 +225,9 @@ def fake_yt(tmp_config, requests_mock):
     requests_mock.post(issue_re, json=_patch)       # set_field
     requests_mock.get(comments_re, json=_comments_get)
     requests_mock.post(comments_re, json=_comments_post)
+    requests_mock.get(f"{U}/api/articles", json=_articles_list)
+    requests_mock.post(f"{U}/api/articles", json=_articles_create)
+    requests_mock.post(article_re, json=_articles_update)   # /api/articles/{id} 更新正文
     yield be
 
 

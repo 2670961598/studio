@@ -1,5 +1,6 @@
 """workers — Claude Code 工人进程管理（吸收 studio-worker，升级 stream-json 直播）
 - launch: 组装自包含任务书 → nohup claude -p --output-format stream-json 落盘直播
+- 知识库（STUDIO-13 起）迁 YouTrack Articles：launch 时 fetch_profile 拉公约/角色档案/手册注入任务书
 - status: DONE(REPORT 落盘) / RUNNING(pid) / DEAD
 - 证据链与 bash 版完全兼容：kernel/workers/<单号>.json / .REPORT.md / .stream.jsonl
 """
@@ -7,9 +8,37 @@ import json, os, subprocess, time
 from pathlib import Path
 from .config import CONFIG
 
+WIKI_TEAM = "全局/团队公约"
+WIKI_WORKER_PROFILE = "编制/worker"                  # 三类 worker（dev/designer/artist）共用执行层档案
+WIKI_COMMON = "手册/worker-common"
+LEGACY_FILES = {                                     # YouTrack 不可达时的本地兜底（迁移前旧路径，git 历史可考）
+    WIKI_TEAM: Path("/Volumes/BigDisk/Studio/kernel/TEAM.md"),
+    WIKI_WORKER_PROFILE: Path("/Volumes/BigDisk/Studio/kernel/agents/worker.md"),
+    WIKI_COMMON: Path("/Volumes/BigDisk/Studio/kernel/skills/worker-common.md"),
+}
+
+
+def fetch_profile(yt, wiki_path: str) -> str:
+    """从 YouTrack Articles 拉知识库档案（唯一事实源）；拉不到回退本地旧文件，再没有给空串。"""
+    try:
+        return yt.wiki_get(wiki_path)
+    except Exception:
+        fb = LEGACY_FILES.get(wiki_path)
+        return fb.read_text(encoding="utf-8") if fb and fb.exists() else ""
+
+
 WORKER_TEMPLATE = """你是虚拟工作室的 {title}（身份 {role}），以独立 Claude Code 进程完成单据 {issue}，一单一命。
-先读团队公约 /Volumes/BigDisk/Studio/kernel/TEAM.md（目标/名册/红线，尤其"成员名册"中你的权限边界），
-再读手册 /Volumes/BigDisk/Studio/kernel/skills/worker-common.md（唯一规范），再读目标仓库的 AGENTS.md（如有）。
+团队公约、角色档案、worker 手册已从 YouTrack Articles 拉取并注入下方（知识库唯一事实源），
+开工先通读（尤其公约"成员名册"中你的权限边界），再读目标仓库的 AGENTS.md（如有）。
+
+# ══════ 团队公约（Articles: {wteam}）══════
+{team}
+
+# ══════ 角色档案（Articles: 编制/worker）══════
+{profile}
+
+# ══════ worker 通用手册（Articles: {wcommon}）══════
+{common}
 
 ## 单据
 - 标题: {summary}
@@ -25,7 +54,11 @@ WORKER_TEMPLATE = """你是虚拟工作室的 {title}（身份 {role}），以�
 1. 仓库: {repo} ｜ 工作分支: {branch}（已建好，先 checkout）。只在此分支提交，提交信息格式照手册。
 2. 心跳：每完成一个阶段执行一次 `YT_ACCT={wacct} ~/bin/yt heartbeat {issue}`。
 3. 完工自检：自跑冻结验收命令，绿了才算完。
-4. 交付：把 REPORT（格式照手册）全文写入 {report} —— 唯一交付物。不要写 YouTrack，不要 push。
+4. 交付：把 REPORT（格式照手册）全文写入 {report} —— 唯一交付物。不要写板面单据状态，不要 push。
+5. 过程沉淀：bug 修复过程/意外发现/来不及做的优化/有趣发现 → 写 Article 草稿留档
+   （curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json"
+   -d '{{"project":{{"id":"{projid}"}},"summary":"草稿: <主题>","content":"<内容>"}}' {yturl}/api/articles，
+   token 取 ~/.config/polymatch3/youtrack.json 里你账号的；PM 巡田时收割转正）。
 """
 
 
@@ -69,6 +102,9 @@ class Worker:
                 continue  # 纯指令，worker 不需要
             producer_notes.append(f"- {text}")
         notes = "\n".join(producer_notes) if producer_notes else "（无额外批注）"
+        team = fetch_profile(t, WIKI_TEAM)            # 知识库在 Articles（STUDIO-13 迁移）
+        profile = fetch_profile(t, WIKI_WORKER_PROFILE)
+        common = fetch_profile(t, WIKI_COMMON)
 
         prompt = WORKER_TEMPLATE.format(
             issue=self.issue, title=title, role=role, summary=ticket["summary"],
@@ -77,7 +113,9 @@ class Worker:
             attempt=ticket["fields"].get("attempt") or 0,
             gate=ticket["fields"].get("验收命令"), repo=lc["path"],
             branch=f"feature/{self.issue}", wacct=lc.get("yt_acct", "agent-core"),
-            report=self.report, producer_notes=notes)
+            report=self.report, producer_notes=notes,
+            wteam=WIKI_TEAM, team=team, profile=profile, wcommon=WIKI_COMMON, common=common,
+            yturl=CONFIG.yt_url, projid=CONFIG.proj_id("STUDIO"))
         self.prompt.write_text(prompt)
         # 清上一轮残留（退回重派时旧 REPORT 会被误判 DONE）
         att = int(ticket["fields"].get("attempt") or 0)

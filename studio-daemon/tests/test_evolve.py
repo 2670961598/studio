@@ -41,7 +41,9 @@ def test_validate_边引用未知状态(schema_env):
 
 def test_resolve_kb_白名单内(schema_env, tmp_config):
     assert evolve._resolve_kb_target("改一下 TEAM.md 的名册") == evolve.KB_ROOT / "TEAM.md"
-    assert evolve._resolve_kb_target("更新 agents/pm.md") is not None
+    # STUDIO-13 迁移后 agents/*.md 已入 Articles：文件白名单仅剩战役 spec
+    assert evolve._resolve_kb_target("更新 POLY-14.yaml 巡逻频率") is not None
+    assert evolve._resolve_kb_target("更新 agents/pm.md") is None
 
 
 def test_resolve_kb_路径穿越拒绝(schema_env):

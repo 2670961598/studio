@@ -17,12 +17,17 @@ def test_根页面(client):
     assert r.status_code == 200 and "vue.global.prod.js" in r.text
 
 
-def test_schema_api(client):
+def test_schema_api(client, fake_yt):
+    g = fake_yt.article_create("STUDIO", "全局", "")       # 父节点
+    fake_yt.article_create("STUDIO", "团队公约", "# 团队公约 —— 名册与红线", parent=g)
+    b = fake_yt.article_create("STUDIO", "编制", "")
+    fake_yt.article_create("STUDIO", "worker", "# 执行层 worker 档案", parent=b)
     r = client.get("/api/schema")
     assert r.status_code == 200
     d = r.json()
     assert set(d["types"]) >= {"需求", "提案", "战役", "疑问"}
-    assert "五族" in d["team"] or "团队公约" in d["team"]
+    assert "团队公约" in d["team"]                          # 公约自 Articles 拉取（STUDIO-13）
+    assert d["agents_kb"].get("worker", "").startswith("# 执行层")
 
 
 def test_jobs_无调度器时安全(client):
