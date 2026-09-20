@@ -1,7 +1,7 @@
 """orchestrator v2 — 五族分类 × 级别流的确定性状态机
 状态 = 机器事实：已派发(进程存在) / 证据就绪(REPORT+gate) / 复验通过(QA复验绿) / 已交付(merge+verify)。
 v2 变化：QA 内联进收割链（证据就绪→复验通过），独立 qa 队列退役；L0 全自动；L3 两段派发。
-派发前置/失败兜底全部按 kernel/skills/dispatch.md 执行。"""
+派发前置/失败兜底全部按 YouTrack Articles 手册/dispatch 执行（STUDIO-13 迁移，旧 kernel/skills/ 已删）。"""
 import json, re, subprocess, time
 from pathlib import Path
 from . import statemachine as sm
