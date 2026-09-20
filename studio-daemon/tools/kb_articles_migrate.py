@@ -51,8 +51,9 @@ STAMP = time.strftime("%F")
 
 
 def render(rel: str, text: str) -> str:
-    return (text.rstrip("\n") + "\n\n---\n\n> 迁移自 `{}`（STUDIO-13，{}）；本地文件已删除，"
-            "后续演进直接改本 Article，git 历史即审计记录。\n").format(rel, STAMP)
+    # 不用 str.format：正文含 {字面量}（如 kernel/agents/{scout,inspector}.md）会被当占位符
+    return (text.rstrip("\n") + "\n\n---\n\n> 迁移自 `" + rel + "`（STUDIO-13，" + STAMP +
+            "）；本地文件已删除，后续演进直接改本 Article，git 历史即审计记录。\n")
 
 
 def project_repo_map() -> str:
