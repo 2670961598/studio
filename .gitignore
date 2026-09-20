@@ -13,3 +13,4 @@ studio-daemon/jobs.sqlite
 *.pyc
 .DS_Store
 kernel/campaigns/*.state.json
+projects/
