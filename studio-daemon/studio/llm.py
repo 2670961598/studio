@@ -19,6 +19,15 @@ CMD_BLACKLIST = ("rm ", "curl", "wget", "push", "sudo", "base64", "eval", "exec"
 GIT_READONLY = {"diff", "log", "status", "rev-parse", "show", "grep", "ls-files", "blame", "shortlog"}
 FIRST_WORDS = {"test", "grep", "wc", "cat", "ls", "find", "diff", "head", "tail",
                "dotnet", "python", "python3", "npm", "cargo", "make"}
+INTERPRETER_WORDS = {"python", "python3", "npm", "cargo", "make", "dotnet"}
+READONLY_WORDS = {"test", "grep", "wc", "cat", "ls", "find", "diff", "head", "tail"}
+
+
+def _bad_path(tok: str) -> bool:
+    """只读命令的参数只允许仓内相对路径：拒绝绝对路径、~、..（HEAD: 前缀剥离后同规则）。"""
+    if tok.startswith("HEAD:"):
+        tok = tok[5:]
+    return tok.startswith("/") or tok.startswith("~") or ".." in tok
 
 
 def _sanitize_cmd(cmd: str | None) -> str | None:
@@ -44,7 +53,8 @@ def _sanitize_cmd(cmd: str | None) -> str | None:
     if any(b in _protected for b in CMD_BLACKLIST):
         return None
     segs = _re.split(r"&&|;", _protected)
-    for seg in segs:
+    segs_raw = _re.split(r"&&|;", c)
+    for seg, seg_raw in zip(segs, segs_raw):
         toks = seg.strip().split()
         if not toks:
             return None
@@ -52,13 +62,25 @@ def _sanitize_cmd(cmd: str | None) -> str | None:
         if w == "git":
             if len(toks) < 2 or toks[1] not in GIT_READONLY:
                 return None
-        elif w not in FIRST_WORDS:
+            if any(_bad_path(t) for t in toks[2:] if not t.startswith("-")):
+                return None
+        elif w in INTERPRETER_WORDS:
+            # 解释器/构建段不享引号豁免：原始文本跑黑名单；禁内联执行参数
+            if any(b in seg_raw for b in CMD_BLACKLIST):
+                return None
+            if "-c" in seg_raw.split() or "--eval" in seg_raw:
+                return None
+        elif w in READONLY_WORDS:
+            if any(_bad_path(t) for t in toks[1:] if not t.startswith("-")):
+                return None
+        else:
             return None
     return c
 
 
-FLASH = "GLM-5.3-Flash"       # 小模型：批示解析/DoD生成/加测/输出审查——快、便宜、多模态
-FULL = "GLM-5.3"              # 大模型：Epic拆解/巡逻/知识编辑——需要推理
+FLASH = "glm-5.3-flash"       # 小模型：批示解析/DoD生成/加测/输出审查/派工预查——快、便宜
+FLASHX = "glm-5.3-flashx"     # 快速模型：merge 等机械任务（端点实测清单 2026-09-20）
+FULL = "glm-5.3"              # 主力模型：开发/策划/Epic拆解/巡逻/知识编辑——需要推理
 
 _CLAUDE_CANDIDATES = ("~/.local/bin/claude", "/usr/local/bin/claude", "/opt/homebrew/bin/claude")
 _CLAUDE_BIN = None            # 进程内缓存解析结果

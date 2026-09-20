@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>STUDIO v2 · 制作人决策台</title>
+<style>
+:root{
+  --paper:#f4f4f2; --paper-alt:#f0efed; --ink:#171717; --ink-2:#737373;
+  --line:#d6d6d6; --line-soft:#e5e5e5;
+  --acc-A:#658396; --acc-B:#639990; --acc-C:#805E5B; --acc-D:#A98A5B;
+  --acc-E:#082D4F; --acc-F:#C47A5A; --acc-G:#7A8A99; --acc-H:#5F5F5F;
+  --mono:Menlo,Monaco,Consolas,"Droid Sans Mono",monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--paper);color:var(--ink);font:15px/1.65 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+::selection{background:#082D4F;color:#f4f4f2}
+
+/* ---------- sidebar ---------- */
+aside{position:fixed;top:0;left:0;bottom:0;width:236px;background:var(--paper-alt);border-right:1px solid var(--line);display:flex;flex-direction:column;z-index:10}
+.brand{padding:28px 22px 18px;border-bottom:1px solid var(--line)}
+.brand .en{font:700 10px/1 var(--mono);letter-spacing:.22em;color:var(--ink-2)}
+.brand h1{font-size:17px;font-weight:700;margin-top:6px;letter-spacing:.02em}
+nav{flex:1;overflow-y:auto;padding:12px 0}
+nav a{display:flex;align-items:center;gap:9px;padding:8px 22px;color:var(--ink-2);text-decoration:none;font-size:13px;border-left:2px solid transparent;transition:background .15s,color .15s}
+nav a:hover{background:#e9e8e5}
+nav a.active{background:#e9e8e5;color:var(--ink);border-left-color:currentColor}
+nav a .no{font:700 10px/1 var(--mono);letter-spacing:.08em}
+nav a .dot{width:7px;height:7px;flex:none}
+nav a .lbl{flex:1}
+nav a .pg{font:11px/1 var(--mono);color:var(--ink-2)}
+nav a.done .pg{color:#3d7a4f}
+.side-foot{padding:16px 22px 20px;border-top:1px solid var(--line)}
+.totalbar{height:3px;background:var(--line);margin-bottom:8px}
+.totalbar i{display:block;height:100%;width:0;background:var(--ink);transition:width .25s}
+.totaltxt{font:11px/1.4 var(--mono);color:var(--ink-2);margin-bottom:12px}
+.side-foot button{display:block;width:100%;margin:6px 0;padding:9px 10px;font:600 12px/1 inherit;letter-spacing:.04em;cursor:pointer;border:1px solid var(--ink);background:var(--ink);color:var(--paper)}
+.side-foot button.ghost{background:transparent;color:var(--ink)}
+.side-foot button:hover{opacity:.85}
+
+/* ---------- main ---------- */
+main{margin-left:236px;max-width:920px;padding:56px 64px 120px}
+.hero{border-bottom:2px solid var(--ink);padding-bottom:26px;margin-bottom:8px}
+.hero .en{font:700 10px/1 var(--mono);letter-spacing:.22em;color:var(--ink-2)}
+.hero h2{font-size:34px;font-weight:800;letter-spacing:.01em;margin:8px 0 12px}
+.hero p{color:var(--ink-2);max-width:56em}
+.hero .steps{margin-top:14px;font-size:13.5px;color:var(--ink)}
+.hero .steps b{font-family:var(--mono);font-size:12px}
+section{padding-top:34px}
+.sec-head{display:flex;align-items:baseline;gap:14px;border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:6px}
+.sec-head .no{font:800 12px/1 var(--mono);letter-spacing:.15em}
+.sec-head h3{font-size:21px;font-weight:800}
+.sec-head .en{margin-left:auto;font:700 10px/1 var(--mono);letter-spacing:.2em;color:var(--ink-2);text-transform:uppercase}
+
+/* ---------- question ---------- */
+.q{padding:20px 0 22px;border-bottom:1px solid var(--line-soft)}
+.q-head{display:flex;align-items:baseline;gap:10px}
+.qid{font:700 11px/1 var(--mono);letter-spacing:.06em;padding:3px 6px;color:#fff}
+.q-title{font-size:15.5px;font-weight:700}
+.chip{margin-left:auto;font:11px/1 var(--mono);color:var(--ink-2);border:1px dashed var(--line);padding:4px 8px;white-space:nowrap}
+.q.confirmed .chip{color:#3d7a4f;border:1px solid #3d7a4f55;border-style:solid}
+.q-note{margin:7px 0 12px;font-size:13px;color:var(--ink-2);max-width:62em}
+.opts{display:flex;flex-direction:column}
+.opt{display:flex;gap:12px;align-items:flex-start;padding:10px 12px 10px 12px;border-left:2px solid transparent;cursor:pointer;transition:background .15s,border-color .15s}
+.opt:hover{background:#ecebe8}
+.opt input{position:absolute;opacity:0;pointer-events:none}
+.radio{flex:none;width:15px;height:15px;margin-top:4px;border:1.5px solid var(--ink-2);border-radius:50%;position:relative;transition:border-color .15s}
+.opt.sel .radio::after{content:"";position:absolute;inset:2.5px;border-radius:50%;background:var(--ink)}
+.opt-body{flex:1}
+.opt-label{font-size:14px;font-weight:600}
+.rec{display:inline-block;margin-left:8px;font:700 10px/1 var(--mono);letter-spacing:.08em;padding:2.5px 6px;vertical-align:1px;color:var(--paper);background:var(--ink)}
+.opt-note{font-size:12.5px;color:var(--ink-2);margin-top:2px}
+.q[data-acc] .opt.sel{background:color-mix(in srgb,var(--acc) 8%,transparent);border-left-color:var(--acc)}
+.q[data-acc] .opt.sel .radio{border-color:var(--acc)}
+.q[data-acc] .opt.sel .radio::after{background:var(--acc)}
+
+/* ---------- inputs ---------- */
+.field{margin:14px 0}
+.field label{display:block;font-size:13px;font-weight:700;margin-bottom:5px}
+.field .hint{font-weight:400;color:var(--ink-2);font-size:12.5px}
+.field input[type=text],.field input[type=number],.field textarea{width:100%;max-width:520px;background:#fff;border:1px solid var(--line);padding:9px 11px;font:14px/1.5 var(--mono);color:var(--ink);outline:none}
+.field input:focus,.field textarea:focus{border-color:var(--ink)}
+.field textarea{min-height:96px;resize:vertical;font-family:inherit}
+
+/* ---------- export ---------- */
+#export-zone{margin-top:14px}
+#export-zone textarea{width:100%;min-height:280px;background:var(--ink);color:#e8e6e2;border:none;padding:16px;font:12.5px/1.7 var(--mono);outline:none;resize:vertical}
+.export-bar{display:flex;gap:10px;margin:12px 0;flex-wrap:wrap}
+.export-bar button{padding:10px 16px;font:600 12.5px/1 inherit;letter-spacing:.03em;cursor:pointer;border:1px solid var(--ink);background:var(--ink);color:var(--paper)}
+.export-bar button.ghost{background:transparent;color:var(--ink)}
+.export-bar button:hover{opacity:.85}
+footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);font-size:12px;color:var(--ink-2)}
+footer code{font-family:var(--mono)}
+
+@media (max-width:960px){
+  aside{position:static;width:auto;border-right:none;border-bottom:1px solid var(--line)}
+  nav{display:flex;flex-wrap:wrap}
+  main{margin-left:0;padding:32px 22px 90px}
+}
+</style>
+</head>
+<body>
+
+<aside>
+  <div class="brand">
+    <div class="en">STUDIO V2 · DECISIONS</div>
+    <h1>制作人决策台</h1>
+  </div>
+  <nav id="nav"></nav>
+  <div class="side-foot">
+    <div class="totalbar"><i id="totalbar"></i></div>
+    <div class="totaltxt" id="totaltxt">0 / 24 已决策</div>
+    <button id="btn-rec">全部按推荐</button>
+    <button class="ghost" id="btn-export">导出 JSON</button>
+    <button class="ghost" id="btn-summary">生成给 Kimi 的摘要</button>
+    <button class="ghost" id="btn-import">导入上次进度</button>
+    <input type="file" id="import-file" accept=".json" style="display:none">
+  </div>
+</aside>
+
+<main>
+  <div class="hero">
+    <div class="en">PRODUCER CONSOLE · ONE HUMAN COMPANY</div>
+    <h2>AI 工作室 v2 决策单</h2>
+    <p>对应方案文档 <b>docs/FRAMEWORK-V2-方案.md</b>。以下 30 个决策点已全部预选推荐值——逐项过目，认同就点一下确认（点推荐项也算），想改就直接选别的。选择会自动保存在本浏览器。</p>
+    <div class="steps"><b>01</b> 逐项过 → <b>02</b> 点「生成给 Kimi 的摘要」→ <b>03</b> 把摘要粘贴回对话，我按结果实施。赶时间就直接「全部按推荐」。</div>
+  </div>
+
+  <div id="sections"></div>
+
+  <section id="sec-I" data-acc="var(--acc-H)">
+    <div class="sec-head" style="--acc:var(--acc-H)"><span class="no">09</span><h3>填空</h3><span class="en">Inputs</span></div>
+    <div class="field">
+      <label>首批要 onboard 的项目 <span class="hint">（逗号分隔，如 POLY, WEB1；POLY 已在）</span></label>
+      <input type="text" id="in-projects" placeholder="POLY, …">
+    </div>
+    <div class="field">
+      <label>预算：每日软停线（¥）<span class="hint">（超过则停派新单）</span></label>
+      <input type="number" id="in-day" value="60" min="0">
+    </div>
+    <div class="field">
+      <label>预算：每月软停线（¥）</label>
+      <input type="number" id="in-month" value="900" min="0">
+    </div>
+    <div class="field">
+      <label>其他要求 / 备注 <span class="hint">（任意，会一并交给我）</span></label>
+      <textarea id="in-notes" placeholder="例如：先做 P0 修复给我看一眼再继续；某个项目的特殊验收命令…"></textarea>
+    </div>
+  </section>
+
+  <section id="sec-export" data-acc="var(--acc-E)">
+    <div class="sec-head" style="--acc:var(--acc-E)"><span class="no">10</span><h3>导出</h3><span class="en">Export</span></div>
+    <div class="export-bar">
+      <button id="btn-summary2">生成摘要（复制给我）</button>
+      <button class="ghost" id="btn-export2">下载 decisions.json</button>
+      <button class="ghost" id="btn-reset">清空重来</button>
+    </div>
+    <div id="export-zone"><textarea id="export-out" readonly placeholder="点「生成摘要」后，这里出现可粘贴给 Kimi 的决策结果"></textarea></div>
+  </section>
+
+  <footer>
+    方案细节见 <code>docs/FRAMEWORK-V2-方案.md</code> ｜ 审核依据 <code>docs/STUDIO-AUDIT-2026-09-20.md</code> ｜ 选择保存在本浏览器 localStorage，关页不丢。
+  </footer>
+</main>
+
+<script>
+const SECTIONS = [
+ {id:"A",no:"01",name:"流程骨架",en:"Flow",acc:"var(--acc-A)",intro:"状态是唯一控制面。你拖单子，daemon 干活；批注只是写给 agent 的上下文。"},
+ {id:"B",no:"02",name:"轨道与单型",en:"Tracks & Types",acc:"var(--acc-B)",intro:"简单的单一拖到底；复杂的单每一步你都能停。"},
+ {id:"C",no:"03",name:"编制与权限",en:"Roles & Guards",acc:"var(--acc-C)",intro:"一个人 + 几个 agent 账号。平台层强制护栏，不靠自觉。"},
+ {id:"D",no:"04",name:"知识库",en:"Knowledge",acc:"var(--acc-D)",intro:"Articles 唯一真源；工人能读，草稿区能写。"},
+ {id:"E",no:"05",name:"多项目",en:"Projects",acc:"var(--acc-E)",intro:"未来你会在本机尝试很多项目，onboarding 必须是一条命令的事。"},
+ {id:"F",no:"06",name:"预算与安全",en:"Budget & Safety",acc:"var(--acc-F)",intro:"内网信任已裁定；这里的约束防的是 AI 失控，不是黑客。"},
+ {id:"G",no:"07",name:"通知与收件箱",en:"Inbox",acc:"var(--acc-G)",intro:"你每天只看一屏：所有停在你闸口的单。"},
+ {id:"H",no:"08",name:"迁移与节奏",en:"Migration",acc:"var(--acc-H)",intro:"存量单怎么办、先修什么、宪章怎么重写。"}
+];
+
+const Q = [
+ // A 流程骨架
+ {id:"A1",sec:"A",title:"状态集",note:"现状 40 态（含 v1 遗留）。v2 建议砍到 8 通用态 + 专用流，存量一次性映射。",
+  opts:[["minimal8","采用新 8 态极简集","草稿/待批准/已批准/开发中/测试中/验收中/已关闭/已取消 + 专用流，干净彻底",1],
+        ["remap40","在现有 40 态上精简映射","改动小，但遗留复杂度留在板面上"],
+        ["custom","自定义","在备注里写你的状态集"]]},
+ {id:"A2",sec:"A",title:"向前拖的语义",note:"比如从「待批准」直接拖到「开发中」——沿途没停过的闸口算不算批了？",
+  opts:[["implicit","向前拖 = 批准沿途全部闸口","最省触点；日报会记录「跳级批准」留痕",1],
+        ["stepwise","必须逐闸口停","每个 H 态都停一次，触点最多但最稳"],
+        ["implicit-warn","允许跳级，但日报里警告","折中：不拦你，但让你看见跳了几级"]]},
+ {id:"A3",sec:"A",title:"回拖的语义",note:"比如从「测试中」拖回「开发中」。",
+  opts:[["rework","回拖 = 返工","attempt+1；你最近一条评论原样注入 worker 当返工意见，不写评论就用失败原因",1],
+        ["silent","仅换状态，不触发动作","daemon 不派工，等你进一步指示"]]},
+ {id:"A4",sec:"A",title:"非常规跳态",note:"你随时可能介入任何单。比如把「草稿」直接拖进「开发中」。",
+  opts:[["adaptive","接受并自适应","daemon 推导缺省步骤自动补齐（补冻结字段、补 DoD）并留痕",1],
+        ["bounce","自动弹回并提示","严格防呆，但你以后会觉得碍手"]]},
+ {id:"A5",sec:"A",title:"关单权（轻装轨）",note:"验收中全绿之后。",
+  opts:[["autoclose","daemon 自动关单","轻装轨全程你只拖 1 次（待批准→已批准）",1],
+        ["manual","全部人工拖关","每单 2 触点，关前你必看一眼证据链"]]},
+ {id:"A6",sec:"A",title:"文档类单的验收",note:"审计发现：两张单用恒真命令 test -e /dev/null 当验收，等于没验。",
+  opts:[["docgate","文档门：模板生成真实检查","文件存在+非空+字数下限+链接可达；恒真命令进黑名单",1],
+        ["anycmd","允许任意验收命令","包括恒真命令（现状的洞，不推荐）"]]},
+ // B
+ {id:"B1",sec:"B",title:"轨道数量",note:"轨道决定一张单要经过几个人工闸口。",
+  opts:[["two","双轨：轻装 / 重保","简单单 1 触点；复杂单 3-4 触点。贴合你说的「简单/复杂」",1],
+        ["three","三轨 A/B/C","恢复宪章 v1 的细分，触点粒度更细但更复杂"],
+        ["one","单轨","全部一个流程，灵活靠手动介入"]]},
+ {id:"B2",sec:"B",title:"默认轨道",note:"建单时没指定的单走哪条。",
+  opts:[["light","默认轻装","默认信任 agent；你觉得重要的单手动升重保",1],
+        ["heavy","默认重保","默认盯每一步，简单的单手动降轻装"],
+        ["bytype","按 Type 自动判","核心/数据/跨仓→重保，其余→轻装；判错了你再改"]]},
+ {id:"B3",sec:"B",title:"重保轨的人工闸口",note:"复杂单你想在哪些点停下来看。",
+  opts:[["three-gates","方案 + 代码 + 验收 三闸","动手前看方案、写完看代码、上线前看验收",1],
+        ["accept-only","仅验收一闸","中间不打扰你，最后把关"],
+        ["all","每步都闸","每一步都等你拖，最稳最慢"]]},
+ {id:"B4",sec:"B",title:"长期单（战役/巡逻）",note:"现状：两个战役 112 次巡逻、0 张孵化子单，情报源持续失败，纯成本中心。",
+  opts:[["keep-fix","保留并修好情报源","修域名校验与备用通道；战役是长期项目的正确载体",1],
+        ["manual","保留但只手动触发巡逻","省钱，但失去自动情报"],
+        ["drop","砍掉战役单","长期需求就拆普通单，不要巡逻"]]},
+ {id:"B5",sec:"B",title:"草稿池（情报+技术债）",note:"Inspector/Scout 的产出暂存区。注意：草稿转正通道目前有实锤断链 bug（C1/C2），选了保留就会在 P1 期修复。",
+  opts:[["keep","保留，拖出草稿即转正","草稿→新单就是一次拖拽，符合状态驱动",1],
+        ["drop","砍掉，一律直接建单","少一类单，少一条断链"]]},
+ // C
+ {id:"C1",sec:"C",title:"启用编制",note:"8 个 agent 账号都已存在。启用几个？",
+  opts:[["three","PM + 工人 + QA 三岗","其余休眠（账号保留）。一个人带三个兵起步",1],
+        ["five","再加 策划 / 美术","游戏项目需要设计文档与资源管线时选"],
+        ["eight","全 8 岗","含 Inspector/Scout；依赖 B4/B5 修复"]]},
+ {id:"C2",sec:"C",title:"工人板面权限",note:"实测：YouTrack 无字段级权限，「禁改状态」要靠 workflow 护栏（见 C3）；这里定的是工人的日常可见性。",
+  opts:[["comment-hb","只读 + 评论 + 心跳字段","现状已达标；另撤销「教 worker 自读 token」的指引，KB 草稿改 daemon 代发",1],
+        ["comment-only","只读 + 评论","心跳也走 daemon 代发"],
+        ["none","完全不经板面","工人只看本地任务书，全部 daemon 代发"]]},
+ {id:"C3",sec:"C",title:"平台护栏",note:"实测可行：自建 state-machine workflow 后，未定义迁移在手工/命令/API 三层全禁；H 态迁出可加「仅 opengames」guard——agent 物理改不动你的闸口。",
+  opts:[["workflow","启用 state-machine workflow + H 态 guard","平台层强制，daemon bug 也拦得住越权迁移",1],
+        ["daemon-only","daemon 自律即可","少一层建设，但护栏只剩自觉"]]},
+ {id:"C4",sec:"C",title:"QA 形态",note:"独立 QA cron 已证伪（5 天只跑 5 次、恒绿）；内联收割链是现状里验证可用的部分。",
+  opts:[["inline","内联收割链","收割时干净 checkout 复跑闸门 + 强制加测并落证据",1],
+        ["separate","独立 QA 进程","隔离更彻底，但要多养一条链路"],
+        ["none","免 QA","只靠闸门+验收，最快最险"]]},
+ // D
+ {id:"D1",sec:"D",title:"知识库载体",note:"31 篇已完成迁移到 Articles；POLY 项目层目前为空。",
+  opts:[["articles","YouTrack Articles 唯一真源","单源、agent 可读、你可在板面直接改",1],
+        ["repo","仓内 markdown","进 git 历史，但 agent 读取要走仓"],
+        ["dual","双写","两边都有，同步成本自己扛"]]},
+ {id:"D2",sec:"D",title:"工人沉淀",note:"工人干活过程产出的笔记/教训往哪写。",
+  opts:[["draft","草稿区直写，PM 巡检转正","工人写本地文件，daemon 以 agent-pm 代发到草稿区；不教 worker 碰 token",1],
+        ["readonly","工人只读不写","知识沉淀只靠你手动"]]},
+ {id:"D3",sec:"D",title:"项目知识库",note:"新项目建起来时。",
+  opts:[["auto","onboarding 自动建 KB 根 + 模板","README/决策记录/教训/接口文档 四个子节点预置",1],
+        ["manual","用到再建"]]},
+ // E
+ {id:"E1",sec:"E",title:"onboarding 方式",note:"你说会尝试很多项目——每开一个新项目的成本必须接近零。",
+  opts:[["script","一条命令全建","studio onboard <名>：YouTrack 项目+字段+板+KB+泳道注册一次到位",1],
+        ["checklist","手工清单","按文档手工建，灵活但慢"]]},
+ {id:"E2",sec:"E",title:"worker 并发上限",note:"同时干活的 claude 进程数。你的 Mac 与 API 限额都是约束。",
+  opts:[["p1g2","每项目 1 个、全局 2 个","两个项目可并行，互不干扰",1],
+        ["g1","全局 1 个串行","最省钱，多项目排队"],
+        ["g3","全局 3 个","更快，注意 GLM 端点并发与稳定性"]]},
+ {id:"E3",sec:"E",title:"板面布局",note:"实测：当前实例一块 Agile 板都没有——拖拽驱动的第一块板随本方案建。",
+  opts:[["both","每项目流程板 + 跨项目「总理板」","总理板聚合所有项目停在你闸口的单 = 你的收件箱",1],
+        ["perproj","仅每项目流程板","跨项目靠自己切换"]]},
+ // F
+ {id:"F1",sec:"F",title:"预算闸",note:"审计发现：STUDIO-14 一单烧掉全程 45% 费用（$13.76），断路-重批-清零会反复为同一工作付费。",
+  opts:[["budget","日/月软停 + 硬停","超线停派新单，超 150% 只留巡检；额度在下方填，随时可改",1],
+        ["record","只记账不限额","看得见花多少，但不停"],
+        ["none","不设"]]},
+ {id:"F2",sec:"F",title:"内网安全档",note:"你已裁定只考虑内网。但 worker 目前以 --dangerously-skip-permissions 无约束执行单据文本拼装的 prompt——这防的是 AI 失控，不是网络。",
+  opts:[["lan","保持 0.0.0.0 + 工人三约束","固定 --model + --disallowedTools + 45 分钟 wall-clock 超时；板面内网可达",1],
+        ["localhost","绑回 127.0.0.1","仅本机可访问 YouTrack；手机/平板看不了板"]]},
+ {id:"F3",sec:"F",title:"git push 策略",note:"现状红线：永不自动 push，13 张已关闭单全部只到本地。",
+  opts:[["batch","维持：版本日批量授权","每周五一次性推；本地先攒着",1],
+        ["onclose","关单即 push","每张单关闭就推远端"],
+        ["manual","全手动","push 永远你自己来"]]},
+ {id:"F4",sec:"F",title:"Studio 仓备份",note:"框架仓现在没有远端——单盘故障 = 全部代码与历史丢失（游戏仓有 GitHub 远端，框架仓没有）。",
+  opts:[["github","建私有 GitHub 远端每日同步","推上去，异地留存",1],
+        ["local","本地定时打包","打包到另一块盘"],
+        ["none","暂不管"]]},
+ // G
+ {id:"G1",sec:"G",title:"你的收件箱",note:"你只有一个人，所有停在人工闸口的单应该汇到一屏。",
+  opts:[["inbox","驾驶舱「待你处理」面板","8787 驾驶舱首页置顶：单号/闸口/已等多久/要点摘要/直达链接",1],
+        ["board","只看 YouTrack 板","不建新面板"],
+        ["digest","面板 + 每日日报 Article","每天 09:30 一篇：昨日闭环/红灯/成本/今日待办"]]},
+ {id:"G2",sec:"G",title:"异常通知",note:"断路触发、预算触底、连续失败这类事，怎么让你知道。",
+  opts:[["dash","驾驶舱 + 日报即可","被动查看，不打扰",1],
+        ["macos","+ macOS 系统通知","异常时弹系统通知"],
+        ["widget","+ Kimi Dashboard widget","在 Kimi 看板里放一个工作室状态 Widget"]]},
+ // H
+ {id:"H1",sec:"H",title:"存量单处理",note:"POLY/STUDIO 现有 5 张打开单 + 历史已关闭单。",
+  opts:[["migrate","映射到新状态机继续跑","一次性迁移脚本：已排期→待批准、待测试→测试中、合并验证→验收中…",1],
+        ["close","全部关闭重来","干净，但丢进行中的上下文"],
+        ["freeze","冻结只读","老单不动，新单走新机制，双轨并行一阵"]]},
+ {id:"H2",sec:"H",title:"实施节奏",note:"审核报告里有 4 个 P0（超时死循环/注入洞/schema 500/worker 无约束），全是小改动。",
+  opts:[["p0first","先修 4 个 P0，再切状态驱动","P0 一天内完成，然后按 P1-P4 分期实施 v2",1],
+        ["parallel","P0 与 v2 并行重写","快，但两条线同时动 daemon"],
+        ["me","我来排","在备注里写你的顺序"]]},
+ {id:"H3",sec:"H",title:"老宪章",note:"CHARTER.md（v1）自称唯一事实源，但与实现已大面积离婚（审核发现 D1-D11）。",
+  opts:[["rewrite","重写为 v2 宪章固化","你本次决策结果就是新宪章正文",1],
+        ["patch","只打补丁不重写","省一次文档功夫，漂移继续累积"]]}
+];
+
+// ---------- state ----------
+const LS="studio-v2-decisions-v1";
+let state={answers:{},confirmed:{},inputs:{}};
+Q.forEach(q=>{const r=q.opts.find(o=>o[3]);if(r)state.answers[q.id]=r[0];});
+try{const s=JSON.parse(localStorage.getItem(LS)||"null");
+  if(s){Object.assign(state.answers,s.answers||{});state.confirmed=s.confirmed||{};state.inputs=s.inputs||{};}}catch(e){}
+function save(){state.inputs={projects:gv("in-projects"),day:gv("in-day"),month:gv("in-month"),notes:gv("in-notes")};
+  localStorage.setItem(LS,JSON.stringify(state));}
+function gv(id){return document.getElementById(id).value}
+function sv(id,v){document.getElementById(id).value=v}
+
+// ---------- render ----------
+const secEl=document.getElementById("sections"),navEl=document.getElementById("nav");
+SECTIONS.forEach(s=>{
+  const qs=Q.filter(q=>q.sec===s.id);
+  navEl.insertAdjacentHTML("beforeend",
+    `<a href="#sec-${s.id}" data-sec="${s.id}" style="color:${s.acc}"><span class="no">${s.no}</span><span class="dot" style="background:${s.acc}"></span><span class="lbl" style="color:var(--ink)">${s.name}</span><span class="pg" id="pg-${s.id}"></span></a>`);
+  let h=`<section id="sec-${s.id}" style="--acc:${s.acc}"><div class="sec-head"><span class="no" style="color:${s.acc}">${s.no}</span><h3>${s.name}</h3><span class="en">${s.en}</span></div>`;
+  if(s.intro)h+=`<p style="font-size:13px;color:var(--ink-2);padding:10px 0 0">${s.intro}</p>`;
+  qs.forEach(q=>{
+    h+=`<div class="q" data-qid="${q.id}" data-acc="${s.acc}" style="--acc:${s.acc}">
+      <div class="q-head"><span class="qid" style="background:${s.acc}">${q.id}</span><span class="q-title">${q.title}</span><span class="chip">待确认</span></div>
+      <div class="q-note">${q.note}</div><div class="opts">`;
+    q.opts.forEach(o=>{
+      h+=`<label class="opt" data-val="${o[0]}"><input type="radio" name="q_${q.id}" value="${o[0]}">
+        <span class="radio"></span><span class="opt-body"><span class="opt-label">${o[1]}${o[3]?'<span class="rec">推荐</span>':''}</span>
+        ${o[2]?`<div class="opt-note">${o[2]}</div>`:''}</span></label>`;});
+    h+=`</div></div>`;});
+  h+=`</section>`;secEl.insertAdjacentHTML("beforeend",h);
+});
+
+// restore inputs
+["projects","day","month","notes"].forEach(k=>{const el=document.getElementById("in-"+k);if(el&&state.inputs[k]!=null)el.value=state.inputs[k];});
+
+function refresh(){
+  let done=0;
+  Q.forEach(q=>{
+    const el=document.querySelector(`.q[data-qid="${q.id}"]`);
+    const val=state.answers[q.id];
+    el.querySelectorAll(".opt").forEach(o=>{
+      const sel=o.dataset.val===val;o.classList.toggle("sel",sel);
+      o.querySelector("input").checked=sel;});
+    const conf=!!state.confirmed[q.id];
+    el.classList.toggle("confirmed",conf);
+    el.querySelector(".chip").textContent=conf?"✓ 已确认":"待确认";
+    if(conf)done++;
+  });
+  SECTIONS.forEach(s=>{
+    const qs=Q.filter(q=>q.sec===s.id);
+    const d=qs.filter(q=>state.confirmed[q.id]).length;
+    const pg=document.getElementById("pg-"+s.id);pg.textContent=`${d}/${qs.length}`;
+    pg.parentElement.classList.toggle("done",d===qs.length);});
+  document.getElementById("totalbar").style.width=(done/Q.length*100)+"%";
+  document.getElementById("totaltxt").textContent=`${done} / ${Q.length} 已决策`;
+}
+document.querySelectorAll(".q input[type=radio]").forEach(r=>{
+  r.addEventListener("change",e=>{
+    const qid=e.target.name.slice(2);
+    state.answers[qid]=e.target.value;state.confirmed[qid]=true;save();refresh();});});
+["in-projects","in-day","in-month","in-notes"].forEach(id=>document.getElementById(id).addEventListener("input",save));
+
+document.getElementById("btn-rec").onclick=()=>{Q.forEach(q=>{const r=q.opts.find(o=>o[3]);if(r){state.answers[q.id]=r[0];state.confirmed[q.id]=true;}});save();refresh();};
+document.getElementById("btn-reset").onclick=()=>{if(confirm("清空全部选择与填空？")){localStorage.removeItem(LS);location.reload();}};
+
+// ---------- export ----------
+function payload(){
+  save();
+  const answers={};Q.forEach(q=>{const o=q.opts.find(o=>o[0]===state.answers[q.id]);
+    answers[q.id]={question:q.title,value:state.answers[q.id],label:o?o[1]:state.answers[q.id],recommended:!!(o&&o[3]),confirmed:!!state.confirmed[q.id]};});
+  return {meta:{framework:"studio-v2",version:"0.9",generated_at:new Date().toISOString()},answers,inputs:state.inputs};
+}
+function download(name,text){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([text],{type:"application/json"}));a.download=name;a.click();URL.revokeObjectURL(a.href);}
+function doExport(){download("studio-v2-decisions.json",JSON.stringify(payload(),null,2));}
+function summary(){
+  const p=payload();let m=`# STUDIO v2 决策结果（${new Date().toLocaleString("zh-CN")}）\n\n`;
+  SECTIONS.forEach(s=>{m+=`## ${s.name}\n`;Q.filter(q=>q.sec===s.id).forEach(q=>{const a=p.answers[q.id];
+    m+=`- **${q.id} ${q.title}**：${a.label}${a.recommended?"（同推荐）":" ⚠️（改自推荐）"}${a.confirmed?"":"（未确认，按推荐）"}\n`;});m+="\n";});
+  m+=`## 填空\n- 首批项目：${p.inputs.projects||"（未填）"}\n- 预算：日 ¥${p.inputs.day||"-"} / 月 ¥${p.inputs.month||"-"}\n- 备注：${p.inputs.notes||"（无）"}\n`;
+  m+=`\n> 机器可读 JSON 已可同时下载（decisions.json）。\n`;
+  return m;
+}
+function showSummary(){const t=summary();const out=document.getElementById("export-out");out.value=t;
+  out.scrollIntoView({behavior:"smooth",block:"center"});
+  (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).catch(()=>{out.select();document.execCommand("copy");});}
+document.getElementById("btn-export").onclick=doExport;
+document.getElementById("btn-export2").onclick=doExport;
+document.getElementById("btn-summary").onclick=showSummary;
+document.getElementById("btn-summary2").onclick=showSummary;
+
+// ---------- import ----------
+document.getElementById("btn-import").onclick=()=>document.getElementById("import-file").click();
+document.getElementById("import-file").addEventListener("change",e=>{
+  const f=e.target.files[0];if(!f)return;const r=new FileReader();
+  r.onload=()=>{try{const d=JSON.parse(r.result);
+    if(d.answers){Object.keys(d.answers).forEach(k=>{state.answers[k]=d.answers[k].value??d.answers[k];state.confirmed[k]=true;});}
+    if(d.inputs){sv("in-projects",d.inputs.projects||"");sv("in-day",d.inputs.day??60);sv("in-month",d.inputs.month??900);sv("in-notes",d.inputs.notes||"");}
+    save();refresh();}catch(err){alert("导入失败："+err.message);}};
+  r.readAsText(f);});
+
+// ---------- scrollspy ----------
+const links=[...document.querySelectorAll("nav a")];
+const obs=new IntersectionObserver(es=>{es.forEach(en=>{if(en.isIntersecting){
+  links.forEach(l=>l.classList.toggle("active",l.dataset.sec===en.target.id.replace("sec-","")));}});},
+  {rootMargin:"-15% 0px -75% 0px"});
+document.querySelectorAll("section[id^=sec-]").forEach(s=>obs.observe(s));
+
+refresh();
+</script>
+</body>
+</html>

@@ -11,6 +11,20 @@ from studio.config import Config, CONFIG  # noqa: E402
 REAL_ROOT = CONFIG._root  # studio-daemon/
 
 
+@pytest.fixture(autouse=True)
+def _no_llm(request, monkeypatch):
+    """测试永远不调真实 LLM（C10：批示/DoD/加测岛全部确定性打桩，套件零扣费零外呼）。
+    orchestrator 对被桩函数均为函数内延迟 import，打模块属性即可生效。
+    test_llm.py 测的是 LLM 岛本体（自带替身），跳过。"""
+    if request.node.path.name == "test_llm.py":
+        return
+    from studio import llm
+    monkeypatch.setattr(llm, "ask", lambda *a, **k: None)
+    monkeypatch.setattr(llm, "parse_directive", lambda *a, **k: None)
+    if hasattr(llm, "reviewed_ask"):
+        monkeypatch.setattr(llm, "reviewed_ask", lambda *a, **k: None)
+
+
 @pytest.fixture
 def tmp_config(tmp_path, monkeypatch):
     """把 CONFIG 的全部可写路径指到临时目录（不重建 singleton，只换路径）。"""

@@ -32,9 +32,12 @@ def run_gate(issue: str, attempt_tag: str, lane: str, acct: str = "agent-pm") ->
         proc = subprocess.run(["bash", "-c", cmd], cwd=repo, capture_output=True,
                               text=True, timeout=600)
     except subprocess.TimeoutExpired as e:
+        # TimeoutExpired.stdout/stderr 恒为 bytes（与 text=True 无关），必须先 decode
+        out = e.stdout.decode("utf-8", "replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
+        err = e.stderr.decode("utf-8", "replace") if isinstance(e.stderr, bytes) else (e.stderr or "")
         proc = subprocess.CompletedProcess([], 124,
-                                           (e.stdout or "") + f"\n[GATE-TIMEOUT 600s]",
-                                           e.stderr or "")
+                                           out + f"\n[GATE-TIMEOUT 600s]",
+                                           err)
     log.write_text(proc.stdout + proc.stderr)
     res = GateResult({
         "issue": issue, "project": pid, "attempt": attempt_tag, "lane": lane,
