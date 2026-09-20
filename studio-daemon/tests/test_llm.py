@@ -44,6 +44,7 @@ def test_ask_失败返回None(monkeypatch):
     import subprocess
     def boom(*a, **k):
         raise subprocess.TimeoutExpired("claude", 1)
+    monkeypatch.setattr(llm, "_llm_fail_log", lambda *a, **k: None)   # 测试不得写生产日志
     monkeypatch.setattr(llm.subprocess, "run", boom)
     assert llm.ask("x") is None
 
