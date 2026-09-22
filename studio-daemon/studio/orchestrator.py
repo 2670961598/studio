@@ -161,6 +161,8 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
         # L3 第一段（方案）交付：无 approve-design 记录 → 进方案审
         if lv.startswith("L3") and not _has(yt, iid, "approve-design"):
             yt.transition(iid, "待批")
+            # 结构性槽位标记：进的是哪个待批位由转换本身声明，与批示词解析解耦
+            yt.comment(iid, "方案段就绪，进入方案审")
             return f"L3-方案段就绪 {iid} →待批(方案审)"
         # 复验与活 worker 抢共享树必误红（GAMES-5/6 实录：闸门跑在别人分支上 4 连退回）。
         # 泳道忙 → 顺延不烧 attempt；闲 → 持锁切到本单分支再跑闸门与加测。
@@ -204,6 +206,7 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
         if lv.startswith(("L0", "L1")):
             return _merge(yt, pid, iid, lane)
         yt.transition(iid, "待批")
+        yt.comment(iid, "复验通过，进入合并审")     # 结构性槽位标记（同上，与批示词解耦）
         return f"READY→待批(合并审) {iid} [{lv}]"
 
     return None
@@ -462,29 +465,24 @@ def _directives(yt, iid, lv, typ) -> str | None:
     idxs = [i for i, st_ in enumerate(slot) if st_ == "待批"]
     # 槽位定位：看最新路标——断路退审=重消费同位；批示已执行=前进一位；无路标=第1位
     cur = 0
-    last_mark = ""                             # 末位定位标记类型：断路复位优先于批号语义
-    for c in cs:                               # cs 为时间序
+    cur = 0
+    for c in cs:                               # cs 为时间序；后写的定位标记胜出
         t_ = c["text"].strip()
-        if c["author"] == "agent-pm" and t_.startswith("断路退审：回到第"):
+        if c["author"] != "agent-pm":
+            continue
+        if t_.startswith("断路退审：回到第"):
             try:
                 cur = max(0, int(re.search(r"第(\d+)批", t_).group(1)) - 1)
             except Exception:
                 cur = 0
-            last_mark = "breaker"
-        elif c["author"] == "agent-pm" and t_.startswith("批示已执行"):
+        elif t_.startswith("方案段就绪，进入方案审"):
+            cur = min(1, len(idxs) - 1)        # 结构性槽位声明：方案审=第2个待批位
+        elif t_.startswith("复验通过，进入合并审"):
+            cur = len(idxs) - 1                 # 结构性槽位声明：合并审=末个待批位
+        elif t_.startswith("批示已执行"):
             m_ = re.search(r"第(\d+)批", t_)
-            if m_:
-                cur = min(int(m_.group(1)), len(idxs) - 1)   # 已消费N批(1基) → 下一位=N(0基)
-            last_mark = "consumed"
-    # L3 槽位语义校正：批号=N 是"第N个批示"而非"第N个槽位"——断路复位重批过的单
-    # 两者错位（GAMES-2 实录：第2批消费于槽1，标记却把下一定位推到合并审）。
-    # L3 以 approve-design 是否已消费为准：未消费→方案审；已消费→合并审；
-    # 但末位标记是断路复位时回到第1批位（立项）重新授权，不做校正。
-    if lv.startswith("L3") and last_mark != "breaker":
-        if any(c["author"] == "agent-pm" and "批示已执行 approve-design" in c["text"] for c in cs):
-            cur = min(2, len(idxs) - 1)
-        elif applied >= 1:
-            cur = min(1, len(idxs) - 1)
+            if m_:                             # 批号=第N个批示；断路复位过的单与槽位
+                cur = min(int(m_.group(1)), len(idxs) - 1)   # 错位，结构标记优先纠正
     cur = min(cur, len(idxs) - 1)
     # 制作人的批准=新授权：断路计数清零（否则 attempt≥3 与重派判定死循环振荡）
     if int(yt.f(iid, "attempt") or 0) >= CONFIG.max_attempts:

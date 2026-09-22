@@ -395,3 +395,33 @@ class TestL3槽位语义:
         log = subprocess.run(["git", "-C", str(repo), "log", "--oneline"],
                              capture_output=True, text=True).stdout
         assert f"merge({iid})" in log
+
+
+class TestL3批示词误解析容忍:
+    def test_LLM岛误写approve_merge_槽位仍按结构标记走(self, env, lanes, monkeypatch):
+        """GAMES-3 实录回归：LLM 岛把 approve-design 批示误解析成 approve-merge，
+        槽位定位必须依赖结构性转换标记（方案段就绪/复验通过），不依赖批示词。"""
+        from studio import llm
+        monkeypatch.setattr(llm, "parse_directive",
+                            lambda text, ctx: {"directive": "approve-merge", "confidence": 0.9})
+        monkeypatch.setattr(CONFIG, "delegated_approvals", {"POLY": ["agent-pm"]})
+        yt = env
+        iid = yt.new("POLY", "L3误解析", "d", lane="core", typ="需求", track="L3 特护")
+        orch.pm_tick()                                   # →待批(立项)
+        yt.comment(iid, "批准\n（PM 代批）")
+        orch.pm_tick(); orch.pm_tick()                   # APPROVED→已派发 / DISPATCH
+        simulate_worker(yt, iid, lanes)
+        orch.pm_tick()                                   # harvest→证据就绪
+        orch.pm_tick()                                   # 方案段就绪→待批(方案审)+结构标记
+        assert state(yt, iid) == "待批"
+        yt.comment(iid, "approve-design\n（PM 代批：方案审通过）")
+        r = orch.pm_tick()                               # 被误解析为 approve-merge → 仍落方案审
+        assert state(yt, iid) == "已派发", "误解析不得把方案审变成合并交付"
+        orch.pm_tick()                                   # DISPATCH 实现段
+        simulate_worker(yt, iid, lanes)
+        for _ in range(3):
+            orch.pm_tick()                               # harvest→verify→复验通过→待批(合并审)+结构标记
+        assert state(yt, iid) == "待批"
+        yt.comment(iid, "批准\n（PM 代批）")
+        orch.pm_tick()
+        assert state(yt, iid) == "已交付", "末轮必须按合并审结构标记真合并"
