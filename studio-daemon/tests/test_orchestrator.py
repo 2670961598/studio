@@ -297,3 +297,60 @@ class Test脏树自愈:
         assert any(a.startswith("DISPATCH") for a in r["actions"]), r
         assert not (repo / "server").exists(), "未跟踪残留必须被清"
         assert any("泳道自愈" in c["text"] for c in yt.comments(iid))
+
+
+class TestPM代批:
+    """制作人委托代批（config.delegated_approvals）：委托项目内 PM 批示等效制作人；
+    未委托项目 PM 批示无效；PM 留痕评论不得被当成批示（防自批准循环）。"""
+
+    def test_委托项目_PM批准_全流程交付(self, env, lanes, monkeypatch):
+        monkeypatch.setattr(CONFIG, "delegated_approvals", {"POLY": ["agent-pm"]})
+        yt = env
+        iid = yt.new("POLY", "L2代批", "d", lane="core", typ="需求", track="L2 常规")
+        orch.pm_tick()                                   # 新单→待批
+        yt.comment(iid, "批准\n（PM 代批：制作人委托）")     # agent-pm 身份批示
+        r = orch.pm_tick()
+        assert any("APPROVED" in a for a in r["actions"]), r
+        orch.pm_tick()                                   # 派发
+        simulate_worker(yt, iid, lanes)
+        orch.pm_tick(); orch.pm_tick(); orch.pm_tick()   # harvest→verify→待批(合并审)
+        assert state(yt, iid) == "待批"
+        yt.comment(iid, "批准\n（PM 代批：制作人委托）")
+        r2 = orch.pm_tick()
+        assert state(yt, iid) == "已交付"
+        repo = Path(CONFIG.lane("core")["path"])
+        log = subprocess.run(["git", "-C", str(repo), "log", "--oneline"],
+                             capture_output=True, text=True).stdout
+        assert f"merge({iid})" in log, "代批合并批必须产生真实 merge commit"
+
+    def test_未委托项目_PM批示_不被消费(self, env, lanes):
+        """默认委托表只含 GAMES——POLY 的 PM 评论必须无效（授权边界不外溢）。"""
+        yt = env
+        iid = yt.new("POLY", "边界", "d", lane="core", typ="需求", track="L2 常规")
+        orch.pm_tick()                                   # →待批
+        yt.comment(iid, "批准")
+        r = orch.pm_tick()
+        assert state(yt, iid) == "待批", "未委托项目 PM 批示不得生效"
+
+
+class Test合并批示忙时保留:
+    def test_L2合并批_泳道忙_批示保留下拍重试(self, env, lanes, monkeypatch):
+        from studio.locks import lock
+        monkeypatch.setattr(CONFIG, "delegated_approvals", {"POLY": ["agent-pm"]})
+        yt = env
+        iid = yt.new("POLY", "L2忙", "d", lane="core", typ="需求", track="L2 常规")
+        yt.comment(iid, "批准\n（PM 代批）")
+        orch.pm_tick(); orch.pm_tick(); orch.pm_tick()   # 待批→批示→派发
+        simulate_worker(yt, iid, lanes)
+        orch.pm_tick(); orch.pm_tick(); orch.pm_tick()   # harvest→verify→待批(合并审)
+        assert state(yt, iid) == "待批"
+        yt.comment(iid, "批准\n（PM 代批）")
+        lock(CONFIG, "lane-POLY-core").acquire("worker-OTHER", 120)   # 活 worker 占道
+        r = orch.pm_tick()
+        assert any(a.startswith("MERGE-DEFER") for a in r["actions"]), r
+        assert state(yt, iid) == "待批"
+        assert not any(c["text"].startswith("批示已执行 approve-merge") for c in yt.comments(iid)), \
+            "忙时不得烧掉批示标记"
+        lock(CONFIG, "lane-POLY-core").release("worker-OTHER")
+        r2 = orch.pm_tick()
+        assert state(yt, iid) == "已交付", "道释放后批示必须自动补合并"

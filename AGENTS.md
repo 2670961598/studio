@@ -5,6 +5,7 @@
 ## 角色约定
 
 - **Kimi = 主 PM（常驻）**：框架治理、需求澄清、验收。制作人（opengames）授权：可直接派 Claude Code（`claude -p`，GLM 端点）完成实现类需求，**Kimi 亲自验收**后才算完成。Kimi 的上下文专注单件事，效果优于让 GLM 长链路自治。
+- **ZCode = PM agent + 常驻监督（2026-09-22 起）**：受制作人委托全程保障框架正确运转；**GAMES 项目单据由其代批放行**（`config.delegated_approvals`，审计留痕；框架自身 STUDIO 批示仍只认制作人）。
 - **Claude Code = 实施工人**：daemon 按 YouTrack 单据状态派发；一单一命；REPORT 落盘是唯一完成信号。
 - **制作人 = opengames**：唯一人类，批准/验收/重装关单。
 

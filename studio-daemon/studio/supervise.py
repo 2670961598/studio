@@ -105,7 +105,7 @@ def _anomalies_tickets(out):
                         if c["author"] == "agent-pm" and c["text"].startswith(_PM_MARKERS):
                             last_marker = i
                     unconsumed = [c for c in cs[last_marker + 1:]
-                                  if c["author"] == CONFIG.producer
+                                  if CONFIG.is_approver(iid.split("-")[0], c["author"])
                                   and _first_seg(c["text"]) in _APPROVE_ALIASES]
                     if unconsumed:
                         u = unconsumed[-1]

@@ -31,6 +31,9 @@ class Config:
                   self.heartbeats_dir, self.logs_dir, self.digest_dir):
             d.mkdir(parents=True, exist_ok=True)
         self.producer = "opengames"
+        # 制作人委托代批（2026-09-22 口头委托：GAMES 项目单据由 PM 代批放行，
+        # "只需要一直批准"；框架自身 STUDIO 批示仍只认制作人）
+        self.delegated_approvals: dict[str, list[str]] = {"GAMES": ["agent-pm"]}
         self.max_attempts = 3
         self.heartbeat_timeout_min = 90
         self.lane_lock_ttl_min = 120
@@ -50,6 +53,10 @@ class Config:
 
     def lane(self, name: str) -> dict:
         return self.lanes[name]
+
+    def is_approver(self, pid: str, author: str) -> bool:
+        """批示授权谓词：制作人恒真；委托表内的项目允许指定账号代批（可审计）。"""
+        return author == self.producer or author in self.delegated_approvals.get(pid, [])
 
     def proj_id(self, pid: str) -> str:
         return self.projects[pid]

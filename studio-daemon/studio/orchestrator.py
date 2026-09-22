@@ -102,7 +102,7 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
     # ---- 草稿：等制作人 promote/kill（Inspector/Scout/自评 的产出位）----
     if st == "草稿":
         for c in yt.comments(iid):
-            if c["author"] != CONFIG.producer:
+            if not CONFIG.is_approver(pid, c["author"]):
                 continue
             w = c["text"].strip().split()
             d0 = w[0] if w else ""
@@ -385,9 +385,9 @@ def _back_to_dispatch(yt, pid, iid, n, why):
 
 
 def _has(yt, iid, word) -> bool:
-    """制作人评论首 token 精确匹配（P2-6：子串匹配会误判"上次X批错了"）。"""
+    """授权批示人评论首 token 精确匹配（P2-6：子串匹配会误判"上次X批错了"）。"""
     for c in yt.comments(iid):
-        if c["author"] == CONFIG.producer:
+        if CONFIG.is_approver(iid.split("-")[0], c["author"]):
             toks = c["text"].strip().split()
             if toks and toks[0] == word:
                 return True
@@ -427,8 +427,10 @@ def _directives(yt, iid, lv, typ) -> str | None:
                   and c["text"].startswith("批示已执行"))
     approvals = []
     for c in cs:
-        if c["author"] != CONFIG.producer or not c["text"].strip():
+        if not CONFIG.is_approver(iid.split("-")[0], c["author"]) or not c["text"].strip():
             continue
+        if c["text"].lstrip().startswith(("批示已执行", "制作人批示", "断路退审")):
+            continue                    # PM 留痕评论禁当批示（代批后防自批准循环）
         # LLM 岛优先理解自然语言批示；失败回退字符串匹配兜底
         from .llm import parse_directive
         parsed = parse_directive(c["text"], f"{iid} 级别={lv} 类型={typ} 当前态={yt.f(iid, 'State')}")
@@ -442,7 +444,7 @@ def _directives(yt, iid, lv, typ) -> str | None:
     if len(approvals) <= applied:
         # 没有新批示；查非 approve 指令（reject/kill/track）
         for c in cs[-10:]:
-            if c["author"] != CONFIG.producer:
+            if not CONFIG.is_approver(iid.split("-")[0], c["author"]):
                 continue
             w = c["text"].strip().split()
             d = _normalize_directive(w[0]) if w else ""
@@ -486,6 +488,9 @@ def _directives(yt, iid, lv, typ) -> str | None:
     if nxt == "已交付":
         # 合并批：必须走真实 merge+verify（禁只翻状态）；失败如实留痕
         m = _merge(yt, iid.split("-")[0], iid, lane_of(yt, iid))
+        if "LANE-BUSY" in m:
+            # 泳道被活 worker 占用是暂态：批示保留不消费，下拍重试（原实现会白烧标记）
+            return f"MERGE-DEFER {iid} 泳道忙，批示保留待下拍"
         if "DELIVERED" not in m:
             yt.comment(iid, f"批示已执行 {d}（合并未成：{m}，已回退重做；复验通过后需重新批准合并） (第{applied + 1}批)")
             _event(iid.split("-")[0], iid, "APPROVE", "opengames", 0, f"{d} 合并失败回退: {m}")
