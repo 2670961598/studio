@@ -46,18 +46,35 @@ class DirLock:
     def acquire(self, owner: str, ttl_min: int = 120) -> None:
         for _ in range(3):                       # 过期接管重试（并发败者各清各的）
             cur = self._read(ttl_min)
-            if cur:
+            if cur and not self._owner_dead():
                 raise LockBusy(f"{cur[0]} {cur[1]}min")
+            if cur:                              # 持锁进程已死：清尸接管（不留 TTL 盲窗）
+                shutil.rmtree(self.path, ignore_errors=True)
             try:
                 self.path.mkdir(parents=True)
                 self._take(owner)
                 return
             except FileExistsError:
                 cur = self._read(ttl_min)        # 复查：真并发 → HELD；过期 → 清尸重试
-                if cur:
+                if cur and not self._owner_dead():
                     raise LockBusy(f"{cur[0]} {cur[1]}min")
                 shutil.rmtree(self.path, ignore_errors=True)
         raise LockBusy("takeover-race")
+
+    def _owner_dead(self) -> bool:
+        """锁上记录的 pid 已不存在 = 死进程残留（daemon 被 kill -9/崩溃等）。
+        tick 锁 TTL 240min：无此接管则一次崩溃 = 4 小时盲窗（09-22 实录）。"""
+        try:
+            pid = int(self.path.joinpath("pid").read_text().strip())
+        except (FileNotFoundError, ValueError):
+            return False                          # 无 pid 可考 → 保守按活锁处理
+        try:
+            os.kill(pid, 0)
+            return False
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return False                          # 别人的进程（活着但无权探测）
 
     def check(self, ttl_min: int = 120):
         cur = self._read(ttl_min)

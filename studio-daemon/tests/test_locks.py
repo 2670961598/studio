@@ -50,3 +50,27 @@ def test_beat_续期(tmp_path):
     (lk.path / "ts").write_text(str(int(time.time()) - 120))
     lk.beat()
     assert lk.check(1).startswith("HELD A")   # 续期后未过期
+
+
+def test_死进程锁自动接管(tmp_path):
+    """daemon 崩溃/被 kill 后锁残留（09-22 实录：tick-GAMES 死锁盲窗 4h）——
+    锁上 pid 已死 → 接管；pid 活着（哪怕无权限探测）→ 仍 LockBusy。"""
+    import os
+    lk = mk(tmp_path, "dead")
+    lk.acquire("tick-x", 10)
+    dead = os.fork()                       # 造一个立刻退出的 pid
+    if dead == 0:
+        os._exit(0)
+    os.waitpid(dead, 0)
+    (lk.path / "pid").write_text(str(dead))
+    b = mk(tmp_path, "dead")
+    b.acquire("tick-y", 10)                # 持锁 pid 已死 → 直接接管，不抛 LockBusy
+    assert b.check(10).startswith("HELD tick-y")
+    live = lk.path.joinpath("pid")         # 活 pid：用当前进程
+    live.write_text(str(os.getpid()))
+    b.release("tick-y")
+    lk2 = mk(tmp_path, "dead2")
+    lk2.acquire("tick-z", 10)
+    lk2.path.joinpath("pid").write_text(str(os.getpid()))
+    with pytest.raises(LockBusy):
+        mk(tmp_path, "dead2").acquire("tick-w", 10)   # 活着 → 拒绝
