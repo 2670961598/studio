@@ -162,20 +162,33 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
         if lv.startswith("L3") and not _has(yt, iid, "approve-design"):
             yt.transition(iid, "待批")
             return f"L3-方案段就绪 {iid} →待批(方案审)"
-        res = run_gate(iid, f"qa-{int(time.time())}", lane, acct="agent-qa")
-        from .llm import extra_test_gen
-        extra = extra_test_gen(yt.get(iid), yt.f(iid, "验收命令") or "")
-        extra_ok = True
-        note = "加测=生成失败跳过"
-        if extra:
+        # 复验与活 worker 抢共享树必误红（GAMES-5/6 实录：闸门跑在别人分支上 4 连退回）。
+        # 泳道忙 → 顺延不烧 attempt；闲 → 持锁切到本单分支再跑闸门与加测。
+        lk = lock(CONFIG, f"lane-{pid}-{lane}")
+        if lk.check(CONFIG.lane_lock_ttl_min) != "FREE":
+            return f"VERIFY-DEFER {iid} 泳道忙，复验顺延"
+        try:
+            lk.acquire(f"qa-{iid}", CONFIG.lane_lock_ttl_min)
+        except LockBusy:
+            return f"VERIFY-DEFER {iid} 泳道忙，复验顺延"
+        try:
             lc = CONFIG.lane(lane)
-            try:
-                p = subprocess.run(["bash", "-c", extra], cwd=lc["path"],
-                                   capture_output=True, text=True, timeout=300)
-                extra_ok = p.returncode == 0
-            except subprocess.TimeoutExpired:
-                extra_ok = False
-            note = f"加测={extra} → ok={extra_ok}"
+            _git(lc["path"], "checkout", f"feature/{iid}")
+            res = run_gate(iid, f"qa-{int(time.time())}", lane, acct="agent-qa")
+            from .llm import extra_test_gen
+            extra = extra_test_gen(yt.get(iid), yt.f(iid, "验收命令") or "")
+            extra_ok = True
+            note = "加测=生成失败跳过"
+            if extra:
+                try:
+                    p = subprocess.run(["bash", "-c", extra], cwd=lc["path"],
+                                       capture_output=True, text=True, timeout=300)
+                    extra_ok = p.returncode == 0
+                except subprocess.TimeoutExpired:
+                    extra_ok = False
+                note = f"加测={extra} → ok={extra_ok}"
+        finally:
+            lk.release(f"qa-{iid}")
         if res.ok and extra_ok:
             yt.transition(iid, "复验通过")
             yt.comment(iid, f"复验通过 证据={res['log'][:-4]}.json commit={res['commit']} {note}")
@@ -226,7 +239,15 @@ def _dispatch(yt, pid, iid, lane, already: bool = False) -> str | None:
     if lk.check(CONFIG.lane_lock_ttl_min) != "FREE":
         return f"LANE-BUSY {lane}"
     if _git(lc["path"], "status", "--porcelain", check=False).stdout.strip():
-        return f"TREE-DIRTY {lane} 跳过"
+        # 锁已 FREE（上面过检）→ 脏树 = worker 残留（完成只认提交，未提交即垃圾）。
+        # 自愈：复位 base + 清未跟踪，评论留证后继续派发。GAMES server/ 残留曾卡道 15h。
+        _git(lc["path"], "checkout", lc["base_branch"], check=False)
+        _git(lc["path"], "reset", "--hard", lc["base_branch"], check=False)
+        _git(lc["path"], "clean", "-fd", check=False)
+        if _git(lc["path"], "status", "--porcelain", check=False).stdout.strip():
+            return f"TREE-DIRTY {lane} 自愈失败，需人工"
+        yt.comment(iid, f"泳道自愈：无活 worker（锁 FREE）下脏树残留，"
+                        f"已 reset+clean 复位 {lc['base_branch']} 后派发")
     lk.acquire(f"worker-{iid}", CONFIG.lane_lock_ttl_min)
     try:
         _git(lc["path"], "checkout", lc["base_branch"])

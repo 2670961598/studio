@@ -72,15 +72,25 @@ def self_eval() -> dict:
         findings.append(f"STALL {m['stall']} 次——审批等待或卡单回收策略需调")
     from .yt import YT
     yt = YT("agent-pm")
-    open_keys = set()
-    try:
-        for r in yt.list("STUDIO", "State:草稿"):
-            if r["type"] == "提案" and r["summary"].startswith("[自评]"):
-                open_keys.add(_finding_key(r["summary"]))
-    except Exception:
-        pass                                    # 查重失败不阻断（宁可重复不可漏报）
+    open_keys: set | None = None                # None = 查重不可用（09-21/09-22 两天
+    for _retry in range(2):                     # 静默吞错连刷重复草稿的教训）
+        try:
+            open_keys = set()
+            for r in yt.list("STUDIO", "State:草稿"):
+                if r["type"] == "提案" and r["summary"].startswith("[自评]"):
+                    # 键必须落在同一基准上：剥掉板面 summary 的 [自评] 前缀再归一——
+                    # 前缀5字符会让 [:16] 截断后两边永远对不上（33/34/35/36 连刷的根因）
+                    open_keys.add(_finding_key(r["summary"].removeprefix("[自评] ")))
+            break
+        except Exception as e:
+            if _retry:                          # 重试仍败：留痕并停建——漏报有巡检兜底，刷屏扰制作人
+                append_event("STUDIO", "-", "SELF_EVAL", "studio-daemon", 0,
+                             f"查重查询失败本轮不建单: {type(e).__name__} {str(e)[:80]}")
+                open_keys = None
     created = []
     for f in findings[:2]:
+        if open_keys is None:
+            continue
         if _finding_key(f) in open_keys:
             continue                            # 同模式草稿已在板上等制作人，不刷屏
         iid = yt.new("STUDIO", f"[自评] {f[:40]}", f"来源：studio-daemon 每日自评\n\n{f}\n\n"

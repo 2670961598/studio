@@ -246,3 +246,54 @@ class TestMerge冲突自愈:
         # 无论冲突与否，单据不允许漂在空中
         st = state(yt, iid)
         assert st in ("已交付", "已派发", "复验通过"), st
+
+
+class Test复验竞态防护:
+    """GAMES-5/6 事故（09-22）回归：复验与活 worker 抢共享树，闸门跑在别人分支上 4 连误红退回。"""
+
+    def test_泳道忙_复验顺延不烧attempt(self, env, lanes):
+        from studio.locks import lock
+        yt = env
+        iid = yt.new("POLY", "v", "d", lane="core", typ="需求", track="L0 自动")
+        orch.pm_tick()                             # 派发
+        simulate_worker(yt, iid, lanes)
+        orch.pm_tick()                             # harvest → 证据就绪
+        assert state(yt, iid) == "证据就绪"
+        lock(CONFIG, "lane-POLY-core").acquire("worker-OTHER", 120)   # 模拟并发活 worker
+        r = orch.pm_tick()
+        assert any(a.startswith("VERIFY-DEFER") for a in r["actions"]), r
+        assert state(yt, iid) == "证据就绪"          # 顺延：不动状态不烧 attempt
+        assert int(yt.f(iid, "attempt") or 0) == 0
+        lock(CONFIG, "lane-POLY-core").release("worker-OTHER")
+        r2 = orch.pm_tick()
+        assert any(a.startswith("VERIFY-OK") for a in r2["actions"]), r2
+
+    def test_复验先切回本单分支再跑闸门(self, env, lanes):
+        """树停在 base 时复验必须先切 feature/<本单>——事故里闸门跑在 feature/GAMES-4/6/7 上。"""
+        yt = env
+        iid = yt.new("POLY", "b1", "d", lane="core", typ="需求", track="L0 自动")
+        orch.pm_tick()
+        simulate_worker(yt, iid, lanes)            # 产物只提交在 feature/{iid}
+        orch.pm_tick()                             # harvest → 证据就绪
+        repo = Path(CONFIG.lane("core")["path"])
+        subprocess.run(["git", "-C", str(repo), "checkout", "main"],
+                       check=True, capture_output=True)   # 别的收割把树切回 base
+        r = orch.pm_tick()
+        assert any(a.startswith("VERIFY-OK") for a in r["actions"]), r
+        branch = subprocess.run(["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
+                                capture_output=True, text=True).stdout.strip()
+        assert branch == f"feature/{iid}", "闸门必须落在本单分支"
+
+
+class Test脏树自愈:
+    def test_worker残留未跟踪_自愈复位后照常派发(self, env, lanes):
+        """GAMES server/ 残留卡道 15h 回归：锁 FREE 下脏树=残留垃圾，自愈留证不再永久跳过。"""
+        yt = env
+        iid = yt.new("POLY", "t", "d", lane="core", typ="需求", track="L0 自动")
+        repo = Path(CONFIG.lane("core")["path"])
+        (repo / "server" / "data").mkdir(parents=True)
+        (repo / "server" / "data" / "x.json").write_text("{}", encoding="utf-8")
+        r = orch.pm_tick()
+        assert any(a.startswith("DISPATCH") for a in r["actions"]), r
+        assert not (repo / "server").exists(), "未跟踪残留必须被清"
+        assert any("泳道自愈" in c["text"] for c in yt.comments(iid))
