@@ -354,3 +354,44 @@ class Test合并批示忙时保留:
         lock(CONFIG, "lane-POLY-core").release("worker-OTHER")
         r2 = orch.pm_tick()
         assert state(yt, iid) == "已交付", "道释放后批示必须自动补合并"
+
+
+class TestL3槽位语义:
+    def test_断路复位后的方案审_不被误定位到合并审(self, env, lanes, monkeypatch):
+        """GAMES-2 实录回归：L3 立项已批 + 断路复位重批（批号=2）后方案段交付进方案审，
+        approve-design 必须落在方案审（→已派发实现段），不得因批号错位直接触发合并交付。"""
+        monkeypatch.setattr(CONFIG, "delegated_approvals", {"POLY": ["agent-pm"]})
+        yt = env
+        iid = yt.new("POLY", "L3方案", "d", lane="core", typ="需求", track="L3 特护")
+        orch.pm_tick()                                   # 新单→待批(立项)
+        yt.comment(iid, "批准\n（PM 代批）")               # 第1批：立项
+        orch.pm_tick()                                   # APPROVED→已派发
+        orch.pm_tick()                                   # DISPATCH 方案段
+        for _ in range(3):                               # 三连红 → 断路退审回第1批位
+            simulate_worker(yt, iid, lanes, ok=False)
+            orch.pm_tick()                               # GATE-FAIL
+            orch.pm_tick()                               # 重派
+        assert state(yt, iid) == "待批"
+        yt.comment(iid, "批准\n（PM 代批）")               # 第2批：复位重批（批号≠槽位）
+        orch.pm_tick()                                   # →已派发
+        orch.pm_tick()                                   # DISPATCH
+        simulate_worker(yt, iid, lanes)                  # 方案段交付（绿）
+        orch.pm_tick()                                   # harvest→证据就绪
+        orch.pm_tick()                                   # L3→待批(方案审)
+        assert state(yt, iid) == "待批"
+        yt.comment(iid, "approve-design\n（PM 代批：方案审通过）")
+        r = orch.pm_tick()
+        assert state(yt, iid) == "已派发", "approve-design 应进实现段而非合并交付"
+        # 实现段闭环：交付→复验→合并审→批准→真实合并
+        orch.pm_tick()
+        simulate_worker(yt, iid, lanes)
+        for _ in range(3):
+            orch.pm_tick()
+        assert state(yt, iid) == "待批"                   # 合并审
+        yt.comment(iid, "批准\n（PM 代批）")
+        orch.pm_tick()
+        assert state(yt, iid) == "已交付"
+        repo = Path(CONFIG.lane("core")["path"])
+        log = subprocess.run(["git", "-C", str(repo), "log", "--oneline"],
+                             capture_output=True, text=True).stdout
+        assert f"merge({iid})" in log
