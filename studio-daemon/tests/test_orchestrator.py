@@ -425,3 +425,25 @@ class TestL3批示词误解析容忍:
         yt.comment(iid, "批准\n（PM 代批）")
         orch.pm_tick()
         assert state(yt, iid) == "已交付", "末轮必须按合并审结构标记真合并"
+
+
+class Test裸批准原始词元优先:
+    def test_LLM把裸批准猜成approve_plan_合并槽仍放行(self, env, lanes, monkeypatch):
+        """GAMES-9 实录回归：LLM 岛把裸"批准"解析成 approve-plan，合并槽卫兵误拒，
+        批示陷入不消费死循环。裸批准的原始词元必须优先于 LLM 口味猜测。"""
+        from studio import llm
+        monkeypatch.setattr(llm, "parse_directive",
+                            lambda text, ctx: {"directive": "approve-plan", "confidence": 0.9})
+        monkeypatch.setattr(CONFIG, "delegated_approvals", {"POLY": ["agent-pm"]})
+        yt = env
+        iid = yt.new("POLY", "裸批", "d", lane="core", typ="需求", track="L2 常规")
+        orch.pm_tick()                                   # →待批(立项)
+        yt.comment(iid, "批准")
+        orch.pm_tick(); orch.pm_tick()                   # APPROVED→已派发 / DISPATCH
+        simulate_worker(yt, iid, lanes)
+        for _ in range(3):
+            orch.pm_tick()                               # harvest→verify→待批(合并审)
+        assert state(yt, iid) == "待批"
+        yt.comment(iid, "批准")
+        r = orch.pm_tick()
+        assert state(yt, iid) == "已交付", "裸批准不得被 LLM 误猜成 approve-plan 卡死"

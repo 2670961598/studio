@@ -434,16 +434,27 @@ def _directives(yt, iid, lv, typ) -> str | None:
             continue
         if c["text"].lstrip().startswith(("批示已执行", "制作人批示", "断路退审")):
             continue                    # PM 留痕评论禁当批示（代批后防自批准循环）
-        # LLM 岛优先理解自然语言批示；失败回退字符串匹配兜底
+        w0 = c["text"].strip().split()[0]
+        norm0 = _normalize_directive(w0)
+        if c["author"] != CONFIG.producer:
+            # 委托代批账号（agent-pm）的评论绝大多数是系统留痕（WORKER REPORT 转发、
+            # 复验通过证据、泳道自愈……正文常含 approve/批准字样）——降级中的 LLM 岛
+            # 会把它们猜成批示挤占槽位计数（GAMES-9 实录）。故非制作人评论只认
+            # 首词明确的批示，确定性解析、不进 LLM。
+            if norm0.startswith("approve"):
+                approvals.append("approve" if norm0 == "approve" else norm0)
+            continue
+        # 裸"批准/同意"的原始词元是批示人的明确意图——LLM 猜的 approve-plan/merge
+        # 口味不得覆盖（GAMES-9 实录：裸批准被猜成 approve-plan，合并槽卫兵误拒死循环）
+        if norm0 == "approve":
+            approvals.append("approve")
+            continue
         from .llm import parse_directive
         parsed = parse_directive(c["text"], f"{iid} 级别={lv} 类型={typ} 当前态={yt.f(iid, 'State')}")
         if parsed and parsed.get("directive", "").startswith("approve"):
             approvals.append(parsed["directive"])
-        else:
-            w0 = c["text"].strip().split()[0]
-            norm = _normalize_directive(w0)
-            if norm.startswith("approve"):
-                approvals.append(norm)
+        elif norm0.startswith("approve"):
+            approvals.append(norm0)
     if len(approvals) <= applied:
         # 没有新批示；查非 approve 指令（reject/kill/track）
         for c in cs[-10:]:
