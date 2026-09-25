@@ -113,9 +113,12 @@ def _llm_fail_log(note: str):
 
 
 def ask(prompt: str, timeout_sec: int = 240, allow_web: bool = False,
-        model: str = FULL) -> str | None:
+        model: str = FULL, cwd: str | None = None) -> str | None:
     """单次 claude 调用。prompt 经 stdin 直传（P1-7）；
-    文本岛默认禁 Bash/WebFetch/WebSearch；model=FLASH 用小模型。"""
+    文本岛默认禁 Bash/WebFetch/WebSearch；model=FLASH 用小模型。
+    cwd：岛的工作目录（巡逻岛=战役仓库根），None=继承调用方 cwd。
+    POLY-14 #5 教训：不给 cwd 时岛在 daemon 目录里落根，把 studio-daemon
+    误判成战役仓库——凡有明确仓库的岛必须显式传。"""
     dis = ["Bash", "WebSearch", "WebFetch"] if not allow_web else ["Bash", "WebSearch"]
     try:
         p = subprocess.run(
@@ -123,7 +126,7 @@ def ask(prompt: str, timeout_sec: int = 240, allow_web: bool = False,
              "--model", model,
              "--disallowedTools", *dis, "--output-format", "json"],
             input=prompt, capture_output=True, text=True,
-            timeout=timeout_sec)
+            timeout=timeout_sec, cwd=cwd)
         if p.returncode != 0:
             _llm_fail_log(f"model={model} rc={p.returncode} stderr={p.stderr[:200]!r}")
             return None

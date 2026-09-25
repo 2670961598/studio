@@ -188,3 +188,25 @@ def test_review_output解析与容错(monkeypatch):
     # 替身不接受 model 关键字（TypeError）也算审查失败，不外抛
     monkeypatch.setattr(llm, "ask", lambda p, timeout=240: "{")
     assert llm.review_output("任务", "OUT") is None
+
+
+def test_ask_cwd透传到子进程(monkeypatch):
+    import subprocess
+    seen = {}
+
+    class FakeP:
+        returncode = 0
+        stdout = '{"result":"ok"}'
+        stderr = ""
+
+    def fake_run(argv, **kw):
+        seen.update(kw)
+        seen["argv"] = argv
+        return FakeP()
+
+    monkeypatch.setattr(llm, "_llm_fail_log", lambda *a, **k: None)   # 测试不得写生产日志
+    monkeypatch.setattr(llm.subprocess, "run", fake_run)
+    assert llm.ask("x", cwd="/tmp/r") == "ok"
+    assert seen["cwd"] == "/tmp/r"
+    assert llm.ask("x") == "ok"
+    assert seen["cwd"] is None
