@@ -447,3 +447,30 @@ class Test裸批准原始词元优先:
         yt.comment(iid, "批准")
         r = orch.pm_tick()
         assert state(yt, iid) == "已交付", "裸批准不得被 LLM 误猜成 approve-plan 卡死"
+
+
+class Test派发顺序:
+    def test_非交付族Type_L0派发被拒_零副作用不拉worker(self, env, lanes, monkeypatch):
+        """POLY-22/23 事故回归：Type=业务 走 L0，旧序先 launch 后 transition，
+        worker 跑完交付而单滞留新单 → 每 tick 无限重派。新序迁移被拒在先，
+        不 checkout、不 launch、attempt 不烧、锁即释放。"""
+        launched = []
+
+        def spy_launch(self, ticket, lane=None):
+            launched.append(self.issue)
+            raise AssertionError("非交付族 Type 不应拉起 worker")
+
+        monkeypatch.setattr(Worker, "launch", spy_launch)
+        yt = env
+        iid = yt.new("POLY", "业务单", "d", lane="core", typ="业务", track="L0 自动")
+        yt.gate_freeze(iid, "test -f docs/out.md")
+        out = orch.pm_tick()
+        assert any("ERROR" in a or "非法迁移" in a for a in out["actions"])
+        assert not launched                                   # 未拉 worker
+        assert state(yt, iid) == "新单"                        # 单未动
+        repo = CONFIG.lane("core")["path"]
+        br = subprocess.run(["git", "-C", repo, "rev-parse", "--verify",
+                             f"feature/{iid}"], capture_output=True)
+        assert br.returncode != 0                              # 未建分支
+        lk = CONFIG.locks_dir / "lane-POLY-core.lock"
+        assert not lk.exists() or "worker-" not in lk.read_text()   # 锁未滞留

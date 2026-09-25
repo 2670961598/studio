@@ -253,6 +253,11 @@ def _dispatch(yt, pid, iid, lane, already: bool = False) -> str | None:
                         f"已 reset+clean 复位 {lc['base_branch']} 后派发")
     lk.acquire(f"worker-{iid}", CONFIG.lane_lock_ttl_min)
     try:
+        if not already:
+            # 先迁移后拉起：非交付族 Type（如 业务）在此即被拒，零副作用返回；
+            # 旧序（先 launch 后 transition）曾造成 POLY-22/23 事故——worker 跑完交付、
+            # 单滞留新单，每 tick 无限重派。迁移成功而 launch 失败则走已派发 UNKNOWN 自愈路。
+            yt.transition(iid, "已派发")
         _git(lc["path"], "checkout", lc["base_branch"])
         # 重派复用已有分支（退回/断路后 feature/<单号> 已存在），首派才建新枝
         if _git(lc["path"], "rev-parse", "--verify", f"feature/{iid}",
@@ -261,8 +266,6 @@ def _dispatch(yt, pid, iid, lane, already: bool = False) -> str | None:
         else:
             _git(lc["path"], "checkout", "-b", f"feature/{iid}")
         Worker(iid).launch(yt.get(iid), lane)
-        if not already:
-            yt.transition(iid, "已派发")
         yt.heartbeat(iid)
         _event(pid, iid, "DISPATCH", "agent-pm", 0, f"lane={lane}")
         return f"DISPATCH {iid} lane={lane}"
