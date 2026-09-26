@@ -1,0 +1,16 @@
+theme: 前沿广域（全领域热点 → 工作室框架启发）
+every_h: 72
+sources:
+  - https://github.com/trending
+  - https://github.com/trending/python
+  - https://news.ycombinator.com/
+  - https://www.reddit.com/r/LocalLLaMA/
+  - https://www.anthropic.com/news
+  - https://openai.com/news/
+  - https://blog.google/technology/ai/
+  - https://huggingface.co/blog
+repo: ""
+baseline_cmd: ""
+child_type: 提案
+child_track: "G1 知识"
+patrol_brief: 广域扫热点，不限于我方领域：AI coding agent / multi-agent 编排 / LLM 工作流引擎 / MCP 生态 / evals 与可观测性 / 开发者工具 / 其他领域最火项目。每轮挑 3-5 个最热信号，逐个回答「对工作室框架有何启发」——映射到派发策略、闸门、知识沉淀、自评元循环、可观测性、成本效率、多 agent 协作模式等改进面。确凿可落地的开提案子单（含来源链接+具体改造建议+预期收益）；纯新闻噪音不开单。颠覆性思路（哪怕意味着框架大改甚至整体替换）同样欢迎进提案队列，由制作人定夺。与本仓 docs/SELF-OPTIMIZE.md 的「已知欠账」对齐者优先。
