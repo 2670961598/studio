@@ -1,0 +1,8 @@
+theme: 测试资产增值巡逻（MatchThree core 泳道）
+every_h: 168
+sources: []
+repo: /Volumes/BigDisk/UnityProject/MatchThree/Match3
+baseline_cmd: DOTNET_ROLL_FORWARD=LatestMajor dotnet test Tests/PolyMatch3.Tests.csproj -v q 2>&1 | tail -4
+child_type: 需求
+child_track: "L2 常规"
+patrol_brief: 找测试盲区：git log 看近期 main 变更触及的公共 API（Core/Matcher/Step/Tools/Defs），对照 Tests/ 是否有对应 Fact/Theory；DefsJson 严格校验分支（MissingMemberHandling.Error 路径）与装配校验（ValidateSpecialGravitySync 等）的漏测面；Playground 四命令回归覆盖。孵化补测子单（gate 用 dotnet test 过滤器或 grep -c 新用例名断言），测试资产只增不减。

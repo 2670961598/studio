@@ -1,0 +1,8 @@
+theme: 玩法内容与关卡质量（Match-GLM game 泳道）
+every_h: 120
+sources: []
+repo: /Volumes/BigDisk/UnityProject/Match-GLM/Match3
+baseline_cmd: ls Assets/Resources/Levels | wc -l
+child_type: 需求
+child_track: "L2 常规"
+patrol_brief: 巡视关卡资产与玩法设计债：①Assets/Resources/Levels/*.pm3.json 关卡表规范性（命名约定、字段齐整、bomb/e5 等特殊关参数自洽）；②docs-game/ 玩法设计（api-notes.md 等）与实际内容的差距；③Playground/levels 试炼资产是否跟得上关卡表。找内容质量缺口，孵化内容修复/工具化子单（gate 用 test -f + grep 或 ls|wc 断言）。

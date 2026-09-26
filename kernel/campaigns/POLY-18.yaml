@@ -1,0 +1,8 @@
+theme: 确定性军规守护（MatchThree core 泳道）
+every_h: 72
+sources: []
+repo: /Volumes/BigDisk/UnityProject/MatchThree/Match3
+baseline_cmd: DOTNET_ROLL_FORWARD=LatestMajor dotnet test Tests/PolyMatch3.Tests.csproj -v q 2>&1 | tail -4
+child_type: 需求
+child_track: "L2 常规"
+patrol_brief: 对比基线快照看测试套趋势（用例总数/失败数）。Grep 排查确定性违例：System.Random、DateTime.Now/UtcNow、string.GetHashCode、Guid.NewGuid 混入 PolyMatch3.Core|Tools|Defs|Game 程序集源码（Unity API 仅允许出现在 Presenter/Editor）；随机消费点漂移（RefillStep 之外消耗 rng）。确凿违例才开子单，gate_cmd 用 grep -c 计数断言或 dotnet test 过滤器断言。
