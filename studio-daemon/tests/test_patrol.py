@@ -28,8 +28,10 @@ class TestRepoResolve:
 def _camp_files(iid, repo=""):
     d = CONFIG._root.parent / "kernel" / "campaigns"
     d.mkdir(parents=True, exist_ok=True)
+    # sources 默认非空：空壳战役会被短路（PATROL-NOSPEC），进岛用例必须带源
     (d / f"{iid}.yaml").write_text(
-        f"theme: 测试\nevery_h: 1\nrepo: {repo}\nsources: []\nbaseline_cmd: ''\n"
+        f"theme: 测试\nevery_h: 1\nrepo: {repo}\nsources:\n  - https://example.com\n"
+        f"baseline_cmd: ''\n"
         f"child_type: 需求\nchild_track: \"L2 常规\"\npatrol_brief: 查仓库\n", encoding="utf-8")
     (d / f"{iid}.state.json").write_text('{"last":0,"count":0}')   # last=0 强制到期
 
@@ -101,7 +103,7 @@ def test_提案子单出生态为草稿(fake_yt, tmp_config, monkeypatch):
         "theme: 前沿\n"
         "every_h: 1\n"
         "repo: ''\n"
-        "sources: []\n"
+        "sources:\n  - https://example.com\n"
         "baseline_cmd: ''\n"
         "child_type: 提案\n"
         'child_track: "G1 知识"\n'
@@ -115,4 +117,64 @@ def test_提案子单出生态为草稿(fake_yt, tmp_config, monkeypatch):
     assert "+1kids" in out
     kids = yt.list("POLY", "Type:提案 状态:草稿")
     assert len(kids) == 1 and "引入X设计" in kids[0]["summary"]
+
+
+def test_岛无响应走独立分支不误标解析失败(fake_yt, tmp_config, monkeypatch):
+    """POLY-19/20 教训：岛 600s 超时返回 None → 空串 rindex 抛 ValueError 被误标
+    "解析失败"。修复后：PATROL-ISLAND-FAIL + ERROR 日志 + 短退避，计数不推进。"""
+    import time as _t
+    from studio.yt import YT
+    from studio import llm
+    yt = YT("agent-pm")
+    iid = yt.new("POLY", "战役：测试5", "d", lane="-", typ="战役", state="运行中")
+    _camp_files(iid)                        # every_h=1（短周期：退避=正常节奏）
+    monkeypatch.setattr(llm, "ask", lambda *a, **k: None)
+    out = patrol._patrol_one(yt, {"id": iid, "state": "运行中", "lane": "-"})
+    assert out.startswith("PATROL-ISLAND-FAIL")
+    st = patrol._state(iid)
+    assert st["count"] == 0                 # 巡逻计数不推进（白跑不算巡逻）
+    assert st["last"] > _t.time() - 3600 * 25 + 3600   # last 已推进（退避后到期）
+    texts = [c["text"] for c in yt.comments(iid)]
+    assert any("无响应" in t for t in texts)
+    assert not any("解析失败" in t for t in texts)     # 不再误标
+
+
+def test_长周期战役岛无响应只退避2小时(fake_yt, tmp_config, monkeypatch):
+    """every_h=168 的战役（POLY-19/20）一次岛超时绝不烧整周：2h 后即重试。"""
+    import time as _t
+    from studio.yt import YT
+    from studio import llm
+    yt = YT("agent-pm")
+    iid = yt.new("POLY", "战役：测试6", "d", lane="-", typ="战役", state="运行中")
+    d = CONFIG._root.parent / "kernel" / "campaigns"
+    (d / f"{iid}.yaml").write_text(
+        "theme: 测试\nevery_h: 168\nrepo: ''\nsources:\n  - https://example.com\n"
+        "baseline_cmd: ''\nchild_type: 需求\nchild_track: \"L2 常规\"\npatrol_brief: b\n",
+        encoding="utf-8")
+    (d / f"{iid}.state.json").write_text('{"last":0,"count":0}')
+    monkeypatch.setattr(llm, "ask", lambda *a, **k: None)
+    patrol._patrol_one(yt, {"id": iid, "state": "运行中", "lane": "-"})
+    st = patrol._state(iid)
+    due_in = st["last"] + 168 * 3600 - _t.time()
+    assert 7000 < due_in <= 7210            # ≈2 小时后重试，而非 168 小时
+
+
+def test_空壳战役短路不烧岛(fake_yt, tmp_config, monkeypatch):
+    """GAMES-32~39 实录：无 repo 无 sources 的战役每天白烧 FULL 调用。短路留言。"""
+    from studio.yt import YT
+    from studio import llm
+    yt = YT("agent-pm")
+    iid = yt.new("POLY", "战役：测试7", "d", lane="-", typ="战役", state="运行中")
+    d = CONFIG._root.parent / "kernel" / "campaigns"
+    (d / f"{iid}.yaml").write_text(
+        "theme: 空壳\nevery_h: 24\nrepo: ''\nsources: []\nbaseline_cmd: ''\n"
+        "child_type: 需求\nchild_track: \"L2 常规\"\npatrol_brief: b\n", encoding="utf-8")
+    (d / f"{iid}.state.json").write_text('{"last":0,"count":0}')
+    called = []
+    monkeypatch.setattr(llm, "ask",
+                        lambda *a, **k: called.append(1) or "{}")
+    out = patrol._patrol_one(yt, {"id": iid, "state": "运行中", "lane": "-"})
+    assert out == f"PATROL-NOSPEC {iid}"
+    assert not called                        # 一次 LLM 调用都没发生
+    assert any("未配置" in c["text"] for c in yt.comments(iid))
 

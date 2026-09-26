@@ -74,13 +74,17 @@ def _runs_of(day_prefix: str) -> list[dict]:
 
 
 def _err_digest(day: str, top: int = 5) -> list[str]:
-    """daemon 日志 ERROR 归一聚类：×N + 一条样本。归一键剥掉时间戳/单号/数字。"""
+    """daemon 日志异常归一聚类：×N + 一条样本。归一键剥掉时间戳/单号/数字。
+    匹配面含 `ask FAILED`（LLM 岛超时是真实第一大病灶，日志不带 ERROR 字样）；
+    TICK 汇总行回显的错误在独立行里已计，跳过防双计。"""
     f = CONFIG.logs_dir / f"daemon-{day}.log"
     if not f.exists():
         return []
     groups: dict[str, list[str]] = {}
     for ln in f.read_text(encoding="utf-8", errors="replace").splitlines():
-        if "ERROR" not in ln:
+        if "ERROR" not in ln and "ask FAILED" not in ln:
+            continue
+        if "TICK {" in ln:
             continue
         body = re.sub(r"^\S+ \S+ ", "", ln.strip())
         key = re.sub(r"\d+", "N", re.sub(r"[A-Za-z]+-\d+", "T", body))[:72]

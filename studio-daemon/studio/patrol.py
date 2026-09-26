@@ -119,6 +119,14 @@ def _patrol_one(yt, row) -> str:
         return f"SKIP {iid} 未到点"
     spec = _spec(iid)
     repo = _repo(spec, row.get("lane") or "-")
+    if not repo and not spec.get("sources"):
+        # 空壳战役（GAMES-32~39 实录）：无仓库无巡逻源，岛只会回"未配置"，
+        # every_h=24 意味着每天白烧 FULL 调用。短路留言，正常推进窗口，等 spec 补齐。
+        yt.comment(iid, f"战役未配置（repo 与 sources 均为空）：本轮跳过，不消耗巡逻岛。"
+                        f"请补 kernel/campaigns/{iid}.yaml（theme/every_h/repo/sources/patrol_brief）。")
+        st = _state(iid); st.update(last=time.time(), count=st["count"] + 1)
+        _save_state(iid, st)
+        return f"PATROL-NOSPEC {iid}"
     snap_text = ""
     if spec.get("baseline_cmd"):
         p = subprocess.run(["bash", "-c", spec["baseline_cmd"]],
@@ -145,6 +153,24 @@ def _patrol_one(yt, row) -> str:
         "（≤2段；禁管道、重定向、$()、反引号、分号），否则会被消毒器拒掉——"
         "基准阈值类断言写成 grep -c 计数或 dotnet test --filter 形式。",
         timeout_sec=600)
+    if res is None:
+        # 岛整体失败（600s 超时/非零退出）≠ 解析失败——POLY-19/20 教训：
+        # None 折叠成空串后 rindex("}") 必抛 ValueError，被误标"解析失败"，
+        # 且解析失败也推进 state → every_h=168 的战役一次超时烧掉整周窗口。
+        # 独立分支：ERROR 日志（进日报异常段）+ 短退避 2h 重试，不推进巡逻计数。
+        every_s = float(spec.get("every_h") or 24) * 3600
+        backoff = 7200 if every_s > 7200 else every_s
+        _log(f"ERROR {iid} 巡逻岛无响应（超时/失败），退避 {backoff // 60} 分钟后重试")
+        yt.comment(iid, f"巡逻 #{_state(iid)['count'] + 1} {time.strftime('%F %T')}\n"
+                        f"巡逻岛无响应（LLM 超时或失败），本轮作废，"
+                        f"{backoff // 60} 分钟后重试（不烧整轮窗口）。")
+        from .metrics import append_event
+        append_event(iid.split("-")[0], iid, "PATROL", "patrol", 0,
+                     "岛无响应（超时/失败），短退避重试")
+        st = _state(iid)
+        st.update(last=time.time() - every_s + backoff)
+        _save_state(iid, st)
+        return f"PATROL-ISLAND-FAIL {iid}"
     # 剥 code fence 再提取 JSON（LLM 常用 ```json ... ``` 包裹）
     _body = (res or "").strip()
     if _body.startswith("```"):

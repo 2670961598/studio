@@ -35,7 +35,10 @@ def _seed():
     (CONFIG.logs_dir / f"daemon-{TODAY}.log").write_text(
         f"{TODAY} 07:50:00 [POLY] ERROR POLY-22 非法迁移 新单 → 已派发\n"
         f"{TODAY} 07:50:00 [POLY] ERROR POLY-23 非法迁移 新单 → 已派发\n"
-        f"{TODAY} 08:00:00 [POLY] TICK ok\n", encoding="utf-8")
+        f"{TODAY} 08:00:00 [POLY] TICK ok\n"
+        f"{TODAY} 09:20:25 [llm] ask FAILED model=glm-5.3 timed out after 600 seconds\n"
+        f"{TODAY} 09:30:25 [POLY] TICK {{\"result\": \"OK\", \"actions\": "
+        f"[\"ERROR POLY-23 非法迁移 新单 → 已派发\"]}}\n", encoding="utf-8")
     (CONFIG.digest_dir / f"self-eval-{TODAY}.json").write_text(
         json.dumps({"findings": ["断路触发 2 次——相关单需人工复盘"]}, ensure_ascii=False),
         encoding="utf-8")
@@ -62,7 +65,8 @@ def test_日报六段事实齐全且发布知识库(tmp_config, monkeypatch):
     assert fake.published == [f"运营日报/{TODAY}"]
     md = (CONFIG.events_path.parent / "reports" / f"daily-{TODAY}.md").read_text(encoding="utf-8")
     assert "派发 1" in md and "失败率 50%" in md      # 指标段（1过1败）
-    assert "×2" in md                                 # 同模式 ERROR 归并成一条
+    assert "×2" in md                                 # 同模式 ERROR 归并成一条（TICK 回显行被过滤，不计成 ×3）
+    assert "ask FAILED" in md                         # LLM 岛超时（不带 ERROR 字样）必须进日报
     assert "断路触发" in md                            # 自评发现
     assert "POLY-18" in md and "性能热点收敛" in md      # 巡逻进展
     assert "STUDIO-36" in md                          # 待决提案
