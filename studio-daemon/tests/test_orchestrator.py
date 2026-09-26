@@ -323,14 +323,25 @@ class TestPM代批:
                              capture_output=True, text=True).stdout
         assert f"merge({iid})" in log, "代批合并批必须产生真实 merge commit"
 
-    def test_未委托项目_PM批示_不被消费(self, env, lanes):
-        """默认委托表只含 GAMES——POLY 的 PM 评论必须无效（授权边界不外溢）。"""
+    def test_未委托项目_PM批示_不被消费(self, env, lanes, monkeypatch):
+        """委托边界不外溢：表外项目的 PM 评论必须无效。POLY 已于 2026-09-26
+        进委托表（制作人授权 ZCode 审查后代批），故用例显式钉住旧表验证机制。"""
+        monkeypatch.setattr(CONFIG, "delegated_approvals", {"GAMES": ["agent-pm"]})
         yt = env
         iid = yt.new("POLY", "边界", "d", lane="core", typ="需求", track="L2 常规")
         orch.pm_tick()                                   # →待批
         yt.comment(iid, "批准")
-        r = orch.pm_tick()
+        orch.pm_tick()
         assert state(yt, iid) == "待批", "未委托项目 PM 批示不得生效"
+
+    def test_POLY审查后代批_被消费(self, env, lanes):
+        """2026-09-26 制作人授权：POLY 进委托表后，附审查意见的 PM 批准生效。"""
+        yt = env
+        iid = yt.new("POLY", "代批", "d", lane="core", typ="需求", track="L2 常规")
+        orch.pm_tick()                                   # →待批
+        yt.comment(iid, "批准 审查意见：巡逻真实发现，验收命令可机器复跑（ZCode 代批留痕）")
+        orch.pm_tick()
+        assert state(yt, iid) == "已派发", "委托项目的 PM 批示应被消费并派发"
 
 
 class Test合并批示忙时保留:
