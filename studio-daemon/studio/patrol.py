@@ -140,7 +140,10 @@ def _patrol_one(yt, row) -> str:
         f"最近基准快照：\n{snap_text or '（无基准）'}\n\n"
         "产出（只输出 JSON）：{\"progress\":\"≤120字进展\",\"findings\":[\"≤80字发现\"...],"
         "\"children\":[{\"summary\":\"子单标题\",\"description\":\"需求描述\","
-        "\"gate_cmd\":\"一条 bash 冻结验收命令\"}]}（children 最多2条，没有确凿可做的就空数组）",
+        "\"gate_cmd\":\"一条 bash 冻结验收命令\"}]}（children 最多2条，没有确凿可做的就空数组）。"
+        "gate_cmd 纪律：只允许 test/grep/wc/cat/ls/diff/dotnet/python 与 git 只读子命令的 && 链"
+        "（≤2段；禁管道、重定向、$()、反引号、分号），否则会被消毒器拒掉——"
+        "基准阈值类断言写成 grep -c 计数或 dotnet test --filter 形式。",
         timeout_sec=600)
     # 剥 code fence 再提取 JSON（LLM 常用 ```json ... ``` 包裹）
     _body = (res or "").strip()
