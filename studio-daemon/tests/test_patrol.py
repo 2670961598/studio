@@ -88,3 +88,31 @@ def test_巡逻无仓库时cwd为None且prompt声明不可猜(fake_yt, tmp_confi
     patrol._patrol_one(yt, {"id": iid, "state": "运行中", "lane": "-"})
     assert calls["cwd"] is None
     assert "不要凭空猜测" in calls["p"]
+
+
+def test_提案子单出生态为草稿(fake_yt, tmp_config, monkeypatch):
+    """治理族子单（Type=提案）出生即「草稿」：进制作人治理队列，绝不进派发流。"""
+    from studio.yt import YT
+    from studio import llm
+    yt = YT("agent-pm")
+    iid = yt.new("POLY", "战役：测试4", "d", lane="-", typ="战役", state="运行中")
+    d = CONFIG._root.parent / "kernel" / "campaigns"
+    (d / f"{iid}.yaml").write_text(
+        "theme: 前沿\n"
+        "every_h: 1\n"
+        "repo: ''\n"
+        "sources: []\n"
+        "baseline_cmd: ''\n"
+        "child_type: 提案\n"
+        'child_track: "G1 知识"\n'
+        "patrol_brief: 广域扫热点\n", encoding="utf-8")
+    (d / f"{iid}.state.json").write_text('{"last":0,"count":0}')
+    monkeypatch.setattr(llm, "ask", lambda *a, **k:
+                        '{"progress":"ok","findings":[],"children":['
+                        '{"summary":"引入X设计","description":"见链接",'
+                        '"gate_cmd":"test -f docs/a.md"}]}')
+    out = patrol._patrol_one(yt, {"id": iid, "state": "运行中", "lane": "-"})
+    assert "+1kids" in out
+    kids = yt.list("POLY", "Type:提案 状态:草稿")
+    assert len(kids) == 1 and "引入X设计" in kids[0]["summary"]
+

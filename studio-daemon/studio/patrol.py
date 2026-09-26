@@ -171,7 +171,8 @@ def _patrol_one(yt, row) -> str:
             note.append(f"跳过子单「{ch['summary'][:30]}」：验收命令未过消毒")
             continue
         child_type = spec.get("child_type", "需求")
-        entry = "发现" if child_type == "情报" else "新单"   # H3: 情报流起点是"发现"，否则出生即死
+        # H3: 情报流起点是"发现"；提案流起点是"草稿"（进治理队列等制作人，不进派发流）
+        entry = {"情报": "发现", "提案": "草稿"}.get(child_type, "新单")
         kid = yt.new(iid.split("-")[0], f"[{iid}] {ch['summary'][:60]}", ch.get("description", ""),
                      lane=row["lane"], typ=child_type,
                      track=child_track, state=entry)

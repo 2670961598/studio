@@ -14,7 +14,8 @@ app = FastAPI(title="studio-daemon")
 async def _guard(request, call_next):
     """本机防护（P1-8）：拒 DNS rebinding（Host 白名单）与跨站 POST（CSRF）。"""
     host = (request.headers.get("host") or "").lower()
-    if host not in ("127.0.0.1:8787", "localhost:8787"):
+    port = str(CONFIG.web_port)                 # 实验场换端口后白名单必须跟着走
+    if host not in (f"127.0.0.1:{port}", f"localhost:{port}"):
         return JSONResponse({"error": "bad host"}, status_code=421)
     if request.method == "POST" and request.headers.get("sec-fetch-site") not in (None, "same-origin", "same-site", "none"):
         return JSONResponse({"error": "cross-site blocked"}, status_code=403)

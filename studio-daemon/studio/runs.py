@@ -6,7 +6,8 @@ from .config import CONFIG
 RUNS = CONFIG.events_path.parent / "runs.jsonl"
 
 JOB_NAMES = {"pm-poly": "子PM·POLY", "pm-studio": "子PM·STUDIO", "qa": "全局QA", "self-eval": "自评引擎",
-             "patrol": "战役巡逻", "evolve-scan": "schema自进化", "evolve": "schema自进化"}
+             "patrol": "战役巡逻", "evolve-scan": "schema自进化", "evolve": "schema自进化",
+             "report-daily": "运营日报", "report-weekly": "运营周报", "report-monthly": "运营月报"}
 
 
 def append_run(job: str, outcome: str, duration_ms: int = 0, summary: str = ""):

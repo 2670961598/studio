@@ -2,7 +2,9 @@
 import json, os
 from pathlib import Path
 
-STUDIO_ROOT = Path("/Volumes/BigDisk/Studio")
+# 根路径可被环境变量改写（实验场隔离：同一份代码，另一套 kernel 状态；
+# 生产不设此变量，恒为 /Volumes/BigDisk/Studio）
+STUDIO_ROOT = Path(os.environ.get("STUDIO_ROOT", "/Volumes/BigDisk/Studio"))
 KERNEL = STUDIO_ROOT / "kernel"
 POLYCFG = Path.home() / ".config/polymatch3"
 
