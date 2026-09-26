@@ -33,9 +33,13 @@ class Config:
                   self.heartbeats_dir, self.logs_dir, self.digest_dir):
             d.mkdir(parents=True, exist_ok=True)
         self.producer = "opengames"
-        # 制作人委托代批（2026-09-22 口头委托：GAMES 项目单据由 PM 代批放行，
-        # "只需要一直批准"；框架自身 STUDIO 批示仍只认制作人）
-        self.delegated_approvals: dict[str, list[str]] = {"GAMES": ["agent-pm"]}
+        # 制作人委托代批：
+        # - GAMES（2026-09-22）"只需要一直批准"——无条件放行
+        # - POLY（2026-09-26）"你直接审查之后，可以的进行同意即可"——ZCode 常驻监督
+        #   逐单审查后代批，批准评论必须附审查意见留痕；非无条件
+        # - 框架自身 STUDIO 批示仍只认制作人
+        self.delegated_approvals: dict[str, list[str]] = {"GAMES": ["agent-pm"],
+                                                          "POLY": ["agent-pm"]}
         self.max_attempts = 3
         self.heartbeat_timeout_min = 90
         self.lane_lock_ttl_min = 120
