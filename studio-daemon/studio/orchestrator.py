@@ -142,6 +142,19 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
         if s.startswith("RUNNING"):
             # 长任务续锁（lane TTL 120min < 大单耗时；按盘上 owner 校验）
             lock(CONFIG, f"lane-{pid}-{lane}").beat(f"worker-{iid}")
+            # wall-clock 兜底（审计 P0-3）：wrap 内看门狗是主杀手，此处第二道防线——
+            # 防 worker 持续心跳却永不封顶（心跳制 90min ≠ 宪章 45min 上限）
+            try:
+                started = time.mktime(time.strptime(
+                    (w.reg_data() or {}).get("started") or "", "%Y-%m-%d %H:%M:%S"))
+            except ValueError:
+                started = 0.0
+            if started and time.time() - started > CONFIG.worker_wall_timeout_s:
+                w.kill()
+                _recycle(yt, pid, iid,
+                         f"wall-clock 超限 kill（>{CONFIG.worker_wall_timeout_s // 60}min）")
+                _release_lane(pid, lane, f"worker-{iid}")
+                return _redispatch(yt, pid, row, lv, typ)
             hb = yt.f(iid, "心跳") or 0
             if hb and (time.time() * 1000 - hb) / 60000 > CONFIG.heartbeat_timeout_min:
                 w.kill()

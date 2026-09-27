@@ -44,6 +44,10 @@ class Config:
         self.heartbeat_timeout_min = 90
         self.lane_lock_ttl_min = 120
         self.tick_lock_ttl_min = 240
+        # worker 约束三件套（宪章 §4.6/§6；审计 P0-3——曾只修在已废弃的 bash 脚本上）
+        self.worker_model = os.environ.get("WORKER_MODEL", "glm-5.3")
+        self.worker_max_budget_usd = float(os.environ.get("WORKER_MAX_BUDGET", "15"))
+        self.worker_wall_timeout_s = int(os.environ.get("WORKER_WALL_TIMEOUT", "2700"))
         self.web_port = int(os.environ.get("STUDIO_PORT", "8787"))
         self.workers_dir.mkdir(parents=True, exist_ok=True)
 

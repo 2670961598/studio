@@ -514,3 +514,43 @@ class Test收割记账:
         assert gp["tokens"] == 500
         done = _json.loads((CONFIG.workers_dir / f"{iid}.done.json").read_text(encoding="utf-8"))
         assert done["result"]["cost_usd"] == 16.48      # 归档钉存，stream 改名后仍在
+
+
+class Test看门狗兜底:
+    def test_wall超限_kill并重派(self, env, lanes, monkeypatch):
+        """审计 P0-3 第二道防线：wrap 看门狗失灵时，reg.started 超 wall-clock 也杀。
+        心跳判据的盲区是"持续心跳却永不封顶"——wall-clock 补上。"""
+        import json as _json
+        import time as _t
+        from datetime import datetime, timedelta
+        yt = env
+        iid = yt.new("POLY", "看门狗", "d", lane="core", typ="需求", track="L1 首批")
+        orch.pm_tick()                                   # →待批
+        yt.comment(iid, "批准")
+        orch.pm_tick()                                   # 批准消费 →已派发
+        orch.pm_tick()                                   # dispatch
+        w = Worker(iid)
+        reg = _json.loads(w.reg.read_text(encoding="utf-8"))
+        reg["started"] = (datetime.now() - timedelta(hours=2)).strftime("%F %T")
+        w.reg.write_text(_json.dumps(reg), encoding="utf-8")
+        killed = []
+        monkeypatch.setattr(Worker, "kill",
+                            lambda self: killed.append(self.issue) or "KILLED")
+        out = orch.pm_tick()
+        assert iid in killed                             # 超限被杀
+        assert state(yt, iid) == "已派发"                 # 重派位（新一轮 worker）
+
+    def test_wall未超限_不误杀(self, env, lanes, monkeypatch):
+        import json as _json
+        yt = env
+        iid = yt.new("POLY", "正常长单", "d", lane="core", typ="需求", track="L1 首批")
+        orch.pm_tick(); yt.comment(iid, "批准"); orch.pm_tick(); orch.pm_tick()
+        w = Worker(iid)
+        reg = _json.loads(w.reg.read_text(encoding="utf-8"))
+        reg["started"] = __import__("time").strftime("%F %T")   # 刚开始
+        w.reg.write_text(_json.dumps(reg), encoding="utf-8")
+        killed = []
+        monkeypatch.setattr(Worker, "kill",
+                            lambda self: killed.append(self.issue) or "KILLED")
+        orch.pm_tick()
+        assert not killed                                # 未超限不动它

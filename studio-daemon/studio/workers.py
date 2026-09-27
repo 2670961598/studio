@@ -62,6 +62,21 @@ WORKER_TEMPLATE = """你是虚拟工作室的 {title}（身份 {role}），以�
 """
 
 
+def wrap_script(issue: str, repo: str, prompt, stream, claude_bin: str) -> str:
+    """wrap 生成（纯函数便于测试）。约束三件套（审计 P0-3，自 ~/bin/studio-worker 迁入）：
+    固定主力模型 + 单次预算帽 + wall-clock 看门狗——worker 持续心跳也不再永跑。"""
+    return f"""#!/bin/bash
+cd "{repo}"
+git checkout feature/{issue} >/dev/null 2>&1
+{claude_bin} -p --dangerously-skip-permissions --output-format stream-json --verbose --model "{CONFIG.worker_model}" --max-budget-usd {CONFIG.worker_max_budget_usd} < "{prompt}" > "{stream}" 2>&1 &
+CPID=$!
+( sleep {CONFIG.worker_wall_timeout_s}; kill -TERM $CPID 2>/dev/null ) & WDOG=$!
+wait $CPID; RC=$?
+kill $WDOG 2>/dev/null
+echo "WORKER-EXIT=$RC" >> "{stream}"
+"""
+
+
 def _role(typ: str) -> tuple[str, str]:
     if typ == "策划":
         return "agent-designer", "策划 worker"
@@ -122,12 +137,8 @@ class Worker:
         for f in (self.report, self.stream):
             if f.exists():
                 f.rename(f.with_name(f"{f.stem}.a{att}{f.suffix}"))
-        self.wrap.write_text(f"""#!/bin/bash
-cd "{lc['path']}"
-git checkout feature/{self.issue} >/dev/null 2>&1
-{claude_bin} -p --dangerously-skip-permissions --output-format stream-json --verbose < "{self.prompt}" > "{self.stream}" 2>&1
-echo "WORKER-EXIT=$?" >> "{self.stream}"
-""")
+        self.wrap.write_text(wrap_script(self.issue, lc["path"], self.prompt,
+                                         self.stream, claude_bin))
         self.wrap.chmod(0o755)
         proc = subprocess.Popen(["nohup", "bash", str(self.wrap)], stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL, start_new_session=True)
