@@ -34,32 +34,38 @@ def _sched():
     from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
     from apscheduler import events as apev
     from .config import CONFIG
-    from .runs import append_run, seed_from_logs
+    from .runs import append_run, seed_from_logs, DurationTracker
     seed_from_logs()
     sched = BackgroundScheduler(
         jobstores={"default": SQLAlchemyJobStore(
-            url=f"sqlite:///{CONFIG._root / 'jobs.sqlite'}")},
+            url=f"sqlite:///{CONFIG._root / 'jobs.sqlite'}"}},
         job_defaults={"max_instances": 1, "coalesce": True, "misfire_grace_time": 300})
+    tracker = DurationTracker()      # 宪章 §4.6：duration_ms 必须接线（审计 P0-1 断点A）
 
     def _on_event(ev):
         job = getattr(ev, "job_id", "?")
-        if ev.code == apev.EVENT_JOB_MISSED:
+        if ev.code == apev.EVENT_JOB_SUBMITTED:
+            tracker.submitted(job)
+        elif ev.code == apev.EVENT_JOB_MISSED:
+            tracker.drop(job)
             append_run(job, "missed", 0, "错过调度（宿主忙/睡眠）")
         elif ev.code == apev.EVENT_JOB_ERROR:
             exc = getattr(ev, "exception", None)
-            append_run(job, "error", 0,
+            append_run(job, "error", tracker.settle(job),
                        f"{type(exc).__name__}: {exc}"[:200] if exc else "error")
         elif ev.code == apev.EVENT_JOB_EXECUTED:
+            dur = tracker.settle(job)
             r = getattr(ev, "retval", None)
             if isinstance(r, dict):
                 summary = "; ".join(r.get("actions", []))[:200] or r.get("result", "")
                 outcome = "ok" if r.get("result") in ("OK", "IDLE") else str(r.get("result", "ok")).lower()
-                append_run(job, outcome, 0, summary)
+                append_run(job, outcome, dur, summary)
             else:
-                append_run(job, "ok", 0, str(r)[:200])
+                append_run(job, "ok", dur, str(r)[:200])
 
     sched.add_listener(_on_event,
-                       apev.EVENT_JOB_EXECUTED | apev.EVENT_JOB_ERROR | apev.EVENT_JOB_MISSED)
+                       apev.EVENT_JOB_EXECUTED | apev.EVENT_JOB_ERROR | apev.EVENT_JOB_MISSED
+                       | apev.EVENT_JOB_SUBMITTED)
     # 文本引用保证 job 可序列化进 SQLite jobstore
     for i, pid in enumerate(_scoped_projects()):
         minutes = _PM_MINUTES.get(pid) or ",".join(

@@ -6,13 +6,18 @@ from .config import CONFIG
 
 
 def append_event(pid: str, issue: str, event: str, actor: str, attempt: int = 0,
-                 note: str = "", tokens: int | None = None, cost_cny: float | None = None):
+                 note: str = "", tokens: int | None = None, cost_cny: float | None = None,
+                 cost_usd: float | None = None, duration_ms: int | None = None):
     rec = {"ts": time.strftime("%F %T"), "pid": pid, "issue": issue, "event": event,
            "actor": actor, "attempt": int(attempt), "note": note}
     if tokens is not None:
         rec["tokens"] = tokens
     if cost_cny is not None:
         rec["cost_cny"] = cost_cny
+    if cost_usd is not None:                   # worker stream 的 total_cost_usd 原币种入账
+        rec["cost_usd"] = cost_usd
+    if duration_ms is not None:
+        rec["duration_ms"] = duration_ms
     with open(CONFIG.events_path, "a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 

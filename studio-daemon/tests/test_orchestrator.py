@@ -485,3 +485,32 @@ class Test派发顺序:
         assert br.returncode != 0                              # 未建分支
         lk = CONFIG.locks_dir / "lane-POLY-core.lock"
         assert not lk.exists() or "worker-" not in lk.read_text()   # 锁未滞留
+
+
+class Test收割记账:
+    def test_收割把成本时长tokens入账(self, env, lanes):
+        """审计 P0-1：GATES-40 的 stream 明躺 cost/duration，账本却是空集——接线验收。"""
+        import json as _json
+        yt = env
+        iid = yt.new("POLY", "记账", "d", lane="core", typ="需求", track="L1 首批")
+        orch.pm_tick()                                   # →待批
+        yt.comment(iid, "批准")
+        orch.pm_tick()                                   # 批准消费 →已派发
+        orch.pm_tick()                                   # dispatch（建分支+launch）
+        simulate_worker(yt, iid, lanes)                  # 产物+REPORT
+        w = Worker(iid)                                  # 补 stream result 行（真账）
+        w.stream.parent.mkdir(parents=True, exist_ok=True)
+        w.stream.write_text(_json.dumps({"type": "result", "total_cost_usd": 16.48,
+                                         "duration_ms": 2683795, "num_turns": 193,
+                                         "usage": {"input_tokens": 300,
+                                                   "output_tokens": 200}}) + "\n",
+                            encoding="utf-8")
+        orch.pm_tick()                                   # harvest
+        assert state(yt, iid) == "证据就绪"
+        evs = [_json.loads(l) for l in
+               CONFIG.events_path.read_text(encoding="utf-8").splitlines()]
+        gp = [e for e in evs if e["event"] == "GATE_PASS"][-1]
+        assert gp["cost_usd"] == 16.48 and gp["duration_ms"] == 2683795
+        assert gp["tokens"] == 500
+        done = _json.loads((CONFIG.workers_dir / f"{iid}.done.json").read_text(encoding="utf-8"))
+        assert done["result"]["cost_usd"] == 16.48      # 归档钉存，stream 改名后仍在

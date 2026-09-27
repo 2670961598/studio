@@ -109,18 +109,16 @@ def _workers() -> list[dict]:
 
 
 def _result_data(w) -> dict:
-    """从 stream.jsonl 的 result 事件提取 cost/turns/session_id。"""
-    if not w.stream.exists():
-        return {}
-    try:
-        for ln in reversed(w.stream.read_text(encoding="utf-8", errors="replace").splitlines()[-10:]):
-            e = json.loads(ln)
-            if e.get("type") == "result":
-                return {"cost_usd": e.get("total_cost_usd"), "turns": e.get("num_turns"),
-                        "duration_ms": e.get("duration_ms"), "session_id": e.get("session_id"),
-                        "is_error": e.get("is_error", False)}
-    except Exception:
-        pass
+    """worker 记账数据：活 stream 的 result 事件，或归档时钉进 done.json 的副本。"""
+    rs = w.result_stats()
+    if rs:
+        return rs
+    done = CONFIG.workers_dir / f"{w.issue}.done.json"
+    if done.exists():
+        try:
+            return json.loads(done.read_text(encoding="utf-8")).get("result") or {}
+        except Exception:
+            pass
     return {}
 
 
@@ -201,14 +199,18 @@ def api_job_ctl(job_id: str, action: str):
 
         def _run():
             mod, fn, kw = TRIGGER_MAP[job_id]
+            import time as _t
+            t0 = _t.time()                       # 手动触发也计时（审计 P0-1 断点B）
             try:
                 r = getattr(importlib.import_module(mod), fn)(**kw)
                 s = "; ".join(r.get("actions", []))[:200] if isinstance(r, dict) else str(r)[:200]
                 from .runs import append_run
-                append_run(job_id, "ok", 0, "[手动] " + (s or "完成"))
+                append_run(job_id, "ok", int((_t.time() - t0) * 1000),
+                           "[手动] " + (s or "完成"))
             except Exception as e:
                 from .runs import append_run
-                append_run(job_id, "error", 0, f"[手动] {type(e).__name__}: {e}"[:200])
+                append_run(job_id, "error", int((_t.time() - t0) * 1000),
+                           f"[手动] {type(e).__name__}: {e}"[:200])
         threading.Thread(target=_run, daemon=True).start()
         return {"ok": f"{job_id} 已后台触发，结果稍后见运行历史"}
     raise HTTPException(400, "action?")

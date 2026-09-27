@@ -180,10 +180,41 @@ echo "WORKER-EXIT=$?" >> "{self.stream}"
             except ProcessLookupError:
                 return f"NOT-ALIVE {self.issue}"
 
+    def result_stats(self) -> dict:
+        """stream 末尾 result 事件 → 记账三元组（成本/时长/tokens）。
+        不同 claude 版本字段名漂移：duration_ms 与 duration_api_ms 都认。
+        缺文件/无 result 事件/坏行 → {}（记账缺失不致命，事实留白）。"""
+        if not self.stream.exists():
+            return {}
+        try:
+            for ln in reversed(self.stream.read_text(
+                    encoding="utf-8", errors="replace").splitlines()[-10:]):
+                e = json.loads(ln)
+                if e.get("type") == "result":
+                    u = e.get("usage") or {}
+                    toks = (u.get("input_tokens") or 0) + (u.get("output_tokens") or 0)
+                    return {"cost_usd": e.get("total_cost_usd"),
+                            "duration_ms": e.get("duration_ms") or e.get("duration_api_ms"),
+                            "tokens": toks or None, "turns": e.get("num_turns"),
+                            "session_id": e.get("session_id"),
+                            "is_error": e.get("is_error", False)}
+        except Exception:
+            pass
+        return {}
+
     def archive(self):
-        """收割处理完毕：reg 与产物全部归档（防旧 REPORT 反复触发 DONE）。"""
+        """收割处理完毕：reg 与产物全部归档（防旧 REPORT 反复触发 DONE）。
+        归档前把 result 记账三元组钉进 done.json——stream 改名后记账/面板仍可读。"""
+        rs = self.result_stats()
         if self.reg.exists():
-            self.reg.rename(CONFIG.workers_dir / f"{self.issue}.done.json")
+            try:
+                reg = json.loads(self.reg.read_text(encoding="utf-8"))
+            except Exception:
+                reg = {}
+            reg["result"] = rs
+            (CONFIG.workers_dir / f"{self.issue}.done.json").write_text(
+                json.dumps(reg, ensure_ascii=False), encoding="utf-8")
+            self.reg.unlink()
         att = time.strftime("%H%M%S")
         for f in (self.report, self.stream):
             if f.exists():

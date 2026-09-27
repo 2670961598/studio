@@ -19,9 +19,9 @@ def _log(pid: str, line: str):
         f.write(f"{time.strftime('%F %T')} [{pid}] {line}\n")
 
 
-def _event(pid, issue, event, actor, attempt=0, note=""):
+def _event(pid, issue, event, actor, attempt=0, note="", **acct):
     from .metrics import append_event
-    append_event(pid, issue, event, actor, attempt, note)
+    append_event(pid, issue, event, actor, attempt, note, **acct)
 
 
 def _git(repo: str, *args, check=True):
@@ -280,7 +280,10 @@ def lane_of(yt, iid) -> str:
 
 def _harvest(yt, pid, iid, lane, w: Worker, lv) -> str:
     report = w.report.read_text() if w.report.exists() else "(REPORT 缺失)"
+    rs = w.result_stats()          # stream 改名归档前取记账三元组（审计 P0-1 断点C）
     lc = CONFIG.lane(lane)
+    acct = dict(tokens=rs.get("tokens"), cost_usd=rs.get("cost_usd"),
+                duration_ms=rs.get("duration_ms"))
     try:
         _git(lc["path"], "checkout", f"feature/{iid}")
         if _git(lc["path"], "merge-base", "--is-ancestor", lc["base_branch"],
@@ -297,7 +300,7 @@ def _harvest(yt, pid, iid, lane, w: Worker, lv) -> str:
         if res.ok:
             yt.transition(iid, "证据就绪")
             yt.comment(iid, f"{report}\n\n— 代发 claude worker（studio-daemon v2）")
-            _event(pid, iid, "GATE_PASS", "agent-pm", 0, f"evidence {res['log']}")
+            _event(pid, iid, "GATE_PASS", "agent-pm", 0, f"evidence {res['log']}", **acct)
             return f"HARVEST {iid} →证据就绪"
         n = yt.attempt_inc(iid)
         flow = sm._flow(lv, yt.f(iid, "Type"))
@@ -309,10 +312,10 @@ def _harvest(yt, pid, iid, lane, w: Worker, lv) -> str:
             except ValueError:
                 pass                             # 迁移异常不吞掉断路评论
             yt.comment(iid, f"@{CONFIG.producer} attempt={n}≥3 断路，evidence {res['log']}")
-            _event(pid, iid, "GATE_FAIL", "agent-pm", n, "断路")
+            _event(pid, iid, "GATE_FAIL", "agent-pm", n, "断路", **acct)
         else:
             yt.comment(iid, f"GATE-FAIL attempt={n} 退回重做，evidence {res['log']}")
-            _event(pid, iid, "GATE_FAIL", "agent-pm", n, res["log"])
+            _event(pid, iid, "GATE_FAIL", "agent-pm", n, res["log"], **acct)
         return f"GATE-FAIL {iid} attempt={n}"
     finally:
         w.archive()                              # REPORT 随之归档，防止旧卷反复收割
