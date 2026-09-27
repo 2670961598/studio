@@ -36,9 +36,11 @@ def _git(repo: str, *args, check=True):
 
 
 def _release_lane(pid, lane, owner):
-    """释放本单名下的 lane 锁（防泄漏；非我持有时静默）。"""
+    """释放本单名下的 lane 锁（防泄漏；非我持有时静默）。
+    锁名只按 lane（审计 P0-4）：lane 在全局 lanes 表注册，同名必同物理仓——
+    曾带 pid 前缀导致 GAMES/POLY 对同一 checkout 各持各的锁，跨项目互斥全失。"""
     try:
-        lock(CONFIG, f"lane-{pid}-{lane}").release(owner)
+        lock(CONFIG, f"lane-{lane}").release(owner)
     except (PermissionError, Exception):
         pass
 
@@ -141,7 +143,7 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
             return _harvest(yt, pid, iid, lane, w, lv)
         if s.startswith("RUNNING"):
             # 长任务续锁（lane TTL 120min < 大单耗时；按盘上 owner 校验）
-            lock(CONFIG, f"lane-{pid}-{lane}").beat(f"worker-{iid}")
+            lock(CONFIG, f"lane-{lane}").beat(f"worker-{iid}")
             # wall-clock 兜底（审计 P0-3）：wrap 内看门狗是主杀手，此处第二道防线——
             # 防 worker 持续心跳却永不封顶（心跳制 90min ≠ 宪章 45min 上限）
             try:
@@ -179,7 +181,7 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
             return f"L3-方案段就绪 {iid} →待批(方案审)"
         # 复验与活 worker 抢共享树必误红（GAMES-5/6 实录：闸门跑在别人分支上 4 连退回）。
         # 泳道忙 → 顺延不烧 attempt；闲 → 持锁切到本单分支再跑闸门与加测。
-        lk = lock(CONFIG, f"lane-{pid}-{lane}")
+        lk = lock(CONFIG, f"lane-{lane}")
         if lk.check(CONFIG.lane_lock_ttl_min) != "FREE":
             return f"VERIFY-DEFER {iid} 泳道忙，复验顺延"
         try:
@@ -251,7 +253,7 @@ def _dispatch(yt, pid, iid, lane, already: bool = False) -> str | None:
     lc = CONFIG.lane(lane)
     if int(yt.f(iid, "attempt") or 0) >= CONFIG.max_attempts:
         return f"BREAK {iid} attempt≥3 待制作人"
-    lk = lock(CONFIG, f"lane-{pid}-{lane}")
+    lk = lock(CONFIG, f"lane-{lane}")
     if lk.check(CONFIG.lane_lock_ttl_min) != "FREE":
         return f"LANE-BUSY {lane}"
     if _git(lc["path"], "status", "--porcelain", check=False).stdout.strip():
@@ -337,7 +339,7 @@ def _harvest(yt, pid, iid, lane, w: Worker, lv) -> str:
 
 def _merge(yt, pid, iid, lane) -> str:
     lc = CONFIG.lane(lane)
-    lk = lock(CONFIG, f"lane-{pid}-{lane}")
+    lk = lock(CONFIG, f"lane-{lane}")
     try:
         lk.acquire(f"merge-{iid}", CONFIG.lane_lock_ttl_min)
     except LockBusy:

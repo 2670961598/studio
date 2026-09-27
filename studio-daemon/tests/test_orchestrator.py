@@ -259,12 +259,12 @@ class Test复验竞态防护:
         simulate_worker(yt, iid, lanes)
         orch.pm_tick()                             # harvest → 证据就绪
         assert state(yt, iid) == "证据就绪"
-        lock(CONFIG, "lane-POLY-core").acquire("worker-OTHER", 120)   # 模拟并发活 worker
+        lock(CONFIG, "lane-core").acquire("worker-OTHER", 120)   # 模拟并发活 worker
         r = orch.pm_tick()
         assert any(a.startswith("VERIFY-DEFER") for a in r["actions"]), r
         assert state(yt, iid) == "证据就绪"          # 顺延：不动状态不烧 attempt
         assert int(yt.f(iid, "attempt") or 0) == 0
-        lock(CONFIG, "lane-POLY-core").release("worker-OTHER")
+        lock(CONFIG, "lane-core").release("worker-OTHER")
         r2 = orch.pm_tick()
         assert any(a.startswith("VERIFY-OK") for a in r2["actions"]), r2
 
@@ -356,13 +356,13 @@ class Test合并批示忙时保留:
         orch.pm_tick(); orch.pm_tick(); orch.pm_tick()   # harvest→verify→待批(合并审)
         assert state(yt, iid) == "待批"
         yt.comment(iid, "批准\n（PM 代批）")
-        lock(CONFIG, "lane-POLY-core").acquire("worker-OTHER", 120)   # 活 worker 占道
+        lock(CONFIG, "lane-core").acquire("worker-OTHER", 120)   # 活 worker 占道
         r = orch.pm_tick()
         assert any(a.startswith("MERGE-DEFER") for a in r["actions"]), r
         assert state(yt, iid) == "待批"
         assert not any(c["text"].startswith("批示已执行 approve-merge") for c in yt.comments(iid)), \
             "忙时不得烧掉批示标记"
-        lock(CONFIG, "lane-POLY-core").release("worker-OTHER")
+        lock(CONFIG, "lane-core").release("worker-OTHER")
         r2 = orch.pm_tick()
         assert state(yt, iid) == "已交付", "道释放后批示必须自动补合并"
 
@@ -483,7 +483,7 @@ class Test派发顺序:
         br = subprocess.run(["git", "-C", repo, "rev-parse", "--verify",
                              f"feature/{iid}"], capture_output=True)
         assert br.returncode != 0                              # 未建分支
-        lk = CONFIG.locks_dir / "lane-POLY-core.lock"
+        lk = CONFIG.locks_dir / "lane-core.lock"
         assert not lk.exists() or "worker-" not in lk.read_text()   # 锁未滞留
 
 

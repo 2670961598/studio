@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from studio.locks import DirLock, LockBusy
+from studio.config import CONFIG
 
 
 def mk(tmp_path, name="t"):
@@ -74,3 +75,21 @@ def test_死进程锁自动接管(tmp_path):
     lk2.path.joinpath("pid").write_text(str(os.getpid()))
     with pytest.raises(LockBusy):
         mk(tmp_path, "dead2").acquire("tick-w", 10)   # 活着 → 拒绝
+
+
+def test_泳道锁跨项目同仓互斥(tmp_config):
+    """审计 P0-4 回归网：锁名只按 lane（物理仓），不带 pid——
+    GAMES 与 POLY 用同名 lane 时必须互斥（曾经各持 lane-GAMES-core /
+    lane-POLY-core 两把锁互不设防，同棵工作树互相 checkout/reset）。"""
+    from studio.locks import LockBusy
+    a = DirLock(CONFIG.locks_dir, "lane-core")
+    a.acquire("worker-POLY-1", 120)
+    b = DirLock(CONFIG.locks_dir, "lane-core")
+    try:
+        b.acquire("worker-GAMES-9", 120)
+        raise AssertionError("跨项目同名 lane 必须互斥")
+    except LockBusy:
+        pass
+    a.release("worker-POLY-1")
+    b.acquire("worker-GAMES-9", 120)          # 释放后方可接管
+    b.release("worker-GAMES-9")
