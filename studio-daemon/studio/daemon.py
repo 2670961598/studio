@@ -38,7 +38,7 @@ def _sched():
     seed_from_logs()
     sched = BackgroundScheduler(
         jobstores={"default": SQLAlchemyJobStore(
-            url=f"sqlite:///{CONFIG._root / 'jobs.sqlite'}"}},
+            url=f"sqlite:///{CONFIG._root / 'jobs.sqlite'}")},
         job_defaults={"max_instances": 1, "coalesce": True, "misfire_grace_time": 300})
     tracker = DurationTracker()      # 宪章 §4.6：duration_ms 必须接线（审计 P0-1 断点A）
 
