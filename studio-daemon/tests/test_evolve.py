@@ -60,3 +60,39 @@ def test_apply_kb_白名单外拒绝(fake_yt, schema_env, monkeypatch):
          "text": "KB-PROPOSED ../../youtrack.json\n```\n{}\n```"})
     out = evolve._apply_kb(yt, iid)
     assert "REJECT" in out
+
+
+class Test验证闸:
+    """制作人 2026-09-27 指令：一切改进必须先在临时目录沙箱验证、确认价值后进生产。
+    approve 只代表"值得做"，VERIFIED 才代表"验证过有效"。"""
+
+    def _cs(self, *triples):
+        return [{"author": a, "created": t, "text": x} for a, t, x in triples], \
+               [x for _, _, x in triples]
+
+    def test_验证晚于提案才有效(self):
+        from studio.evolve import _verified
+        cs, ts = self._cs(("opengames", 1, "evolve-schema 新类型X"),
+                          ("agent-pm", 2, "SCHEMA-PROPOSED X"),
+                          ("opengames", 3, "approve"),
+                          ("agent-pm", 4, "VERIFIED sandbox PASS tests 137"))
+        assert _verified(cs, ts, 2) is True
+
+    def test_验证早于提案无效(self):
+        from studio.evolve import _verified
+        cs, ts = self._cs(("agent-pm", 1, "VERIFIED 早于提案无效"),
+                          ("opengames", 2, "evolve-schema 新类型X"),
+                          ("agent-pm", 3, "SCHEMA-PROPOSED X"),
+                          ("opengames", 4, "approve"))
+        assert _verified(cs, ts, 3) is False
+
+    def test_无验证或非pm作者无效(self):
+        from studio.evolve import _verified
+        cs, ts = self._cs(("opengames", 1, "evolve-schema X"),
+                          ("agent-pm", 2, "SCHEMA-PROPOSED X"),
+                          ("opengames", 3, "approve"))
+        assert _verified(cs, ts, 2) is False            # 没有 VERIFIED
+        cs2, ts2 = self._cs(("opengames", 1, "evolve-schema X"),
+                            ("agent-pm", 2, "SCHEMA-PROPOSED X"),
+                            ("someone-else", 3, "VERIFIED 伪造"))
+        assert _verified(cs2, ts2, 2) is False           # 作者不是 agent-pm

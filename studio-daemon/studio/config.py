@@ -37,9 +37,11 @@ class Config:
         # - GAMES（2026-09-22）"只需要一直批准"——无条件放行
         # - POLY（2026-09-26）"你直接审查之后，可以的进行同意即可"——ZCode 常驻监督
         #   逐单审查后代批，批准评论必须附审查意见留痕；非无条件
-        # - 框架自身 STUDIO 批示仍只认制作人
+        # - STUDIO（2026-09-27）"全部开发你直接审核"——未来探索/开发需求/bug
+        #   处置由 ZCode 审核放行（须附审查意见）；宪章与红线修改仍只认制作人
         self.delegated_approvals: dict[str, list[str]] = {"GAMES": ["agent-pm"],
-                                                          "POLY": ["agent-pm"]}
+                                                          "POLY": ["agent-pm"],
+                                                          "STUDIO": ["agent-pm"]}
         self.max_attempts = 3
         self.heartbeat_timeout_min = 90
         self.lane_lock_ttl_min = 120

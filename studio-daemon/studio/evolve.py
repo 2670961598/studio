@@ -55,6 +55,22 @@ def close_windows():
             _log(f"WINDOW-CLOSED {row['id']}")
 
 
+def _verified(cs, all_texts, proposed_at) -> bool:
+    """验证闸（制作人 2026-09-27 指令：一切改进必须先在临时目录验证、确认价值后才
+    进生产，杜绝 AI 一拍脑袋）：提案应用前必须有 agent-pm 的 `VERIFIED <沙箱验证
+    摘要>` 评论，且晚于提案——approve 只代表"值得做"，VERIFIED 才代表"验证过有效"。"""
+    return any(t.startswith("VERIFIED") and c["author"] == "agent-pm"
+               and proposed_at and c["created"] >= proposed_at
+               for c, t in zip(cs, all_texts))
+
+
+def _pending_verify_hint(yt, iid, all_texts):
+    if not any(t.startswith("已获批准但缺沙箱验证证据") for t in all_texts):   # 幂等：提示只留一次
+        yt.comment(iid, "已获批准但缺沙箱验证证据（验证闸，制作人 2026-09-27 指令）："
+                        "请在临时目录沙箱验证（studio-daemon/tools/sandbox-verify.sh 或等价流程），"
+                        "确认价值后回评论 `VERIFIED <验证摘要>` 方可应用。")
+
+
 def _process(yt, iid: str) -> str | None:
     cs = yt.comments(iid)
     all_texts = [c["text"].strip() for c in cs]                   # P1-6：迭代文本而非 dict
@@ -83,12 +99,18 @@ def _process(yt, iid: str) -> str | None:
                 yt.comment(iid, "检测到新指令，旧提案作废，重新起草。")
             return _propose(yt, iid, desc)
         if approved:
+            if not _verified(cs, all_texts, proposed_at):
+                _pending_verify_hint(yt, iid, all_texts)
+                return f"PENDING-VERIFY {iid}"
             return _apply(yt, iid, desc)
         return f"PENDING-APPROVE {iid}"
     if kb:
         if proposed_at is None:
             return _propose_kb(yt, iid, kb)
         if approved:
+            if not _verified(cs, all_texts, proposed_at):
+                _pending_verify_hint(yt, iid, all_texts)
+                return f"PENDING-KB-VERIFY {iid}"
             return _apply_kb(yt, iid)
         return f"PENDING-KB-APPROVE {iid}"
     return None

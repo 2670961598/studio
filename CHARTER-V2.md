@@ -80,6 +80,7 @@ bug 单默认轻装；需求单默认中装；知识/探索默认重装。制作
 4. **制作人任意介入**：任何时刻拖任何单到任何状态，daemon 与 agent 自适应（kill/park/返工按语义推导），不弹回。
 5. **预查闸**：每次派 agent 前，先派一个 Flash 小 agent 做预查——输出严格 JSON `{pass: bool, reason}`；解析失败重派一次；仍失败或 pass=false → **不开始**，面板标记 + 必要时自动开 bug 单。
 6. **预算**：干活不计成本；单次派工带 `--max-budget-usd` 帽与 45 分钟 wall-clock 看门狗防失控；daemon 全程记账（成本/耗时入 events.jsonl，duration_ms 必须接线）。
+7. **验证闸（2026-09-27 制作人指令）**：一切改进/建议（框架代码、schema、知识库、流程）必须先在**独立临时目录沙箱**验证——补丁可应用 + 测试全绿 + 针对性验证命令通过，确认存在真实价值后方可进生产；**杜绝 AI 一拍脑袋就开做**。治理族提案在 approve 之后还须 `VERIFIED <验证摘要>` 证据才可应用（evolve 机械强制）。工具：`studio-daemon/tools/sandbox-verify.sh`。
 
 ## 5. git 协议
 
