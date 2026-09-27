@@ -210,3 +210,47 @@ def test_ask_cwd透传到子进程(monkeypatch):
     assert seen["cwd"] == "/tmp/r"
     assert llm.ask("x") == "ok"
     assert seen["cwd"] is None
+
+
+class TestSanitizeAuditP12:
+    """审计 P1-2 绕过面回归网（2026-09-26 五路审计，巡逻读外部源后 LLM 生成 gate_cmd，
+    提示注入直达 bash -c——STUDIO-37 前沿战役上线前必须封堵）。"""
+
+    def test_参数赋值写文件逃逸拒绝(self):
+        from studio.llm import _sanitize_cmd
+        for evil in ["git diff --output=/tmp/evil && test -f x",
+                     "find . -fprint=/tmp/evil",
+                     "find . -fprint0=~/x",
+                     "git show --output=~/.ssh/evil",
+                     "dotnet test -fprint=x Tests/t.csproj"]:
+            assert _sanitize_cmd(evil) is None, evil
+
+    def test_任意模块执行拒绝(self):
+        from studio.llm import _sanitize_cmd
+        for evil in ["python -m pip install requests",
+                     "python -m http.server 8000",
+                     "python -m zipfile -e evil.zip /Users/x/LaunchAgents/",
+                     "python3 -m http.server"]:
+            assert _sanitize_cmd(evil) is None, evil
+
+    def test_裸变量与分号拒绝(self):
+        from studio.llm import _sanitize_cmd
+        for evil in ["cat $HOME/.config/polymatch3/youtrack.json",
+                     "cat ${HOME}/x",
+                     "cat a; cat b",
+                     "test -f a;ls b"]:
+            assert _sanitize_cmd(evil) is None, evil
+
+    def test_解释器绝对路径脚本拒绝(self):
+        from studio.llm import _sanitize_cmd
+        for evil in ["python /tmp/evil.py", "dotnet run /Users/x/evil.csproj"]:
+            assert _sanitize_cmd(evil) is None, evil
+
+    def test_合法范式不误伤(self):
+        from studio.llm import _sanitize_cmd
+        for ok in ["dotnet test Tests/PolyMatch3.Tests.csproj --filter LevelAssetAudit",
+                   "python -m pytest tests/ -q",
+                   "test -f docs-game/features/levels-index.md && grep -c pm3.json docs-game/features/levels-index.md",
+                   "git log --oneline -3",
+                   "wc -l docs/api/seams.md docs/api/changelog.md"]:
+            assert _sanitize_cmd(ok) == ok, ok

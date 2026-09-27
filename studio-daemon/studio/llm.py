@@ -21,6 +21,8 @@ FIRST_WORDS = {"test", "grep", "wc", "cat", "ls", "find", "diff", "head", "tail"
                "dotnet", "python", "python3", "npm", "cargo", "make"}
 INTERPRETER_WORDS = {"python", "python3", "npm", "cargo", "make", "dotnet"}
 READONLY_WORDS = {"test", "grep", "wc", "cat", "ls", "find", "diff", "head", "tail"}
+# 写文件/执行原语参数（审计 P1-2：git diff --output= / find -fprint= 曾可写任意路径）
+DANGEROUS_FLAGS = ("-fprint", "--output", "-delete", "-exec", "-ok", "-fprintf", "--patch")
 
 
 def _bad_path(tok: str) -> bool:
@@ -28,6 +30,16 @@ def _bad_path(tok: str) -> bool:
     if tok.startswith("HEAD:"):
         tok = tok[5:]
     return tok.startswith("/") or tok.startswith("~") or ".." in tok
+
+
+def _bad_flag(tok: str) -> bool:
+    """- 前缀参数：写文件/执行原语一律拒；含 = 的取赋值段按路径规则查
+    （--output=/abs、-fprint=~/x 这类借参数豁免逃逸的载体）。"""
+    if tok.startswith(DANGEROUS_FLAGS):
+        return True
+    if "=" in tok:
+        return _bad_path(tok.split("=", 1)[1])
+    return False
 
 
 def _sanitize_cmd(cmd: str | None) -> str | None:
@@ -50,15 +62,22 @@ def _sanitize_cmd(cmd: str | None) -> str | None:
         _protected = _protected.replace(m.group(), f"__Q{len(_quotes)-1}__", 1)
     if "&" in _protected.replace("&&", ""):         # 单 & = 后台执行，禁
         return None
+    if "$" in _protected:                          # 引号外裸变量（$HOME/${X}）禁——读任意路径
+        return None
+    if ";" in _protected:                          # 分号分段禁（任务书纪律，曾按段放行）
+        return None
     if any(b in _protected for b in CMD_BLACKLIST):
         return None
-    segs = _re.split(r"&&|;", _protected)
-    segs_raw = _re.split(r"&&|;", c)
+    segs = _protected.split("&&")
+    segs_raw = c.split("&&")
     for seg, seg_raw in zip(segs, segs_raw):
         toks = seg.strip().split()
         if not toks:
             return None
         w = toks[0]                            # 词元精确匹配（防 testX/grepped 前缀混淆）
+        args = toks[2:] if w == "git" else toks[1:]
+        if any(_bad_flag(t) for t in args if t.startswith("-")):
+            return None                          # 写文件/执行原语与 = 赋值逃逸
         if w == "git":
             if len(toks) < 2 or toks[1] not in GIT_READONLY:
                 return None
@@ -68,8 +87,16 @@ def _sanitize_cmd(cmd: str | None) -> str | None:
             # 解释器/构建段不享引号豁免：原始文本跑黑名单；禁内联执行参数
             if any(b in seg_raw for b in CMD_BLACKLIST):
                 return None
-            if "-c" in seg_raw.split() or "--eval" in seg_raw:
+            toks_r = seg_raw.split()
+            if "-c" in toks_r or "--eval" in seg_raw:
                 return None
+            if "-m" in toks_r:                    # -m 任意模块=装包/开服/解压全可能，白名单收
+                i = toks_r.index("-m")
+                mod = toks_r[i + 1] if i + 1 < len(toks_r) else ""
+                if not mod.startswith("pytest"):  # 唯一合法：python -m pytest
+                    return None
+            if any(_bad_path(t) for t in toks[1:] if not t.startswith("-")):
+                return None                       # 直接跑绝对路径脚本同样禁
         elif w in READONLY_WORDS:
             if any(_bad_path(t) for t in toks[1:] if not t.startswith("-")):
                 return None
