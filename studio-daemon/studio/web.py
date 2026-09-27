@@ -9,16 +9,39 @@ from . import statemachine
 
 app = FastAPI(title="studio-daemon")
 
+# 敏感值脱敏（审计 P3：worker 若 cat 过凭证文件，token 即上面板/对话流）
+_TOKEN_RE = None
+
+
+def _redact(obj):
+    """递归脱敏：perm-xxx 形态的 YouTrack token 替换为 ***REDACTED***。
+    形态独特（perm- 前缀 + 20 以上 base64ish），不会误杀 commit/sha。"""
+    global _TOKEN_RE
+    import re as _re
+    if _TOKEN_RE is None:
+        _TOKEN_RE = _re.compile(r"perm-[A-Za-z0-9+/=_\-]{20,}")
+    if isinstance(obj, str):
+        return _TOKEN_RE.sub("perm-***REDACTED***", obj)
+    if isinstance(obj, list):
+        return [_redact(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _redact(v) for k, v in obj.items()}
+    return obj
+
 
 @app.middleware("http")
 async def _guard(request, call_next):
-    """本机防护（P1-8）：拒 DNS rebinding（Host 白名单）与跨站 POST（CSRF）。"""
+    """本机防护（P1-8 + 审计 P2）：拒 DNS rebinding（Host 白名单）；
+    跨站请求一律拒（GET 也拒——防恶意网页先读 /api/token 再 POST）；
+    POST 须带 X-Studio-Token（Sec-Fetch-Site 单层防线挡不住旧浏览器/非浏览器客户端）。"""
     host = (request.headers.get("host") or "").lower()
     port = str(CONFIG.web_port)                 # 实验场换端口后白名单必须跟着走
     if host not in (f"127.0.0.1:{port}", f"localhost:{port}"):
         return JSONResponse({"error": "bad host"}, status_code=421)
-    if request.method == "POST" and request.headers.get("sec-fetch-site") not in (None, "same-origin", "same-site", "none"):
+    if request.headers.get("sec-fetch-site") not in (None, "same-origin", "same-site", "none"):
         return JSONResponse({"error": "cross-site blocked"}, status_code=403)
+    if request.method == "POST" and request.headers.get("x-studio-token") != CONFIG.panel_token:
+        return JSONResponse({"error": "bad token"}, status_code=403)
     return await call_next(request)
 STATIC = CONFIG._root / "static"
 
@@ -248,12 +271,18 @@ def api_schema():
 
 @app.get("/api/workers")
 def api_workers():
-    return _workers()
+    return _redact(_workers())
+
+
+@app.get("/api/token")
+def api_token():
+    """POST 令牌（供本机前端 ctl 用；跨站 GET 已被 middleware 拒）。"""
+    return {"token": CONFIG.panel_token}
 
 
 @app.get("/api/transcript/{issue}")
 def api_transcript(issue: str):
-    return _transcript(issue)
+    return _redact(_transcript(issue))
 
 
 # ---------------------------------------------------------------- 静态与首页

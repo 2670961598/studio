@@ -55,6 +55,22 @@ class Config:
 
     # ---- 便捷访问 ----
     @property
+    def panel_token(self) -> str:
+        """面板 POST 令牌：env STUDIO_PANEL_TOKEN 优先；否则首用生成并持久化到
+        ~/.config/polymatch3/panel-token（凭证目录，绝不入仓）。"""
+        import secrets
+        env = os.environ.get("STUDIO_PANEL_TOKEN")
+        if env:
+            return env
+        f = POLYCFG / "panel-token"
+        if f.exists():
+            return f.read_text(encoding="utf-8").strip()
+        tok = "pt-" + secrets.token_hex(24)
+        f.write_text(tok + "\n", encoding="utf-8")
+        f.chmod(0o600)
+        return tok
+
+    @property
     def yt_url(self) -> str:
         return self.yt_cfg["url"].rstrip("/")
 

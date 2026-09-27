@@ -5,6 +5,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from fastapi.testclient import TestClient
 from studio import web
+from studio.config import CONFIG
 
 
 @pytest.fixture
@@ -42,5 +43,31 @@ def test_transcript_404(client):
     assert client.get("/api/transcript/NOPE-1").status_code == 404
 
 
-def test_job_ctl_未知job_404(client):
-    assert client.post("/api/jobs/nope/trigger").status_code in (404, 503)
+def test_job_ctl_未知job_404(client, monkeypatch):
+    monkeypatch.setenv("STUDIO_PANEL_TOKEN", "pt-test-123")
+    assert client.post("/api/jobs/nope/trigger",
+                       headers={"X-Studio-Token": "pt-test-123"}).status_code in (404, 503)
+
+
+class TestCSRF与脱敏:
+    """审计 P2/P3：POST 令牌防线 + 对话流/worker 数据 token 脱敏。"""
+
+    def test_POST无令牌403_有令牌过闸(self, client, monkeypatch):
+        monkeypatch.setenv("STUDIO_PANEL_TOKEN", "pt-test-123")
+        r = client.post("/api/jobs/pm-poly/pause")
+        assert r.status_code == 403 and r.json()["error"] == "bad token"
+        r2 = client.post("/api/jobs/pm-poly/pause", headers={"X-Studio-Token": "pt-test-123"})
+        assert r2.status_code == 503            # 过了闸，路由内因调度器未运行 503
+
+    def test_跨站GET也拒_防读token后二段攻击(self, client):
+        r = client.get("/api/token", headers={"Sec-Fetch-Site": "cross-site"})
+        assert r.status_code == 403
+        assert client.get("/api/token").status_code == 200
+
+    def test_workers与transcript脱敏(self, client, tmp_path):
+        import json as _json
+        (CONFIG.workers_dir / "W-1.json").write_text(_json.dumps(
+            {"issue": "W-1", "pid": -1,
+             "branch": "perm-abc123def456ghi789jkl012mno"}), encoding="utf-8")
+        w = client.get("/api/workers").json()
+        assert "perm-abc123" not in str(w) and "REDACTED" in str(w)

@@ -270,7 +270,11 @@ createApp({
       try{workers.value=await (await fetch('/api/workers')).json()}catch(e){}
       try{Object.assign(sc,await (await fetch('/api/schema')).json())}catch(e){}
     }
-    async function ctl(id,act){await fetch(`/api/jobs/${id}/${act}`,{method:'POST'});refresh()}
+    let TOK=null
+    async function ctl(id,act){
+      if(TOK===null){try{TOK=(await (await fetch('/api/token')).json()).token}catch(e){TOK=''}}
+      await fetch(`/api/jobs/${id}/${act}`,{method:'POST',headers:{'X-Studio-Token':TOK}});refresh()
+    }
     async function openTr(issue){tr.value=await (await fetch('/api/transcript/'+issue)).json()}
     const outCls=o=>({ok:'b-ok',idle:'b-idle',error:'b-err',missed:'b-warn'}[o]||'b-mut')
     const wCls=s=>s.startsWith('RUNNING')?'b-ok pulse':s.startsWith('DONE')?'b-idle':s.startsWith('UNKNOWN')?'b-mut':'b-err'
