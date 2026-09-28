@@ -197,20 +197,22 @@ class Worker:
         缺文件/无 result 事件/坏行 → {}（记账缺失不致命，事实留白）。"""
         if not self.stream.exists():
             return {}
-        try:
-            for ln in reversed(self.stream.read_text(
-                    encoding="utf-8", errors="replace").splitlines()[-10:]):
+        # 逐行容错（生产实录：wrap 末尾恒有 WORKER-EXIT=0 非 JSON 行，
+        # 循环外 try 曾让解析整桶放弃——记账接线因此静默失效一天）
+        for ln in reversed(self.stream.read_text(
+                encoding="utf-8", errors="replace").splitlines()[-10:]):
+            try:
                 e = json.loads(ln)
-                if e.get("type") == "result":
-                    u = e.get("usage") or {}
-                    toks = (u.get("input_tokens") or 0) + (u.get("output_tokens") or 0)
-                    return {"cost_usd": e.get("total_cost_usd"),
-                            "duration_ms": e.get("duration_ms") or e.get("duration_api_ms"),
-                            "tokens": toks or None, "turns": e.get("num_turns"),
-                            "session_id": e.get("session_id"),
-                            "is_error": e.get("is_error", False)}
-        except Exception:
-            pass
+            except Exception:
+                continue
+            if e.get("type") == "result":
+                u = e.get("usage") or {}
+                toks = (u.get("input_tokens") or 0) + (u.get("output_tokens") or 0)
+                return {"cost_usd": e.get("total_cost_usd"),
+                        "duration_ms": e.get("duration_ms") or e.get("duration_api_ms"),
+                        "tokens": toks or None, "turns": e.get("num_turns"),
+                        "session_id": e.get("session_id"),
+                        "is_error": e.get("is_error", False)}
         return {}
 
     def archive(self):

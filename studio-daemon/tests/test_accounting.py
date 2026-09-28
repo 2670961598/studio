@@ -13,8 +13,10 @@ from studio.runs import DurationTracker              # noqa: E402
 def _mk_stream(iid, result: dict):
     w = Worker(iid)
     w.stream.parent.mkdir(parents=True, exist_ok=True)
+    # 尾行复刻 wrap 脚本的 WORKER-EXIT 非 JSON 行（生产形态——循环外 try 曾在此翻车）
     lines = [json.dumps({"type": "user", "message": "go"}, ensure_ascii=False),
-             json.dumps(dict(type="result", **result), ensure_ascii=False)]
+             json.dumps(dict(type="result", **result), ensure_ascii=False),
+             "WORKER-EXIT=0"]
     w.stream.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return w
 
