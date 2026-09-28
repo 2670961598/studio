@@ -62,13 +62,36 @@ WORKER_TEMPLATE = """你是虚拟工作室的 {title}（身份 {role}），以�
 """
 
 
-def wrap_script(issue: str, repo: str, prompt, stream, claude_bin: str) -> str:
-    """wrap 生成（纯函数便于测试）。约束三件套（审计 P0-3，自 ~/bin/studio-worker 迁入）：
-    固定主力模型 + 单次预算帽 + wall-clock 看门狗——worker 持续心跳也不再永跑。"""
+# 执行器规格表（STUDIO-47C）：lane 可配 executor 字段选择执行 CLI。
+# 新执行器接入纪律：参数面必须先在沙箱真实验证（--model/预算/输出格式映射），
+# 未登记的执行器启动即报错，绝不静默降级跑错命令。
+EXECUTOR_SPECS = {
+    "claude": {
+        "args": "-p --dangerously-skip-permissions --output-format stream-json --verbose "
+                '--model "{model}" --max-budget-usd {budget}',
+    },
+}
+
+
+def executor_cmdline(executor: str, prompt, stream) -> str:
+    spec = EXECUTOR_SPECS.get(executor)
+    if not spec:
+        known = ", ".join(EXECUTOR_SPECS)
+        raise RuntimeError(f"未知执行器 {executor!r}（已登记：{known}）——"
+                           f"新执行器须先在沙箱验证参数面并登记 EXECUTOR_SPECS")
+    return spec["args"].format(model=CONFIG.worker_model,
+                               budget=CONFIG.worker_max_budget_usd) \
+        + f' < "{prompt}" > "{stream}" 2>&1'
+
+
+def wrap_script(issue: str, repo: str, prompt, stream, claude_bin: str,
+                executor: str = "claude") -> str:
+    """wrap 生成（纯函数便于测试）。约束三件套（审计 P0-3）：固定模型 + 预算帽 +
+    wall-clock 看门狗。多执行器（STUDIO-47C）：命令行由 EXECUTOR_SPECS 按执行器映射。"""
     return f"""#!/bin/bash
 cd "{repo}"
 git checkout feature/{issue} >/dev/null 2>&1
-{claude_bin} -p --dangerously-skip-permissions --output-format stream-json --verbose --model "{CONFIG.worker_model}" --max-budget-usd {CONFIG.worker_max_budget_usd} < "{prompt}" > "{stream}" 2>&1 &
+{claude_bin} {executor_cmdline(executor, prompt, stream)} &
 CPID=$!
 ( sleep {CONFIG.worker_wall_timeout_s}; kill -TERM $CPID 2>/dev/null ) & WDOG=$!
 wait $CPID; RC=$?
@@ -137,8 +160,8 @@ class Worker:
         for f in (self.report, self.stream):
             if f.exists():
                 f.rename(f.with_name(f"{f.stem}.a{att}{f.suffix}"))
-        self.wrap.write_text(wrap_script(self.issue, lc["path"], self.prompt,
-                                         self.stream, claude_bin))
+        self.wrap.write_text(wrap_script(self.issue, lc["path"], self.prompt, self.stream,
+                                         claude_bin, executor=lc.get("executor", "claude")))
         self.wrap.chmod(0o755)
         proc = subprocess.Popen(["nohup", "bash", str(self.wrap)], stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL, start_new_session=True)

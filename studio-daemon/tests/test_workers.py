@@ -25,3 +25,17 @@ def test_wrap_参数可调(tmp_config, monkeypatch):
     s = wrap_script("T-2", "/r", "/p", "/s", "/c")
     assert '--model "glm-5.3-air"' in s and "--max-budget-usd 8.5" in s
     assert "sleep 600" in s
+
+
+def test_未登记执行器报错不静默(tmp_config):
+    """47-C 纪律：新执行器必须先沙箱验证参数面并登记——未登记的启动即报错。"""
+    import pytest
+    from studio.workers import wrap_script
+    with pytest.raises(RuntimeError, match="未知执行器 'codex'"):
+        wrap_script("T-9", "/r", "/p", "/s", "/c", executor="codex")
+
+
+def test_claude执行器三件套不变(tmp_config):
+    from studio.workers import wrap_script
+    s = wrap_script("T-10", "/r", "/p", "/s", "/c", executor="claude")
+    assert '--model "glm-5.3"' in s and "--max-budget-usd" in s and "sleep 2700" in s
