@@ -30,13 +30,33 @@ BUILTIN_ROLLBACK = [("证据就绪", "已派发"), ("复验通过", "已派发")
 BUILTIN_TYPES = {"需求", "缺陷", "技术债"}   # 交付族（走级别流）
 
 
+class _StrictLoader(yaml.SafeLoader):
+    """重复键检测（C2 根因：双 情报: 键被 safe_load 静默后者覆盖，边凭空消失）。"""
+    pass
+
+
+def _no_dup_construct(loader, node, deep=False):
+    mapping = {}
+    for k_node, v_node in node.value:
+        key = loader.construct_object(k_node, deep=deep)
+        if key in mapping:
+            raise ValueError(f"schema 重复键: {key}")
+        mapping[key] = loader.construct_object(v_node, deep=deep)
+    return mapping
+
+
+_StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+                              _no_dup_construct)
+
+
 def _load_schema() -> dict:
     try:
         with open(SCHEMA_PATH, encoding="utf-8") as f:
-            s = yaml.safe_load(f) or {}
+            s = yaml.load(f, Loader=_StrictLoader) or {}
         assert s.get("types") and s.get("type_edges")
         return s
-    except Exception:
+    except Exception as e:
+        print(f"[statemachine] schema 加载失败，回退内置: {type(e).__name__} {e}")
         return {}
 
 
@@ -86,6 +106,10 @@ def allowed(frm: str, to: str, track, typ) -> bool:
         if (frm, to) in [(flow[i], flow[i + 1]) for i in range(len(flow) - 1)]:
             return True
         if (frm, to) in ROLLBACK and frm in flow:
+            return True
+        # 交付族的 type_edges 入口（C1：技术债草稿 promote [[草稿,新单]]——
+        # "草稿"不在任何级别流里，此边只能来自 type_edges 补查）
+        if (frm, to) in TYPE_EDGES.get(typ, []):
             return True
         return False
     edges = TYPE_EDGES.get(typ)

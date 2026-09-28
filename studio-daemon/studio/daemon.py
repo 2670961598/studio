@@ -83,7 +83,7 @@ def _sched():
                       id="evolve-scan", replace_existing=True)
         sched.add_job("studio.reports:daily_report", CronTrigger.from_crontab("30 21 * * *"),
                       id="report-daily", replace_existing=True)
-        sched.add_job("studio.reports:weekly_report", CronTrigger.from_crontab("30 9 * * 1"),
+        sched.add_job("studio.reports:weekly_report", CronTrigger.from_crontab("30 9 * * mon"),  # APScheduler 周语义：数字 1=周二（曾致首份周报晚一天）,
                       id="report-weekly", replace_existing=True)
         sched.add_job("studio.reports:monthly_report", CronTrigger.from_crontab("40 9 1 * *"),
                       id="report-monthly", replace_existing=True)

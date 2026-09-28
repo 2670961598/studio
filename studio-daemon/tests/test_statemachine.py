@@ -76,3 +76,35 @@ class TestNextStates:
 
     def test_next_states_战役(self):
         assert set(sm.next_states("运行中", None, "战役")) == {"暂停"}
+
+
+class Test草稿转正双断链修复:
+    """旧审计 C1/C2（宪章 §10 点名消化未兑现）：技术债/情报草稿 promote 必炸
+    "非法迁移"——yaml 双 情报: 键静默覆盖丢 [草稿,发现] 边 + 交付族永不查 type_edges。"""
+
+    def test_技术债草稿promote合法(self):
+        import studio.statemachine as sm
+        assert sm.allowed("草稿", "新单", "L1 首批", "技术债") is True
+
+    def test_情报草稿promote合法(self):
+        import studio.statemachine as sm
+        assert sm.allowed("草稿", "发现", None, "情报") is True
+        assert sm.allowed("发现", "评估中", None, "情报") is True
+
+    def test_交付族补查不破坏级别流语义(self):
+        import studio.statemachine as sm
+        # 级别流非法迁移依然拒（补查只开 type_edges 里声明的边）
+        assert sm.allowed("新单", "已交付", "L2 常规", "需求") is False
+        assert sm.allowed("草稿", "新单", "L2 常规", "需求") is False   # 需求无 type_edges
+
+    def test_重复键schema拒载回退内置(self, tmp_config, monkeypatch):
+        import studio.statemachine as sm
+        bad = tmp_config._root.parent / "kernel" / "schema" / "ticket-types.yaml"
+        orig = bad.read_text(encoding="utf-8")
+        monkeypatch.setattr(sm, "SCHEMA_PATH", bad)
+        bad.write_text(orig + "\n情报: [[发现, 评估中]]\n", encoding="utf-8")
+        sm.recompute()
+        # 回退内置表（BUILTIN_TYPE_EDGES 完整含 情报 三边），不是被覆盖的残缺表
+        assert sm.allowed("草稿", "发现", None, "情报") is True
+        bad.write_text(orig, encoding="utf-8")
+        sm.recompute()
