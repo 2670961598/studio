@@ -35,6 +35,40 @@ def _git(repo: str, *args, check=True):
     return p
 
 
+# ---- 优雅重载（STUDIO-47A，制作人 2026-09-28 需求）----
+# 重启即指令：收到后停派新工（drain），在途 worker 自然收割完，daemon 自我退出，
+# 看护拉起新代码，从外置状态原地续跑——框架与项目零中断。
+
+DRAIN_FILE = "drain.json"
+
+
+def drain_requested() -> bool:
+    return (CONFIG.locks_dir / DRAIN_FILE).exists()
+
+
+def in_flight() -> int:
+    """在途 worker 数（reg 文件在=未收割；done=已归档不算）。"""
+    return len([f for f in CONFIG.workers_dir.glob("*.json")
+                if not f.name.endswith(".done.json")])
+
+
+def drain_ready() -> tuple[bool, str]:
+    """drain 完成判定：无在途 reg 且无 claude 进程（LLM 岛短进程也等掉，防孤儿写半截）。"""
+    import subprocess as _sp
+    if not drain_requested():
+        return False, "no-drain"
+    n = in_flight()
+    if n:
+        return False, f"in-flight={n}"
+    try:
+        r = _sp.run(["pgrep", "-f", "claude -p"], capture_output=True)
+        if r.returncode == 0:
+            return False, "claude-procs-alive"
+    except Exception:
+        pass
+    return True, "ready"
+
+
 def _release_lane(pid, lane, owner):
     """释放本单名下的 lane 锁（防泄漏；非我持有时静默）。
     锁名只按 lane（审计 P0-4）：lane 在全局 lanes 表注册，同名必同物理仓——
@@ -250,6 +284,8 @@ def _redispatch(yt, pid, row, lv, typ) -> str:
 def _dispatch(yt, pid, iid, lane, already: bool = False) -> str | None:
     if lane == "-" or not lane:
         return f"NO-LANE {iid}"
+    if drain_requested():                       # 优雅重载：只停新派发，收割/复验照常
+        return f"DRAINING {iid}（优雅重载中，暂缓派发）"
     lc = CONFIG.lane(lane)
     if int(yt.f(iid, "attempt") or 0) >= CONFIG.max_attempts:
         return f"BREAK {iid} attempt≥3 待制作人"

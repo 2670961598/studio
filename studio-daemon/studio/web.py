@@ -45,6 +45,18 @@ async def _guard(request, call_next):
     return await call_next(request)
 STATIC = CONFIG._root / "static"
 
+@app.post("/api/restart")
+def api_restart(reason: str = ""):
+    """优雅重载（STUDIO-47A）：写 drain 标志→停派新工→等在途收割完→daemon 自退→看护拉起。"""
+    import json as _json, time as _t
+    from . import orchestrator as _orch
+    (_orch.CONFIG.locks_dir / _orch.DRAIN_FILE).write_text(
+        _json.dumps({"ts": _t.strftime("%F %T"), "reason": reason or "面板触发"},
+                    ensure_ascii=False), encoding="utf-8")
+    return {"ok": "draining", "in_flight": _orch.in_flight(),
+            "note": "在途 worker 收割完成后自动重启；期间不派新工"}
+
+
 TRIGGER_MAP = {  # 立即执行的路由表（job id → 可调用）
     "pm-poly": ("studio.orchestrator", "pm_tick", {"pid": "POLY"}),
     "pm-studio": ("studio.orchestrator", "pm_tick", {"pid": "STUDIO"}),
@@ -193,8 +205,10 @@ def api_state_alias():
     """看护脚本的健康检查入口（含调度器活性）。"""
     from . import runtime
     import json as _j
+    from . import orchestrator as _orch
     return {"now": time.strftime("%F %T"),
             "sched_alive": runtime.SCHED is not None and runtime.SCHED.running,
+            "draining": _orch.drain_requested(), "in_flight": _orch.in_flight(),
             "started": runtime.STARTED}
 
 

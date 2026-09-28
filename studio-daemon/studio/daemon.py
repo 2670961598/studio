@@ -87,16 +87,37 @@ def _sched():
                       id="report-weekly", replace_existing=True)
         sched.add_job("studio.reports:monthly_report", CronTrigger.from_crontab("40 9 1 * *"),
                       id="report-monthly", replace_existing=True)
+        sched.add_job("studio.daemon:drain_watch", CronTrigger.from_crontab("*/30 * * * * *"),
+                      id="drain-watch", replace_existing=True)
     from . import runtime
     runtime.SCHED = sched
     runtime.STARTED = time.time()
     return sched
 
 
+def drain_watch() -> dict:
+    """优雅重载哨兵（STUDIO-47A）：drain 请求且无在途 → 记账后自退（看护拉起新代码）。"""
+    import os
+    from . import orchestrator as orch
+    from .runs import append_run
+    ready, why = orch.drain_ready()
+    if ready:
+        append_run("drain-watch", "ok", 0, f"优雅重载：在途清零，自退重启（{why}）")
+        os._exit(0)                       # 看护循环 10s 后拉起新代码；drain 文件由新进程清理
+    return {"result": "IDLE" if why == "no-drain" else "WAIT",
+            "actions": [why]}
+
+
 def run():
     import uvicorn
     from .web import app
     from .config import CONFIG
+    from . import orchestrator as _orch
+    df = _orch.CONFIG.locks_dir / _orch.DRAIN_FILE
+    if df.exists():                        # 上轮优雅重载完成 → 清标志留痕
+        import time as _t
+        print(f"[daemon] 上轮优雅重载完成（drain 标志清除 {df}），续跑")
+        df.unlink()
     sched = _sched()
     sched.start()
     print(f"[studio-daemon] scheduler on; dashboard http://127.0.0.1:{CONFIG.web_port}", flush=True)

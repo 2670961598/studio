@@ -85,6 +85,7 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);
 
   <nav>
     <button v-for="t in tabs" :key="t.k" :class="{on:tab===t.k}" @click="tab=t.k">{{t.n}}</button>
+    <button class="btn warn" style="float:right" @click="gracefulRestart">优雅重载</button>
   </nav>
 
   <!-- 总览 -->
@@ -271,6 +272,15 @@ createApp({
       try{Object.assign(sc,await (await fetch('/api/schema')).json())}catch(e){}
     }
     let TOK=null
+    async function gracefulRestart(){
+      if(!confirm('优雅重载：停派新工，等在途 worker 收割完自动重启。继续？'))return
+      let TOK=null
+      try{TOK=(await (await fetch('/api/token')).json()).token}catch(e){TOK=''}
+      const r=await(await fetch('/api/restart',{method:'POST',headers:{'X-Studio-Token':TOK},
+        body:JSON.stringify({reason:'面板优雅重载'})})).json()
+      alert(r.ok?`已进入 drain：在途 ${r.in_flight} 个，完成后自动重启`:'失败')
+      refresh()
+    }
     async function ctl(id,act){
       if(TOK===null){try{TOK=(await (await fetch('/api/token')).json()).token}catch(e){TOK=''}}
       await fetch(`/api/jobs/${id}/${act}`,{method:'POST',headers:{'X-Studio-Token':TOK}});refresh()
@@ -281,7 +291,7 @@ createApp({
     const wStatus=s=>s.split(' ')[0]
     const msgCls=m=>m.role==='sys'?'m-sys':m.kind==='tool'?'m-tool':m.kind==='result'?(m.ok===false?'m-res m-err':'m-res'):'m-ai'
     onMounted(()=>{refresh();setInterval(refresh,5000)})
-    return {tab,tabs,ov,jobs,runs,workers,tr,runFilter,sc,ytIssue,jName,ctl,openTr,outCls,wCls,wStatus,msgCls}
+    return {tab,tabs,ov,jobs,runs,workers,tr,runFilter,sc,ytIssue,jName,ctl,openTr,outCls,wCls,wStatus,msgCls,gracefulRestart}
   }
 }).mount('#app')
 </script>

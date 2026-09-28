@@ -554,3 +554,39 @@ class Test看门狗兜底:
                             lambda self: killed.append(self.issue) or "KILLED")
         orch.pm_tick()
         assert not killed                                # 未超限不动它
+
+
+class Test优雅重载:
+    """STUDIO-47A：重启即指令——drain 后停派新工（收割照常），在途清零 daemon 自退。"""
+
+    def test_drain时派发被暂缓(self, env, lanes):
+        yt = env
+        iid = yt.new("POLY", "重载", "d", lane="core", typ="需求", track="L0 自动")
+        yt.gate_freeze(iid, "test -f docs/out.md")
+        orch.CONFIG.locks_dir.joinpath("drain.json").write_text("{}", encoding="utf-8")
+        out = orch.pm_tick()
+        assert any(a.startswith(f"DRAINING {iid}") for a in out["actions"])
+        assert state(yt, iid) == "新单"                 # 未派发
+        orch.CONFIG.locks_dir.joinpath("drain.json").unlink()
+
+    def test_drain_ready判定(self, tmp_config, monkeypatch):
+        import subprocess as _sp
+        f = tmp_config.locks_dir / "drain.json"
+        f.write_text("{}", encoding="utf-8")
+        (tmp_config.workers_dir / "W-9.json").write_text("{}", encoding="utf-8")
+        assert orch.drain_ready() == (False, "in-flight=1")
+        (tmp_config.workers_dir / "W-9.json").unlink()
+        monkeypatch.setattr(_sp, "run",
+                            lambda *a, **k: _sp.CompletedProcess([], 0, ""))
+        ok, why = orch.drain_ready()
+        assert ok is False and why == "claude-procs-alive"
+        monkeypatch.setattr(_sp, "run",
+                            lambda *a, **k: _sp.CompletedProcess([], 1, ""))
+        assert orch.drain_ready() == (True, "ready")
+
+    def test_无drain时正常派发(self, env, lanes):
+        yt = env
+        iid = yt.new("POLY", "正常", "d", lane="core", typ="需求", track="L0 自动")
+        yt.gate_freeze(iid, "test -f docs/out.md")
+        out = orch.pm_tick()
+        assert any(a.startswith(f"DISPATCH {iid}") for a in out["actions"])

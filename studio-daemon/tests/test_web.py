@@ -71,3 +71,14 @@ class TestCSRF与脱敏:
              "branch": "perm-abc123def456ghi789jkl012mno"}), encoding="utf-8")
         w = client.get("/api/workers").json()
         assert "perm-abc123" not in str(w) and "REDACTED" in str(w)
+
+
+def test_restart端点写drain(client, monkeypatch):
+    monkeypatch.setenv("STUDIO_PANEL_TOKEN", "pt-test-123")
+    from studio import orchestrator as orch
+    r = client.post("/api/restart", headers={"X-Studio-Token": "pt-test-123"})
+    assert r.json()["ok"] == "draining"
+    assert (CONFIG.locks_dir / "drain.json").exists()
+    st = client.get("/api/state").json()
+    assert st["draining"] is True and "in_flight" in st
+    (CONFIG.locks_dir / "drain.json").unlink()
