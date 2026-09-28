@@ -57,12 +57,17 @@ def api_restart(reason: str = ""):
             "note": "在途 worker 收割完成后自动重启；期间不派新工"}
 
 
-TRIGGER_MAP = {  # 立即执行的路由表（job id → 可调用）
+TRIGGER_MAP = {  # 立即执行的路由表（job id → 可调用）——与 _sched 装配对齐
+    #（审计 P2 曾指出硬编码漏岗：report-* 与 pm-games 缺席，手动触发"未知 job"实录）
     "pm-poly": ("studio.orchestrator", "pm_tick", {"pid": "POLY"}),
     "pm-studio": ("studio.orchestrator", "pm_tick", {"pid": "STUDIO"}),
+    "pm-games": ("studio.orchestrator", "pm_tick", {"pid": "GAMES"}),
     "self-eval": ("studio.metrics", "self_eval", {}),
     "patrol": ("studio.patrol", "patrol_tick", {}),
     "evolve-scan": ("studio.evolve", "scan", {}),
+    "report-daily": ("studio.reports", "daily_report", {}),
+    "report-weekly": ("studio.reports", "weekly_report", {}),
+    "report-monthly": ("studio.reports", "monthly_report", {}),
 }
 
 
