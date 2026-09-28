@@ -137,8 +137,11 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
 
     # ---- 草稿：等制作人 promote/kill（Inspector/Scout/自评 的产出位）----
     if st == "草稿":
-        for c in yt.comments(iid):
-            if not CONFIG.can_approve(pid, c["author"], lane):
+        cs0 = yt.comments(iid)
+        hold = _producer_hold(cs0)
+        for c in cs0:
+            if (hold and c["author"] != CONFIG.producer) \
+                    or not CONFIG.can_approve(pid, c["author"], lane):
                 continue
             w = c["text"].strip().split()
             d0 = w[0] if w else ""
@@ -444,6 +447,15 @@ def _back_to_dispatch(yt, pid, iid, n, why):
     yt.comment(iid, f"退回重做: {why} attempt={n}")
 
 
+HOLD_WORDS = ("亲批", "hold")   # 制作人单据级叮嘱（2026-09-28）：评论首词命中即本单一律亲批
+
+
+def _producer_hold(cs) -> bool:
+    """制作人在本单留过「亲批/hold」叮嘱 → 一切代批失效（制作人本人照常有效）。"""
+    return any(c["author"] == CONFIG.producer
+               and (c["text"].strip().split() or [""])[0] in HOLD_WORDS for c in cs)
+
+
 def _has(yt, iid, word, lane=None) -> bool:
     """授权批示人评论首 token 精确匹配（P2-6：子串匹配会误判"上次X批错了"）。"""
     for c in yt.comments(iid):
@@ -486,8 +498,10 @@ def _directives(yt, iid, lv, typ, lane=None) -> str | None:
     applied = sum(1 for c in cs if c["author"] == "agent-pm"
                   and c["text"].startswith("批示已执行"))
     approvals = []
+    hold = _producer_hold(cs)
     for c in cs:
-        if not CONFIG.can_approve(iid.split("-")[0], c["author"], lane) or not c["text"].strip():
+        if (hold and c["author"] != CONFIG.producer) \
+                or not CONFIG.can_approve(iid.split("-")[0], c["author"], lane) or not c["text"].strip():
             continue
         if c["text"].lstrip().startswith(("批示已执行", "制作人批示", "断路退审")):
             continue                    # PM 留痕评论禁当批示（代批后防自批准循环）
@@ -515,7 +529,8 @@ def _directives(yt, iid, lv, typ, lane=None) -> str | None:
     if len(approvals) <= applied:
         # 没有新批示；查非 approve 指令（reject/kill/track）
         for c in cs[-10:]:
-            if not CONFIG.can_approve(iid.split("-")[0], c["author"], lane):
+            if (hold and c["author"] != CONFIG.producer) \
+                    or not CONFIG.can_approve(iid.split("-")[0], c["author"], lane):
                 continue
             w = c["text"].strip().split()
             d = _normalize_directive(w[0]) if w else ""

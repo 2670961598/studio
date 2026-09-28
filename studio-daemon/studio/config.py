@@ -45,6 +45,14 @@ class Config:
         # 亲批泳道（制作人 2026-09-28 指令：三消 core 仓迭代多版、重要度最高，
         # 慎之又慎——该泳道单据一切批示只认制作人，代批账号的批准不被消费）
         self.producer_only_lanes: dict[str, list[str]] = {"POLY": ["core"]}
+        # fail-safe（2026-09-28）：委托账号未在 youtrack.json 注册 token 时自动剔除并告警
+        # ——代批账号切 agent-deputy 后，token 未就位前不会 401 崩溃，只是该账号暂不可代批
+        _ag = self.yt_cfg.get("agents", {})
+        for _p, _accts in list(self.delegated_approvals.items()):
+            _ok = [a for a in _accts if a in _ag and _ag[a].get("token")]
+            if len(_ok) != len(_accts):
+                print(f"[config] 委托账号缺 token 剔除：{_p} {_accts}→{_ok}（youtrack.json 注册后自动恢复）")
+                self.delegated_approvals[_p] = _ok
         self.max_attempts = 3
         self.heartbeat_timeout_min = 90
         self.lane_lock_ttl_min = 120

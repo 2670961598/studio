@@ -651,3 +651,48 @@ class Test亲批泳道:
         assert state(yt, iid) == "已派发", "非亲批泳道代批应照常"
 
 
+
+
+class Test亲批叮嘱:
+    """制作人 2026-09-28 指令：单据级「亲批/hold」——任何单上制作人评论首词命中，
+    该单一切代批失效（本人照常）。与泳道级亲批正交、可叠加。"""
+
+    def test_game泳道亲批叮嘱后代批失效(self, env, lanes, monkeypatch):
+        from studio.config import CONFIG as _C
+        import conftest as _cf
+        yt = env
+        monkeypatch.setattr(_C, "producer_only_lanes", {})   # 排除泳道亲批，纯测叮嘱
+        iid = yt.new("POLY", "叮嘱", "d", lane="game", typ="需求", track="L1 首批")
+        orch.pm_tick()
+        # fake 后端评论作者恒为 agent-pm——直插制作人评论（真实现形态）
+        be = _cf.CURRENT_BACKEND
+        be.issues[iid]["comments"].append(
+            {"author": "opengames", "text": "亲批 这单我要自己看", "created": be.now_ms()})
+        yt.comment(iid, "批准 审查意见：……（ZCode 代批留痕）")
+        orch.pm_tick()
+        assert state(yt, iid) == "待批", "亲批叮嘱后一切代批必须失效"
+
+    def test_无叮嘱代批照常(self, env, lanes, monkeypatch):
+        from studio.config import CONFIG as _C
+        monkeypatch.setattr(_C, "producer_only_lanes", {})
+        yt = env
+        iid = yt.new("POLY", "无叮嘱", "d", lane="game", typ="需求", track="L1 首批")
+        orch.pm_tick()
+        yt.comment(iid, "批准 审查意见：常规代批（ZCode 代批留痕）")
+        orch.pm_tick()
+        assert state(yt, iid) == "已派发"
+
+    def test_委托账号缺token自动剔除(self, tmp_config, capsys, monkeypatch):
+        import importlib
+        from studio import config as cfgmod
+        import json as _json
+        # 注册表里去掉 agent-pm → 委托被剔除（fail-safe，不 401）
+        real_load = cfgmod._load
+        def fake_load(p):
+            d = real_load(p)
+            if p.name == "youtrack.json":
+                d["agents"] = {}
+            return d
+        monkeypatch.setattr(cfgmod, "_load", fake_load)
+        c = cfgmod.Config()
+        assert c.delegated_approvals == {"GAMES": [], "POLY": [], "STUDIO": []}
