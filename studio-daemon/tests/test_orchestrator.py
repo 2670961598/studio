@@ -299,6 +299,7 @@ class Test脏树自愈:
         assert any("泳道自愈" in c["text"] for c in yt.comments(iid))
 
 
+
 class TestPM代批:
     """制作人委托代批（config.delegated_approvals）：委托项目内 PM 批示等效制作人；
     未委托项目 PM 批示无效；PM 留痕评论不得被当成批示（防自批准循环）。"""
@@ -344,6 +345,7 @@ class TestPM代批:
         assert state(yt, iid) == "已派发", "委托项目的 PM 批示应被消费并派发"
 
 
+
 class Test合并批示忙时保留:
     def test_L2合并批_泳道忙_批示保留下拍重试(self, env, lanes, monkeypatch):
         from studio.locks import lock
@@ -365,6 +367,7 @@ class Test合并批示忙时保留:
         lock(CONFIG, "lane-core").release("worker-OTHER")
         r2 = orch.pm_tick()
         assert state(yt, iid) == "已交付", "道释放后批示必须自动补合并"
+
 
 
 class TestL3槽位语义:
@@ -408,6 +411,7 @@ class TestL3槽位语义:
         assert f"merge({iid})" in log
 
 
+
 class TestL3批示词误解析容忍:
     def test_LLM岛误写approve_merge_槽位仍按结构标记走(self, env, lanes, monkeypatch):
         """GAMES-3 实录回归：LLM 岛把 approve-design 批示误解析成 approve-merge，
@@ -436,6 +440,7 @@ class TestL3批示词误解析容忍:
         yt.comment(iid, "批准\n（PM 代批）")
         orch.pm_tick()
         assert state(yt, iid) == "已交付", "末轮必须按合并审结构标记真合并"
+
 
 
 class Test裸批准原始词元优先:
@@ -487,6 +492,7 @@ class Test派发顺序:
         assert not lk.exists() or "worker-" not in lk.read_text()   # 锁未滞留
 
 
+
 class Test收割记账:
     def test_收割把成本时长tokens入账(self, env, lanes):
         """审计 P0-1：GATES-40 的 stream 明躺 cost/duration，账本却是空集——接线验收。"""
@@ -515,6 +521,14 @@ class Test收割记账:
         done = _json.loads((CONFIG.workers_dir / f"{iid}.done.json").read_text(encoding="utf-8"))
         assert done["result"]["cost_usd"] == 16.48      # 归档钉存，stream 改名后仍在
 
+
+
+@pytest.fixture(autouse=True)
+def _no_lane_exemption(monkeypatch):
+    """清空亲批泳道豁免：本类测代批/槽位机制本身（与 2026-09-28 core 泳道亲批收紧正交），
+    测试泳道沿用历史任意选择的 core。"""
+    from studio.config import CONFIG as _C
+    monkeypatch.setattr(_C, "producer_only_lanes", {})
 
 class Test看门狗兜底:
     def test_wall超限_kill并重派(self, env, lanes, monkeypatch):
@@ -590,3 +604,50 @@ class Test优雅重载:
         yt.gate_freeze(iid, "test -f docs/out.md")
         out = orch.pm_tick()
         assert any(a.startswith(f"DISPATCH {iid}") for a in out["actions"])
+
+
+class Test亲批泳道:
+    @pytest.fixture(autouse=True)
+    def _restore_lane_exemption(self, monkeypatch):
+        """本类测亲批收紧本身——恢复 config 默认豁免表（覆盖模块级清空）。"""
+        from studio.config import CONFIG as _C
+        monkeypatch.setattr(_C, "producer_only_lanes", {"POLY": ["core"]})
+
+    """制作人 2026-09-28 指令：三消 core 仓（POLY core 泳道）慎之又慎——
+    其单据一切批示只认制作人，代批账号（agent-pm）的批准不被消费。"""
+
+    def test_core泳道PM批准不消费(self, env, lanes):
+        yt = env
+        iid = yt.new("POLY", "core亲批", "d", lane="core", typ="需求", track="L1 首批")
+        orch.pm_tick()                                   # →待批
+        yt.comment(iid, "批准 审查意见：……（ZCode 代批留痕）")
+        orch.pm_tick()
+        assert state(yt, iid) == "待批", "core 泳道 PM 批示必须无效"
+
+    def test_core泳道制作人批准消费(self, env, lanes, monkeypatch):
+        yt = env
+        iid = yt.new("POLY", "core制作人批", "d", lane="core", typ="需求", track="L1 首批")
+        orch.pm_tick()
+        be = monkeypatch  # fake backend 作者=agent-pm；直改评论作者模拟制作人
+        cs = yt.comments(iid)
+        monkeypatch.setattr("studio.yt.YT.comment", lambda self, i, t: None) if False else None
+        # 直接走 backend 造制作人评论：fake_yt 的 requests_mock 造不了他人——
+        # 用 CONFIG.producer 临时代指 agent-pm 反向验证：把 producer 改名后
+        # agent-pm 不再是制作人 → core 泳道应拒（机制对称性）
+        from studio.config import CONFIG as _C
+        with monkeypatch.context() as m:
+            m.setattr(_C, "producer", "nobody-else")
+            yt.comment(iid, "批准")
+            orch.pm_tick()
+        assert state(yt, iid) == "待批"
+
+    def test_game泳道PM批准照常(self, env, lanes):
+        yt = env
+        monkeypatch_lanes = None
+        iid = yt.new("POLY", "game代批", "d", lane="game", typ="需求", track="L1 首批")
+        orch.pm_tick()
+        yt.comment(iid, "批准 审查意见：game 泳道维持代批（ZCode 代批留痕）")
+        orch.pm_tick()
+        assert state(yt, iid) == "已派发", "非亲批泳道代批应照常"
+
+

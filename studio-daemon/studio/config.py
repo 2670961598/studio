@@ -42,6 +42,9 @@ class Config:
         self.delegated_approvals: dict[str, list[str]] = {"GAMES": ["agent-pm"],
                                                           "POLY": ["agent-pm"],
                                                           "STUDIO": ["agent-pm"]}
+        # 亲批泳道（制作人 2026-09-28 指令：三消 core 仓迭代多版、重要度最高，
+        # 慎之又慎——该泳道单据一切批示只认制作人，代批账号的批准不被消费）
+        self.producer_only_lanes: dict[str, list[str]] = {"POLY": ["core"]}
         self.max_attempts = 3
         self.heartbeat_timeout_min = 90
         self.lane_lock_ttl_min = 120
@@ -85,6 +88,14 @@ class Config:
     def is_approver(self, pid: str, author: str) -> bool:
         """批示授权谓词：制作人恒真；委托表内的项目允许指定账号代批（可审计）。"""
         return author == self.producer or author in self.delegated_approvals.get(pid, [])
+
+    def can_approve(self, pid: str, author: str, lane: str | None) -> bool:
+        """含泳道豁免的批准谓词：亲批泳道（producer_only_lanes）内制作人之外一律无效。"""
+        if author == self.producer:
+            return True
+        if lane and lane in self.producer_only_lanes.get(pid, []):
+            return False
+        return author in self.delegated_approvals.get(pid, [])
 
     def proj_id(self, pid: str) -> str:
         return self.projects[pid]

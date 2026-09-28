@@ -138,7 +138,7 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
     # ---- 草稿：等制作人 promote/kill（Inspector/Scout/自评 的产出位）----
     if st == "草稿":
         for c in yt.comments(iid):
-            if not CONFIG.is_approver(pid, c["author"]):
+            if not CONFIG.can_approve(pid, c["author"], lane):
                 continue
             w = c["text"].strip().split()
             d0 = w[0] if w else ""
@@ -167,7 +167,7 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
 
     # ---- 待批：制作人批示（位置语义）----
     if st == "待批":
-        return _directives(yt, iid, lv, typ)
+        return _directives(yt, iid, lv, typ, lane)
 
     # ---- 已派发：收割 / 巡检 / 重派闭环（dispatch.md 兜底 1/2/6 的代码化）----
     if st == "已派发":
@@ -208,7 +208,7 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
     # ---- 证据就绪：QA 内联复验（冻结验收复跑 + 加测岛）----
     if st == "证据就绪":
         # L3 第一段（方案）交付：无 approve-design 记录 → 进方案审
-        if lv.startswith("L3") and not _has(yt, iid, "approve-design"):
+        if lv.startswith("L3") and not _has(yt, iid, "approve-design", lane):
             yt.transition(iid, "待批")
             # 结构性槽位标记：进的是哪个待批位由转换本身声明，与批示词解析解耦
             yt.comment(iid, "方案段就绪，进入方案审")
@@ -444,10 +444,10 @@ def _back_to_dispatch(yt, pid, iid, n, why):
     yt.comment(iid, f"退回重做: {why} attempt={n}")
 
 
-def _has(yt, iid, word) -> bool:
+def _has(yt, iid, word, lane=None) -> bool:
     """授权批示人评论首 token 精确匹配（P2-6：子串匹配会误判"上次X批错了"）。"""
     for c in yt.comments(iid):
-        if CONFIG.is_approver(iid.split("-")[0], c["author"]):
+        if CONFIG.can_approve(iid.split("-")[0], c["author"], lane):
             toks = c["text"].strip().split()
             if toks and toks[0] == word:
                 return True
@@ -479,7 +479,7 @@ def _normalize_directive(word: str) -> str:
     return word
 
 
-def _directives(yt, iid, lv, typ) -> str | None:
+def _directives(yt, iid, lv, typ, lane=None) -> str | None:
     """位置感知批示：第 k 个未消费的 approve 指令作用于流的第 k 个待批位。
     消费留痕（PM 评论"批示已执行"）保证幂等——同一评论不会二次执行。"""
     cs = yt.comments(iid)
@@ -487,7 +487,7 @@ def _directives(yt, iid, lv, typ) -> str | None:
                   and c["text"].startswith("批示已执行"))
     approvals = []
     for c in cs:
-        if not CONFIG.is_approver(iid.split("-")[0], c["author"]) or not c["text"].strip():
+        if not CONFIG.can_approve(iid.split("-")[0], c["author"], lane) or not c["text"].strip():
             continue
         if c["text"].lstrip().startswith(("批示已执行", "制作人批示", "断路退审")):
             continue                    # PM 留痕评论禁当批示（代批后防自批准循环）
@@ -515,7 +515,7 @@ def _directives(yt, iid, lv, typ) -> str | None:
     if len(approvals) <= applied:
         # 没有新批示；查非 approve 指令（reject/kill/track）
         for c in cs[-10:]:
-            if not CONFIG.is_approver(iid.split("-")[0], c["author"]):
+            if not CONFIG.can_approve(iid.split("-")[0], c["author"], lane):
                 continue
             w = c["text"].strip().split()
             d = _normalize_directive(w[0]) if w else ""

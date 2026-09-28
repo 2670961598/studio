@@ -104,8 +104,13 @@ def _anomalies_tickets(out):
                     for i, c in enumerate(cs):
                         if c["author"] == "agent-pm" and c["text"].startswith(_PM_MARKERS):
                             last_marker = i
+                    _lane = None
+                    try:
+                        _lane = yt.f(iid, "泳道")
+                    except Exception:
+                        pass
                     unconsumed = [c for c in cs[last_marker + 1:]
-                                  if CONFIG.is_approver(iid.split("-")[0], c["author"])
+                                  if CONFIG.can_approve(iid.split("-")[0], c["author"], _lane)
                                   and _first_seg(c["text"]) in _APPROVE_ALIASES]
                     if unconsumed:
                         u = unconsumed[-1]
