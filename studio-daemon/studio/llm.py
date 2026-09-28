@@ -250,13 +250,16 @@ def dod_gen(ticket: dict) -> str | None:
     typ = ticket["fields"].get("Type") or "需求"
     res = reviewed_ask(
         f"为下述 YouTrack 单据生成**一条冻结验收命令**（bash 单行，可机器执行、退出码0=过，"
-        f"路径用仓库相对路径，测试类优先项目既有测试命令，文档类用 test -f + grep，"
-        f"确实无文件可查的恒真断言用 test -e /dev/null——严禁 test -f /dev/null，"
-        f"/dev/null 是字符设备，test -f 对它恒假，会造成必然 GATE-FAIL 死循环）。"
+        f"路径用仓库相对路径，测试类优先项目既有测试命令，文档类用 test -f + grep。"
+        f"若该单确实没有任何可机器断言的验收物，只输出 SKIP（走人工补命令）——"
+        f"严禁恒真断言充数（test -e /dev/null 之类：空证据=无证据）。"
         f"命令只允许 test/grep/wc/cat/ls/diff/git 子命令，禁止 ; && || $() 反引号 重定向。"
         f"只输出命令本身一行，不要解释。\nType={typ}\n标题: {ticket['summary']}\n"
         f"描述: {ticket['description']}")
-    return _sanitize_cmd(_one_line(res))
+    out = _one_line(res)
+    if out and out.strip().upper() == "SKIP":
+        return None                            # 无可断言产物 → DOD-MISSING 人工补，不造空证据
+    return _sanitize_cmd(out)
 
 
 def extra_test_gen(ticket: dict, frozen_gate: str) -> str | None:

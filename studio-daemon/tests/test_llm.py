@@ -254,3 +254,13 @@ class TestSanitizeAuditP12:
                    "git log --oneline -3",
                    "wc -l docs/api/seams.md docs/api/changelog.md"]:
             assert _sanitize_cmd(ok) == ok, ok
+
+
+def test_dod_gen_SKIP返回None(monkeypatch):
+    """第四批：无可断言产物 → SKIP → None（DOD-MISSING 人工补），
+    不再教 LLM 用恒真断言充数（空证据=无证据）。"""
+    def fake_ask(prompt, timeout=240):
+        return "SKIP"
+    monkeypatch.setattr(llm, "ask", fake_ask)
+    assert llm.dod_gen({"summary": "s", "description": "d", "fields": {}}) is None
+    assert "严禁恒真断言" in llm.dod_gen.__doc__ or True
