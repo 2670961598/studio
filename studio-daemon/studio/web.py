@@ -45,6 +45,47 @@ async def _guard(request, call_next):
     return await call_next(request)
 STATIC = CONFIG._root / "static"
 
+def _resume_payload(issue: str) -> dict:
+    """接管续聊数据（STUDIO-47B）：活 reg 或归档 done.json 里钉存的 session_id + 当时仓。"""
+    import json as _json
+    for f in (CONFIG.workers_dir / f"{issue}.json",
+              CONFIG.workers_dir / f"{issue}.done.json"):
+        if f.exists():
+            try:
+                d = _json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            sid = ((d.get("result") or {}).get("session_id")) or ""
+            return {"issue": issue, "session_id": sid,
+                    "repo": d.get("repo") or "", "archive": f.name.endswith(".done.json"),
+                    "cmd": (f"cd \"{d.get('repo')}\" && claude --resume {sid}" if sid else "")}
+    raise HTTPException(404, f"无 worker 记录 {issue}")
+
+
+@app.get("/api/resume-cmd/{issue}")
+def api_resume_cmd(issue: str):
+    """接管命令（复制用）：claude --resume 恢复该 worker 历史对话，手动继续。"""
+    return _redact(_resume_payload(issue))
+
+
+@app.post("/api/resume-terminal/{issue}")
+def api_resume_terminal(issue: str):
+    """在 Terminal.app 新窗口打开续聊会话（本机单人场景；失败回落复制命令）。"""
+    import subprocess as _sp
+    pl = _resume_payload(issue)
+    if not pl["session_id"]:
+        return {"ok": False, "note": "该单无 session_id（旧归档），用命令行手动续"}
+    apple = ('tell application "Terminal" to do script "'
+             + pl["cmd"].replace('"', '\\"') + '"')
+    try:
+        r = _sp.run(["osascript", "-e", apple], capture_output=True, text=True, timeout=15)
+        if r.returncode == 0:
+            return {"ok": True, "note": "Terminal 已打开续聊会话"}
+        return {"ok": False, "note": f"osascript 失败（Terminal 忙/权限），请复制命令：{pl['cmd']}"}
+    except Exception as e:
+        return {"ok": False, "note": f"唤起失败请复制命令：{pl['cmd']}（{type(e).__name__}）"}
+
+
 @app.post("/api/restart")
 def api_restart(reason: str = ""):
     """优雅重载（STUDIO-47A）：写 drain 标志→停派新工→等在途收割完→daemon 自退→看护拉起。"""

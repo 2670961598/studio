@@ -82,3 +82,35 @@ def test_restart端点写drain(client, monkeypatch):
     st = client.get("/api/state").json()
     assert st["draining"] is True and "in_flight" in st
     (CONFIG.locks_dir / "drain.json").unlink()
+
+
+class Test接管续聊:
+    """STUDIO-47B：worker 会话可接管——claude --resume <session_id>（制作人手动继续某次对话）。"""
+
+    def test_有session返回接管命令(self, client):
+        import json as _json
+        (CONFIG.workers_dir / "W-7.done.json").write_text(_json.dumps(
+            {"issue": "W-7", "repo": "/tmp/r", "result": {"session_id": "sid-123"}}), encoding="utf-8")
+        r = client.get("/api/resume-cmd/W-7").json()
+        assert r["session_id"] == "sid-123"
+        assert r["cmd"] == 'cd "/tmp/r" && claude --resume sid-123'
+
+    def test_无记录404_旧归档无session(self, client):
+        import json as _json
+        assert client.get("/api/resume-cmd/NOPE-9").status_code == 404
+        (CONFIG.workers_dir / "W-8.done.json").write_text(_json.dumps(
+            {"issue": "W-8", "result": {}}), encoding="utf-8")
+        r = client.get("/api/resume-cmd/W-8").json()
+        assert r["cmd"] == "" and "session_id" in r
+
+    def test_终端唤起失败回落复制(self, client, monkeypatch):
+        import json as _json
+        monkeypatch.setenv("STUDIO_PANEL_TOKEN", "pt-t")
+        (CONFIG.workers_dir / "W-9.done.json").write_text(_json.dumps(
+            {"issue": "W-9", "repo": "/tmp/r", "result": {"session_id": "s9"}}), encoding="utf-8")
+        import subprocess as _sp
+        monkeypatch.setattr(_sp, "run",
+                            lambda *a, **k: _sp.CompletedProcess([], 1, "", "busy"))
+        r = client.post("/api/resume-terminal/W-9",
+                        headers={"X-Studio-Token": "pt-t"}).json()
+        assert r["ok"] is False and "复制命令" in r["note"] and "claude --resume s9" in r["note"]

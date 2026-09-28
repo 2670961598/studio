@@ -180,7 +180,8 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);
           <td class="mono">{{w.branch}}</td>
           <td class="mono">{{w.cost_usd!=null?w.cost_usd.toFixed(3):'—'}}</td>
           <td class="mono">{{w.turns??'—'}}</td>
-          <td><button class="btn" v-if="w.has_stream" @click="openTr(w.issue)">对话记录</button></td>
+          <td><button class="btn" v-if="w.has_stream" @click="openTr(w.issue)">对话记录</button>
+            <button class="btn" v-if="w.has_stream" @click="takeover(w.issue)">接管</button></td>
         </tr>
       </table>
       <div v-else class="empty">尚无工人记录</div>
@@ -239,6 +240,15 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);
     <div class="modal">
       <header><h1 style="font-size:16px">工人对话 · {{tr.issue}}
         <button class="btn" style="float:right" @click="tr=null">关闭</button></h1></header>
+      <div v-if="resume" style="position:fixed;inset:0;background:#0009;z-index:60;display:flex;align-items:center;justify-content:center">
+        <div style="background:var(--bg,#222);padding:18px;border-radius:10px;max-width:640px">
+          <h3>接管续聊 {{resume.issue}} <button class="btn" style="float:right" @click="resume=null">关闭</button></h3>
+          <p style="opacity:.75;font-size:13px">session {{resume.session_id.slice(0,8)}}…（{{resume.archive?'已归档':'进行中'}}）</p>
+          <pre style="user-select:all;background:#111;padding:8px;border-radius:6px;font-size:12px">{{resume.cmd}}</pre>
+          <button class="btn warn" @click="openTerminal">在 Terminal 打开</button>
+          <button class="btn" @click="navigator.clipboard.writeText(resume.cmd);alert('已复制，到任意终端粘贴即可续聊')">复制命令</button>
+        </div>
+      </div>
       <div class="chat">
         <div v-for="(m,i) in tr.messages" :key="i" :class="msgCls(m)">
           <template v-if="m.kind==='tool'">
@@ -286,12 +296,23 @@ createApp({
       await fetch(`/api/jobs/${id}/${act}`,{method:'POST',headers:{'X-Studio-Token':TOK}});refresh()
     }
     async function openTr(issue){tr.value=await (await fetch('/api/transcript/'+issue)).json()}
+    const resume=ref(null)
+    async function takeover(issue){
+      resume.value=await (await fetch('/api/resume-cmd/'+issue)).json()
+      if(resume.value && !resume.value.session_id){alert('该单无 session_id（旧归档），无法续聊');resume.value=null}
+    }
+    async function openTerminal(){
+      let TOK=null
+      try{TOK=(await (await fetch('/api/token')).json()).token}catch(e){TOK=''}
+      const r=await(await fetch('/api/resume-terminal/'+resume.value.issue,{method:'POST',headers:{'X-Studio-Token':TOK}})).json()
+      alert(r.note)
+    }
     const outCls=o=>({ok:'b-ok',idle:'b-idle',error:'b-err',missed:'b-warn'}[o]||'b-mut')
     const wCls=s=>s.startsWith('RUNNING')?'b-ok pulse':s.startsWith('DONE')?'b-idle':s.startsWith('UNKNOWN')?'b-mut':'b-err'
     const wStatus=s=>s.split(' ')[0]
     const msgCls=m=>m.role==='sys'?'m-sys':m.kind==='tool'?'m-tool':m.kind==='result'?(m.ok===false?'m-res m-err':'m-res'):'m-ai'
     onMounted(()=>{refresh();setInterval(refresh,5000)})
-    return {tab,tabs,ov,jobs,runs,workers,tr,runFilter,sc,ytIssue,jName,ctl,openTr,outCls,wCls,wStatus,msgCls,gracefulRestart}
+    return {tab,tabs,ov,jobs,runs,workers,tr,runFilter,sc,ytIssue,jName,ctl,openTr,outCls,wCls,wStatus,msgCls,gracefulRestart,resume,takeover,openTerminal}
   }
 }).mount('#app')
 </script>
