@@ -87,8 +87,8 @@ def _sched():
                       id="report-weekly", replace_existing=True)
         sched.add_job("studio.reports:monthly_report", CronTrigger.from_crontab("40 9 1 * *"),
                       id="report-monthly", replace_existing=True)
-        sched.add_job("studio.daemon:drain_watch", CronTrigger.from_crontab("*/30 * * * * *"),
-                      id="drain-watch", replace_existing=True)
+        sched.add_job("studio.daemon:drain_watch", CronTrigger(second="*/30"),
+                      id="drain-watch", replace_existing=True)   # 秒域须用构造参数：from_crontab 只认 5 字段（曾致启动循环崩溃）
     from . import runtime
     runtime.SCHED = sched
     runtime.STARTED = time.time()

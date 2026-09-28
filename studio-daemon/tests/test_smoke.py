@@ -13,3 +13,18 @@ def test_全模块可导入():
     for m in pkgutil.iter_modules(studio.__path__):
         if not m.name.startswith("_"):
             importlib.import_module(f"studio.{m.name}")
+
+
+def test_sched装配冒烟(tmp_config):
+    """触发器错误（如 from_crontab 6 字段）只在装配时炸——import 冒烟抓不到，
+    曾致生产启动循环崩溃（2026-09-28 实录）。装配必须进冒烟。"""
+    import studio.daemon as d
+    from studio import runtime
+    prev = runtime.SCHED                      # _sched 会写全局态——测试后还原防污染后续用例
+    try:
+        s = d._sched()
+        ids = sorted(j.id for j in s.get_jobs())
+        assert {"pm-poly", "pm-studio", "pm-games", "drain-watch",
+                "report-daily", "report-weekly", "report-monthly"} <= set(ids)
+    finally:
+        runtime.SCHED = prev
