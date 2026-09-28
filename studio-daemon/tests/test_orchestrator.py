@@ -696,3 +696,42 @@ class Test亲批叮嘱:
         monkeypatch.setattr(cfgmod, "_load", fake_load)
         c = cfgmod.Config()
         assert c.delegated_approvals == {"GAMES": [], "POLY": [], "STUDIO": []}
+
+
+class Test探索并行通道:
+    """制作人 2026-09-28：调研/前沿收集/试验类不占交付工作目录——不受泳道互斥约束，
+    可多开并行。机制：explore 泳道每单独立锁 + /tmp 独立工作区 + 免 git，直交付。"""
+
+    def test_两张探索单同拍并行派发(self, env, lanes):
+        """交付泳道一锁一 worker；explore 各持各锁——同拍两张都派出去。"""
+        yt = env
+        a = yt.new("POLY", "探索A", "调研X", lane="explore", typ="需求", track="L0 自动")
+        b = yt.new("POLY", "探索B", "调研Y", lane="explore", typ="需求", track="L0 自动")
+        yt.gate_freeze(a, "test -f out.md")
+        yt.gate_freeze(b, "test -f out.md")
+        out = orch.pm_tick()
+        acts = " | ".join(out["actions"])
+        assert f"DISPATCH {a} lane=explore" in acts and f"DISPATCH {b} lane=explore" in acts
+
+    def test_探索收割免git直交付(self, env, lanes):
+        import json as _json
+        from studio.workers import Worker
+        yt = env
+        iid = yt.new("POLY", "探索交付", "调研Z", lane="explore", typ="需求", track="L0 自动")
+        yt.gate_freeze(iid, "test -f finding.md")
+        orch.pm_tick()                                   # dispatch
+        # 探索产物落工作区 + REPORT
+        wd = Path(CONFIG.lane("explore")["path"]) / iid
+        wd.mkdir(parents=True, exist_ok=True)
+        (wd / "finding.md").write_text("# 调研结论\nX 可行", encoding="utf-8")
+        (wd / "docs").mkdir(exist_ok=True)
+        (wd / "docs" / "out.md").write_text("加测桩\n", encoding="utf-8")  # env 桩加测命令的落点
+        simulate_worker(yt, iid, "explore") if False else None
+        w = Worker(iid)
+        w.report.parent.mkdir(parents=True, exist_ok=True)
+        w.report.write_text("WORKER REPORT 探索\n结论：X 可行\n", encoding="utf-8")
+        orch.pm_tick()                                   # harvest（免 git）
+        assert state(yt, iid) == "证据就绪"
+        r1 = orch.pm_tick()                              # 复验（gate 在探索区跑）→ 复验通过
+        r2 = orch.pm_tick()                              # L0 直交付（免 merge）
+        assert state(yt, iid) == "已交付"

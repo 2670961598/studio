@@ -28,6 +28,10 @@ def run_gate(issue: str, attempt_tag: str, lane: str, acct: str = "agent-pm") ->
     if any(d in cmd for d in danger) or any(b in cmd for b in CMD_BLACKLIST):
         raise RuntimeError(f"GATE-DANGEROUS {issue} 验收命令含危险特征，拒跑：{cmd[:80]}")
     repo = CONFIG.lane(lane)["path"]
+    if lane == "explore":
+        # 探索通道：每单独立工作区即闸门 cwd（产物相对路径与 worker 一致）
+        repo = str(Path(repo) / issue)
+        Path(repo).mkdir(parents=True, exist_ok=True)
     pid = issue.split("-")[0]
     evdir = CONFIG.evidence_dir / pid
     evdir.mkdir(parents=True, exist_ok=True)

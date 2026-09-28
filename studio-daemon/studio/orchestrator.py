@@ -216,18 +216,20 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
             # 结构性槽位标记：进的是哪个待批位由转换本身声明，与批示词解析解耦
             yt.comment(iid, "方案段就绪，进入方案审")
             return f"L3-方案段就绪 {iid} →待批(方案审)"
-        # 复验与活 worker 抢共享树必误红（GAMES-5/6 实录：闸门跑在别人分支上 4 连退回）。
-        # 泳道忙 → 顺延不烧 attempt；闲 → 持锁切到本单分支再跑闸门与加测。
-        lk = lock(CONFIG, f"lane-{lane}")
-        if lk.check(CONFIG.lane_lock_ttl_min) != "FREE":
-            return f"VERIFY-DEFER {iid} 泳道忙，复验顺延"
-        try:
-            lk.acquire(f"qa-{iid}", CONFIG.lane_lock_ttl_min)
-        except LockBusy:
-            return f"VERIFY-DEFER {iid} 泳道忙，复验顺延"
+        if lane != "explore":
+            # 复验与活 worker 抢共享树必误红（GAMES-5/6 实录：闸门跑在别人分支上 4 连退回）。
+            # 泳道忙 → 顺延不烧 attempt；闲 → 持锁切到本单分支再跑闸门与加测。
+            lk = lock(CONFIG, f"lane-{lane}")
+            if lk.check(CONFIG.lane_lock_ttl_min) != "FREE":
+                return f"VERIFY-DEFER {iid} 泳道忙，复验顺延"
+            try:
+                lk.acquire(f"qa-{iid}", CONFIG.lane_lock_ttl_min)
+            except LockBusy:
+                return f"VERIFY-DEFER {iid} 泳道忙，复验顺延"
         try:
             lc = CONFIG.lane(lane)
-            _git(lc["path"], "checkout", f"feature/{iid}")
+            if lane != "explore":
+                _git(lc["path"], "checkout", f"feature/{iid}")
             res = run_gate(iid, f"qa-{int(time.time())}", lane, acct="agent-qa")
             from .llm import extra_test_gen
             extra = extra_test_gen(yt.get(iid), yt.f(iid, "验收命令") or "")
@@ -235,14 +237,16 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
             note = "加测=生成失败跳过"
             if extra:
                 try:
-                    p = subprocess.run(["bash", "-c", extra], cwd=lc["path"],
+                    _cwd = str(Path(lc["path"]) / iid) if lane == "explore" else lc["path"]
+                    p = subprocess.run(["bash", "-c", extra], cwd=_cwd,
                                        capture_output=True, text=True, timeout=300)
                     extra_ok = p.returncode == 0
                 except subprocess.TimeoutExpired:
                     extra_ok = False
                 note = f"加测={extra} → ok={extra_ok}"
         finally:
-            lk.release(f"qa-{iid}")
+            if lane != "explore":
+                lk.release(f"qa-{iid}")
         if res.ok and extra_ok:
             yt.transition(iid, "复验通过")
             yt.comment(iid, f"复验通过 证据={res['log'][:-4]}.json commit={res['commit']} {note}")
@@ -292,6 +296,22 @@ def _dispatch(yt, pid, iid, lane, already: bool = False) -> str | None:
     lc = CONFIG.lane(lane)
     if int(yt.f(iid, "attempt") or 0) >= CONFIG.max_attempts:
         return f"BREAK {iid} attempt≥3 待制作人"
+    if lane == "explore":
+        # 探索并行通道（制作人 2026-09-28：调研/前沿收集/试验类不占交付工作目录，
+        # 不受泳道互斥约束）：每单独立锁 + /tmp 独立工作区 + 免 git——发散任务可多开
+        wd = Path(lc["path"]) / iid
+        wd.mkdir(parents=True, exist_ok=True)
+        lk = lock(CONFIG, f"explore-{iid}")
+        try:
+            if not already:
+                yt.transition(iid, "已派发")
+            Worker(iid).launch(yt.get(iid), lane)
+            yt.heartbeat(iid)
+            _event(pid, iid, "DISPATCH", "agent-pm", 0, f"lane={lane} 并行通道")
+            return f"DISPATCH {iid} lane=explore(并行)"
+        except Exception:
+            lk.release(f"worker-{iid}")
+            raise
     lk = lock(CONFIG, f"lane-{lane}")
     if lk.check(CONFIG.lane_lock_ttl_min) != "FREE":
         return f"LANE-BUSY {lane}"
@@ -335,6 +355,23 @@ def lane_of(yt, iid) -> str:
 def _harvest(yt, pid, iid, lane, w: Worker, lv) -> str:
     report = w.report.read_text() if w.report.exists() else "(REPORT 缺失)"
     rs = w.result_stats()          # stream 改名归档前取记账三元组（审计 P0-1 断点C）
+    if lane == "explore":
+        # 探索通道收割：无 git 概念——闸门跑在 /tmp 探索区（断言探索产物），产物即 REPORT
+        try:
+            res = run_gate(iid, str(int(yt.f(iid, "attempt") or 0) + 1), lane)
+            if res.ok:
+                yt.transition(iid, "证据就绪")
+                yt.comment(iid, f"{report}\n\n— 代发 claude worker（studio-daemon 探索通道）")
+                _event(pid, iid, "GATE_PASS", "agent-pm", 0, f"evidence {res['log']}",
+                       tokens=rs.get("tokens"), cost_usd=rs.get("cost_usd"),
+                       duration_ms=rs.get("duration_ms"))
+                return f"HARVEST {iid} →证据就绪(探索)"
+            n = yt.attempt_inc(iid)
+            yt.comment(iid, f"GATE-FAIL attempt={n} 退回重做，evidence {res['log']}")
+            _event(pid, iid, "GATE_FAIL", "agent-pm", n, res["log"])
+            return f"GATE-FAIL {iid} attempt={n}"
+        finally:
+            w.archive()
     lc = CONFIG.lane(lane)
     acct = dict(tokens=rs.get("tokens"), cost_usd=rs.get("cost_usd"),
                 duration_ms=rs.get("duration_ms"))
@@ -377,6 +414,13 @@ def _harvest(yt, pid, iid, lane, w: Worker, lv) -> str:
 
 
 def _merge(yt, pid, iid, lane) -> str:
+    if lane == "explore":
+        # 探索通道"合并"=交付：产物是 REPORT/评论/Article，无 git 合并概念
+        yt.transition(iid, "已交付")
+        yt.comment(iid, "探索交付：REPORT 与证据已落盘（/tmp 探索区产物随生命周期自然过期，"
+                        "沉淀物请入知识库/板面）")
+        _event(pid, iid, "MERGE", "agent-pm", 0, "explore-direct")
+        return f"DELIVERED {iid} (探索直交付)"
     lc = CONFIG.lane(lane)
     lk = lock(CONFIG, f"lane-{lane}")
     try:

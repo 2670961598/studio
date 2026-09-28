@@ -264,9 +264,12 @@ def git_repo(tmp_path):
 
 
 @pytest.fixture
-def lanes(tmp_config, monkeypatch, git_repo):
+def lanes(tmp_config, monkeypatch, git_repo, tmp_path):
     """把 core 泳道指到 git 沙箱。"""
     monkeypatch.setitem(CONFIG.lanes, "core",
                         {"path": str(git_repo), "base_branch": "main",
                          "agent": "agent-core", "yt_acct": "agent-core"})
+    monkeypatch.setitem(CONFIG.lanes, "explore",       # 探索并行通道（09-28）：/tmp 免 git
+                        {"path": str(tmp_path / "explore-lane"), "base_branch": "-",
+                         "agent": "agent-scout", "yt_acct": "agent-pm"})
     yield CONFIG
