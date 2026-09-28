@@ -67,3 +67,20 @@ def test_duration_tracker_配对与清零(tmp_config):
     t.drop("j2")                                    # MISSED：从未起跑，丢弃防脏配对
     assert t.settle("j2") == 0
     assert t.settle("从未提交") == 0
+
+
+def test_launch登记提示词版本(tmp_config):
+    """47-E：reg 带 prompt_ver/sha8 + prompts.jsonl 登记（周报归因地基）。"""
+    import json
+    from studio.workers import PROMPT_VERSION
+    pf = CONFIG.events_path.parent / "prompts.jsonl"
+    reg = CONFIG.workers_dir / "T-88.json"
+    reg.write_text(json.dumps({"issue": "T-88", "pid": -1,
+                               "prompt_ver": PROMPT_VERSION, "prompt_sha8": "ab12cd34"}),
+                   encoding="utf-8")
+    with open(pf, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"ts": "2026-09-29 00:00:00", "issue": "T-88",
+                            "ver": PROMPT_VERSION, "sha8": "ab12cd34"}) + "\n")
+    d = json.loads(reg.read_text(encoding="utf-8"))
+    assert d["prompt_ver"] == PROMPT_VERSION and len(d["prompt_sha8"]) == 8
+    assert PROMPT_VERSION in pf.read_text(encoding="utf-8")

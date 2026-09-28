@@ -8,6 +8,10 @@ import json, os, subprocess, time
 from pathlib import Path
 from .config import CONFIG
 
+# 提示词版本次号（STUDIO-47E）：改 WORKER_TEMPLATE 必须同步 +1 并在 git commit 里写明改因
+# ——打回率按版本归因的地基（与 STUDIO-43 复盘闭环联动）。
+PROMPT_VERSION = "W-2026-09-29.1"
+
 WIKI_TEAM = "全局/团队公约"
 WIKI_WORKER_PROFILE = "编制/worker"                  # 三类 worker（dev/designer/artist）共用执行层档案
 WIKI_COMMON = "手册/worker-common"
@@ -166,11 +170,19 @@ class Worker:
         proc = subprocess.Popen(["nohup", "bash", str(self.wrap)], stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL, start_new_session=True)
         pid = proc.pid                            # wrap 即 session leader（pgid=pid）
+        import hashlib as _hl
+        _sha8 = _hl.sha256(prompt.encode("utf-8")).hexdigest()[:8]
         reg = {"issue": self.issue, "pid": pid, "lane": lane,
                "branch": f"feature/{self.issue}", "repo": lc["path"],
                "base": lc["base_branch"], "report": str(self.report),
-               "stream": str(self.stream), "started": time.strftime("%F %T")}
+               "stream": str(self.stream), "started": time.strftime("%F %T"),
+               "prompt_ver": PROMPT_VERSION, "prompt_sha8": _sha8}
         self.reg.write_text(json.dumps(reg, ensure_ascii=False))
+        # 版本登记（append-only）：版本×单号×哈希——周报按此归因打回率
+        with open(CONFIG.events_path.parent / "prompts.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": reg["started"], "issue": self.issue,
+                                "ver": PROMPT_VERSION, "sha8": _sha8},
+                               ensure_ascii=False) + "\n")
         return pid
 
     def reg_data(self) -> dict | None:

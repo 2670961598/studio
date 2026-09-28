@@ -226,9 +226,41 @@ def weekly_report() -> dict:
              "## 异常 TOP（7 日归并）", *(_err_digest(today, top=8) or ["- 无"]), "",
              "## 框架演进（git，7 日）",
              *(_git_log(time.strftime("%F", time.localtime(t0 - 7 * 86400)), today)[:20] or ["- 无"]), "",
+             "## 提示词版本归因（派发/打回 按版本）", *_prompt_stats(), "",
              "## 待决提案（等制作人）", *_proposal_queue(), "",
              "> 自动生成 by studio-daemon reports，幂等重跑覆盖。"]
     return _emit("周报", f"weekly-{iso}.md", "\n".join(lines) + "\n")
+
+
+def _prompt_stats() -> list[str]:
+    """版本×(派发,QA打回,GATE败)——提示词改进效果一目了然（STUDIO-47E 地基）。"""
+    import collections
+    pf = CONFIG.events_path.parent / "prompts.jsonl"
+    if not pf.exists():
+        return ["- （无版本登记）"]
+    ver_of = {}
+    for ln in pf.read_text(encoding="utf-8").splitlines():
+        try:
+            d = json.loads(ln)
+            ver_of[d["issue"]] = d["ver"]
+        except Exception:
+            continue
+    cnt = collections.defaultdict(lambda: {"dispatch": 0, "qa_back": 0, "gate_fail": 0})
+    for e in _events_all():
+        v = ver_of.get(e.get("issue"))
+        if not v:
+            continue
+        ev = e.get("event")
+        if ev == "DISPATCH":
+            cnt[v]["dispatch"] += 1
+        elif ev == "QA_BACK":
+            cnt[v]["qa_back"] += 1
+        elif ev == "GATE_FAIL":
+            cnt[v]["gate_fail"] += 1
+    if not cnt:
+        return ["- （登记版本无关联事件）"]
+    return [f"- {v}：派发 {c['dispatch']} ｜ QA打回 {c['qa_back']} ｜ 闸门败 {c['gate_fail']}"
+            for v, c in sorted(cnt.items())]
 
 
 def monthly_report() -> dict:
