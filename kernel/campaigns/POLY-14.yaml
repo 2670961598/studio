@@ -1,10 +1,14 @@
 theme: 游戏性能优化（Match-GLM game 泳道）
 every_h: 48
 sources:
-  - https://blog.unity.com/technology
-  - https://unity.com/how-to/advanced/optimization
+- https://blog.unity.com/technology
+- https://unity.com/how-to/advanced/optimization
 repo: /Volumes/BigDisk/UnityProject/Match-GLM/Match3
-baseline_cmd: ""   # TODO 制作人：可填 bench-sync.sh 风格的基准命令，快照将自动序列化对比
+baseline_cmd: DOTNET_ROLL_FORWARD=LatestMajor dotnet test Tests/PolyMatch3.Tests.csproj
+  -v q 2>&1 | tail -4
 child_type: 需求
-child_track: "L2 常规"
-patrol_brief: 结合仓库 Assets/Presenter/Benchmark 与 .kimi_tmp 历史跑分，抓渲染/动画/板逻辑热点；每轮最多孵化 1-2 张优化子单，gate_cmd 必须是可机器复跑的断言（如单测/基准阈值）。
+child_track: L2 常规
+patrol_brief: 聚焦双仓评估 P1 清单推进与验证：①LegalMoveProbe 局部探测（POLY-26）等价性+计时门是否守住；②Matcher
+  缓冲复用/AnyMatch（POLY-27）GC 列对比；③万段批 SoA（POLY-28）animbench 数据；④新热点扫描（评估报告未覆盖面：渲染合批/OnGUI
+  垃圾属 P2 观察）。原任务：结合 Assets/Presenter/Benchmark 与 .kimi_tmp 历史跑分抓热点；每轮最多孵化 1-2 张子单，gate_cmd
+  须可机器复跑。
