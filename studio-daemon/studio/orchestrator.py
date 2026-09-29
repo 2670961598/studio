@@ -176,6 +176,9 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
             yt.gate_freeze(iid, gate)
         if lv.startswith("L0"):
             return _dispatch(yt, pid, iid, lane)
+        # STUDIO-79 全流程逐环签字：高等级单立项位预告（幂等，低等级不发）
+        from . import signoff
+        signoff.brief_comment(yt, iid, org_level(yt, iid))
         yt.transition(iid, "待批")
         return f"NEW→待批 {iid} [{lv}]"
 
@@ -286,8 +289,11 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
     if st == "复验通过":
         if lv.startswith(("L0", "L1")):
             return _merge(yt, pid, iid, lane)
+        # STUDIO-79：高等级单进终验收位附签字快照（低等级 snap 为空，评论正文不变）
+        from . import signoff
+        snap = signoff.snapshot_note(yt, iid, lane, org_level(yt, iid))
         yt.transition(iid, "待批")
-        yt.comment(iid, "复验通过，进入合并审")     # 结构性槽位标记（同上，与批示词解耦）
+        yt.comment(iid, "复验通过，进入合并审" + (f"｜{snap}" if snap else ""))     # 结构性槽位标记（同上，与批示词解耦）
         return f"READY→待批(合并审) {iid} [{lv}]"
 
     return None
@@ -643,6 +649,7 @@ def _directives(yt, iid, lv, typ, lane=None) -> str | None:
     approvals: list[tuple[str, int]] = []   # (指令, 评论时间戳)——时间锚定配对见下
     hold = _producer_hold(cs)
     from . import approval as _ap
+    from . import signoff as _so
     _shadow = _ap.engine_mode(iid.split("-")[0]) == "shadow"
     _dispa = yt.f(iid, "派单人") or CONFIG.producer      # 无派单人字段的存量单：终验保守归制作人
     _lv = _ap.org and org_level(yt, iid)
@@ -665,6 +672,8 @@ def _directives(yt, iid, lv, typ, lane=None) -> str | None:
                        f"legacy允但org拒（{_o_why}）author={c['author']}")
         if c["text"].lstrip().startswith(("批示已执行", "制作人批示", "断路退审")):
             continue                    # PM 留痕评论禁当批示（代批后防自批准循环）
+        if _so.is_sign_comment(c["text"]):
+            continue                    # STUDIO-79 签字评论不当批示（防 LLM 岛把 sign-merge 猜成 approve-merge）
         w0 = c["text"].strip().split()[0]
         norm0 = _normalize_directive(w0)
         if c["author"] != CONFIG.producer:
@@ -749,6 +758,14 @@ def _directives(yt, iid, lv, typ, lane=None) -> str | None:
     if nxt == "已交付" and slot.count("待批") > 1 and d == "approve-plan":
         yt.comment(iid, f"指令 {d} 与当前批位（合并批）不符，未消费；请用 approve-merge 或 kill")
         return f"DIRECTIVE-MISMATCH {iid} {d}"
+    # STUDIO-79 全流程逐环签字：终验收位前置校验（宪章§12.2/§12.3）——
+    # 高等级单七环签字不齐 → 合并批示不消费（无留痕、不 advance），板面幂等留缺环清单
+    if nxt == "已交付":
+        _ok, _missing, _note = _so.final_gate(yt, iid.split("-")[0], iid, lane,
+                                              org_level(yt, iid))
+        if not _ok:
+            _so.pending_comment(yt, iid, _missing)
+            return f"SIGNOFF-PENDING {iid} {_note}"
     note = f"{d} → {nxt} (第{applied + 1}批)"
     if nxt == "已交付":
         # 合并批：必须走真实 merge+verify（禁只翻状态）；失败如实留痕
