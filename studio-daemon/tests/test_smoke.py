@@ -25,6 +25,7 @@ def test_sched装配冒烟(tmp_config):
         s = d._sched()
         ids = sorted(j.id for j in s.get_jobs())
         assert {"pm-poly", "pm-studio", "pm-games", "drain-watch",
-                "report-daily", "report-weekly", "report-monthly"} <= set(ids)
+                "report-daily", "report-weekly", "report-monthly",
+                "steward"} <= set(ids)          # steward=框架管家（STUDIO-83，治理族岗）
     finally:
         runtime.SCHED = prev

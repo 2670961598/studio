@@ -1,7 +1,7 @@
 """daemon — 入口：APScheduler 装配 + uvicorn 仪表盘
 用法:
   python -m studio.daemon run          # 常驻（launchd KeepAlive 拉起）
-  python -m studio.daemon tick pm|selfeval|report  # 手动跑一岗（调试/冒烟）
+  python -m studio.daemon tick pm|selfeval|report|steward  # 手动跑一岗（调试/冒烟）
   python -m studio.daemon board        # 打印板面快照
 环境隔离（实验场）：
   STUDIO_ROOT=<dir>   换 kernel 状态根（锁定/证据/战役/日志全部跟着走）
@@ -89,6 +89,8 @@ def _sched():
                       id="report-monthly", replace_existing=True)
         sched.add_job("studio.daemon:drain_watch", CronTrigger(minute="*/5"),
                       id="drain-watch", replace_existing=True)   # 平时 5 分钟拍；drain 激活后内联快轮询（降噪：30s 拍曾 2880 条/天占 runs 九成）
+        sched.add_job("studio.steward:steward_tick", CronTrigger.from_crontab("9,39 * * * *"),
+                      id="steward", replace_existing=True)   # 框架管家（STUDIO-83）：半小时拍收割校验+@宰相终验提醒；错峰 9/39 避开 pm(0/4/7 分位)/patrol(5)/evolve(3,13..)
     from . import runtime
     runtime.SCHED = sched
     runtime.STARTED = time.time()
@@ -147,6 +149,10 @@ def main():
             from .reports import daily_report
             import json
             print(json.dumps(daily_report(), ensure_ascii=False, indent=2))
+        elif role == "steward":
+            from .steward import steward_tick
+            import json
+            print(json.dumps(steward_tick(), ensure_ascii=False, indent=2))
     elif cmd == "board":
         from .yt import YT
         from .config import CONFIG
