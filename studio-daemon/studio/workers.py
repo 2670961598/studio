@@ -56,13 +56,13 @@ WORKER_TEMPLATE = """你是虚拟工作室的 {title}（身份 {role}），以�
 
 ## 执行要求
 1. 仓库: {repo} ｜ 工作分支: {branch}（已建好，先 checkout）。只在此分支提交，提交信息格式照手册。
-2. 心跳：每完成一个阶段执行一次 `YT_ACCT={wacct} ~/bin/yt heartbeat {issue}`。
+2. 心跳：每完成一个阶段执行一次 `curl -s -X POST http://127.0.0.1:8787/api/yt/heartbeat -H 'Content-Type: application/json' -d "{{\"iid\":\"{issue}\",\"key\":\"$STUDIO_WKEY\"}}"`（YouTrack 一律走此网关；禁止读取 youtrack.json/token——越权即拒，状态推进不归你）。
 3. 完工自检：自跑冻结验收命令，绿了才算完。
 4. 交付：把 REPORT（格式照手册）全文写入 {report} —— 唯一交付物。不要写板面单据状态，不要 push。
 5. 过程沉淀：bug 修复过程/意外发现/来不及做的优化/有趣发现 → 写 Article 草稿留档
    （curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json"
    -d '{{"project":{{"id":"{projid}"}},"summary":"草稿: <主题>","content":"<内容>"}}' {yturl}/api/articles，
-   token 取 ~/.config/polymatch3/youtrack.json 里你账号的；PM 巡田时收割转正）。
+   发布走网关 `curl -s -X POST http://127.0.0.1:8787/api/yt/article -H 'Content-Type: application/json' -d "{{\"iid\":\"{issue}\",\"key\":\"$STUDIO_WKEY\",\"title\":\"<标题>\",\"content\":\"<正文>\"}}"`；PM 巡田时收割转正。绝不读取 youtrack.json）。
 """
 
 

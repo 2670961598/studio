@@ -40,7 +40,9 @@ async def _guard(request, call_next):
         return JSONResponse({"error": "bad host"}, status_code=421)
     if request.headers.get("sec-fetch-site") not in (None, "same-origin", "same-site", "none"):
         return JSONResponse({"error": "cross-site blocked"}, status_code=403)
-    if request.method == "POST" and request.headers.get("x-studio-token") != CONFIG.panel_token:
+    if request.method == "POST" and request.url.path.startswith("/api/yt/"):
+        pass   # YouTrack 网关走独立 wkey 认证（worker 凭证），不吃面板令牌
+    elif request.method == "POST" and request.headers.get("x-studio-token") != CONFIG.panel_token:
         return JSONResponse({"error": "bad token"}, status_code=403)
     return await call_next(request)
 STATIC = CONFIG._root / "static"
@@ -114,6 +116,59 @@ def api_resume_terminal(issue: str):
     except Exception as e:
         return {"ok": False, "note": f"唤起失败请复制命令：{pl['cmd']}（{type(e).__name__}）"}
 
+
+
+
+def _worker_key_ok(iid: str, key: str) -> bool:
+    """worker 凭证校验：reg 里的 wkey（派单签发）——YouTrack 网关唯一放行凭证。
+    制作人 2026-09-29 定则：agent 用 YouTrack 必经框架（防越级）；白名单制动作。"""
+    import json as _json
+    for f in (CONFIG.workers_dir / f"{iid}.json",
+              CONFIG.workers_dir / f"{iid}.done.json"):
+        if f.exists():
+            try:
+                return bool(key) and _json.loads(f.read_text(encoding="utf-8")).get("wkey") == key
+            except Exception:
+                return False
+    return False
+
+
+@app.post("/api/yt/comment")
+def gw_comment(req: dict):
+    """worker 评论——署名自动注入 [项目·单号·worker]（账号共用、单上身份不混淆）。"""
+    if not _worker_key_ok(req.get("iid", ""), req.get("key", "")):
+        return JSONResponse({"error": "bad worker key"}, status_code=403)
+    from .yt import YT
+    from .metrics import append_event
+    iid = req["iid"]
+    pid = iid.split("-")[0]
+    YT("agent-8").comment(iid, f"[{pid}·{iid}·worker] {req.get('text', '')}")
+    append_event(pid, iid, "GW_COMMENT", "gateway", 0, (req.get("text") or "")[:60])
+    return {"ok": True, "signed": True}
+
+
+@app.post("/api/yt/heartbeat")
+def gw_heartbeat(req: dict):
+    if not _worker_key_ok(req.get("iid", ""), req.get("key", "")):
+        return JSONResponse({"error": "bad worker key"}, status_code=403)
+    from .yt import YT
+    YT("agent-8").heartbeat(req["iid"])
+    return {"ok": True}
+
+
+@app.post("/api/yt/article")
+def gw_article(req: dict):
+    """草稿文章发布（探索/情报产物；路径 草稿/单号/标题）。"""
+    if not _worker_key_ok(req.get("iid", ""), req.get("key", "")):
+        return JSONResponse({"error": "bad worker key"}, status_code=403)
+    from .yt import YT
+    from .metrics import append_event
+    iid = req["iid"]
+    pid = iid.split("-")[0]
+    path = f"草稿/{iid}/{req.get('title', '未命名')[:40]}"
+    YT("agent-8").wiki_create(path, f"[{pid}·{iid}·worker] 草稿\n\n{req.get('content','')}", pid)
+    append_event(pid, iid, "GW_ARTICLE", "gateway", 0, path[:60])
+    return {"ok": True, "path": path}
 
 @app.post("/api/restart")
 def api_restart(reason: str = ""):

@@ -133,3 +133,43 @@ def test_时间线聚合(client):
     assert kinds == ["WORKER", "DISPATCH", "GATE_PASS"]      # 按时间排序
     assert r[0]["cost_usd"] == 2.5 and r[0]["turns"] == 7
     assert client.get("/api/timeline/NONE-1").json() == []
+
+
+class TestYouTrack网关:
+    """制作人 2026-09-29 定则：agent 用 YouTrack 必经框架——worker 持派单签发的 wkey，
+    网关白名单放行（comment/heartbeat/article）+ 署名自动注入 [项目·单号·worker] + 记账；
+    无 key/错 key/白名单外动作一律 403。worker 从此不持有任何 token。"""
+
+    def _wreg(self, iid="W-77"):
+        import json as _json
+        f = CONFIG.workers_dir / f"{iid}.json"
+        f.write_text(_json.dumps({"issue": iid, "pid": -1, "wkey": "k77"}), encoding="utf-8")
+        return iid
+
+    def test_错key与无key拒(self, client):
+        iid = self._wreg()
+        assert client.post("/api/yt/comment", json={"iid": iid, "key": "bad", "text": "x"}).status_code == 403
+        assert client.post("/api/yt/comment", json={"iid": iid, "text": "x"}).status_code == 403
+
+    def test_评论署名注入(self, client, fake_yt, monkeypatch):
+        from studio import web as _w
+        from studio.yt import YT
+        iid = self._wreg()
+        calls = []
+        monkeypatch.setattr(YT, "comment", lambda self, i, t: calls.append((i, t)))
+        r = client.post("/api/yt/comment", json={"iid": iid, "key": "k77", "text": "阶段完成"}).json()
+        assert r["ok"] and r["signed"]
+        assert calls and calls[0][1].startswith("[W·W-77·worker] 阶段完成")
+
+    def test_心跳放行(self, client, fake_yt, monkeypatch):
+        from studio.yt import YT
+        iid = self._wreg()
+        calls = []
+        monkeypatch.setattr(YT, "heartbeat", lambda self, i: calls.append(i))
+        assert client.post("/api/yt/heartbeat", json={"iid": iid, "key": "k77"}).json()["ok"]
+        assert calls == [iid]
+
+    def test_状态推进不在白名单(self, client):
+        """网关无 transition/set_field 端点——状态推进只归 daemon（状态是唯一控制面焊死）。"""
+        import requests as _rq
+        assert client.post("/api/yt/transition", json={}).status_code in (404, 405)
