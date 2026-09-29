@@ -193,7 +193,9 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
                     return _harvest(yt, pid, iid, lane, w, lv)
                 w.kill()
                 if not w.wait_dead():               # 等死再动树；超时则下拍再重派
-                    return f"KILL-PENDING {iid} 等待进程退出"
+                    w.kill(escalate=True)           # SIGTERM 拒退→SIGKILL（P0：僵死进程曾卡道 20min+）
+                    if not w.wait_dead():
+                        return f"KILL-PENDING {iid} 等待进程退出"
                 _recycle(yt, pid, iid,
                          f"wall-clock 超限 kill（>{CONFIG.worker_wall_timeout_s // 60}min）")
                 _release_lane(pid, lane, f"worker-{iid}")
@@ -204,7 +206,9 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
                     return _harvest(yt, pid, iid, lane, w, lv)
                 w.kill()
                 if not w.wait_dead():
-                    return f"KILL-PENDING {iid} 等待进程退出"
+                    w.kill(escalate=True)           # SIGTERM 拒退→SIGKILL（同上）
+                    if not w.wait_dead():
+                        return f"KILL-PENDING {iid} 等待进程退出"
                 _recycle(yt, pid, iid, "心跳超时 kill")
                 _release_lane(pid, lane, f"worker-{iid}")
                 return _redispatch(yt, pid, row, lv, typ)

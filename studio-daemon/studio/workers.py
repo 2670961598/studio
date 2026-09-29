@@ -228,18 +228,20 @@ class Worker:
             _t.sleep(1)
         return False
 
-    def kill(self) -> str:
+    def kill(self, escalate: bool = False) -> str:
         reg = self.reg_data()
         if not reg or reg["pid"] < 0:
             return "UNKNOWN"
         import signal
+        sig = signal.SIGKILL if escalate else signal.SIGTERM
+        tag = "KILL9" if escalate else "KILLED"
         try:  # wrap 以 session leader 启动，杀整组连 claude 及其孙进程一起收
-            os.killpg(reg["pid"], signal.SIGTERM)
-            return f"KILLED {self.issue} (pgid={reg['pid']})"
+            os.killpg(reg["pid"], sig)
+            return f"{tag} {self.issue} (pgid={reg['pid']})"
         except (ProcessLookupError, PermissionError):
             try:
-                os.kill(reg["pid"], signal.SIGTERM)
-                return f"KILLED {self.issue} (pid={reg['pid']})"
+                os.kill(reg["pid"], sig)
+                return f"{tag} {self.issue} (pid={reg['pid']})"
             except ProcessLookupError:
                 return f"NOT-ALIVE {self.issue}"
 
