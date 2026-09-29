@@ -255,12 +255,14 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
                 _git(lc["path"], "checkout", f"feature/{iid}")
             res = run_gate(iid, f"qa-{int(time.time())}", lane, acct="agent-4")
             from .llm import extra_test_gen
-            extra = extra_test_gen(yt.get(iid), yt.f(iid, "验收命令") or "")
+            # 加测与闸门同 cwd（STUDIO-83 实录：生成器不知 cwd 会按冻结命令里的 cd
+            # 写相对路径，在 lane 根执行 → 文件不存在误红）——生成与执行都钉在这
+            _cwd = str(Path(lc["path"]) / iid) if lane == "explore" else lc["path"]
+            extra = extra_test_gen(yt.get(iid), yt.f(iid, "验收命令") or "", _cwd)
             extra_ok = True
             note = "加测=生成失败跳过"
             if extra:
                 try:
-                    _cwd = str(Path(lc["path"]) / iid) if lane == "explore" else lc["path"]
                     p = subprocess.run(["bash", "-c", extra], cwd=_cwd,
                                        capture_output=True, text=True, timeout=300)
                     extra_ok = p.returncode == 0

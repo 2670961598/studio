@@ -16,7 +16,9 @@ def env(fake_yt, lanes, monkeypatch):
     from studio import llm
     monkeypatch.setattr(llm, "dod_gen",
                         lambda t: "test -f docs/out.md && grep -q 关键 docs/out.md")
-    monkeypatch.setattr(llm, "extra_test_gen", lambda t, g: "test -f docs/out.md")
+    gen_cwds = []                                    # 记录加测生成拿到的 cwd（STUDIO-83 误红回归）
+    monkeypatch.setattr(llm, "extra_test_gen",
+                        lambda t, g, cwd="": (gen_cwds.append(cwd), "test -f docs/out.md")[1])
 
     def fake_launch(self, ticket, lane=None):
         self.reg.parent.mkdir(parents=True, exist_ok=True)
@@ -39,6 +41,7 @@ def env(fake_yt, lanes, monkeypatch):
 
     yt = YT("agent-8")
     yt._backend = fake_yt          # 供 fake_comment 以任意身份直写（opengames 批示模拟）
+    yt.gen_cwds = gen_cwds         # 供加测 cwd 断言（STUDIO-83 加测 cwd 错配回归）
     return yt
 
 
@@ -74,6 +77,9 @@ class TestL0全自动:
         assert state(yt, iid) == "证据就绪"
         assert "VERIFY-OK" in orch.pm_tick()["actions"][0]
         assert state(yt, iid) == "复验通过"
+        # STUDIO-83 加测 cwd 错配回归：生成器必须拿到 lane 根（加测实际执行目录），
+        # 否则会按冻结命令里的 cd 写相对路径 → lane 根下文件不存在 → 闸门绿仍误红
+        assert yt.gen_cwds == [CONFIG.lane("core")["path"]]
         assert "DELIVERED" in orch.pm_tick()["actions"][0]
         assert state(yt, iid) == "已交付"
         repo = Path(CONFIG.lane("core")["path"])

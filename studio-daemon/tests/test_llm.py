@@ -264,3 +264,36 @@ def test_dod_gen_SKIP返回None(monkeypatch):
     monkeypatch.setattr(llm, "ask", fake_ask)
     assert llm.dod_gen({"summary": "s", "description": "d", "fields": {}}) is None
     assert "严禁恒真断言" in llm.dod_gen.__doc__ or True
+
+
+# ---------------- extra_test_gen：QA 加测命令生成（STUDIO-83 cwd 告知） ----------------
+
+def _capture_island(monkeypatch, reply):
+    """替身岛：主 LLM 固定回 reply 并捕获 prompt；Flash 审查一律 pass。"""
+    seen = []
+
+    def fake_ask(prompt, timeout=240, **kw):
+        if prompt.startswith("你是语义审查器"):
+            return '{"verdict":"pass","issues":[],"corrected":""}'
+        seen.append(prompt)
+        return reply
+
+    monkeypatch.setattr(llm, "ask", fake_ask)
+    return seen
+
+
+class TestExtraTestGen:
+    def test_cwd告知进提示词(self, monkeypatch):
+        """cwd 必须显式进 prompt（STUDIO-83 实录 2026-09-30：生成器不知 cwd，
+        按冻结命令里的 cd 写 studio/ 相对路径，实际在 lane 根执行 → 文件不存在
+        → 闸门 exit=0 仍 VERIFY-FAIL 误红，白烧一个 attempt）。"""
+        seen = _capture_island(monkeypatch, "test -f studio-daemon/AGENTS.md")
+        out = llm.extra_test_gen({"summary": "x"}, "cd /x/studio-daemon && pytest", cwd="/x")
+        assert out == "test -f studio-daemon/AGENTS.md"
+        assert "(cwd)=/x" in seen[0] and "cd 不会执行" in seen[0]
+
+    def test_无cwd不硬塞(self, monkeypatch):
+        """cwd 缺省（老调用形状兼容）：提示词不加执行目录行，行为不变。"""
+        seen = _capture_island(monkeypatch, "test -f a")
+        assert llm.extra_test_gen({"summary": "x"}, "pytest") == "test -f a"
+        assert "cwd" not in seen[0]

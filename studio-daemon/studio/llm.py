@@ -262,13 +262,18 @@ def dod_gen(ticket: dict) -> str | None:
     return _sanitize_cmd(out)
 
 
-def extra_test_gen(ticket: dict, frozen_gate: str) -> str | None:
-    """QA 加测：生成一条 worker 没跑过、与冻结命令不同的验证命令——同样过消毒。"""
+def extra_test_gen(ticket: dict, frozen_gate: str, cwd: str = "") -> str | None:
+    """QA 加测：生成一条 worker 没跑过、与冻结命令不同的验证命令——同样过消毒。
+    cwd=命令实际执行目录。STUDIO-83 实录（2026-09-30 误红 attempt）：不告知 cwd 时
+    生成器按冻结命令里的 cd 假定相对路径，而执行在 lane 根（framework 泳道≠仓根）→
+    文件不存在 → grep exit 2 → 闸门绿仍 VERIFY-FAIL。必须显式告知执行目录。"""
+    where = (f"\n命令实际执行目录(cwd)={cwd}——冻结命令里的 cd 不会执行，"
+             f"路径必须相对该目录写（或用绝对路径）。" if cwd else "")
     res = reviewed_ask(
         f"QA 复测加测命令生成。单据: {ticket['summary']}\n冻结验收命令(工人已跑): {frozen_gate}\n"
         f"生成**一条不同角度**的 bash 验证命令（检查冻结命令没覆盖的点），"
         f"命令只允许 test/grep/wc/cat/ls/diff，禁止 ; && || $() 反引号 重定向。"
-        f"只输出命令本身一行。", 240, model=FLASH)
+        f"只输出命令本身一行。{where}", 240, model=FLASH)
     return _sanitize_cmd(_one_line(res))
 
 
