@@ -89,12 +89,15 @@ def executor_cmdline(executor: str, prompt, stream) -> str:
 
 
 def wrap_script(issue: str, repo: str, prompt, stream, claude_bin: str,
-                executor: str = "claude") -> str:
+                executor: str = "claude", wkey: str = "") -> str:
     """wrap 生成（纯函数便于测试）。约束三件套（审计 P0-3）：固定模型 + 预算帽 +
-    wall-clock 看门狗。多执行器（STUDIO-47C）：命令行由 EXECUTOR_SPECS 按执行器映射。"""
+    wall-clock 看门狗。多执行器（STUDIO-47C）：命令行由 EXECUTOR_SPECS 按执行器映射。
+    wkey（STUDIO-79 修复）：派单签发的网关凭证导出给 worker 进程——YouTrack 网关
+    （web._worker_key_ok）读 reg 里的 wkey 认证，任务书教的 curl 用 $STUDIO_WKEY。"""
     return f"""#!/bin/bash
 cd "{repo}"
 git checkout feature/{issue} >/dev/null 2>&1
+export STUDIO_WKEY="{wkey}"
 {claude_bin} {executor_cmdline(executor, prompt, stream)} &
 CPID=$!
 ( sleep {CONFIG.worker_wall_timeout_s}; kill -TERM $CPID 2>/dev/null ) & WDOG=$!
@@ -165,8 +168,13 @@ class Worker:
         for f in (self.report, self.stream):
             if f.exists():
                 f.rename(f.with_name(f"{f.stem}.a{att}{f.suffix}"))
+        # STUDIO-79 修复：派单即签发网关凭证（reg 钉存 + wrap 导出）——
+        # 此前 web 网关收权（ac12fe1）只建了校验端，签发端从未接线，worker 心跳/评论/文章全 403
+        import secrets as _sec
+        wkey = "wk-" + _sec.token_hex(16)
         self.wrap.write_text(wrap_script(self.issue, lc["path"], self.prompt, self.stream,
-                                         claude_bin, executor=lc.get("executor", "claude")))
+                                         claude_bin, executor=lc.get("executor", "claude"),
+                                         wkey=wkey))
         self.wrap.chmod(0o755)
         proc = subprocess.Popen(["nohup", "bash", str(self.wrap)], stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL, start_new_session=True)
@@ -177,7 +185,8 @@ class Worker:
                "branch": f"feature/{self.issue}", "repo": lc["path"],
                "base": lc["base_branch"], "report": str(self.report),
                "stream": str(self.stream), "started": time.strftime("%F %T"),
-               "prompt_ver": PROMPT_VERSION, "prompt_sha8": _sha8}
+               "prompt_ver": PROMPT_VERSION, "prompt_sha8": _sha8,
+               "wkey": wkey}                      # STUDIO-79 修复：网关凭证钉进 reg（签发断链曾致 worker 心跳全 403）
         self.reg.write_text(json.dumps(reg, ensure_ascii=False))
         # 版本登记（append-only）：版本×单号×哈希——周报按此归因打回率
         with open(CONFIG.events_path.parent / "prompts.jsonl", "a", encoding="utf-8") as f:
