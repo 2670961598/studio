@@ -154,7 +154,7 @@ def main():
         from . import statemachine
         rows = []
         for pid in CONFIG.projects:
-            rows += YT("agent-pm").list(pid, "状态:" + ",".join(statemachine.PM_ACTIONABLE))
+            rows += YT("agent-8").list(pid, "状态:" + ",".join(statemachine.PM_ACTIONABLE))
         print(json.dumps(rows, ensure_ascii=False, indent=1))
     else:
         print(__doc__)

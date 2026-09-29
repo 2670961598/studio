@@ -106,9 +106,9 @@ echo "WORKER-EXIT=$RC" >> "{stream}"
 
 def _role(typ: str) -> tuple[str, str]:
     if typ == "策划":
-        return "agent-designer", "策划 worker"
+        return "agent-6", "策划 worker"
     if typ == "美术":
-        return "agent-artist", "美术 worker"
+        return "agent-5", "美术 worker"
     return "agent-dev", "程序 worker"
 
 
@@ -124,7 +124,7 @@ class Worker:
     def launch(self, ticket: dict, lane: str | None = None) -> int:
         from .yt import YT
         from .llm import _claude_bin
-        t = YT("agent-pm")
+        t = YT("agent-8")
         lane = lane or ticket["fields"].get("泳道") or "core"
         lc = CONFIG.lane(lane)
         claude_bin = _claude_bin()                # wrap 在守护进程环境跑，PATH 里没有 claude，必须写绝对路径
@@ -154,7 +154,7 @@ class Worker:
             lane=lane, type=ticket["fields"].get("Type") or "需求",
             attempt=ticket["fields"].get("attempt") or 0,
             gate=ticket["fields"].get("验收命令"), repo=lc["path"],
-            branch=f"feature/{self.issue}", wacct=lc.get("yt_acct", "agent-core"),
+            branch=f"feature/{self.issue}", wacct=lc.get("yt_acct", "agent-2"),
             report=self.report, producer_notes=notes,
             wteam=WIKI_TEAM, team=team, profile=profile, wcommon=WIKI_COMMON, common=common,
             yturl=CONFIG.yt_url, projid=CONFIG.proj_id("STUDIO"))

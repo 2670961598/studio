@@ -110,7 +110,7 @@ def self_eval() -> dict:
     if m["stall"] >= 3:
         findings.append(f"STALL {m['stall']} 次——审批等待或卡单回收策略需调")
     from .yt import YT
-    yt = YT("agent-pm")
+    yt = YT("agent-8")
     open_keys: set | None = None                # None = 查重不可用（09-21/09-22 两天
     for _retry in range(2):                     # 静默吞错连刷重复草稿的教训）
         try:

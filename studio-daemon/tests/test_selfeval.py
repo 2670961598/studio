@@ -20,14 +20,14 @@ def _seed_open_draft(yt):
 class TestSelfEvalDedup:
     def test_同模式草稿在板_不重复建单(self, fake_yt, monkeypatch):
         from studio.yt import YT
-        yt = YT("agent-pm")
+        yt = YT("agent-8")
         _seed_open_draft(yt)
         monkeypatch.setattr(metrics, "compute", lambda d: dict(M))
         assert metrics.self_eval()["drafts"] == []
 
     def test_查重连败_停建单并留痕(self, fake_yt, monkeypatch, requests_mock):
         from studio.yt import YT
-        yt = YT("agent-pm")
+        yt = YT("agent-8")
         _seed_open_draft(yt)
         monkeypatch.setattr(metrics, "compute", lambda d: dict(M))
         requests_mock.get(f"{CONFIG.yt_url}/api/issues", exc=ConnectionError("stale pool"))
@@ -38,7 +38,7 @@ class TestSelfEvalDedup:
 
     def test_首败重试成活_照常查重(self, fake_yt, monkeypatch, requests_mock):
         from studio.yt import YT
-        yt = YT("agent-pm")
+        yt = YT("agent-8")
         _seed_open_draft(yt)
         monkeypatch.setattr(metrics, "compute", lambda d: dict(M))
         st = {"n": 0}
@@ -60,7 +60,7 @@ class Test打回自动复盘:
         import json as _json, time as _t
         from studio.yt import YT
         from studio import metrics as M
-        yt = YT("agent-pm")
+        yt = YT("agent-8")
         iid = yt.new("POLY", "被退单", "d", lane="games", typ="需求", track="L2 常规")
         ts = _t.strftime("%F %T")
         CONFIG.events_path.write_text("\n".join(_json.dumps(
@@ -85,7 +85,7 @@ class Test打回自动复盘:
         from studio.yt import YT
         from studio import metrics as M
         import json as _json, time as _t
-        yt = YT("agent-pm")
+        yt = YT("agent-8")
         iid = yt.new("POLY", "岛失败单", "d", lane="games", typ="需求", track="L2 常规")
         CONFIG.events_path.write_text(_json.dumps(
             {"ts": _t.strftime("%F %T"), "pid": "POLY", "issue": iid, "event": "QA_BACK",

@@ -13,7 +13,7 @@
    **杜绝 AI 一拍脑袋就开做。**
    - 工具：`studio-daemon/tools/sandbox-verify.sh <patch.diff> [验证命令]`
      （临时目录克隆 → apply → 生产 venv 跑全套 pytest → 可选针对性验证 → verdict.json）
-   - 治理族提案：evolve 流在制作人 approve 之后还须 agent-pm 评论
+   - 治理族提案：evolve 流在制作人 approve 之后还须 agent-8 评论
      `VERIFIED <沙箱验证摘要>`（晚于提案）才 apply——机械强制，缺证据停在 PENDING-VERIFY
    - 一次性验证用临时目录（用完即弃），持续性实验用实验场（见支柱 1）
 

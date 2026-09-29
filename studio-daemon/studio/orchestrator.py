@@ -85,7 +85,7 @@ def pm_tick(pid: str = "POLY") -> dict:
         lk.acquire(f"tick-{int(time.time())}", CONFIG.tick_lock_ttl_min)
     except LockBusy:
         return {"result": "LOCK-HELD", "actions": []}
-    yt = YT("agent-pm")
+    yt = YT("agent-8")
     out = {"result": "IDLE", "actions": []}
     try:
         board = yt.list(pid, "状态:" + ",".join(sm.PM_ACTIONABLE))
@@ -238,7 +238,7 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
             lc = CONFIG.lane(lane)
             if lane != "explore":
                 _git(lc["path"], "checkout", f"feature/{iid}")
-            res = run_gate(iid, f"qa-{int(time.time())}", lane, acct="agent-qa")
+            res = run_gate(iid, f"qa-{int(time.time())}", lane, acct="agent-4")
             from .llm import extra_test_gen
             extra = extra_test_gen(yt.get(iid), yt.f(iid, "验收命令") or "")
             extra_ok = True
@@ -258,11 +258,11 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
         if res.ok and extra_ok:
             yt.transition(iid, "复验通过")
             yt.comment(iid, f"复验通过 证据={res['log'][:-4]}.json commit={res['commit']} {note}")
-            _event(pid, iid, "QA_PASS", "agent-qa", 0, note)
+            _event(pid, iid, "QA_PASS", "agent-4", 0, note)
             return f"VERIFY-OK {iid} {note[:60]}"
         n = yt.attempt_inc(iid)
         _back_to_dispatch(yt, pid, iid, n, f"复验红 exit={res['exit']} {note}")
-        _event(pid, iid, "QA_BACK", "agent-qa", n, note)
+        _event(pid, iid, "QA_BACK", "agent-4", n, note)
         return f"VERIFY-FAIL {iid} attempt={n}"
 
     # ---- 复验通过：合并（L0/L1 自动；L2/L3 待批=合并审）----
@@ -315,7 +315,7 @@ def _dispatch(yt, pid, iid, lane, already: bool = False) -> str | None:
                 yt.transition(iid, "已派发")
             Worker(iid).launch(yt.get(iid), lane)
             yt.heartbeat(iid)
-            _event(pid, iid, "DISPATCH", "agent-pm", 0, f"lane={lane} 并行通道")
+            _event(pid, iid, "DISPATCH", "agent-8", 0, f"lane={lane} 并行通道")
             return f"DISPATCH {iid} lane=explore(并行)"
         except Exception:
             lk.release(f"worker-{iid}")
@@ -349,7 +349,7 @@ def _dispatch(yt, pid, iid, lane, already: bool = False) -> str | None:
             _git(lc["path"], "checkout", "-b", f"feature/{iid}")
         Worker(iid).launch(yt.get(iid), lane)
         yt.heartbeat(iid)
-        _event(pid, iid, "DISPATCH", "agent-pm", 0, f"lane={lane}")
+        _event(pid, iid, "DISPATCH", "agent-8", 0, f"lane={lane}")
         return f"DISPATCH {iid} lane={lane}"
     except Exception:
         lk.release(f"worker-{iid}")
@@ -370,13 +370,13 @@ def _harvest(yt, pid, iid, lane, w: Worker, lv) -> str:
             if res.ok:
                 yt.transition(iid, "证据就绪")
                 yt.comment(iid, f"{report}\n\n— 代发 claude worker（studio-daemon 探索通道）")
-                _event(pid, iid, "GATE_PASS", "agent-pm", 0, f"evidence {res['log']}",
+                _event(pid, iid, "GATE_PASS", "agent-8", 0, f"evidence {res['log']}",
                        tokens=rs.get("tokens"), cost_usd=rs.get("cost_usd"),
                        duration_ms=rs.get("duration_ms"))
                 return f"HARVEST {iid} →证据就绪(探索)"
             n = yt.attempt_inc(iid)
             yt.comment(iid, f"GATE-FAIL attempt={n} 退回重做，evidence {res['log']}")
-            _event(pid, iid, "GATE_FAIL", "agent-pm", n, res["log"])
+            _event(pid, iid, "GATE_FAIL", "agent-8", n, res["log"])
             return f"GATE-FAIL {iid} attempt={n}"
         finally:
             w.archive()
@@ -399,7 +399,7 @@ def _harvest(yt, pid, iid, lane, w: Worker, lv) -> str:
         if res.ok:
             yt.transition(iid, "证据就绪")
             yt.comment(iid, f"{report}\n\n— 代发 claude worker（studio-daemon v2）")
-            _event(pid, iid, "GATE_PASS", "agent-pm", 0, f"evidence {res['log']}", **acct)
+            _event(pid, iid, "GATE_PASS", "agent-8", 0, f"evidence {res['log']}", **acct)
             return f"HARVEST {iid} →证据就绪"
         n = yt.attempt_inc(iid)
         flow = sm._flow(lv, yt.f(iid, "Type"))
@@ -411,17 +411,17 @@ def _harvest(yt, pid, iid, lane, w: Worker, lv) -> str:
             except ValueError:
                 pass                             # 迁移异常不吞掉断路评论
             yt.comment(iid, f"@{CONFIG.producer} attempt={n}≥3 断路，evidence {res['log']}")
-            _event(pid, iid, "GATE_FAIL", "agent-pm", n, "断路", **acct)
+            _event(pid, iid, "GATE_FAIL", "agent-8", n, "断路", **acct)
         else:
             yt.comment(iid, f"GATE-FAIL attempt={n} 退回重做，evidence {res['log']}")
-            _event(pid, iid, "GATE_FAIL", "agent-pm", n, res["log"], **acct)
+            _event(pid, iid, "GATE_FAIL", "agent-8", n, res["log"], **acct)
         return f"GATE-FAIL {iid} attempt={n}"
     except Exception:
         # 收割异常（gate 拒跑/HTTP 抖动等）也计 attempt（审计 P1-6）：
         # 曾"异常冒泡→ARCHIVED 不罚→下拍立即重派"= 无断路的重派风暴，每 10 分钟白烧一轮 worker
         n = yt.attempt_inc(iid)
         yt.comment(iid, f"收割异常计 attempt={n}（断路保护生效，不再无罚重派）")
-        _event(pid, iid, "GATE_FAIL", "agent-pm", n, "harvest-exception")
+        _event(pid, iid, "GATE_FAIL", "agent-8", n, "harvest-exception")
         raise
     finally:
         w.archive()                              # REPORT 随之归档，防止旧卷反复收割
@@ -434,7 +434,7 @@ def _merge(yt, pid, iid, lane) -> str:
         yt.transition(iid, "已交付")
         yt.comment(iid, "探索交付：REPORT 与证据已落盘（/tmp 探索区产物随生命周期自然过期，"
                         "沉淀物请入知识库/板面）")
-        _event(pid, iid, "MERGE", "agent-pm", 0, "explore-direct")
+        _event(pid, iid, "MERGE", "agent-8", 0, "explore-direct")
         return f"DELIVERED {iid} (探索直交付)"
     lc = CONFIG.lane(lane)
     lk = lock(CONFIG, f"lane-{lane}")
@@ -456,7 +456,7 @@ def _merge(yt, pid, iid, lane) -> str:
             _git(lc["path"], "clean", "-fd", check=False)
             n = yt.attempt_inc(iid)
             yt.comment(iid, f"merge 冲突已隔离退回重做 attempt={n}: {str(e)[:120]}")
-            _event(pid, iid, "GATE_FAIL", "agent-pm", n, "merge-conflict")
+            _event(pid, iid, "GATE_FAIL", "agent-8", n, "merge-conflict")
             try:
                 yt.transition(iid, "已派发")
             except ValueError:
@@ -465,14 +465,14 @@ def _merge(yt, pid, iid, lane) -> str:
         res = run_gate(iid, f"verify-{int(time.time())}", lane)
         if res.ok:
             yt.transition(iid, "已交付")
-            _event(pid, iid, "MERGE", "agent-pm", 0, f"→{lc['base_branch']} verify绿")
-            _event(pid, iid, "CLOSE", "agent-pm", 0, "未push(无批示)")
+            _event(pid, iid, "MERGE", "agent-8", 0, f"→{lc['base_branch']} verify绿")
+            _event(pid, iid, "CLOSE", "agent-8", 0, "未push(无批示)")
             return f"DELIVERED {iid}"
         # verify 红：回滚 base 上的 merge commit，退回重做（P2-4）
         _git(lc["path"], "reset", "--hard", "ORIG_HEAD", check=False)
         n = yt.attempt_inc(iid)
         yt.comment(iid, f"merge-verify红回滚 exit={res['exit']} attempt={n}")
-        _event(pid, iid, "GATE_FAIL", "agent-pm", n, "merge-verify红")
+        _event(pid, iid, "GATE_FAIL", "agent-8", n, "merge-verify红")
         try:
             yt.transition(iid, "已派发")
         except ValueError:
@@ -494,7 +494,7 @@ def _recycle(yt, pid, iid, why):
             f.write(f"{time.strftime('%F %T')} {iid} {why}\n")
     n = yt.attempt_inc(iid)
     yt.comment(iid, f"兜底退回: {why} attempt={n}")
-    _event(pid, iid, "GATE_FAIL", "agent-pm", n, why)
+    _event(pid, iid, "GATE_FAIL", "agent-8", n, why)
 
 
 def _back_to_dispatch(yt, pid, iid, n, why):
@@ -519,7 +519,7 @@ def _final_position(yt, iid, lv, typ) -> bool:
     """终验收位判定（影子期近似）：L2/L3 流的第二待批位（合并审）即终验收；
     首待批为立项批。结构上以「批示已执行」计数近似（applied 值在调用处可得）。
     简化：合并审=终验收——L2 的第2待批/L3 的第3待批。"""
-    applied = sum(1 for c in yt.comments(iid) if c["author"] == "agent-pm"
+    applied = sum(1 for c in yt.comments(iid) if c["author"] == "agent-8"
                   and c["text"].startswith("批示已执行"))
     return applied >= 1                                     # 已过立项批 → 当前位=终验收
 
@@ -581,7 +581,7 @@ def _directives(yt, iid, lv, typ, lane=None) -> str | None:
     """位置感知批示：第 k 个未消费的 approve 指令作用于流的第 k 个待批位。
     消费留痕（PM 评论"批示已执行"）保证幂等——同一评论不会二次执行。"""
     cs = yt.comments(iid)
-    applied = sum(1 for c in cs if c["author"] == "agent-pm"
+    applied = sum(1 for c in cs if c["author"] == "agent-8"
                   and c["text"].startswith("批示已执行"))
     approvals: list[tuple[str, int]] = []   # (指令, 评论时间戳)——时间锚定配对见下
     hold = _producer_hold(cs)
@@ -611,7 +611,7 @@ def _directives(yt, iid, lv, typ, lane=None) -> str | None:
         w0 = c["text"].strip().split()[0]
         norm0 = _normalize_directive(w0)
         if c["author"] != CONFIG.producer:
-            # 委托代批账号（agent-pm）的评论绝大多数是系统留痕（WORKER REPORT 转发、
+            # 委托代批账号（agent-8）的评论绝大多数是系统留痕（WORKER REPORT 转发、
             # 复验通过证据、泳道自愈……正文常含 approve/批准字样）——降级中的 LLM 岛
             # 会把它们猜成批示挤占槽位计数（GAMES-9 实录）。故非制作人评论只认
             # 首词明确的批示，确定性解析、不进 LLM。
@@ -634,7 +634,7 @@ def _directives(yt, iid, lv, typ, lane=None) -> str | None:
             approvals.append((parsed["directive"], c["created"]))
         elif norm0.startswith("approve"):
             approvals.append((norm0, c["created"]))
-    last_mark = max((c["created"] for c in cs if c["author"] == "agent-pm"
+    last_mark = max((c["created"] for c in cs if c["author"] == "agent-8"
                     and c["text"].startswith("批示已执行")), default=0)
     # 亲批泳道收紧/单据级叮嘱会追溯滤掉曾被消费的代批，applied 虚高会把后来
     # 亲批的序位吞掉（POLY-26/27/29 实录：代批史+1、合格批示仅制作人 1 条 →
@@ -666,7 +666,7 @@ def _directives(yt, iid, lv, typ, lane=None) -> str | None:
     cur = 0
     for c in cs:                               # cs 为时间序；后写的定位标记胜出
         t_ = c["text"].strip()
-        if c["author"] != "agent-pm":
+        if c["author"] != "agent-8":
             continue
         if t_.startswith("断路退审：回到第"):
             try:

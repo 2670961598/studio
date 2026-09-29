@@ -37,7 +37,7 @@ def env(fake_yt, lanes, monkeypatch):
         return "RUNNING -1 0min"
     monkeypatch.setattr(Worker, "status", fake_status)
 
-    yt = YT("agent-pm")
+    yt = YT("agent-8")
     yt._backend = fake_yt          # 供 fake_comment 以任意身份直写（opengames 批示模拟）
     return yt
 
@@ -305,11 +305,11 @@ class TestPM代批:
     未委托项目 PM 批示无效；PM 留痕评论不得被当成批示（防自批准循环）。"""
 
     def test_委托项目_PM批准_全流程交付(self, env, lanes, monkeypatch):
-        monkeypatch.setattr(CONFIG, "delegated_approvals", {"POLY": ["agent-pm"]})
+        monkeypatch.setattr(CONFIG, "delegated_approvals", {"POLY": ["agent-8"]})
         yt = env
         iid = yt.new("POLY", "L2代批", "d", lane="core", typ="需求", track="L2 常规")
         orch.pm_tick()                                   # 新单→待批
-        yt.comment(iid, "批准\n（PM 代批：制作人委托）")     # agent-pm 身份批示
+        yt.comment(iid, "批准\n（PM 代批：制作人委托）")     # agent-8 身份批示
         r = orch.pm_tick()
         assert any("APPROVED" in a for a in r["actions"]), r
         orch.pm_tick()                                   # 派发
@@ -327,7 +327,7 @@ class TestPM代批:
     def test_未委托项目_PM批示_不被消费(self, env, lanes, monkeypatch):
         """委托边界不外溢：表外项目的 PM 评论必须无效。POLY 已于 2026-09-26
         进委托表（制作人授权 ZCode 审查后代批），故用例显式钉住旧表验证机制。"""
-        monkeypatch.setattr(CONFIG, "delegated_approvals", {"GAMES": ["agent-pm"]})
+        monkeypatch.setattr(CONFIG, "delegated_approvals", {"GAMES": ["agent-8"]})
         yt = env
         iid = yt.new("POLY", "边界", "d", lane="core", typ="需求", track="L2 常规")
         orch.pm_tick()                                   # →待批
@@ -349,7 +349,7 @@ class TestPM代批:
 class Test合并批示忙时保留:
     def test_L2合并批_泳道忙_批示保留下拍重试(self, env, lanes, monkeypatch):
         from studio.locks import lock
-        monkeypatch.setattr(CONFIG, "delegated_approvals", {"POLY": ["agent-pm"]})
+        monkeypatch.setattr(CONFIG, "delegated_approvals", {"POLY": ["agent-8"]})
         yt = env
         iid = yt.new("POLY", "L2忙", "d", lane="core", typ="需求", track="L2 常规")
         yt.comment(iid, "批准\n（PM 代批）")
@@ -374,7 +374,7 @@ class TestL3槽位语义:
     def test_断路复位后的方案审_不被误定位到合并审(self, env, lanes, monkeypatch):
         """GAMES-2 实录回归：L3 立项已批 + 断路复位重批（批号=2）后方案段交付进方案审，
         approve-design 必须落在方案审（→已派发实现段），不得因批号错位直接触发合并交付。"""
-        monkeypatch.setattr(CONFIG, "delegated_approvals", {"POLY": ["agent-pm"]})
+        monkeypatch.setattr(CONFIG, "delegated_approvals", {"POLY": ["agent-8"]})
         yt = env
         iid = yt.new("POLY", "L3方案", "d", lane="core", typ="需求", track="L3 特护")
         orch.pm_tick()                                   # 新单→待批(立项)
@@ -419,7 +419,7 @@ class TestL3批示词误解析容忍:
         from studio import llm
         monkeypatch.setattr(llm, "parse_directive",
                             lambda text, ctx: {"directive": "approve-merge", "confidence": 0.9})
-        monkeypatch.setattr(CONFIG, "delegated_approvals", {"POLY": ["agent-pm"]})
+        monkeypatch.setattr(CONFIG, "delegated_approvals", {"POLY": ["agent-8"]})
         yt = env
         iid = yt.new("POLY", "L3误解析", "d", lane="core", typ="需求", track="L3 特护")
         orch.pm_tick()                                   # →待批(立项)
@@ -450,7 +450,7 @@ class Test裸批准原始词元优先:
         from studio import llm
         monkeypatch.setattr(llm, "parse_directive",
                             lambda text, ctx: {"directive": "approve-plan", "confidence": 0.9})
-        monkeypatch.setattr(CONFIG, "delegated_approvals", {"POLY": ["agent-pm"]})
+        monkeypatch.setattr(CONFIG, "delegated_approvals", {"POLY": ["agent-8"]})
         yt = env
         iid = yt.new("POLY", "裸批", "d", lane="core", typ="需求", track="L2 常规")
         orch.pm_tick()                                   # →待批(立项)
@@ -614,7 +614,7 @@ class Test亲批泳道:
         monkeypatch.setattr(_C, "producer_only_lanes", {"POLY": ["core"]})
 
     """制作人 2026-09-28 指令：三消 core 仓（POLY core 泳道）慎之又慎——
-    其单据一切批示只认制作人，代批账号（agent-pm）的批准不被消费。"""
+    其单据一切批示只认制作人，代批账号（agent-8）的批准不被消费。"""
 
     def test_core泳道PM批准不消费(self, env, lanes):
         yt = env
@@ -628,12 +628,12 @@ class Test亲批泳道:
         yt = env
         iid = yt.new("POLY", "core制作人批", "d", lane="core", typ="需求", track="L1 首批")
         orch.pm_tick()
-        be = monkeypatch  # fake backend 作者=agent-pm；直改评论作者模拟制作人
+        be = monkeypatch  # fake backend 作者=agent-8；直改评论作者模拟制作人
         cs = yt.comments(iid)
         monkeypatch.setattr("studio.yt.YT.comment", lambda self, i, t: None) if False else None
         # 直接走 backend 造制作人评论：fake_yt 的 requests_mock 造不了他人——
-        # 用 CONFIG.producer 临时代指 agent-pm 反向验证：把 producer 改名后
-        # agent-pm 不再是制作人 → core 泳道应拒（机制对称性）
+        # 用 CONFIG.producer 临时代指 agent-8 反向验证：把 producer 改名后
+        # agent-8 不再是制作人 → core 泳道应拒（机制对称性）
         from studio.config import CONFIG as _C
         with monkeypatch.context() as m:
             m.setattr(_C, "producer", "nobody-else")
@@ -685,7 +685,7 @@ class Test亲批叮嘱:
         monkeypatch.setattr(_C, "producer_only_lanes", {})   # 排除泳道亲批，纯测叮嘱
         iid = yt.new("POLY", "叮嘱", "d", lane="game", typ="需求", track="L1 首批")
         orch.pm_tick()
-        # fake 后端评论作者恒为 agent-pm——直插制作人评论（真实现形态）
+        # fake 后端评论作者恒为 agent-8——直插制作人评论（真实现形态）
         be = _cf.CURRENT_BACKEND
         be.issues[iid]["comments"].append(
             {"author": "opengames", "text": "亲批 这单我要自己看", "created": be.now_ms()})
@@ -707,7 +707,7 @@ class Test亲批叮嘱:
         import importlib
         from studio import config as cfgmod
         import json as _json
-        # 注册表里去掉 agent-pm → 委托被剔除（fail-safe，不 401）
+        # 注册表里去掉 agent-8 → 委托被剔除（fail-safe，不 401）
         real_load = cfgmod._load
         def fake_load(p):
             d = real_load(p)

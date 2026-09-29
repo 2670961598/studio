@@ -39,14 +39,14 @@ class Config:
         #   逐单审查后代批，批准评论必须附审查意见留痕；非无条件
         # - STUDIO（2026-09-27）"全部开发你直接审核"——未来探索/开发需求/bug
         #   处置由 ZCode 审核放行（须附审查意见）；宪章与红线修改仍只认制作人
-        self.delegated_approvals: dict[str, list[str]] = {"GAMES": ["agent-pm"],
-                                                          "POLY": ["agent-pm"],
-                                                          "STUDIO": ["agent-pm"]}
+        self.delegated_approvals: dict[str, list[str]] = {"GAMES": ["agent-8"],
+                                                          "POLY": ["agent-8"],
+                                                          "STUDIO": ["agent-8"]}
         # 亲批泳道（制作人 2026-09-28 指令：三消 core 仓迭代多版、重要度最高，
         # 慎之又慎——该泳道单据一切批示只认制作人，代批账号的批准不被消费）
         self.producer_only_lanes: dict[str, list[str]] = {"POLY": ["core"]}
         # fail-safe（2026-09-28）：委托账号未在 youtrack.json 注册 token 时自动剔除并告警
-        # ——代批账号切 agent-deputy 后，token 未就位前不会 401 崩溃，只是该账号暂不可代批
+        # ——代批账号切 agent-9 后，token 未就位前不会 401 崩溃，只是该账号暂不可代批
         _ag = self.yt_cfg.get("agents", {})
         for _p, _accts in list(self.delegated_approvals.items()):
             _ok = [a for a in _accts if a in _ag and _ag[a].get("token")]

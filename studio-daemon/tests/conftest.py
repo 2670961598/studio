@@ -191,7 +191,7 @@ def fake_yt(tmp_config, requests_mock):
 
     def _comments_post(request, ctx):
         iid = _iid(request)
-        be.issues[iid]["comments"].append({"author": "agent-pm", "text": request.json()["text"],
+        be.issues[iid]["comments"].append({"author": "agent-8", "text": request.json()["text"],
                                            "created": be.now_ms()})
         return {"id": len(be.issues[iid]["comments"])}
 
@@ -232,7 +232,7 @@ def fake_yt(tmp_config, requests_mock):
         return {"idReadable": aid}
 
     article_re = _re.compile(r"/api/articles/[^/?]+([?/].*)?$")
-    requests_mock.get(f"{U}/api/users/me", json={"login": "agent-pm", "name": "Agent PM"})
+    requests_mock.get(f"{U}/api/users/me", json={"login": "agent-8", "name": "Agent PM"})
     requests_mock.get(f"{U}/api/issues", json=_list)
     requests_mock.post(f"{U}/api/issues", json=_create)
     requests_mock.get(issue_re, json=_get)          # /api/issues/{id}
@@ -268,8 +268,8 @@ def lanes(tmp_config, monkeypatch, git_repo, tmp_path):
     """把 core 泳道指到 git 沙箱。"""
     monkeypatch.setitem(CONFIG.lanes, "core",
                         {"path": str(git_repo), "base_branch": "main",
-                         "agent": "agent-core", "yt_acct": "agent-core"})
+                         "agent": "agent-2", "yt_acct": "agent-2"})
     monkeypatch.setitem(CONFIG.lanes, "explore",       # 探索并行通道（09-28）：/tmp 免 git
                         {"path": str(tmp_path / "explore-lane"), "base_branch": "-",
-                         "agent": "agent-scout", "yt_acct": "agent-pm"})
+                         "agent": "agent-3", "yt_acct": "agent-8"})
     yield CONFIG

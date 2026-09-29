@@ -70,7 +70,7 @@ def _anomalies_tickets(out):
     from .yt import YT
     from . import statemachine as sm
     from .workers import Worker
-    yt = YT("agent-pm")
+    yt = YT("agent-8")
     now_ms = time.time() * 1000
     for pid in CONFIG.projects:   # C4：曾漏 GAMES（09-22 上线后一直不在巡检范围）
         try:
@@ -102,7 +102,7 @@ def _anomalies_tickets(out):
                     cs = yt.comments(iid)
                     last_marker = -1
                     for i, c in enumerate(cs):
-                        if c["author"] == "agent-pm" and c["text"].startswith(_PM_MARKERS):
+                        if c["author"] == "agent-8" and c["text"].startswith(_PM_MARKERS):
                             last_marker = i
                     _lane = None
                     try:
@@ -157,7 +157,7 @@ def _anomalies_conformance(out):
     from . import statemachine as sm
     from .metrics import _finding_key
     from .llm import _sanitize_cmd
-    yt = YT("agent-pm")
+    yt = YT("agent-8")
     BAD_GATES = {"test -f /dev/null"}            # 历史事故形态：字符设备上 -f 恒假
     for pid in CONFIG.projects:   # C4：曾漏 GAMES（09-22 上线后一直不在巡检范围）
         try:

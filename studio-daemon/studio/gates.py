@@ -11,7 +11,7 @@ class GateResult(dict):
         return self["exit"] == 0
 
 
-def run_gate(issue: str, attempt_tag: str, lane: str, acct: str = "agent-pm") -> GateResult:
+def run_gate(issue: str, attempt_tag: str, lane: str, acct: str = "agent-8") -> GateResult:
     from .yt import YT
     t = YT(acct)
     if not lane:

@@ -9,7 +9,7 @@ from .config import CONFIG
 
 def _yt():
     from .yt import YT
-    return YT("agent-pm")
+    return YT("agent-8")
 
 
 def _reports_dir() -> Path:

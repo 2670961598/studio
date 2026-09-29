@@ -6,7 +6,7 @@ from .config import CONFIG
 
 
 class YT:
-    def __init__(self, acct: str = "agent-pm"):
+    def __init__(self, acct: str = "agent-8"):
         self.acct = acct
         self.base = CONFIG.yt_url
         self.s = requests.Session()

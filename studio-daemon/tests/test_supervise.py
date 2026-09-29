@@ -9,7 +9,7 @@ from studio import supervise as sv
 class TestConformance:
     def test_自评重复草稿报警(self, fake_yt):
         from studio.yt import YT
-        yt = YT("agent-pm")
+        yt = YT("agent-8")
         for i in range(2):
             yt.new("STUDIO", "[自评] 闸门失败率 55%（11/20）——检查 DoD", "d",
                    lane=None, typ="提案", track="G1 知识", state="草稿")
@@ -19,7 +19,7 @@ class TestConformance:
 
     def test_恒假gate与空gate报警(self, fake_yt):
         from studio.yt import YT
-        yt = YT("agent-pm")
+        yt = YT("agent-8")
         i1 = yt.new("STUDIO", "a", "d", lane=None, typ="需求", track="L1 首批", state="待批")
         yt.set_text(i1, "验收命令", "test -f /dev/null")
         i2 = yt.new("STUDIO", "b", "d", lane=None, typ="需求", track="L1 首批", state="待批")
@@ -72,7 +72,7 @@ class TestApprovalUnconsumed:
     def test_待批有未消费批准_必须报警(self, fake_yt):
         from studio.yt import YT
         from studio import statemachine as sm
-        yt = YT("agent-pm")
+        yt = YT("agent-8")
         iid = yt.new("POLY", "t", "d", lane="core", typ="需求", track="L1 首批")
         yt.transition(iid, "待批")
         fake_yt.issues[iid]["comments"].append(
@@ -83,13 +83,13 @@ class TestApprovalUnconsumed:
 
     def test_已消费不报(self, fake_yt):
         from studio.yt import YT
-        yt = YT("agent-pm")
+        yt = YT("agent-8")
         iid = yt.new("POLY", "t2", "d", lane="core", typ="需求", track="L1 首批")
         yt.transition(iid, "待批")
         fake_yt.issues[iid]["comments"].append(
             {"author": "opengames", "text": "批准", "created": fake_yt.now_ms()})
         fake_yt.issues[iid]["comments"].append(
-            {"author": "agent-pm", "text": "批示已执行 approve → 已派发 (第1批)", "created": fake_yt.now_ms()})
+            {"author": "agent-8", "text": "批示已执行 approve → 已派发 (第1批)", "created": fake_yt.now_ms()})
         out = []
         sv._anomalies_tickets(out)
         assert not any(a["kind"] == "approval-unconsumed" for a in out), out

@@ -151,7 +151,7 @@ def _overview() -> dict:
     from .metrics import compute
     board = []
     for pid in CONFIG.projects:
-        board += YT("agent-pm").list(pid, "状态:" + ",".join(statemachine.PM_ACTIONABLE))
+        board += YT("agent-8").list(pid, "状态:" + ",".join(statemachine.PM_ACTIONABLE))
     for b in board:
         b["yt"] = _yt_url(b["id"])
     evs = []
@@ -347,7 +347,7 @@ def api_schema():
         return {"error": str(e)}
     team, agents_kb = "", {}
     try:                                              # 知识库已迁 Articles（STUDIO-13）；不可达时降级为空
-        t = YT("agent-pm")
+        t = YT("agent-8")
         team = t.wiki_get("全局/团队公约")
         agents_kb = {path.split("/", 1)[1]: a["content"][:400]
                      for path, a in t.wiki_all().items() if path.startswith("编制/")}

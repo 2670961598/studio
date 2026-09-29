@@ -105,7 +105,7 @@ PM 巡田收割转正。
 def main(argv: list[str]) -> int:
     sys.path.insert(0, str(ROOT))
     from studio.yt import YT
-    t = YT("agent-pm")
+    t = YT("agent-8")
     check = "--check" in argv
     if check:
         arts = t.wiki_all()

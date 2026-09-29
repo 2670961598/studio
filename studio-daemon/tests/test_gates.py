@@ -14,7 +14,7 @@ def _ticket(fake_yt, yt, repo, cmd):
 
 def test_证据格式_与bash版兼容(fake_yt, lanes):
     from studio.yt import YT
-    yt = YT("agent-pm")
+    yt = YT("agent-8")
     iid = _ticket(fake_yt, yt, lanes, "test -f docs/hello.md")
     res = run_gate(iid, "1", "core")
     ev = json.loads(Path(res["log"][:-4] + ".json").read_text())
@@ -30,7 +30,7 @@ def test_证据格式_与bash版兼容(fake_yt, lanes):
 
 def test_失败命令_exit透传(fake_yt, lanes):
     from studio.yt import YT
-    yt = YT("agent-pm")
+    yt = YT("agent-8")
     iid = _ticket(fake_yt, yt, lanes, "exit 7")
     res = run_gate(iid, "1", "core")
     assert not res.ok and res["exit"] == 7
@@ -38,7 +38,7 @@ def test_失败命令_exit透传(fake_yt, lanes):
 
 def test_缺命令报错(fake_yt, lanes):
     from studio.yt import YT
-    yt = YT("agent-pm")
+    yt = YT("agent-8")
     iid = yt.new("POLY", "g", "d", lane="core")
     with pytest.raises(RuntimeError, match="GATE-NO-CMD"):
         run_gate(iid, "1", "core")
@@ -49,7 +49,7 @@ def test_危险命令拒跑不执行(fake_yt, lanes):
     危险快筛兜底，命中即 raise（TICK ERROR 留痕，不执行、不计 attempt）。"""
     import pytest as _pytest
     from studio.yt import YT
-    yt = YT("agent-pm")
+    yt = YT("agent-8")
     iid = _ticket(fake_yt, yt, lanes, "rm -rf /tmp/evil && test -f docs/hello.md")
     with _pytest.raises(RuntimeError, match="GATE-DANGEROUS"):
         run_gate(iid, "1", "core")
@@ -61,7 +61,7 @@ def test_危险命令拒跑不执行(fake_yt, lanes):
 def test_手工合法范式不误杀(fake_yt, lanes):
     """存量手工 gate 范式（cd 仓库绝对路径 && node 脚本）不在危险特征内，照跑。"""
     from studio.yt import YT
-    yt = YT("agent-pm")
+    yt = YT("agent-8")
     from studio.config import CONFIG
     repo = CONFIG.lane("core")["path"]
     iid = _ticket(fake_yt, yt, lanes, f"cd {repo} && test -f docs/hello.md")
@@ -74,7 +74,7 @@ def test_手工命令for循环与重定向不再误杀(fake_yt, lanes):
     快筛只挡破坏/注入原语，放行手工合法语法。"""
     from studio.yt import YT
     import pytest as _pt
-    yt = YT("agent-pm")
+    yt = YT("agent-8")
     # /usr/bin/true 秒退（node 形态实测 85s——node 解析不存在脚本出奇慢）
     from studio.config import CONFIG as _C
     _repo = _C.lane("core")["path"]

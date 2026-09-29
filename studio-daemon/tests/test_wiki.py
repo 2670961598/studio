@@ -9,7 +9,7 @@ from studio import workers
 
 
 def test_wiki_create_逐级建父并按路径取回(fake_yt):
-    t = YT("agent-pm")
+    t = YT("agent-8")
     aid = t.wiki_create("全局/团队公约", "# 团队公约\n红线：禁自批。")
     assert aid
     assert t.wiki_get("全局/团队公约") == "# 团队公约\n红线：禁自批。"
@@ -17,7 +17,7 @@ def test_wiki_create_逐级建父并按路径取回(fake_yt):
 
 
 def test_wiki_create_幂等重跑等于更新(fake_yt):
-    t = YT("agent-pm")
+    t = YT("agent-8")
     t.wiki_create("手册/worker-common", "v1")
     t.wiki_create("手册/worker-common", "v2")
     assert t.wiki_get("手册/worker-common") == "v2"
@@ -26,13 +26,13 @@ def test_wiki_create_幂等重跑等于更新(fake_yt):
 
 
 def test_wiki_get_未知路径抛KeyError(fake_yt):
-    t = YT("agent-pm")
+    t = YT("agent-8")
     with pytest.raises(KeyError):
         t.wiki_get("编制/不存在")
 
 
 def test_fetch_profile_优先articles_失配回退本地(fake_yt, tmp_path, monkeypatch):
-    t = YT("agent-pm")
+    t = YT("agent-8")
     aid = t.wiki_create("编制/worker", "档案-来自Articles")
     assert workers.fetch_profile(t, "编制/worker") == "档案-来自Articles"
     del fake_yt.articles[aid]                        # Articles 侧丢失 → 走本地兜底
@@ -44,7 +44,7 @@ def test_fetch_profile_优先articles_失配回退本地(fake_yt, tmp_path, monk
 
 
 def test_launch_任务书注入公约档案手册(fake_yt, lanes, monkeypatch):
-    t = YT("agent-pm")
+    t = YT("agent-8")
     t.wiki_create("全局/团队公约", "# 团队公约 —— 名册与红线")
     t.wiki_create("编制/worker", "# 执行层 worker 档案")
     t.wiki_create("手册/worker-common", "# worker-common 唯一规范")

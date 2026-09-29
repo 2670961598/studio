@@ -8,7 +8,7 @@ from studio.yt import YT
 
 @pytest.fixture
 def yt(fake_yt):
-    return YT("agent-pm")
+    return YT("agent-8")
 
 
 def test_建单_无泳道_STUDIO(fake_yt, yt):

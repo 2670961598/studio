@@ -17,7 +17,7 @@ MARK_PROPOSED, MARK_APPLIED = "SCHEMA-PROPOSED", "SCHEMA-APPLIED"
 
 def _yt():
     from .yt import YT
-    return YT("agent-pm")
+    return YT("agent-8")
 
 
 def _log(line: str):
@@ -63,9 +63,9 @@ def close_windows():
 
 def _verified(cs, all_texts, proposed_at) -> bool:
     """验证闸（制作人 2026-09-27 指令：一切改进必须先在临时目录验证、确认价值后才
-    进生产，杜绝 AI 一拍脑袋）：提案应用前必须有 agent-pm 的 `VERIFIED <沙箱验证
+    进生产，杜绝 AI 一拍脑袋）：提案应用前必须有 agent-8 的 `VERIFIED <沙箱验证
     摘要>` 评论，且晚于提案——approve 只代表"值得做"，VERIFIED 才代表"验证过有效"。"""
-    return any(t.startswith("VERIFIED") and c["author"] == "agent-pm"
+    return any(t.startswith("VERIFIED") and c["author"] == "agent-8"
                and proposed_at and c["created"] >= proposed_at
                for c, t in zip(cs, all_texts))
 
@@ -168,7 +168,7 @@ def _apply_kb(yt, iid: str) -> str:
     subprocess.run(["git", "-C", str(KB_ROOT.parent), "commit", "-q", "-m",
                     f"kb-update: {rel}（{iid} 制作人已批准）"], check=False)
     from .metrics import append_event
-    append_event("STUDIO", iid, "KB_UPDATE", "agent-pm", 0, rel)
+    append_event("STUDIO", iid, "KB_UPDATE", "agent-8", 0, rel)
     yt.comment(iid, f"{MARK_APPLIED} {rel} 已更新并 git 提交，全员即刻生效。")
     _to_window(yt, iid)
     return f"KB-APPLIED {iid} {rel}"
@@ -287,7 +287,7 @@ def _apply(yt, iid: str, desc: str) -> str:
                     f"evolve-schema: 新增类型「{name}」（{iid} 制作人已批准）"], check=False)
     from .runs import append_run
     from .metrics import append_event
-    append_event("STUDIO", iid, "SCHEMA_EVOLVE", "agent-pm", 0, f"新增类型 {name}")
+    append_event("STUDIO", iid, "SCHEMA_EVOLVE", "agent-8", 0, f"新增类型 {name}")
     append_run("evolve", "ok", 0, f"注册类型 {name}")
     yt.comment(iid, f"{MARK_APPLIED} {name} 已注册：枚举+知识库+git 提交完成，全工作室即刻生效。")
     _to_window(yt, iid)

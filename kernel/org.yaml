@@ -39,15 +39,15 @@ projects:
 # 账号是等级权限锚点（YouTrack 原生权限按账号配——平台级强制，不重复造轮子）；
 # 个体身份靠评论署名协议：正文前缀 [项目·名字·部门]（账号=等级，同名不同个体的定位）。
 accounts:                        # login → 等级上限（干/批按批干矩阵另算）
-  agent-deputy: 9                # 最高位 agent：宰相代批/高层执行（制作人 9 级单的执行侧）
-  agent-pm: 8                    # PM 治理（引擎宿主账号，daemon 系统动作用它）
-  agent-inspector: 7             # 审查
-  agent-designer: 6              # 策划
-  agent-artist: 5                # 美术
-  agent-qa: 4                    # QA
-  agent-scout: 3                 # 情报/探索
-  agent-core: 2                  # core 施工
-  agent-game: 1                  # game 施工
+  agent-9: 9                # 最高位 agent：宰相代批/高层执行（制作人 9 级单的执行侧）
+  agent-8: 8                    # PM 治理（引擎宿主账号，daemon 系统动作用它）
+  agent-7: 7             # 审查
+  agent-6: 6              # 策划
+  agent-5: 5                # 美术
+  agent-4: 4                    # QA
+  agent-3: 3                 # 情报/探索
+  agent-2: 2                  # core 施工
+  agent-1: 1                  # game 施工
 署名协议: "[项目·个体名·部门] 正文"   # 一切 agent 评论必带（YouTrack author=等级账号，署名=个体）
 # 权限落地（P2 实施）：YouTrack 项目角色按等级递减——低等级账号对高危状态无命令权限，
 # 平台层先拦一道，代码引擎（org 分权）再拦一道，双保险。

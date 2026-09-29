@@ -40,7 +40,7 @@ def test_巡逻带仓库路径与cwd(fake_yt, tmp_config, monkeypatch):
     from studio.yt import YT
     from studio import llm
     monkeypatch.setitem(CONFIG.lanes, "game", {"path": "/tmp/game"})
-    yt = YT("agent-pm")
+    yt = YT("agent-8")
     iid = yt.new("POLY", "战役：测试", "d", lane="game", typ="战役", state="运行中")
     _camp_files(iid)                       # spec 无 repo → 回退 game 泳道路径
     calls = {}
@@ -60,7 +60,7 @@ def test_巡逻spec_repo优先于泳道(fake_yt, tmp_config, monkeypatch):
     from studio.yt import YT
     from studio import llm
     monkeypatch.setitem(CONFIG.lanes, "game", {"path": "/tmp/game"})
-    yt = YT("agent-pm")
+    yt = YT("agent-8")
     iid = yt.new("POLY", "战役：测试2", "d", lane="game", typ="战役", state="运行中")
     _camp_files(iid, repo="/tmp/camp")
     calls = {}
@@ -77,7 +77,7 @@ def test_巡逻spec_repo优先于泳道(fake_yt, tmp_config, monkeypatch):
 def test_巡逻无仓库时cwd为None且prompt声明不可猜(fake_yt, tmp_config, monkeypatch):
     from studio.yt import YT
     from studio import llm
-    yt = YT("agent-pm")
+    yt = YT("agent-8")
     iid = yt.new("POLY", "战役：测试3", "d", lane="-", typ="战役", state="运行中")
     _camp_files(iid)
     calls = {}
@@ -96,7 +96,7 @@ def test_提案子单出生态为草稿(fake_yt, tmp_config, monkeypatch):
     """治理族子单（Type=提案）出生即「草稿」：进制作人治理队列，绝不进派发流。"""
     from studio.yt import YT
     from studio import llm
-    yt = YT("agent-pm")
+    yt = YT("agent-8")
     iid = yt.new("POLY", "战役：测试4", "d", lane="-", typ="战役", state="运行中")
     d = CONFIG._root.parent / "kernel" / "campaigns"
     (d / f"{iid}.yaml").write_text(
@@ -125,7 +125,7 @@ def test_岛无响应走独立分支不误标解析失败(fake_yt, tmp_config, m
     import time as _t
     from studio.yt import YT
     from studio import llm
-    yt = YT("agent-pm")
+    yt = YT("agent-8")
     iid = yt.new("POLY", "战役：测试5", "d", lane="-", typ="战役", state="运行中")
     _camp_files(iid)                        # every_h=1（短周期：退避=正常节奏）
     monkeypatch.setattr(llm, "ask", lambda *a, **k: None)
@@ -144,7 +144,7 @@ def test_长周期战役岛无响应只退避2小时(fake_yt, tmp_config, monkey
     import time as _t
     from studio.yt import YT
     from studio import llm
-    yt = YT("agent-pm")
+    yt = YT("agent-8")
     iid = yt.new("POLY", "战役：测试6", "d", lane="-", typ="战役", state="运行中")
     d = CONFIG._root.parent / "kernel" / "campaigns"
     (d / f"{iid}.yaml").write_text(
@@ -163,7 +163,7 @@ def test_空壳战役短路不烧岛(fake_yt, tmp_config, monkeypatch):
     """GAMES-32~39 实录：无 repo 无 sources 的战役每天白烧 FULL 调用。短路留言。"""
     from studio.yt import YT
     from studio import llm
-    yt = YT("agent-pm")
+    yt = YT("agent-8")
     iid = yt.new("POLY", "战役：测试7", "d", lane="-", typ="战役", state="运行中")
     d = CONFIG._root.parent / "kernel" / "campaigns"
     (d / f"{iid}.yaml").write_text(
