@@ -61,6 +61,40 @@ def _finding_key(f: str) -> str:
     return re.sub(r"[\d%（）()．.]+", "", f)[:16]
 
 
+def _postmortem_scan(yt, evs) -> list[str]:
+    """QA 打回自动复盘（STUDIO-43，制作人批准 2026-09-29）：打回/断路单自动沉淀
+    现象→根因→解法→预防进知识库——人类反馈回流 evals 的断链补齐。
+    防刷屏：已有「复盘已沉淀」标记的单不重开；每日 ≤2 张；岛失败静默跳过。"""
+    from collections import Counter
+    hits = Counter()
+    for e in evs:
+        if e.get("event") == "QA_BACK" or (
+                e.get("event") == "GATE_FAIL" and int(e.get("attempt") or 0) >= 3):
+            hits[e.get("issue")] += 1
+    done = []
+    for iid, n in hits.most_common(2):
+        try:
+            cs = yt.comments(iid)
+        except Exception:
+            continue
+        if any((c["text"] or "").startswith("复盘已沉淀") for c in cs):
+            continue                       # 查重：同单只复盘一次
+        from .llm import reviewed_ask
+        chain = "\n".join(f"{c['author']}: {(c['text'] or '')[:160]}" for c in cs[-12:])
+        md = reviewed_ask(
+            f"为下述单据的打回/断路写复盘（四段：## 现象/## 根因/## 解法/## 预防，"
+            f"每段≤80字，结论具体可执行）。打回次数={n}。\n单据评论链：\n{chain}", 400)
+        if not md or len(md) < 40:
+            continue                       # 岛失败不炸，跳过
+        pid = iid.split("-")[0]
+        yt.wiki_create(f"复盘/{iid}", f"# 复盘 {iid}\n\n{md}", pid)
+        yt.comment(iid, f"复盘已沉淀：知识库「复盘/{iid}」（现象→根因→解法→预防，"
+                        f"打回 {n} 次自动触发，STUDIO-43）")
+        append_event(pid, iid, "POSTMORTEM", "self-eval", 0, f"打回{n}次自动复盘")
+        done.append(iid)
+    return done
+
+
 def self_eval() -> dict:
     """元循环：指标 → 异常模式 → 内部改进草稿单（≤2/日，量化证据，制作人择优 promote）。
     查重：同模式草稿未结案（State=草稿）不重复建——否则每天一跑就堆一摞重复提案。"""
@@ -105,8 +139,14 @@ def self_eval() -> dict:
         yt.set_text(iid, "来源", "self-eval " + time.strftime("%F %T"))
         created.append(iid)
         append_event("STUDIO", iid, "SELF_EVAL", "studio-daemon", 0, f[:60])
+    postmortems = []
+    try:
+        postmortems = _postmortem_scan(yt, evs)     # STUDIO-43：打回自动复盘（每日随自评）
+    except Exception as e:
+        append_event("STUDIO", "-", "SELF_EVAL", "studio-daemon", 0,
+                     f"复盘扫描失败: {type(e).__name__} {str(e)[:60]}")
     report = {"ts": time.strftime("%F %T"), "metrics": {k: v for k, v in m.items() if k != "recent"},
-              "findings": findings, "drafts": created}
+              "findings": findings, "drafts": created, "postmortems": postmortems}
     (CONFIG.digest_dir / f"self-eval-{time.strftime('%F')}.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2))
     return report
