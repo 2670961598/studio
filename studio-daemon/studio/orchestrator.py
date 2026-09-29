@@ -650,6 +650,7 @@ def _directives(yt, iid, lv, typ, lane=None) -> str | None:
     from . import signoff as _so
     _shadow = _ap.engine_mode(iid.split("-")[0]) == "shadow"
     _dispa = yt.f(iid, "派单人") or CONFIG.producer      # 无派单人字段的存量单：终验保守归制作人
+    _depts = _dept_set(yt.f(iid, "部门"))   # STUDIO-78 联签分支：跨部门单主管全签方放行
     _lv = _ap.org and org_level(yt, iid)
     _at_final = _final_position(yt, iid, lv, typ)
     for c in cs:
@@ -657,14 +658,14 @@ def _directives(yt, iid, lv, typ, lane=None) -> str | None:
                 or not CONFIG.can_approve(iid.split("-")[0], c["author"], lane) or not c["text"].strip():
             if _shadow and c["text"].strip() and c["author"] != CONFIG.producer:
                 _o_ok, _o_why = _ap.org_decide(iid.split("-")[0], iid, c["author"], lane,
-                                               _lv, _dispa, cs, _at_final)
+                                               _lv, _dispa, cs, _at_final, depts=_depts)
                 if _o_ok:
                     _event(iid.split("-")[0], iid, "SHADOW_DIFF", "shadow", 0,
                            f"legacy拒但org允（{_o_why}）author={c['author']}")
             continue
         if _shadow and c["author"] != CONFIG.producer:
             _o_ok, _o_why = _ap.org_decide(iid.split("-")[0], iid, c["author"], lane,
-                                           _lv, _dispa, cs, _at_final)
+                                           _lv, _dispa, cs, _at_final, depts=_depts)
             if not _o_ok:
                 _event(iid.split("-")[0], iid, "SHADOW_DIFF", "shadow", 0,
                        f"legacy允但org拒（{_o_why}）author={c['author']}")
