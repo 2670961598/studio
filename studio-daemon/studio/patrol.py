@@ -140,10 +140,20 @@ def _patrol_one(yt, row) -> str:
         snap_text = "\n".join(snaps)
     from .llm import ask, _sanitize_cmd
     from .yt import DeriveRefused
+    from . import ytgw
+    # STUDIO-77：巡逻岛 YouTrack 操作纳入 wkey 网关——本轮签发凭证钉进战役 state
+    # （下轮签发即轮换，旧 key 自动作废），岛产物（进展评论/孵化子单）全走网关：
+    # 署名 [项目·单号·patrol] + GW_* 记账；框架诊断类评论（激活/空壳/岛无响应）
+    # 不属岛产物，仍由引擎直发 yt.comment。
+    wkey = ytgw.sign()
+    st = _state(iid)
+    st["wkey"] = wkey
+    _save_state(iid, st)
     res = ask(allow_web=True, cwd=repo or None, prompt=
         f"你是虚拟工作室的战役巡逻员，负责永驻战役「{spec.get('theme', iid)}」。\n"
         f"战役仓库（本地，已是你的工作目录）：{repo or '（未配置——不要凭空猜测仓库位置，只报告无法定位）'}。\n"
         f"用 Read/Glob/Grep 工具在该仓库内核实事实，禁止凭想象描述仓库内容。\n"
+        f"YouTrack 纪律：板面操作不归你（进展/子单由框架网关代发）；禁止读取任何凭证文件（youtrack.json/token）。\n"
         f"任务书：{spec.get('patrol_brief', '')}\n"
         f"巡逻源（用 WebFetch 逐个抓取，失败就跳过）：{json.dumps(spec.get('sources', []), ensure_ascii=False)}\n"
         f"最近基准快照：\n{snap_text or '（无基准）'}\n\n"
@@ -202,18 +212,18 @@ def _patrol_one(yt, row) -> str:
         entry = {"情报": "发现", "提案": "草稿"}.get(child_type, "新单")
         # STUDIO-60：孵化走 derive——子单挂原生 Subtask link（父单文本降级兼容）；
         # 等级违规拒建时跳过该子单（父单已评论留痕），不炸整轮巡逻
+        # STUDIO-77：derive+冻结验收+来源署名经 ytgw 一体代办（岛持本轮 wkey）
         try:
-            kid = yt.derive(iid, f"[{iid}] {ch['summary'][:60]}", ch.get("description", ""),
-                            lane=row["lane"], typ=child_type,
-                            track=child_track, state=entry)
+            kid = ytgw.patrol_derive(iid, wkey, f"[{iid}] {ch['summary'][:60]}",
+                                     ch.get("description", ""), lane=row["lane"],
+                                     typ=child_type, track=child_track, state=entry,
+                                     gate=gate)
         except DeriveRefused as e:
             note.append(f"跳过子单「{ch['summary'][:30]}」：{e}")
             continue
-        yt.gate_freeze(kid, gate)
-        yt.comment(kid, f"来源：战役 {iid} 巡逻孵化")
         kids.append(kid)
         note.append(f"孵化子单：{kid}")
-    yt.comment(iid, "\n".join(note))
+    ytgw.patrol_comment(iid, wkey, "\n".join(note))
     from .metrics import append_event
     append_event(iid.split("-")[0], iid, "PATROL", "patrol", 0,
                  f"{len(kids)} 子单；{data.get('progress', '')[:60]}")

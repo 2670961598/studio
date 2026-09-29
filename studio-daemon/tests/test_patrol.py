@@ -198,3 +198,70 @@ def test_空壳战役短路不烧岛(fake_yt, tmp_config, monkeypatch):
     assert not called                        # 一次 LLM 调用都没发生
     assert any("未配置" in c["text"] for c in yt.comments(iid))
 
+
+
+# ---- STUDIO-77：巡逻岛 YouTrack 操作纳入 wkey 网关 ----
+
+def test_巡逻岛产物走网关_署名与凭证钉存(fake_yt, tmp_config, monkeypatch):
+    """STUDIO-77：岛签发 wkey 钉战役 state（可审计、下轮轮换）；进展评论/孵化子单
+    经 ytgw 署名 [pid·iid·patrol] 并记 GW_* 事件；子单验收命令照冻。"""
+    from studio.yt import YT
+    from studio import llm
+    yt = YT("agent-8")
+    iid = yt.new("POLY", "战役：gw", "d", lane="-", typ="战役", state="运行中")
+    _camp_files(iid)
+    monkeypatch.setattr(llm, "ask", lambda *a, **k:
+                        '{"progress":"p1","findings":["f1"],"children":['
+                        '{"summary":"补文档","description":"d",'
+                        '"gate_cmd":"test -f docs/a.md"}]}')
+    out = patrol._patrol_one(yt, {"id": iid, "state": "运行中", "lane": "-"})
+    assert "+1kids" in out
+    texts = [c["text"] for c in yt.comments(iid)]
+    assert any(t.startswith(f"[POLY·{iid}·patrol] 巡逻 #") for t in texts)
+    kids = yt.list("POLY", "Type:需求 状态:新单")
+    assert len(kids) == 1 and yt.f(kids[0]["id"], "验收命令") == "test -f docs/a.md"
+    assert any(c["text"].startswith(f"[POLY·{iid}·patrol] 来源：战役")
+               for c in yt.comments(kids[0]["id"]))
+    st = patrol._state(iid)
+    assert st.get("wkey", "").startswith("wk-") and len(st["wkey"]) == 3 + 32
+    evs = CONFIG.events_path.read_text(encoding="utf-8")
+    assert "GW_COMMENT" in evs and "GW_DERIVE" in evs
+
+
+def test_空壳战役框架评论不经网关署名(fake_yt, tmp_config, monkeypatch):
+    """STUDIO-77 白名单边界：空壳短路留言是框架诊断（岛没跑、无凭证）——不经网关、
+    不署名 [·patrol]，战役 state 也不签发 wkey。"""
+    from studio.yt import YT
+    from studio import llm
+    yt = YT("agent-8")
+    iid = yt.new("POLY", "战役：gw2", "d", lane="-", typ="战役", state="运行中")
+    d = CONFIG._root.parent / "kernel" / "campaigns"
+    (d / f"{iid}.yaml").write_text(
+        "theme: 空壳\nevery_h: 24\nrepo: ''\nsources: []\nbaseline_cmd: ''\n"
+        "child_type: 需求\nchild_track: \"L2 常规\"\npatrol_brief: b\n", encoding="utf-8")
+    (d / f"{iid}.state.json").write_text('{"last":0,"count":0}')
+    monkeypatch.setattr(llm, "ask", lambda *a, **k: "{}")
+    out = patrol._patrol_one(yt, {"id": iid, "state": "运行中", "lane": "-"})
+    assert out == f"PATROL-NOSPEC {iid}"
+    assert any("未配置" in c["text"] for c in yt.comments(iid))
+    assert not any(c["text"].startswith("[") for c in yt.comments(iid))
+    assert "wkey" not in patrol._state(iid)
+
+
+def test_巡逻岛prompt明令禁读凭证(fake_yt, tmp_config, monkeypatch):
+    """STUDIO-77 直连收口：岛 prompt 必须明示「板面不归你 + 禁读 youtrack.json/token」
+    ——岛有 Read 工具，纪律行是岛侧唯一可教的收口面。"""
+    from studio.yt import YT
+    from studio import llm
+    yt = YT("agent-8")
+    iid = yt.new("POLY", "战役：gw3", "d", lane="-", typ="战役", state="运行中")
+    _camp_files(iid)
+    calls = {}
+
+    def fake_ask(prompt, timeout_sec=240, allow_web=False, model=llm.FULL, cwd=None):
+        calls["p"] = prompt
+        return '{"progress":"ok","findings":[],"children":[]}'
+
+    monkeypatch.setattr(llm, "ask", fake_ask)
+    patrol._patrol_one(yt, {"id": iid, "state": "运行中", "lane": "-"})
+    assert "不归你" in calls["p"] and "youtrack.json" in calls["p"]
