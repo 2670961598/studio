@@ -39,3 +39,39 @@ def test_claude执行器三件套不变(tmp_config):
     from studio.workers import wrap_script
     s = wrap_script("T-10", "/r", "/p", "/s", "/c", executor="claude")
     assert '--model "glm-5.3"' in s and "--max-budget-usd" in s and "sleep 2700" in s
+
+
+# ---- STUDIO-79 修复：wkey 签发断链 ----
+# ac12fe1（网关收权）只建了校验端（web._worker_key_ok 读 reg 的 wkey），签发端从未
+# 接线——reg 无 wkey、wrap 不导出 STUDIO_WKEY，worker 心跳/评论/文章一律 403。
+# 下方两例补齐断链回归：launch 签发（reg 钉存 + wrap 导出）→ 网关端到端放行。
+
+def test_wrap_导出网关凭证(tmp_config):
+    s = wrap_script("T-20", "/tmp/repo", "/tmp/p.md", "/tmp/s.jsonl", "/usr/bin/claude",
+                    wkey="wk-abc123")
+    assert 'export STUDIO_WKEY="wk-abc123"' in s
+    # 旧调用兼容：无凭证导出空串（网关 _worker_key_ok 的 bool(key) 对空 key fail-closed 拒）
+    assert 'export STUDIO_WKEY=""' in wrap_script("T-21", "/r", "/p", "/s", "/c")
+
+
+def test_launch签发wkey_网关端到端放行(tmp_config, fake_yt, lanes, monkeypatch):
+    import json as _json
+    from studio import workers as W
+    from studio.workers import Worker
+    from studio.yt import YT
+    monkeypatch.setattr(W.subprocess, "Popen",     # 不真拉起 wrap（测试进程内不跑 claude）
+                        lambda *a, **k: type("P", (), {"pid": -1})())
+    yt = YT("agent-8")
+    iid = yt.new("STUDIO", "wkey签发", "d", lane="core", typ="需求", track="L2 常规")
+    Worker(iid).launch(yt.get(iid), "core")
+    reg = _json.loads((CONFIG.workers_dir / f"{iid}.json").read_text(encoding="utf-8"))
+    assert reg["wkey"].startswith("wk-") and len(reg["wkey"]) == 3 + 32   # wk- + 32 hex
+    wrap = (CONFIG.workers_dir / f"{iid}.wrap.sh").read_text(encoding="utf-8")
+    assert f'export STUDIO_WKEY="{reg["wkey"]}"' in wrap
+    # 端到端：持 reg 里的 wkey 过网关心跳 → 板面「心跳」字段真实落值
+    from fastapi.testclient import TestClient
+    from studio import web
+    client = TestClient(web.app, base_url=f"http://127.0.0.1:{CONFIG.web_port}")
+    assert client.post("/api/yt/heartbeat",
+                       json={"iid": iid, "key": reg["wkey"]}).json()["ok"]
+    assert int(yt.f(iid, "心跳")) > 0
