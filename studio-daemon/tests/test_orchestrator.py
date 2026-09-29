@@ -874,3 +874,120 @@ class Test影子模式:
         assert ok and why == "final-owner-only"            # 派单人本人终验 ✓
         ok, why = ap.org_decide("STUDIO", "S-1", "agent-4", None, 5, "opengames", cs, True)
         assert not ok                                       # 非派单人终验 ✗
+
+
+class Test部门路由:
+    """STUDIO-55 P3-b（STUDIO-61）：单据"部门"字段驱动施工泳道。
+    工程部→framework、情报部→explore（并行通道）、跨部门→联签提示默认工程部；
+    无部门字段 → 泳道字段照旧（验收①：行为与现状完全一致）。"""
+
+    @pytest.fixture
+    def fw(self, lanes, tmp_path, monkeypatch):
+        """framework 泳道指到独立 git 沙箱（部门路由落点验证）。"""
+        repo = tmp_path / "fw"
+        repo.mkdir()
+        def g(*a):
+            subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True, text=True)
+        g("init", "-b", "main")
+        g("config", "user.email", "t@t")
+        g("config", "user.name", "t")
+        (repo / "docs").mkdir()
+        (repo / "docs" / "hello.md").write_text("# fw\n", encoding="utf-8")
+        g("add", "-A")
+        g("commit", "-m", "init")
+        monkeypatch.setitem(CONFIG.lanes, "framework",
+                            {"path": str(repo), "base_branch": "main",
+                             "agent": "agent-8", "yt_acct": "agent-8"})
+        return repo
+
+    def _mk(self, yt, pid="STUDIO", lane="core"):
+        iid = yt.new(pid, "部门路由", "d", lane=lane, typ="需求", track="L0 自动")
+        yt.gate_freeze(iid, "test -f docs/out.md")
+        return iid
+
+    def test_工程部_派framework(self, env, fw):
+        yt = env
+        iid = self._mk(yt)
+        yt.set_field(iid, "部门", "工程部")
+        out = orch.pm_tick("STUDIO")
+        assert f"DISPATCH {iid} lane=framework" in " | ".join(out["actions"])
+        assert Worker(iid).reg_data()["lane"] == "framework"
+        br = subprocess.run(["git", "-C", str(fw), "rev-parse", "--verify", f"feature/{iid}"],
+                            capture_output=True)
+        assert br.returncode == 0, "分支必须建在 framework 泳道仓"
+
+    def test_情报部_派explore并行通道(self, env, fw):
+        yt = env
+        iid = self._mk(yt, lane="core")            # 泳道字段 core：部门字段驱动优先
+        yt.set_field(iid, "部门", "情报部")
+        out = orch.pm_tick("STUDIO")
+        assert f"DISPATCH {iid} lane=explore" in " | ".join(out["actions"])
+        assert Worker(iid).reg_data()["lane"] == "explore"
+        assert (Path(CONFIG.lane("explore")["path"]) / iid).is_dir(), "探索通道独立工作区已建"
+
+    def test_跨部门_联签提示默认工程部(self, env, fw):
+        yt = env
+        iid = self._mk(yt)
+        yt.set_field(iid, "部门", "跨部门")
+        out = orch.pm_tick("STUDIO")
+        assert f"DISPATCH {iid} lane=framework" in " | ".join(out["actions"])
+        orch.pm_tick("STUDIO")                      # 下拍（RUNNING）：提示幂等不刷屏
+        hints = [c for c in yt.comments(iid) if c["text"].startswith("跨部门联签提示")]
+        assert len(hints) == 1, "联签提示必须留痕且幂等（每拍一刷会淹板面）"
+        # 多值枚举形态（ORG-DESIGN：部门为多值枚举）：[工程部,情报部] 同跨部门语义
+        # （首单 RUNNING 占道，放锁后再派——交付泳道一锁一 worker 是另一码事）
+        from studio.locks import lock
+        lock(CONFIG, "lane-framework").release(f"worker-{iid}")
+        iid2 = self._mk(yt)
+        yt.set_field(iid2, "部门", ["工程部", "情报部"])
+        out2 = orch.pm_tick("STUDIO")
+        assert f"DISPATCH {iid2} lane=framework" in " | ".join(out2["actions"])
+        assert any(c["text"].startswith("跨部门联签提示") for c in yt.comments(iid2))
+
+    def test_无部门字段_行为与现状一致(self, env, fw):
+        yt = env
+        iid = self._mk(yt)                          # 泳道=core，无部门
+        out = orch.pm_tick("STUDIO")
+        assert f"DISPATCH {iid} lane=core" in " | ".join(out["actions"])
+        assert Worker(iid).reg_data()["lane"] == "core"
+        iid2 = self._mk(yt, lane=None)              # 无泳道无部门 → NO-LANE 照旧
+        out2 = orch.pm_tick("STUDIO")
+        assert f"NO-LANE {iid2}" in out2["actions"]
+        assert not any(c["text"].startswith("跨部门联签提示") for c in yt.comments(iid))
+
+    def test_部门路由单_派发收割复验合并同一泳道(self, env, fw):
+        """全程一致性回归：若只改派发点，收割会按原泳道进错仓（KeyError/放错锁）——
+        部门解析必须统一在所有泳道派生点，同单派发→收割→复验→合并全程同一泳道。"""
+        yt = env
+        iid = self._mk(yt)
+        yt.set_field(iid, "部门", "工程部")
+        orch.pm_tick("STUDIO")                      # DISPATCH framework
+        subprocess.run(["git", "-C", str(fw), "checkout", f"feature/{iid}"],
+                       check=True, capture_output=True)
+        (fw / "docs" / "out.md").write_text("# ok\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(fw), "add", "-A"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(fw), "commit", "-m", f"feat({iid}): x"],
+                       check=True, capture_output=True)
+        w = Worker(iid)
+        w.report.parent.mkdir(parents=True, exist_ok=True)
+        w.report.write_text(f"WORKER REPORT {iid}\n", encoding="utf-8")
+        assert any(a.startswith("HARVEST") for a in orch.pm_tick("STUDIO")["actions"])
+        assert state(yt, iid) == "证据就绪"
+        assert any(a.startswith("VERIFY-OK") for a in orch.pm_tick("STUDIO")["actions"])
+        assert state(yt, iid) == "复验通过"
+        assert any(a.startswith("DELIVERED") for a in orch.pm_tick("STUDIO")["actions"])
+        log = subprocess.run(["git", "-C", str(fw), "log", "--oneline"],
+                             capture_output=True, text=True).stdout
+        assert f"merge({iid})" in log, "L0 直合并必须落在 framework 仓"
+
+    def test_亲批泳道钉死不迁(self, env, fw, monkeypatch):
+        """红线：producer_only_lanes（POLY core 亲批）优先于部门路由——部门字段
+        不得把单搬出制作人钉死的泳道（对应 can_approve 的泳道豁免语义）。"""
+        monkeypatch.setattr(CONFIG, "producer_only_lanes", {"POLY": ["core"]})
+        yt = env
+        iid = self._mk(yt, pid="POLY", lane="core")
+        yt.set_field(iid, "部门", "工程部")
+        out = orch.pm_tick()
+        assert f"DISPATCH {iid} lane=core" in " | ".join(out["actions"])
+        assert Worker(iid).reg_data()["lane"] == "core"
+        assert not any(c["text"].startswith("跨部门联签提示") for c in yt.comments(iid))

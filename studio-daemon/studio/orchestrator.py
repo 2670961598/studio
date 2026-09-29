@@ -13,6 +13,14 @@ from .yt import YT
 
 SPECIAL = {"疑问", "情报", "提案", "复盘", "战役", "事故"}   # 各自引擎/人工，pm 不碰
 
+# ---- 部门路由（STUDIO-55 P3-b / STUDIO-61，制作人 2026-09-29 派单）----
+# 单据"部门"字段驱动施工泳道（ORG-DESIGN：部门有自己的泳道/资源）：
+# 工程部→framework、情报部→explore（并行通道）、跨部门（多值枚举或字面值）→
+# 联签提示默认工程部。无部门字段/未知部门 → 泳道字段照旧（行为与现状完全一致）；
+# 亲批泳道（producer_only_lanes）钉死不迁——部门路由不得把单搬出制作人红线泳道。
+DEPT_LANES = {"工程部": "framework", "情报部": "explore"}
+COSIGN_MARK = "跨部门联签提示"      # 幂等锚点：提示评论每单只发一次（pm_tick 每 10 分钟一拍）
+
 
 def _log(pid: str, line: str):
     with open(CONFIG.logs_dir / f"daemon-{time.strftime('%F')}.log", "a", encoding="utf-8") as f:
@@ -132,6 +140,7 @@ def _level(row) -> str:
 
 def _handle(yt: YT, pid: str, row: dict) -> str | None:
     iid, st, lane, typ = row["id"], row["state"], row["lane"], row["type"]
+    lane = dept_lane(yt, iid, lane)   # P3-b 部门路由：同单全程同一泳道（收割/复验/合并/放锁一致）
     lv = _level(row)
     flow = sm._flow(lv, typ)
 
@@ -300,7 +309,47 @@ def _redispatch(yt, pid, row, lv, typ) -> str:
     return r or f"REDISPATCH-DEFERRED {iid}"
 
 
+def _dept_set(val) -> set[str]:
+    """部门字段归一：缺省/单枚举(str)/多值枚举([{name:…}] 或 [str]) → 部门名集合。
+    （部门为多值枚举——ORG-DESIGN 单据模型；YouTrack 单值回 str、多值回 list[dict]。）"""
+    if not val:
+        return set()
+    out = set()
+    for v in (val if isinstance(val, (list, tuple)) else [val]):
+        name = ((v.get("name") or "") if isinstance(v, dict) else str(v)).strip()
+        if name and name != "-":
+            out.add(name)
+    return out
+
+
+def dept_lane(yt, iid, raw_lane: str, hint: bool = False) -> str:
+    """_dispatch 前置部门解析：部门集合映射施工泳道。所有泳道派生点统一走这里
+    （_handle/_recycle/lane_of/supervise 交付核对），保证同单派发→收割→复验→合并→
+    放锁全程同一泳道。无部门字段/未知部门 → raw_lane 原样（验收①：行为与现状
+    完全一致）。hint=True（仅派发路）跨部门单留联签提示评论。"""
+    depts = _dept_set(yt.f(iid, "部门"))
+    if not depts or raw_lane in CONFIG.producer_only_lanes.get(iid.split("-")[0], []):
+        return raw_lane
+    if len(depts) > 1 or "跨部门" in depts:          # 跨部门：联签提示，默认工程部
+        if hint:
+            _cosign_hint(yt, iid, depts)
+        return "framework"
+    return DEPT_LANES.get(next(iter(depts))) or raw_lane
+
+
+def _cosign_hint(yt, iid, depts):
+    """跨部门联签提示（ORG-DESIGN：上级派跨部门任务由涉及部门共同决定、联签共担）。
+    幂等：锚点评论已存在则不重复，防 pm_tick 每 10 分钟一拍刷屏。"""
+    if any(c["text"].startswith(COSIGN_MARK) for c in yt.comments(iid)):
+        return
+    yt.comment(iid, f"{COSIGN_MARK}：本单涉及 {'+'.join(sorted(depts))}，"
+                    "需所涉部门主管联签共担；施工默认按工程部派发（framework 泳道）")
+
+
 def _dispatch(yt, pid, iid, lane, already: bool = False) -> str | None:
+    # 前置部门解析（P3-b）：部门字段驱动施工泳道。解析置于 NO-LANE 判定之前——
+    # 部门可补位无泳道单；无部门字段时 lane 原样，后续判定序与现状完全一致。
+    lane = dept_lane(yt, iid, lane, hint=True)
     if lane == "-" or not lane:
         return f"NO-LANE {iid}"
     if drain_requested():                       # 优雅重载：只停新派发，收割/复验照常
@@ -361,7 +410,7 @@ def _dispatch(yt, pid, iid, lane, already: bool = False) -> str | None:
 
 
 def lane_of(yt, iid) -> str:
-    return yt.f(iid, "泳道") or "core"
+    return dept_lane(yt, iid, yt.f(iid, "泳道") or "core")   # P3-b：合并路径同部门解析
 
 
 def _harvest(yt, pid, iid, lane, w: Worker, lv) -> str:
@@ -489,7 +538,7 @@ def _merge(yt, pid, iid, lane) -> str:
 # ---------------------------------------------------------------- 兜底与批示
 def _recycle(yt, pid, iid, why):
     """dispatch.md 兜底：退回已派发（attempt+1），脏树先隔离。"""
-    lane = yt.f(iid, "泳道") or "core"
+    lane = dept_lane(yt, iid, yt.f(iid, "泳道") or "core")   # P3-b：隔离仓=部门解析后泳道
     lc = CONFIG.lane(lane)
     dirty = _git(lc["path"], "status", "--porcelain", check=False).stdout.strip()
     if dirty:

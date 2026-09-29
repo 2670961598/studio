@@ -119,6 +119,26 @@ def test_提案子单出生态为草稿(fake_yt, tmp_config, monkeypatch):
     assert len(kids) == 1 and "引入X设计" in kids[0]["summary"]
 
 
+def test_孵化子单走subtask链(fake_yt, tmp_config, monkeypatch):
+    """STUDIO-60：巡逻孵化走 derive——子单挂原生 Subtask link + 父单文本降级兼容。
+    战役（运营族 级别:无）豁免等级梯，但链路必须建。"""
+    from studio.yt import YT
+    from studio import llm
+    yt = YT("agent-8")
+    iid = yt.new("POLY", "战役：测试8", "d", lane="-", typ="战役", state="运行中")
+    _camp_files(iid)
+    monkeypatch.setattr(llm, "ask", lambda *a, **k:
+                        '{"progress":"ok","findings":[],"children":['
+                        '{"summary":"补文档","description":"d",'
+                        '"gate_cmd":"test -f docs/a.md"}]}')
+    out = patrol._patrol_one(yt, {"id": iid, "state": "运行中", "lane": "-"})
+    assert "+1kids" in out
+    kids = yt.list("POLY", "Type:需求 状态:新单")
+    assert len(kids) == 1
+    assert yt.parents(kids[0]["id"]) == [iid]              # 原生 links 挂上
+    assert yt.f(kids[0]["id"], "父单") == iid              # 文本字段降级兼容回写
+
+
 def test_岛无响应走独立分支不误标解析失败(fake_yt, tmp_config, monkeypatch):
     """POLY-19/20 教训：岛 600s 超时返回 None → 空串 rindex 抛 ValueError 被误标
     "解析失败"。修复后：PATROL-ISLAND-FAIL + ERROR 日志 + 短退避，计数不推进。"""

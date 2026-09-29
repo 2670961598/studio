@@ -5,6 +5,17 @@ from . import statemachine
 from .config import CONFIG
 
 
+class DeriveRefused(ValueError):
+    """派生拒建（等级违规等治理约束）：父单已评论留痕，细节见异常消息。"""
+
+
+def _levelless(typ) -> bool:
+    """「级别:无」族判定（运营/知识/事件——schema 唯一事实源）：不参与等级梯。
+    未知类型 fail-closed（按有级别过梯）——不认识的一律受校验，防绕道。"""
+    fam = statemachine.family_of(typ or "")
+    return bool(fam) and fam.get("级别") in (None, "无")
+
+
 class YT:
     def __init__(self, acct: str = "agent-8"):
         self.acct = acct
@@ -116,6 +127,60 @@ class YT:
 
     def comment(self, issue: str, text: str):
         self._post(f"/api/issues/{issue}/comments?fields=id", {"text": text})
+
+    # ---- 派生链（STUDIO-60：原生 issue links 主轨，「父单」文本字段降级兼容） ----
+    def links(self, issue: str) -> list[dict]:
+        """原生 issue links → [{type, direction, ids}]（Subtask/Relates 等）。"""
+        rows = self._get(f"/api/issues/{issue}/links",
+                         params={"fields": "direction,linkType(name),issues(idReadable)"})
+        return [{"type": (r.get("linkType") or {}).get("name", "?"),
+                 "direction": r.get("direction", "?"),
+                 "ids": [i.get("idReadable") for i in r.get("issues", [])]}
+                for r in rows]
+
+    def parents(self, issue: str) -> list[str]:
+        """Subtask 反向父单（links 主轨；子单的 INWARD 组）。"""
+        return [i for g in self.links(issue)
+                if g["type"] == "Subtask" and g["direction"] == "INWARD" for i in g["ids"]]
+
+    def subtasks(self, issue: str) -> list[str]:
+        """Subtask 正向子单（父单的 OUTWARD 组）。"""
+        return [i for g in self.links(issue)
+                if g["type"] == "Subtask" and g["direction"] == "OUTWARD" for i in g["ids"]]
+
+    def parent_of(self, issue: str) -> str | None:
+        """父单解析：原生 links 优先；无 links 降级读「父单」文本字段（老单兼容）。"""
+        ps = self.parents(issue)
+        return ps[0] if ps else (self.f(issue, "父单") or None)
+
+    def link_subtask(self, parent: str, child: str):
+        """child 挂为 parent 的 Subtask（子侧 INWARD 建链；幂等：已挂跳过）。"""
+        if parent in self.parents(child):
+            return
+        self._post(f"/api/issues/{child}/links?fields=id", {
+            "linkType": {"name": "Subtask"}, "direction": "INWARD",
+            "issues": [{"idReadable": parent}]})
+
+    def derive(self, parent: str, summary: str, desc: str, *, lane="core", prio="normal",
+               typ="需求", track="L2 常规", state="新单") -> str:
+        """从 parent 派生子单（拆解/孵化的统一治理入口）：
+        ① org_level 双轨校验 子等级<父（YouTrack 等级字段优先，回退轨道映射）；
+        ② 违规拒建：不留半成品，parent 评论留痕 + 抛 DeriveRefused；
+           「级别:无」族父单（战役=孵化器）豁免等级梯，链路照建；
+        ③ 建单后挂 Subtask link（主轨）+ 回写「父单」文本字段（降级兼容老读方）。"""
+        if not _levelless(self.f(parent, "Type")):
+            from .org import level_of
+            plv = level_of(self.f(parent, "轨道") or "", self.f(parent, "等级"))
+            clv = level_of(track or "", None)
+            if plv is None or clv is None or clv >= plv:
+                self.comment(parent, f"拒建派生子单「{summary[:40]}」：等级违规"
+                             f"（子 {clv} ≮ 父 {plv}，org_level 双轨解析）")
+                raise DeriveRefused(f"{parent} 拒建子单「{summary[:30]}」：子等级 {clv} ≮ 父等级 {plv}")
+        kid = self.new(parent.split("-")[0], summary, desc, lane=lane, prio=prio,
+                       typ=typ, track=track, state=state)
+        self.link_subtask(parent, kid)
+        self.set_text(kid, "父单", parent)
+        return kid
 
     # ---- 知识库（Articles，STUDIO-13 迁移后的档案唯一事实源） ----
     def wiki_all(self, pid: str = "STUDIO") -> dict[str, dict]:

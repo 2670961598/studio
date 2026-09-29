@@ -139,6 +139,7 @@ def _patrol_one(yt, row) -> str:
         snaps = _snap_path(iid).read_text(encoding="utf-8").splitlines()[-3:]
         snap_text = "\n".join(snaps)
     from .llm import ask, _sanitize_cmd
+    from .yt import DeriveRefused
     res = ask(allow_web=True, cwd=repo or None, prompt=
         f"你是虚拟工作室的战役巡逻员，负责永驻战役「{spec.get('theme', iid)}」。\n"
         f"战役仓库（本地，已是你的工作目录）：{repo or '（未配置——不要凭空猜测仓库位置，只报告无法定位）'}。\n"
@@ -199,9 +200,15 @@ def _patrol_one(yt, row) -> str:
         child_type = spec.get("child_type", "需求")
         # H3: 情报流起点是"发现"；提案流起点是"草稿"（进治理队列等制作人，不进派发流）
         entry = {"情报": "发现", "提案": "草稿"}.get(child_type, "新单")
-        kid = yt.new(iid.split("-")[0], f"[{iid}] {ch['summary'][:60]}", ch.get("description", ""),
-                     lane=row["lane"], typ=child_type,
-                     track=child_track, state=entry)
+        # STUDIO-60：孵化走 derive——子单挂原生 Subtask link（父单文本降级兼容）；
+        # 等级违规拒建时跳过该子单（父单已评论留痕），不炸整轮巡逻
+        try:
+            kid = yt.derive(iid, f"[{iid}] {ch['summary'][:60]}", ch.get("description", ""),
+                            lane=row["lane"], typ=child_type,
+                            track=child_track, state=entry)
+        except DeriveRefused as e:
+            note.append(f"跳过子单「{ch['summary'][:30]}」：{e}")
+            continue
         yt.gate_freeze(kid, gate)
         yt.comment(kid, f"来源：战役 {iid} 巡逻孵化")
         kids.append(kid)
