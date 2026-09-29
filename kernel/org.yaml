@@ -18,7 +18,7 @@ projects:
       巡逻引擎:
         {level: 1, 部门: [情报部], 角色: 情报部主管, 上级: 宰相(ZCode), 定时: patrol(每小时05分)}
       worker池:
-        {level: 1, 部门: [工程部], 角色: 施工执行, 上级: 宰相(ZCode)}
+        {level: 1, 部门: [工程部], 角色: 施工执行, 上级: 宰相(ZCode), 身份: agent-dev}
     approvals:                    # 分权引擎配置
       engine: shadow              # 影子期启动（制作人 09-29 定则：零分歧 3 天切 org；legacy 保留可回滚）
       派单人终验收: true           # 铁律（定死）
