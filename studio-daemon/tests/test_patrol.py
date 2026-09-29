@@ -139,6 +139,38 @@ def test_孵化子单走subtask链(fake_yt, tmp_config, monkeypatch):
     assert yt.f(kids[0]["id"], "父单") == iid              # 文本字段降级兼容回写
 
 
+def test_子单孵化异常单点容错(fake_yt, tmp_config, monkeypatch):
+    """STUDIO-37 实录：孵化子单炸 400（哨兵泳道等 HTTPError）曾炸出 _patrol_one、
+    state 不落盘 → 每小时无断路重烧整轮巡逻。修复后：坏子单只跳过留痕，
+    本轮其余子单照常孵化 + 评论 + state 落盘。"""
+    from studio.yt import YT
+    from studio import llm
+    yt = YT("agent-8")
+    iid = yt.new("POLY", "战役：容错", "d", lane="-", typ="战役", state="运行中")
+    _camp_files(iid)
+    monkeypatch.setattr(llm, "ask", lambda *a, **k:
+                        '{"progress":"ok","findings":[],"children":['
+                        '{"summary":"坏子单","description":"d",'
+                        '"gate_cmd":"test -f docs/a.md"},'
+                        '{"summary":"好子单","description":"d",'
+                        '"gate_cmd":"test -f docs/b.md"}]}')
+    real_derive = yt.derive
+
+    def flaky_derive(parent, summary, *a, **k):
+        if "坏子单" in summary:
+            raise RuntimeError("400 Bad Request: 泳道 '-' 非法值")   # 模拟 HTTP 400
+        return real_derive(parent, summary, *a, **k)
+
+    monkeypatch.setattr(yt, "derive", flaky_derive)
+    out = patrol._patrol_one(yt, {"id": iid, "state": "运行中", "lane": "-"})
+    assert "+1kids" in out                       # 好子单照常孵化
+    assert patrol._state(iid)["count"] == 1      # 本轮 state 落盘（不再无断路重烧）
+    texts = "\n".join(c["text"] for c in yt.comments(iid))
+    assert "孵化异常" in texts                    # 坏子单跳过留痕在父单评论
+    kids = yt.list("POLY", "Type:需求 状态:新单")
+    assert len(kids) == 1 and "好子单" in kids[0]["summary"]
+
+
 def test_岛无响应走独立分支不误标解析失败(fake_yt, tmp_config, monkeypatch):
     """POLY-19/20 教训：岛 600s 超时返回 None → 空串 rindex 抛 ValueError 被误标
     "解析失败"。修复后：PATROL-ISLAND-FAIL + ERROR 日志 + 短退避，计数不推进。"""

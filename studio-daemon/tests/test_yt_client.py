@@ -17,6 +17,15 @@ def test_建单_无泳道_STUDIO(fake_yt, yt):
     assert "泳道" not in fake_yt.issues[iid]["fields"]
 
 
+def test_建单_泳道哨兵视为无泳道(fake_yt, yt):
+    """STUDIO-37 实录：lane="-"（list() 对无泳道单的缺省值）不是任何项目的
+    枚举值，带上建单必 400——哨兵=无泳道，不带字段；合法枚举值照常带。"""
+    iid = yt.new("STUDIO", "t", "d", lane="-", typ="提案", track="G1 知识", state="草稿")
+    assert fake_yt.issues[iid]["fields"].get("泳道") is None
+    ok = yt.new("POLY", "t", "d", lane="framework", typ="需求", track="L2 常规")
+    assert fake_yt.issues[ok]["fields"]["泳道"] == "framework"
+
+
 def test_建单_字段齐全(fake_yt, yt):
     iid = yt.new("POLY", "t", "d", lane="core", typ="需求", track="L0 自动")
     f = fake_yt.issues[iid]["fields"]

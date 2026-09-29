@@ -209,6 +209,15 @@ def _patrol_one(yt, row) -> str:
         except DeriveRefused as e:
             note.append(f"跳过子单「{ch['summary'][:30]}」：{e}")
             continue
+        except Exception as e:
+            # 单点容错（STUDIO-37 实录：哨兵泳道 400 炸整轮，state 不落盘 → 每小时
+            # 无断路重烧 FULL 调用，违宪章§0.6）：HTTPError/任何异常只废该子单，
+            # 本轮其余产出照常评论 + state 落盘
+            _log(f"ERROR {iid} 孵化子单「{ch['summary'][:40]}」失败 "
+                 f"{type(e).__name__}: {e}")
+            note.append(f"跳过子单「{ch['summary'][:30]}」：孵化异常"
+                        f"({type(e).__name__}: {str(e)[:80]})")
+            continue
         yt.gate_freeze(kid, gate)
         yt.comment(kid, f"来源：战役 {iid} 巡逻孵化")
         kids.append(kid)
