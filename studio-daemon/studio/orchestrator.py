@@ -69,9 +69,11 @@ def drain_ready() -> tuple[bool, str]:
     if n:
         return False, f"in-flight={n}"
     try:
-        r = _sp.run(["pgrep", "-f", "claude -p"], capture_output=True)
+        # 只查我们签发的 worker wrap（kernel/workers/*.wrap.sh）——裸查 "claude -p"
+        # 会误匹配制作人终端里的 claude 会话，曾致 drain 永不清零（00:01 崩溃循环实录）
+        r = _sp.run(["pgrep", "-f", "workers/.*wrap.sh"], capture_output=True)
         if r.returncode == 0:
-            return False, "claude-procs-alive"
+            return False, "wrap-alive"
     except Exception:
         pass
     return True, "ready"

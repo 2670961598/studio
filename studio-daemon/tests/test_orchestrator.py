@@ -593,7 +593,7 @@ class Test优雅重载:
         monkeypatch.setattr(_sp, "run",
                             lambda *a, **k: _sp.CompletedProcess([], 0, ""))
         ok, why = orch.drain_ready()
-        assert ok is False and why == "claude-procs-alive"
+        assert ok is False and why == "wrap-alive"
         monkeypatch.setattr(_sp, "run",
                             lambda *a, **k: _sp.CompletedProcess([], 1, ""))
         assert orch.drain_ready() == (True, "ready")
@@ -1008,3 +1008,16 @@ class Test终验身份对齐:
         assert ok and why == "final-owner-only"          # 个体名↔账号等价，终验放行
         ok, _ = ap.org_decide("STUDIO", "S-1", "agent-4", None, 5, "宰相(ZCode)", cs, True)
         assert not ok                                      # 他人终验仍拒
+
+
+def test_drain_ready不误判制作人终端claude(tmp_config, monkeypatch):
+    """00:01 崩溃循环实录：pgrep "claude -p" 误匹配制作人终端会话→drain 永不清零。
+    修复后只查 workers/*.wrap.sh（我们签发的 worker）。"""
+    import subprocess as _sp
+    import studio.orchestrator as orch
+    f = tmp_config.locks_dir / "drain.json"
+    f.write_text("{}", encoding="utf-8")
+    # pgrep 探测失败（无 wrap）→ ready
+    monkeypatch.setattr(_sp, "run", lambda *a, **k: _sp.CompletedProcess([], 1, ""))
+    ok, why = orch.drain_ready()
+    assert ok is True and why == "ready"
