@@ -14,3 +14,4 @@ studio-daemon/jobs.sqlite
 .DS_Store
 kernel/campaigns/*.state.json
 projects/
+kernel/metrics/prompts.jsonl
