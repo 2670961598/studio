@@ -66,6 +66,9 @@ class FakeBackend:
 
     def _cf_api(self, name, v):
         t = FIELD_TYPE.get(name, "SingleEnumIssueCustomField")
+        if isinstance(v, (list, tuple)):            # 多值枚举（部门等 org 字段）
+            return {"name": name, "$type": t, "value": [
+                {"name": (x.get("name") if isinstance(x, dict) else str(x))} for x in v]}
         if isinstance(v, bool):
             return {"name": name, "$type": t, "value": v}
         if isinstance(v, (int, float)):

@@ -196,8 +196,9 @@ def _anomalies_conformance(out):
                 out.append({"sev": "low", "issue": iid, "kind": "check-error", "detail": repr(e)})
         # 交付完整性：已交付单必有真实 merge 提交
         try:
+            from .orchestrator import dept_lane   # P3-b：部门路由单按解析后泳道核对，防误报
             for r in yt.list(pid, "State:已交付"):
-                iid, lane = r["id"], yt.f(r["id"], "泳道") or "core"
+                iid, lane = r["id"], dept_lane(yt, r["id"], yt.f(r["id"], "泳道") or "core")
                 try:
                     lc = CONFIG.lane(lane)
                 except Exception:
