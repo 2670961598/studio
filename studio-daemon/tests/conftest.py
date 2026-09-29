@@ -90,6 +90,9 @@ class FakeBackend:
         self.articles = {}                     # idReadable -> {summary, content, parent, project}
         self.acounters = {"POLY": 0, "STUDIO": 0}
         self.links = {}                        # iid -> [{type, direction, ids}]（STUDIO-60）
+        self.workflows = {}                    # id -> {name, scripts: [{name, content}]}
+        self.usages = {}                       # project_id -> [{id, workflow_id}]
+        self._wf_seq, self._usage_seq = 150, 900
         self._clock = 1000                     # 单调时钟，评论排序用
 
     def link(self, src: str, typ: str, direction: str, dst: str):
@@ -135,6 +138,40 @@ class FakeBackend:
                 continue
             out.append(self._issue_api(iid))
         return sorted(out, key=lambda x: x["idReadable"])
+
+    # ---------- admin workflows（STUDIO-62 平台 guard） ----------
+    def wf_create(self, name, scripts):
+        import re as _re
+        if not _re.fullmatch(r"[a-z0-9\-_.~]+", name or ""):
+            raise ValueError("名称只能包含小写字母数字字符、-、_、. 和 ~")
+        self._wf_seq += 1
+        wid = f"151-{self._wf_seq}"
+        self.workflows[wid] = {"name": name, "scripts": scripts or [], "rules": []}
+        return wid
+
+    def rule_create(self, wid, name, script):
+        """真库实录：规则创建即解析装载——缺 target/ruleType 直接拒（issue 级判据）。"""
+        if wid not in self.workflows:
+            raise ValueError("workflow 不存在")
+        for key in ("target:", "ruleType:"):
+            if key not in (script or ""):
+                raise ValueError(f"加载规则 {name} 的脚本时出错: 脚本输出属性 '{key[:-1]}' 为 undefined")
+        self.workflows[wid]["rules"].append({"name": name, "script": script})
+        return f"153-{len(self.workflows[wid]['rules'])}"
+
+    def usage_create(self, project_id, workflow_id):
+        wf = self.workflows.get(workflow_id)
+        if wf is None:
+            raise ValueError("workflow 不存在")
+        if not wf["rules"]:                     # 真库实录：无 issue 级规则的壳拒挂接
+            raise ValueError("只包含全局级别模块，无法附加到项目中")
+        lst = self.usages.setdefault(project_id, [])
+        if any(u["workflow_id"] == workflow_id for u in lst):
+            raise ValueError("已挂接")
+        self._usage_seq += 1
+        lst.append({"id": f"151-{self._usage_seq}", "workflow_id": workflow_id})
+        return lst[-1]["id"]
+
 
     # ---------- Articles（知识库） ----------
     def article_create(self, pid, summary, content, parent=None):
@@ -265,6 +302,73 @@ def fake_yt(tmp_config, requests_mock):
         if "content" in body:
             be.articles[aid]["content"] = body["content"]
         return {"idReadable": aid}
+
+    # ---- admin workflows（STUDIO-62 平台 guard 装卸） ----
+    def _wf_id(request):
+        return request.path.split("/api/admin/workflows/")[1].split("/")[0].split("?")[0]
+
+    def _wf_list(request, ctx):
+        return [{"id": w, "name": d["name"]} for w, d in be.workflows.items()]
+
+    def _wf_create(request, ctx):
+        body = request.json()
+        try:
+            wid = be.wf_create(body["name"], body.get("scripts") or [])
+        except ValueError as e:                 # 真库实录语义：名字非法/全局级模块/重复挂接 → 400
+            ctx.status_code = 400
+            return {"error": "Package error", "error_description": str(e)}
+        ctx.status_code = 200
+        return {"id": wid, "name": body["name"]}
+
+    def _rule_create(request, ctx):
+        wid = request.path.split("/api/admin/workflows/")[1].split("/")[0]
+        body = request.json()
+        try:
+            rid = be.rule_create(wid, body.get("name", ""), body.get("script") or "")
+        except ValueError as e:                 # 真库实录：规则装载失败 → 400
+            ctx.status_code = 400
+            return {"error": "bad_request", "error_description": str(e)}
+        return {"id": rid, "name": body.get("name")}
+
+    def _wf_delete(request, ctx):
+        be.workflows.pop(_wf_id(request), None)
+        ctx.status_code = 200
+        return {}
+
+    def _usages(request, ctx):
+        pid = request.path.split("/api/admin/projects/")[1].split("/")[0]
+        return [{"id": u["id"], "workflow": {"id": u["workflow_id"],
+                "name": be.workflows.get(u["workflow_id"], {}).get("name", "?")}}
+                for u in be.usages.get(pid, [])
+                if u["workflow_id"] in be.workflows]
+
+    def _usage_create(request, ctx):
+        pid = request.path.split("/api/admin/projects/")[1].split("/")[0]
+        wid = request.json()["workflow"]["id"]
+        try:
+            uid = be.usage_create(pid, wid)
+        except ValueError as e:
+            ctx.status_code = 400
+            return {"error": "Package error", "error_description": str(e)}
+        return {"id": uid, "workflow": {"id": wid}}
+
+    def _usage_delete(request, ctx):
+        pid = request.path.split("/api/admin/projects/")[1].split("/workflows/")[0]
+        uid = request.path.rsplit("/", 1)[1].split("?")[0]
+        be.usages[pid] = [u for u in be.usages.get(pid, []) if u["id"] != uid]
+        ctx.status_code = 200
+        return {}
+
+    wf_re = _re.compile(r"/api/admin/workflows/[^/?]+([?/].*)?$")
+    wf_rules_re = _re.compile(r"/api/admin/workflows/[^/]+/rules([?/].*)?$")
+    usage_re = _re.compile(r"/api/admin/projects/[^/]+/workflows(/[^/?]+)?([?/].*)?$")
+    requests_mock.get(f"{U}/api/admin/workflows", json=_wf_list)
+    requests_mock.post(f"{U}/api/admin/workflows", json=_wf_create)
+    requests_mock.post(wf_rules_re, json=_rule_create)   # 后注册优先：rules 先于 wf 通配
+    requests_mock.delete(wf_re, json=_wf_delete)
+    requests_mock.get(usage_re, json=_usages)
+    requests_mock.post(usage_re, json=_usage_create)
+    requests_mock.delete(usage_re, json=_usage_delete)
 
     article_re = _re.compile(r"/api/articles/[^/?]+([?/].*)?$")
     links_re = _re.compile(r"/api/issues/[A-Z0-9]+-\d+/links([?/].*)?$")
