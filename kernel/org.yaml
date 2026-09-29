@@ -20,7 +20,7 @@ projects:
       worker池:
         {level: 1, 部门: [工程部], 角色: 施工执行, 上级: 宰相(ZCode)}
     approvals:                    # 分权引擎配置
-      engine: legacy              # legacy（现行权威）| shadow（org 并行记账）| org（org 权威）
+      engine: shadow              # 影子期启动（制作人 09-29 定则：零分歧 3 天切 org；legacy 保留可回滚）
       派单人终验收: true           # 铁律（定死）
       producer_level: 9           # 9 必亲批；8 制作人保留关注
       producer_watch_level: 8
