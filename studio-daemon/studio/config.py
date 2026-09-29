@@ -62,6 +62,7 @@ class Config:
         self.worker_max_budget_usd = float(os.environ.get("WORKER_MAX_BUDGET", "15"))
         self.worker_wall_timeout_s = int(os.environ.get("WORKER_WALL_TIMEOUT", "2700"))
         self.web_port = int(os.environ.get("STUDIO_PORT", "8787"))
+        self.web_host = os.environ.get("STUDIO_WEB_HOST", "127.0.0.1")  # 分布式：可指向集中网关
         self.workers_dir.mkdir(parents=True, exist_ok=True)
 
     # ---- 便捷访问 ----
