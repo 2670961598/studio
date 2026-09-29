@@ -190,6 +190,7 @@ TRIGGER_MAP = {  # 立即执行的路由表（job id → 可调用）——与 _
     "self-eval": ("studio.metrics", "self_eval", {}),
     "patrol": ("studio.patrol", "patrol_tick", {}),
     "evolve-scan": ("studio.evolve", "scan", {}),
+    "orggov-scan": ("studio.orggov", "scan", {}),
     "report-daily": ("studio.reports", "daily_report", {}),
     "report-weekly": ("studio.reports", "weekly_report", {}),
     "report-monthly": ("studio.reports", "monthly_report", {}),

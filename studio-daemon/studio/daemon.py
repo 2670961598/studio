@@ -81,6 +81,8 @@ def _sched():
                       id="patrol", replace_existing=True)
         sched.add_job("studio.evolve:scan", CronTrigger.from_crontab("3,13,23,33,43,53 * * * *"),
                       id="evolve-scan", replace_existing=True)
+        sched.add_job("studio.orggov:scan", CronTrigger.from_crontab("7,17,27,37,47,57 * * * *"),
+                      id="orggov-scan", replace_existing=True)   # STUDIO-80 升级链（错峰 evolve 4min）
         sched.add_job("studio.reports:daily_report", CronTrigger.from_crontab("30 21 * * *"),
                       id="report-daily", replace_existing=True)
         sched.add_job("studio.reports:weekly_report", CronTrigger.from_crontab("30 9 * * mon"),  # APScheduler 周语义：数字 1=周二（曾致首份周报晚一天）,
