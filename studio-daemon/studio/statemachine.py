@@ -83,6 +83,13 @@ TYPE_EDGES = {k: [tuple(e) for e in v]
 ROLLBACK = [tuple(e) for e in (_S.get("rollback_edges") or BUILTIN_ROLLBACK)]
 
 
+def family_of(typ: str) -> dict:
+    """type → 族声明 dict（schema families 段；未知 type 返回 {}）。
+    STUDIO-60 派生等级校验用：「级别:无」族（运营/知识/事件）不参与等级梯。"""
+    fam = ((_S.get("types") or {}).get(typ) or {}).get("族")
+    return (_S.get("families") or {}).get(fam) or {}
+
+
 def _norm_level(track) -> str:
     t = (track or "").strip()
     for lv in LEVEL_FLOWS:
