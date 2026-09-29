@@ -991,3 +991,20 @@ class Test部门路由:
         assert f"DISPATCH {iid} lane=core" in " | ".join(out["actions"])
         assert Worker(iid).reg_data()["lane"] == "core"
         assert not any(c["text"].startswith("跨部门联签提示") for c in yt.comments(iid))
+
+
+class Test终验身份对齐:
+    """影子假阳性修复：派单人字段存个体名（宰相(ZCode)）、author 是账号（agent-8）
+    ——42 条假分歧的根因。归一后同名等价。"""
+
+    def test_个体名派单人与账号author等价(self, tmp_config, monkeypatch):
+        from studio import approval as ap
+        from studio import org as _org
+        monkeypatch.setattr(_org, "load", lambda force=False: {
+            "accounts": {"agent-8": 8},
+            "projects": {"STUDIO": {"agents": {"宰相(ZCode)": {"login": "agent-8"}}}}})
+        cs = []
+        ok, why = ap.org_decide("STUDIO", "S-1", "agent-8", None, 5, "宰相(ZCode)", cs, True)
+        assert ok and why == "final-owner-only"          # 个体名↔账号等价，终验放行
+        ok, _ = ap.org_decide("STUDIO", "S-1", "agent-4", None, 5, "宰相(ZCode)", cs, True)
+        assert not ok                                      # 他人终验仍拒
