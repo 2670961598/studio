@@ -56,6 +56,8 @@ FIELD_TYPE = {"State": "StateIssueCustomField", "Type": "SingleEnumIssueCustomFi
               "轨道": "SingleEnumIssueCustomField", "泳道": "SingleEnumIssueCustomField",
               "Priority": "SingleEnumIssueCustomField",
               "验收命令": "TextIssueCustomField", "来源": "TextIssueCustomField",
+              "父单": "TextIssueCustomField",        # STUDIO-60：降级兼容字段
+              "等级": "SimpleIssueCustomField",      # STUDIO-60：org_level 双轨新轨
               "attempt": "SimpleIssueCustomField", "心跳": "SimpleIssueCustomField"}
 
 
@@ -84,7 +86,22 @@ class FakeBackend:
         self.counters = {"POLY": 100, "STUDIO": 10}
         self.articles = {}                     # idReadable -> {summary, content, parent, project}
         self.acounters = {"POLY": 0, "STUDIO": 0}
+        self.links = {}                        # iid -> [{type, direction, ids}]（STUDIO-60）
         self._clock = 1000                     # 单调时钟，评论排序用
+
+    def link(self, src: str, typ: str, direction: str, dst: str):
+        """issue link 双边记账（对齐真实 YouTrack）：src 侧按 direction 记，
+        dst 侧镜像反向（INWARD↔OUTWARD；无向类型原样）——同型同向组合并、去重。"""
+        def _side(a, b, d):
+            for g in self.links.setdefault(a, []):
+                if g["type"] == typ and g["direction"] == d:
+                    if b not in g["ids"]:
+                        g["ids"].append(b)
+                    return
+            self.links[a].append({"type": typ, "direction": d, "ids": [b]})
+        _side(src, dst, direction)
+        mirror = {"INWARD": "OUTWARD", "OUTWARD": "INWARD"}.get(direction, direction)
+        _side(dst, src, mirror)
 
     def now_ms(self):
         self._clock += 1
@@ -195,6 +212,21 @@ def fake_yt(tmp_config, requests_mock):
                                            "created": be.now_ms()})
         return {"id": len(be.issues[iid]["comments"])}
 
+    def _links_get(request, ctx):
+        iid = _iid(request)
+        return [{"linkType": {"name": g["type"]}, "direction": g["direction"],
+                 "issues": [{"idReadable": i} for i in g["ids"]]}
+                for g in be.links.get(iid, [])]
+
+    def _links_post(request, ctx):
+        iid = _iid(request)
+        body = request.json()
+        lt = (body.get("linkType") or {}).get("name", "?")
+        dr = body.get("direction", "OUTWARD")
+        for tgt in body.get("issues", []):
+            be.link(iid, lt, dr, tgt.get("idReadable") or tgt.get("id"))
+        return {"id": f"{iid}-L{len(be.links.get(iid, []))}"}
+
     import re as _re
     issue_re = _re.compile(r"/api/issues/[A-Z0-9]+-\d+([?/].*)?$")
     comments_re = _re.compile(r"/api/issues/[A-Z0-9]+-\d+/comments([?/].*)?$")
@@ -232,6 +264,7 @@ def fake_yt(tmp_config, requests_mock):
         return {"idReadable": aid}
 
     article_re = _re.compile(r"/api/articles/[^/?]+([?/].*)?$")
+    links_re = _re.compile(r"/api/issues/[A-Z0-9]+-\d+/links([?/].*)?$")
     requests_mock.get(f"{U}/api/users/me", json={"login": "agent-8", "name": "Agent PM"})
     requests_mock.get(f"{U}/api/issues", json=_list)
     requests_mock.post(f"{U}/api/issues", json=_create)
@@ -239,6 +272,8 @@ def fake_yt(tmp_config, requests_mock):
     requests_mock.post(issue_re, json=_patch)       # set_field
     requests_mock.get(comments_re, json=_comments_get)
     requests_mock.post(comments_re, json=_comments_post)
+    requests_mock.get(links_re, json=_links_get)    # STUDIO-60：issue links（后注册优先于 issue_re）
+    requests_mock.post(links_re, json=_links_post)
     requests_mock.get(f"{U}/api/articles", json=_articles_list)
     requests_mock.post(f"{U}/api/articles", json=_articles_create)
     requests_mock.post(article_re, json=_articles_update)   # /api/articles/{id} 更新正文
