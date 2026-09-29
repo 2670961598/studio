@@ -87,8 +87,8 @@ def _sched():
                       id="report-weekly", replace_existing=True)
         sched.add_job("studio.reports:monthly_report", CronTrigger.from_crontab("40 9 1 * *"),
                       id="report-monthly", replace_existing=True)
-        sched.add_job("studio.daemon:drain_watch", CronTrigger(second="*/30"),
-                      id="drain-watch", replace_existing=True)   # 秒域须用构造参数：from_crontab 只认 5 字段（曾致启动循环崩溃）
+        sched.add_job("studio.daemon:drain_watch", CronTrigger(minute="*/5"),
+                      id="drain-watch", replace_existing=True)   # 平时 5 分钟拍；drain 激活后内联快轮询（降噪：30s 拍曾 2880 条/天占 runs 九成）
     from . import runtime
     runtime.SCHED = sched
     runtime.STARTED = time.time()
@@ -96,16 +96,22 @@ def _sched():
 
 
 def drain_watch() -> dict:
-    """优雅重载哨兵（STUDIO-47A）：drain 请求且无在途 → 记账后自退（看护拉起新代码）。"""
-    import os
+    """优雅重载哨兵（STUDIO-47A）：平时 5 分钟拍查 drain；激活后内联 30s 快轮询，
+    在途清零即记账自退（看护拉起新代码）。"""
+    import os, time as _t
     from . import orchestrator as orch
     from .runs import append_run
     ready, why = orch.drain_ready()
+    if why == "no-drain":
+        return {"result": "IDLE", "actions": []}          # 平时静默（降噪）
+    deadline = _t.time() + 3600                            # drain 激活：快轮询至多 1h
+    while not ready and _t.time() < deadline:
+        _t.sleep(30)
+        ready, why = orch.drain_ready()
     if ready:
         append_run("drain-watch", "ok", 0, f"优雅重载：在途清零，自退重启（{why}）")
-        os._exit(0)                       # 看护循环 10s 后拉起新代码；drain 文件由新进程清理
-    return {"result": "IDLE" if why == "no-drain" else "WAIT",
-            "actions": [why]}
+        os._exit(0)
+    return {"result": "WAIT", "actions": [f"drain 轮询超时（{why}），下拍续查)"]}
 
 
 def run():
