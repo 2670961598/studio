@@ -62,6 +62,35 @@ def _resume_payload(issue: str) -> dict:
     raise HTTPException(404, f"无 worker 记录 {issue}")
 
 
+@app.get("/api/timeline/{issue}")
+def api_timeline(issue: str):
+    """单据全链路时间线（STUDIO-42）：events 账本 + worker 记账聚合——
+    失败单一眼定位卡在哪段（派发→施工时长→闸门→QA→合并）。"""
+    import json as _json
+    from .reports import _events_all
+    evs = [e for e in _events_all() if e.get("issue") == issue]
+    out = [{"ts": e["ts"], "kind": e["event"], "attempt": e.get("attempt", 0),
+            "detail": (e.get("note") or "")[:100],
+            **({"cost_usd": e["cost_usd"]} if e.get("cost_usd") is not None else {}),
+            **({"duration_ms": e["duration_ms"]} if e.get("duration_ms") is not None else {})}
+           for e in evs]
+    for f in (CONFIG.workers_dir / f"{issue}.done.json",
+              CONFIG.workers_dir / f"{issue}.json"):
+        if f.exists():
+            try:
+                d = _json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            r = d.get("result") or {}
+            if r.get("cost_usd") is not None or d.get("started"):
+                out.append({"ts": d.get("started") or "", "kind": "WORKER",
+                            "attempt": 0, "branch": d.get("branch"),
+                            "cost_usd": r.get("cost_usd"),
+                            "duration_ms": r.get("duration_ms"),
+                            "turns": r.get("turns")})
+    return _redact(sorted(out, key=lambda x: x["ts"]))
+
+
 @app.get("/api/resume-cmd/{issue}")
 def api_resume_cmd(issue: str):
     """接管命令（复制用）：claude --resume 恢复该 worker 历史对话，手动继续。"""

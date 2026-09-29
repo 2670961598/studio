@@ -114,3 +114,22 @@ class Test接管续聊:
         r = client.post("/api/resume-terminal/W-9",
                         headers={"X-Studio-Token": "pt-t"}).json()
         assert r["ok"] is False and "复制命令" in r["note"] and "claude --resume s9" in r["note"]
+
+
+def test_时间线聚合(client):
+    """STUDIO-42：events+worker 记账按单聚合，排序输出，脱敏。"""
+    import json as _json
+    CONFIG.events_path.write_text(
+        _json.dumps({"ts": "2026-09-29 10:00:00", "pid": "G", "issue": "T-99",
+                     "event": "DISPATCH", "actor": "a", "attempt": 0, "note": "lane=games"}) + "\n" +
+        _json.dumps({"ts": "2026-09-29 11:00:00", "pid": "G", "issue": "T-99",
+                     "event": "GATE_PASS", "actor": "a", "attempt": 0, "note": "ev x",
+                     "cost_usd": 2.5, "duration_ms": 60000}) + "\n", encoding="utf-8")
+    (CONFIG.workers_dir / "T-99.done.json").write_text(_json.dumps(
+        {"issue": "T-99", "started": "2026-09-29 09:00:00", "branch": "feature/T-99",
+         "result": {"cost_usd": 2.5, "duration_ms": 60000, "turns": 7}}), encoding="utf-8")
+    r = client.get("/api/timeline/T-99").json()
+    kinds = [x["kind"] for x in r]
+    assert kinds == ["WORKER", "DISPATCH", "GATE_PASS"]      # 按时间排序
+    assert r[0]["cost_usd"] == 2.5 and r[0]["turns"] == 7
+    assert client.get("/api/timeline/NONE-1").json() == []

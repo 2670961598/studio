@@ -181,7 +181,8 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);
           <td class="mono">{{w.cost_usd!=null?w.cost_usd.toFixed(3):'—'}}</td>
           <td class="mono">{{w.turns??'—'}}</td>
           <td><button class="btn" v-if="w.has_stream" @click="openTr(w.issue)">对话记录</button>
-            <button class="btn" v-if="w.has_stream" @click="takeover(w.issue)">接管</button></td>
+            <button class="btn" v-if="w.has_stream" @click="takeover(w.issue)">接管</button>
+            <button class="btn" @click="openTl(w.issue)">时间线</button></td>
         </tr>
       </table>
       <div v-else class="empty">尚无工人记录</div>
@@ -240,6 +241,14 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);
     <div class="modal">
       <header><h1 style="font-size:16px">工人对话 · {{tr.issue}}
         <button class="btn" style="float:right" @click="tr=null">关闭</button></h1></header>
+      <div v-if="tl" style="position:fixed;inset:0;background:#0009;z-index:61;display:flex;align-items:center;justify-content:center" @click.self="tl=null">
+        <div style="background:var(--bg,#222);padding:18px;border-radius:10px;max-width:720px;max-height:80vh;overflow:auto">
+          <h3>时间线 {{tl.length}} 事件 <button class="btn" style="float:right" @click="tl=null">关闭</button></h3>
+          <table style="font-size:12px"><tr v-for="(e,i) in tl" :key="i" style="border-bottom:1px solid #333">
+            <td style="opacity:.6;padding:2px 8px">{{e.ts}}</td><td style="padding:2px 8px">{{e.kind}}</td>
+            <td style="opacity:.8;padding:2px 8px">{{e.detail||''}} {{e.cost_usd?('$'+e.cost_usd.toFixed(2)):''}} {{e.duration_ms?((e.duration_ms/1000/60).toFixed(1)+'min'):''}}</td></tr></table>
+        </div>
+      </div>
       <div v-if="resume" style="position:fixed;inset:0;background:#0009;z-index:60;display:flex;align-items:center;justify-content:center">
         <div style="background:var(--bg,#222);padding:18px;border-radius:10px;max-width:640px">
           <h3>接管续聊 {{resume.issue}} <button class="btn" style="float:right" @click="resume=null">关闭</button></h3>
@@ -297,6 +306,8 @@ createApp({
     }
     async function openTr(issue){tr.value=await (await fetch('/api/transcript/'+issue)).json()}
     const resume=ref(null)
+    const tl=ref(null)
+    async function openTl(issue){tl.value=await (await fetch('/api/timeline/'+issue)).json()}
     async function takeover(issue){
       resume.value=await (await fetch('/api/resume-cmd/'+issue)).json()
       if(resume.value && !resume.value.session_id){alert('该单无 session_id（旧归档），无法续聊');resume.value=null}
@@ -312,7 +323,7 @@ createApp({
     const wStatus=s=>s.split(' ')[0]
     const msgCls=m=>m.role==='sys'?'m-sys':m.kind==='tool'?'m-tool':m.kind==='result'?(m.ok===false?'m-res m-err':'m-res'):'m-ai'
     onMounted(()=>{refresh();setInterval(refresh,5000)})
-    return {tab,tabs,ov,jobs,runs,workers,tr,runFilter,sc,ytIssue,jName,ctl,openTr,outCls,wCls,wStatus,msgCls,gracefulRestart,resume,takeover,openTerminal}
+    return {tab,tabs,ov,jobs,runs,workers,tr,runFilter,sc,ytIssue,jName,ctl,openTr,outCls,wCls,wStatus,msgCls,gracefulRestart,resume,takeover,openTerminal,tl,openTl}
   }
 }).mount('#app')
 </script>
