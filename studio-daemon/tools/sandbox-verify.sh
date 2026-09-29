@@ -15,13 +15,12 @@ TS=$(date +%Y%m%d-%H%M%S)
 SB="/tmp/studio-verify-$TS"
 
 git clone -q "$PROD" "$SB" || { echo '{"verdict":"CLONE-FAIL"}'; exit 2; }
+# apply 必须在仓库根：子目录执行时新文件前缀解析有歧义（kernel/org.yaml 实录：patch 含而未落盘）
+(cd "$SB" && git apply --check "$PATCH" 2>&1 && git apply "$PATCH")
+apply_rc=$?
 cd "$SB/studio-daemon" || exit 2
+[ $apply_rc -ne 0 ] && { printf '{"verdict":"APPLY-FAIL","sandbox":"%s"}\n' "$SB"; exit 1; }
 
-apply_out=$(git apply --check "$PATCH" 2>&1) && git apply "$PATCH"
-if [ $? -ne 0 ]; then
-  printf '{"verdict":"APPLY-FAIL","sandbox":"%s","detail":%s}\n' "$SB" "$(printf '%s' "$apply_out" | head -c 200 | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')"
-  exit 1
-fi
 
 TESTS_OUT=$("$PY" -m pytest tests/ -q 2>&1 | tail -1)
 TESTS_OK=0
