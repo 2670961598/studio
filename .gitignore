@@ -15,3 +15,5 @@ studio-daemon/jobs.sqlite
 kernel/campaigns/*.state.json
 projects/
 kernel/metrics/prompts.jsonl
+kernel/campaigns/*.snapshots.jsonl
+kernel/campaigns/*.state.json
