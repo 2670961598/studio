@@ -27,7 +27,7 @@ LOOP_THRESHOLD = 3             # 同 (动作类型, 单号) 出现次数
 _APPROVE_ALIASES = {"approve", "approve-plan", "approve-merge", "approve-design",
                     "批准", "同意", "通过", "批", "可以", "可以的", "好的", "好",
                     "行", "嗯", "没问题", "ok"}
-_PM_MARKERS = ("批示已执行", "断路退审")
+_PM_MARKERS = ("批示已执行", "断路退审", "方案段就绪", "复验通过，进入合并审", "收割异常计")  # C5：v2 新槽位路标补齐
 
 
 def _anomalies_daemon(out):
@@ -72,7 +72,7 @@ def _anomalies_tickets(out):
     from .workers import Worker
     yt = YT("agent-pm")
     now_ms = time.time() * 1000
-    for pid in ("POLY", "STUDIO"):
+    for pid in CONFIG.projects:   # C4：曾漏 GAMES（09-22 上线后一直不在巡检范围）
         try:
             board = [r for r in yt.list(pid, "State:" + ",".join(sm.PM_ACTIONABLE))]
         except Exception as e:
@@ -159,7 +159,7 @@ def _anomalies_conformance(out):
     from .llm import _sanitize_cmd
     yt = YT("agent-pm")
     BAD_GATES = {"test -f /dev/null"}            # 历史事故形态：字符设备上 -f 恒假
-    for pid in ("POLY", "STUDIO"):
+    for pid in CONFIG.projects:   # C4：曾漏 GAMES（09-22 上线后一直不在巡检范围）
         try:
             board = yt.list(pid, "State:" + ",".join(sm.PM_ACTIONABLE))
         except Exception as e:

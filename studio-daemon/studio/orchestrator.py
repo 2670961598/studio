@@ -529,13 +529,21 @@ DIRECTIVE_ALIASES = {
     "approve": "approve", "approve-plan": "approve-plan", "approve-merge": "approve-merge",
     "approve-design": "approve-design", "approve-push": "approve-push",
     "批准": "approve", "同意": "approve", "通过": "approve", "批": "approve",
-    # 口语批准（LLM 岛不可用时的兜底；首段精确匹配，"好像不对"之类不会被误判）
-    "可以": "approve", "可以的": "approve", "好": "approve", "好的": "approve",
-    "行": "approve", "嗯": "approve", "没问题": "approve", "ok": "approve",
     "reject": "reject", "kill": "kill", "否决": "reject", "取消": "kill", "杀": "kill",
     "promote": "promote", "转正": "promote",
     "track": "track",
 }
+
+
+# 口语弱批准（P1-12）：单看首词歧义太大（"好，不过先别做"）——
+# 仅当整句去标点后 ≤4 字（"好"/"可以的"/"ok 了"）才视作 approve
+ORAL_APPROVES = {"可以", "可以的", "好", "好的", "行", "嗯", "没问题", "ok"}
+
+
+def _oral_approve(text: str) -> bool:
+    import re as _re
+    bare = _re.sub(r"[，。！？,.!?;；\s]", "", text or "")
+    return bool(bare) and len(bare) <= 4 and bare in ORAL_APPROVES
 
 
 def _normalize_directive(word: str) -> str:
@@ -573,10 +581,15 @@ def _directives(yt, iid, lv, typ, lane=None) -> str | None:
             # 首词明确的批示，确定性解析、不进 LLM。
             if norm0.startswith("approve"):
                 approvals.append("approve" if norm0 == "approve" else norm0)
+            elif _oral_approve(c["text"]):            # P1-12：口语批准须整句极短
+                approvals.append("approve")
             continue
         # 裸"批准/同意"的原始词元是批示人的明确意图——LLM 猜的 approve-plan/merge
         # 口味不得覆盖（GAMES-9 实录：裸批准被猜成 approve-plan，合并槽卫兵误拒死循环）
         if norm0 == "approve":
+            approvals.append("approve")
+            continue
+        if _oral_approve(c["text"]):            # P1-12：极短口语批准（≤4字）同义 approve
             approvals.append("approve")
             continue
         from .llm import parse_directive

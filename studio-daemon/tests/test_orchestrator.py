@@ -764,3 +764,31 @@ class Test收割异常计分与kill原子性:
         acts = " ".join(out["actions"])
         assert "HARVEST" in acts and "kill" not in acts        # 走了收割不是 kill
         assert state(yt, iid) == "证据就绪"
+
+
+class Test口语弱批准收紧:
+    """P1-12：'好，不过先别做' 首段切出'好'曾直当 approve——现仅整句≤4字才算。"""
+
+    def test_长句口语不批(self, env, lanes):
+        from studio.config import CONFIG as _C
+        yt = env
+        iid = yt.new("POLY", "口语", "d", lane="game", typ="需求", track="L1 首批")
+        orch.pm_tick()
+        be = None
+        import conftest as _cf
+        be = _cf.CURRENT_BACKEND
+        be.issues[iid]["comments"].append(
+            {"author": "opengames", "text": "好，不过先别做，等我看看", "created": be.now_ms()})
+        orch.pm_tick()
+        assert state(yt, iid) == "待批", "长句口语首词不得当批准"
+
+    def test_极短口语照批(self, env, lanes):
+        import conftest as _cf
+        yt = env
+        iid = yt.new("POLY", "口语2", "d", lane="game", typ="需求", track="L1 首批")
+        orch.pm_tick()
+        be = _cf.CURRENT_BACKEND
+        be.issues[iid]["comments"].append(
+            {"author": "opengames", "text": "可以的", "created": be.now_ms()})
+        orch.pm_tick()
+        assert state(yt, iid) == "已派发"

@@ -27,7 +27,13 @@ def _log(line: str):
 
 
 def scan(yt=None) -> list[str]:
-    """扫治理族提案单（Type=提案）：草稿→草案(待批)；待批+approve→应用(观察窗)。"""
+    """扫治理族提案单（Type=提案）：草稿→草案(待批)；待批+approve→应用(观察窗)。
+    加锁（N8）：cron 与面板手动触发可并发——git add/枚举注册不可重入。"""
+    from .locks import lock, LockBusy
+    try:
+        lock(CONFIG, "evolve-scan").acquire("evolve-scan", 300)
+    except LockBusy:
+        return []
     yt = yt or _yt()
     actions = []
     try:
