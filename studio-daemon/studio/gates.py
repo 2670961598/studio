@@ -19,13 +19,13 @@ def run_gate(issue: str, attempt_tag: str, lane: str, acct: str = "agent-pm") ->
     cmd = t.f(issue, "验收命令")
     if not cmd:
         raise RuntimeError(f"GATE-NO-CMD {issue} 缺冻结验收命令")
-    # 危险快筛（第四批：dod_gen/patrol 已过白名单消毒，但验收命令可被手工设置——
-    # 存量 32 张含 cd /abs、env 前缀等。此处兜底拒最坏：删除/网络/提权/写系统路径。
-    # 拒跑 raise 冒泡为 TICK ERROR（不执行、不计 attempt、留痕人工处置）。
-    from .llm import CMD_BLACKLIST
+    # 危险快筛（第四批→GAMES-84 误伤修正）：只挡"破坏/注入原语"——
+    # rm/curl/wget/sudo/push/base64/eval/exec、命令替换 $( 与反引号、系统路径。
+    # shell 正常语法（| > < ; for/循环）不拦：手工冻结的合法命令常用
+    # （GAMES-84 实录：cd /abs && for g in ... 曾被误杀卡单）。
     danger = ("rm ", "curl", "wget", "sudo", "push", "base64", "eval", "exec",
-              "`", "$(", "|", ">", "<", "/etc/", "/Users/", "~")
-    if any(d in cmd for d in danger) or any(b in cmd for b in CMD_BLACKLIST):
+              "$(", "`", "/etc/", "/Users/", "~")
+    if any(d in cmd for d in danger):
         raise RuntimeError(f"GATE-DANGEROUS {issue} 验收命令含危险特征，拒跑：{cmd[:80]}")
     repo = CONFIG.lane(lane)["path"]
     if lane == "explore":

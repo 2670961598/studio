@@ -189,14 +189,22 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
             except ValueError:
                 started = 0.0
             if started and time.time() - started > CONFIG.worker_wall_timeout_s:
+                if w.report.exists():               # 恰好交卷：走收割不误杀（P1-7）
+                    return _harvest(yt, pid, iid, lane, w, lv)
                 w.kill()
+                if not w.wait_dead():               # 等死再动树；超时则下拍再重派
+                    return f"KILL-PENDING {iid} 等待进程退出"
                 _recycle(yt, pid, iid,
                          f"wall-clock 超限 kill（>{CONFIG.worker_wall_timeout_s // 60}min）")
                 _release_lane(pid, lane, f"worker-{iid}")
                 return _redispatch(yt, pid, row, lv, typ)
             hb = yt.f(iid, "心跳") or 0
             if hb and (time.time() * 1000 - hb) / 60000 > CONFIG.heartbeat_timeout_min:
+                if w.report.exists():               # 恰好交卷：走收割不误杀（P1-7）
+                    return _harvest(yt, pid, iid, lane, w, lv)
                 w.kill()
+                if not w.wait_dead():
+                    return f"KILL-PENDING {iid} 等待进程退出"
                 _recycle(yt, pid, iid, "心跳超时 kill")
                 _release_lane(pid, lane, f"worker-{iid}")
                 return _redispatch(yt, pid, row, lv, typ)
@@ -408,6 +416,13 @@ def _harvest(yt, pid, iid, lane, w: Worker, lv) -> str:
             yt.comment(iid, f"GATE-FAIL attempt={n} 退回重做，evidence {res['log']}")
             _event(pid, iid, "GATE_FAIL", "agent-pm", n, res["log"], **acct)
         return f"GATE-FAIL {iid} attempt={n}"
+    except Exception:
+        # 收割异常（gate 拒跑/HTTP 抖动等）也计 attempt（审计 P1-6）：
+        # 曾"异常冒泡→ARCHIVED 不罚→下拍立即重派"= 无断路的重派风暴，每 10 分钟白烧一轮 worker
+        n = yt.attempt_inc(iid)
+        yt.comment(iid, f"收割异常计 attempt={n}（断路保护生效，不再无罚重派）")
+        _event(pid, iid, "GATE_FAIL", "agent-pm", n, "harvest-exception")
+        raise
     finally:
         w.archive()                              # REPORT 随之归档，防止旧卷反复收割
         _release_lane(pid, lane, f"worker-{iid}")

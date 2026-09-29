@@ -735,3 +735,32 @@ class Test探索并行通道:
         r1 = orch.pm_tick()                              # 复验（gate 在探索区跑）→ 复验通过
         r2 = orch.pm_tick()                              # L0 直交付（免 merge）
         assert state(yt, iid) == "已交付"
+
+
+class Test收割异常计分与kill原子性:
+    def test_harvest异常计attempt断风暴(self, env, lanes, monkeypatch):
+        """P1-6：gate 拒跑等收割异常曾不罚 attempt → ARCHIVED 立即重派 → 每 10 分钟白烧一轮。"""
+        yt = env
+        iid = yt.new("POLY", "异常计分", "d", lane="core", typ="需求", track="L1 首批")
+        orch.pm_tick(); yt.comment(iid, "批准"); orch.pm_tick(); orch.pm_tick()
+        simulate_worker(yt, iid, lanes)
+        def boom(*a, **k):
+            raise RuntimeError("GATE-DANGEROUS X 模拟")
+        monkeypatch.setattr(orch, "run_gate", boom)   # orchestrator 是 from-import 绑定
+        out = orch.pm_tick()
+        assert any("ERROR" in a for a in out["actions"])      # 异常冒泡记录
+        assert int(yt.f(iid, "attempt") or 0) == 1            # 且 attempt 已计（断路可期）
+
+    def test_kill前REPORT复查走收割(self, env, lanes, monkeypatch):
+        """P1-7：worker 恰在判死与 kill 之间交卷——曾误杀丢证据；现在走收割。"""
+        yt = env
+        iid = yt.new("POLY", "交卷竞态", "d", lane="core", typ="需求", track="L0 自动")
+        yt.gate_freeze(iid, "test -f docs/out.md")
+        orch.pm_tick()
+        simulate_worker(yt, iid, lanes)                        # 产物+REPORT 已交
+        # 伪造心跳超时情境：心跳设为 2 小时前
+        yt.set_field(iid, "心跳", int((__import__("time").time()) - 7200) * 1000, "SimpleIssueCustomField")
+        out = orch.pm_tick()
+        acts = " ".join(out["actions"])
+        assert "HARVEST" in acts and "kill" not in acts        # 走了收割不是 kill
+        assert state(yt, iid) == "证据就绪"

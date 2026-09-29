@@ -211,6 +211,23 @@ class Worker:
         except (ProcessLookupError, ValueError):
             return f"DEAD pid={reg['pid']}（看 {reg['stream']}）"
 
+    def wait_dead(self, timeout_s: float = 15) -> bool:
+        """kill 后轮询进程组确认死亡（审计 P1-7：不等死就重派=垂死 worker 与新 worker
+        同分支并发写）。True=已死；False=超时（调用方记录并放弃本拍重派，下拍再来）。"""
+        import os as _os, time as _t
+        reg = self.reg_data()
+        pid = (reg or {}).get("pid", -1)
+        if pid <= 0:
+            return True
+        deadline = _t.time() + timeout_s
+        while _t.time() < deadline:
+            try:
+                _os.kill(pid, 0)
+            except (ProcessLookupError, PermissionError):
+                return True                      # PermissionError=僵尸态待收，同样视为不可写
+            _t.sleep(1)
+        return False
+
     def kill(self) -> str:
         reg = self.reg_data()
         if not reg or reg["pid"] < 0:
