@@ -641,6 +641,27 @@ class Test亲批泳道:
             orch.pm_tick()
         assert state(yt, iid) == "待批"
 
+    def test_亲批泳道代批史_制作人亲批合并不被序位吞掉(self, env, lanes, monkeypatch):
+        """POLY-26/27/29 实录回归：收紧前单据有代批消费史（批示已执行+1），
+        收紧后合格批示仅制作人 1 条，applied 虚高 → 亲批永判无新批示，合并审卡死。"""
+        from studio.config import CONFIG as _C
+        yt = env
+        iid = yt.new("POLY", "代批史亲批合并", "d", lane="core", typ="需求", track="L2 常规")
+        orch.pm_tick()                                   # → 待批
+        with monkeypatch.context() as m:                 # ① 收紧前：代批第 1 批被消费
+            m.setattr(_C, "producer_only_lanes", {})
+            yt.comment(iid, "批准 审查意见：收紧前的代批（ZCode 代批留痕）")
+            orch.pm_tick()
+            orch.pm_tick()                               # DISPATCH 拉工人
+        assert state(yt, iid) == "已派发"
+        simulate_worker(yt, iid, lanes)
+        orch.pm_tick(); orch.pm_tick()                   # harvest + verify → 复验通过
+        orch.pm_tick()                                   # → 待批（合并审）
+        assert state(yt, iid) == "待批"
+        fake_yt_backend_comment(yt, iid, "opengames", "批准合并")  # ② 收紧后亲批
+        orch.pm_tick()
+        assert state(yt, iid) == "已交付", "亲批不得被代批史的序位计数吞掉"
+
     def test_game泳道PM批准照常(self, env, lanes):
         yt = env
         monkeypatch_lanes = None

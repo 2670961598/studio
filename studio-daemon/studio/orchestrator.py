@@ -529,6 +529,7 @@ DIRECTIVE_ALIASES = {
     "approve": "approve", "approve-plan": "approve-plan", "approve-merge": "approve-merge",
     "approve-design": "approve-design", "approve-push": "approve-push",
     "批准": "approve", "同意": "approve", "通过": "approve", "批": "approve",
+    "批准合并": "approve-merge", "同意合并": "approve-merge", "通过合并": "approve-merge",
     "reject": "reject", "kill": "kill", "否决": "reject", "取消": "kill", "杀": "kill",
     "promote": "promote", "转正": "promote",
     "track": "track",
@@ -564,7 +565,7 @@ def _directives(yt, iid, lv, typ, lane=None) -> str | None:
     cs = yt.comments(iid)
     applied = sum(1 for c in cs if c["author"] == "agent-pm"
                   and c["text"].startswith("批示已执行"))
-    approvals = []
+    approvals: list[tuple[str, int]] = []   # (指令, 评论时间戳)——时间锚定配对见下
     hold = _producer_hold(cs)
     for c in cs:
         if (hold and c["author"] != CONFIG.producer) \
@@ -580,24 +581,31 @@ def _directives(yt, iid, lv, typ, lane=None) -> str | None:
             # 会把它们猜成批示挤占槽位计数（GAMES-9 实录）。故非制作人评论只认
             # 首词明确的批示，确定性解析、不进 LLM。
             if norm0.startswith("approve"):
-                approvals.append("approve" if norm0 == "approve" else norm0)
+                approvals.append(("approve" if norm0 == "approve" else norm0, c["created"]))
             elif _oral_approve(c["text"]):            # P1-12：口语批准须整句极短
-                approvals.append("approve")
+                approvals.append(("approve", c["created"]))
             continue
         # 裸"批准/同意"的原始词元是批示人的明确意图——LLM 猜的 approve-plan/merge
         # 口味不得覆盖（GAMES-9 实录：裸批准被猜成 approve-plan，合并槽卫兵误拒死循环）
         if norm0 == "approve":
-            approvals.append("approve")
+            approvals.append(("approve", c["created"]))
             continue
         if _oral_approve(c["text"]):            # P1-12：极短口语批准（≤4字）同义 approve
-            approvals.append("approve")
+            approvals.append(("approve", c["created"]))
             continue
         from .llm import parse_directive
         parsed = parse_directive(c["text"], f"{iid} 级别={lv} 类型={typ} 当前态={yt.f(iid, 'State')}")
         if parsed and parsed.get("directive", "").startswith("approve"):
-            approvals.append(parsed["directive"])
+            approvals.append((parsed["directive"], c["created"]))
         elif norm0.startswith("approve"):
-            approvals.append(norm0)
+            approvals.append((norm0, c["created"]))
+    last_mark = max((c["created"] for c in cs if c["author"] == "agent-pm"
+                    and c["text"].startswith("批示已执行")), default=0)
+    # 亲批泳道收紧/单据级叮嘱会追溯滤掉曾被消费的代批，applied 虚高会把后来
+    # 亲批的序位吞掉（POLY-26/27/29 实录：代批史+1、合格批示仅制作人 1 条 →
+    # 1≤1 永判无新批示，合并审卡死五小时）。已消费批示必然早于其留痕——以
+    # 「最近留痕之前的合格批示数」为 applied 上限；健康流两者相等，行为不变。
+    applied = min(applied, sum(1 for _, ts in approvals if ts < last_mark))
     if len(approvals) <= applied:
         # 没有新批示；查非 approve 指令（reject/kill/track）
         for c in cs[-10:]:
@@ -613,7 +621,7 @@ def _directives(yt, iid, lv, typ, lane=None) -> str | None:
                 yt.set_field(iid, "轨道", w[1])
                 return f"LEVEL {iid} → {w[1]}"
         return None
-    d = approvals[applied]                     # 第 applied 个（0基）未消费指令
+    d = approvals[applied][0]                  # 第 applied 个（0基）未消费指令
     slot = sm._flow(lv, typ)
     if not slot or "待批" not in slot:
         return None
