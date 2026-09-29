@@ -57,3 +57,33 @@ def approve_ceiling(agent: str, pid: str) -> int:
 def producer_final(pid: str) -> bool:
     """铁律开关：派单人终验收（org 声明，引擎 P2 强制）。"""
     return bool((project(pid).get("approvals") or {}).get("派单人终验收"))
+
+
+def agent_profile(identity: str, pid: str = "STUDIO") -> dict:
+    """agents 段人事档案查询（worker 任务书注入用，STUDIO-82）：个体名/身份/login 三路匹配。
+    返回 {部门, 角色, 职责, 上级, level}；职责缺省从 bu 段部门职能聚合（档案自带职责字段优先，
+    多部门时带"部门:职能"前缀防混淆）。匹配不到 → {}（调用方按无档案处理，不注入）。"""
+    p = project(pid)
+    hit = None
+    for name, a in (p.get("agents") or {}).items():
+        a = a or {}
+        if identity in (name, a.get("身份"), a.get("login")):
+            hit = a
+            break
+    if not hit:
+        return {}
+    depts = hit.get("部门") or []
+    depts = [depts] if isinstance(depts, str) else [str(d) for d in depts]
+    if hit.get("职责"):                          # 档案自带职责（预留字段，优先于部门职能）
+        raw = hit["职责"]
+        duties = [raw] if isinstance(raw, str) else [str(x) for x in raw]
+    else:
+        bus = p.get("bu") or {}
+        pre = len(depts) > 1                     # 单部门不带前缀（部门行已写明），多部门带前缀
+        duties = []
+        for d in depts:
+            f = (bus.get(d) or {}).get("职能") or "（职能未登记）"
+            duties.append(f"{d}:{f}" if pre else f)
+    up = hit.get("上级")
+    return {"部门": depts, "角色": str(hit.get("角色") or ""),
+            "职责": duties, "上级": up, "level": hit.get("level")}
