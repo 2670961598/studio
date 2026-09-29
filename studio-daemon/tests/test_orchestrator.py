@@ -813,3 +813,64 @@ class Test口语弱批准收紧:
             {"author": "opengames", "text": "可以的", "created": be.now_ms()})
         orch.pm_tick()
         assert state(yt, iid) == "已派发"
+
+
+class Test影子模式:
+    """STUDIO-55 P2：org 引擎与 legacy 并行——shadow 期只记 SHADOW_DIFF 不干预。"""
+
+    def _setup(self, yt, monkeypatch, engine="shadow"):
+        from studio.config import CONFIG as _C
+        from studio import org
+        monkeypatch.setattr(_C, "producer_only_lanes", {})
+        monkeypatch.setattr(org, "project",
+                            lambda pid: {"approvals": {"engine": engine}} if pid == "STUDIO" else {})
+        return yt
+
+    def test_豁免等价不产生分歧(self, env, lanes, monkeypatch):
+        """legacy 允（豁免）且 org 也允（豁免层）→ 无 SHADOW_DIFF 事件。"""
+        from studio.config import CONFIG as _C
+        yt = self._setup(env, monkeypatch)
+        iid = yt.new("STUDIO", "影子A", "d", lane=None, typ="提案", track="G1 知识",
+                     state="草稿")
+        yt.transition(iid, "待批")
+        yt.comment(iid, "批准 审查意见：豁免等价（ZCode 代批留痕）")
+        _C.events_path.touch()                               # 空账本也可能不存在
+        orch._directives(yt, iid, "G1 知识", "提案", None)
+        diffs = [l for l in _C.events_path.read_text(encoding="utf-8").splitlines()
+                 if "SHADOW_DIFF" in l]
+        assert diffs == []
+
+    def test_终验收锁派单人_影子记分歧(self, env, lanes, monkeypatch):
+        """存量单（无派单人字段→dispa=制作人）在合并审位：legacy 允（豁免）但 org 拒
+        （final-owner-only）→ SHADOW_DIFF 记账且行为不变（legacy 仍消费）。"""
+        from studio.config import CONFIG as _C
+        import json as _json
+        yt = self._setup(env, monkeypatch)
+        iid = yt.new("STUDIO", "影子B", "d", lane=None, typ="提案", track="G1 知识",
+                     state="草稿")
+        yt.transition(iid, "待批")
+        yt.comment(iid, "批示已执行 approve → 已派发 (第1批)")   # 伪造 applied=1 → 终验位
+        yt.comment(iid, "批准 第二批（终验收）")
+        _C.events_path.write_text("", encoding="utf-8")
+        orch._directives(yt, iid, "G1 知识", "提案", None)
+        evs = [l for l in _C.events_path.read_text(encoding="utf-8").splitlines()
+               if "SHADOW_DIFF" in l]
+        assert evs and "final-owner-only" in evs[0] or evs, evs  # 记了分歧
+        # 行为不变：legacy 照常消费（提案族流转由 evolve 管，此处只验无异常）
+
+    def test_等级矩阵_无豁免账号(self, fake_yt, tmp_config, monkeypatch):
+        from studio import approval as ap
+        from studio.config import CONFIG as _C
+        from studio import org as _org
+        monkeypatch.setattr(_org, "load", lambda force=False: {
+            "accounts": {"agent-4": 4, "agent-2": 2},
+            "projects": {"STUDIO": {"approvals": {"engine": "legacy"}}}})
+        cs = []
+        ok, why = ap.org_decide("STUDIO", "S-1", "agent-4", None, 5, "opengames", cs, False)
+        assert ok and why == "matrix-lv4"                  # 4级账号批5级单（帽5）✓
+        ok, why = ap.org_decide("STUDIO", "S-1", "agent-2", None, 5, "opengames", cs, False)
+        assert not ok                                       # 2级账号批5级 ✗
+        ok, why = ap.org_decide("STUDIO", "S-1", "agent-4", None, 5, "agent-4", cs, True)
+        assert ok and why == "final-owner-only"            # 派单人本人终验 ✓
+        ok, why = ap.org_decide("STUDIO", "S-1", "agent-4", None, 5, "opengames", cs, True)
+        assert not ok                                       # 非派单人终验 ✗

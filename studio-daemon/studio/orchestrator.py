@@ -506,6 +506,24 @@ def _back_to_dispatch(yt, pid, iid, n, why):
     yt.comment(iid, f"退回重做: {why} attempt={n}")
 
 
+def org_level(yt, iid) -> int | None:
+    """单据等级：YouTrack 等级字段优先，双轨回退轨道映射。"""
+    from .org import level_of
+    try:
+        return level_of(yt.f(iid, "轨道") or "", yt.f(iid, "等级"))
+    except Exception:
+        return None
+
+
+def _final_position(yt, iid, lv, typ) -> bool:
+    """终验收位判定（影子期近似）：L2/L3 流的第二待批位（合并审）即终验收；
+    首待批为立项批。结构上以「批示已执行」计数近似（applied 值在调用处可得）。
+    简化：合并审=终验收——L2 的第2待批/L3 的第3待批。"""
+    applied = sum(1 for c in yt.comments(iid) if c["author"] == "agent-pm"
+                  and c["text"].startswith("批示已执行"))
+    return applied >= 1                                     # 已过立项批 → 当前位=终验收
+
+
 HOLD_WORDS = ("亲批", "hold")   # 制作人单据级叮嘱（2026-09-28）：评论首词命中即本单一律亲批
 
 
@@ -567,10 +585,27 @@ def _directives(yt, iid, lv, typ, lane=None) -> str | None:
                   and c["text"].startswith("批示已执行"))
     approvals: list[tuple[str, int]] = []   # (指令, 评论时间戳)——时间锚定配对见下
     hold = _producer_hold(cs)
+    from . import approval as _ap
+    _shadow = _ap.engine_mode(iid.split("-")[0]) == "shadow"
+    _dispa = yt.f(iid, "派单人") or CONFIG.producer      # 无派单人字段的存量单：终验保守归制作人
+    _lv = _ap.org and org_level(yt, iid)
+    _at_final = _final_position(yt, iid, lv, typ)
     for c in cs:
         if (hold and c["author"] != CONFIG.producer) \
                 or not CONFIG.can_approve(iid.split("-")[0], c["author"], lane) or not c["text"].strip():
+            if _shadow and c["text"].strip() and c["author"] != CONFIG.producer:
+                _o_ok, _o_why = _ap.org_decide(iid.split("-")[0], iid, c["author"], lane,
+                                               _lv, _dispa, cs, _at_final)
+                if _o_ok:
+                    _event(iid.split("-")[0], iid, "SHADOW_DIFF", "shadow", 0,
+                           f"legacy拒但org允（{_o_why}）author={c['author']}")
             continue
+        if _shadow and c["author"] != CONFIG.producer:
+            _o_ok, _o_why = _ap.org_decide(iid.split("-")[0], iid, c["author"], lane,
+                                           _lv, _dispa, cs, _at_final)
+            if not _o_ok:
+                _event(iid.split("-")[0], iid, "SHADOW_DIFF", "shadow", 0,
+                       f"legacy允但org拒（{_o_why}）author={c['author']}")
         if c["text"].lstrip().startswith(("批示已执行", "制作人批示", "断路退审")):
             continue                    # PM 留痕评论禁当批示（代批后防自批准循环）
         w0 = c["text"].strip().split()[0]

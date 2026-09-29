@@ -19,7 +19,8 @@ projects:
         {level: 1, 部门: [情报部], 角色: 情报部主管, 上级: 宰相(ZCode), 定时: patrol(每小时05分)}
       worker池:
         {level: 1, 部门: [工程部], 角色: 施工执行, 上级: 宰相(ZCode)}
-    approvals:                    # 分权引擎配置（P2 接线；现为事实源声明）
+    approvals:                    # 分权引擎配置
+      engine: legacy              # legacy（现行权威）| shadow（org 并行记账）| org（org 权威）
       派单人终验收: true           # 铁律（定死）
       producer_level: 9           # 9 必亲批；8 制作人保留关注
       producer_watch_level: 8
