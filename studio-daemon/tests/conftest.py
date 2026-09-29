@@ -114,6 +114,11 @@ class FakeBackend:
         return self._clock
 
     def create(self, pid, summary, desc, fields):
+        # STUDIO-37 实录：泳道 "-" 是板面"无泳道"哨兵，不是任何项目的枚举值——
+        # 真实 YouTrack 直接 400，假后端曾照单全收（测试全绿、生产每小时白烧）。
+        # 拒收哨兵 = 把这类错拦在测试层：yt.new() 的防御若回退，lane="-" 用例当场炸红。
+        if fields.get("泳道") == "-":
+            raise ValueError("泳道 '-' 非法（板面无泳道哨兵，不带字段；真实 YouTrack 会 400）")
         self.counters[pid] += 1
         iid = f"{pid}-{self.counters[pid]}"
         self.issues[iid] = {"summary": summary, "description": desc, "created": self.now_ms(),

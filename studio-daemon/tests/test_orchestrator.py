@@ -122,6 +122,14 @@ def fake_yt_backend_comment(yt, iid, author, text):
         {"author": author, "text": text, "created": yt._backend.now_ms()})
 
 
+def sign_seven_rings(yt, iid, agent="agent-8", final="opengames"):
+    """STUDIO-79 全流程签字：L3 特护（等级4）终验前置校验需七环签齐——
+    前六环委托代批账号（yt.comment=agent-8）签、merge 环派单人（制作人）签。"""
+    for s in ("理解", "拆分", "方案", "执行", "测试", "回归"):
+        yt.comment(iid, f"sign-{s} 已确认")
+    fake_yt_backend_comment(yt, iid, final, "sign-merge 派单人终验收")
+
+
 class TestBase前进自愈:
     def _hotfix_on_base(self, lanes, path="hotfix.txt", content="框架热修\n"):
         repo = Path(CONFIG.lane("core")["path"])
@@ -402,6 +410,7 @@ class TestL3槽位语义:
         for _ in range(3):
             orch.pm_tick()
         assert state(yt, iid) == "待批"                   # 合并审
+        sign_seven_rings(yt, iid)                         # STUDIO-79：L3（等级4）终验前置签字
         yt.comment(iid, "批准\n（PM 代批）")
         orch.pm_tick()
         assert state(yt, iid) == "已交付"
@@ -437,6 +446,7 @@ class TestL3批示词误解析容忍:
         for _ in range(3):
             orch.pm_tick()                               # harvest→verify→复验通过→待批(合并审)+结构标记
         assert state(yt, iid) == "待批"
+        sign_seven_rings(yt, iid)                         # STUDIO-79：L3（等级4）终验前置签字
         yt.comment(iid, "批准\n（PM 代批）")
         orch.pm_tick()
         assert state(yt, iid) == "已交付", "末轮必须按合并审结构标记真合并"

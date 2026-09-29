@@ -81,7 +81,9 @@ class YT:
             {"name": "轨道", "$type": "SingleEnumIssueCustomField", "value": {"name": track}},
             {"name": "attempt", "$type": "SimpleIssueCustomField", "value": 0},
         ]
-        if lane:  # 泳道是项目级字段（POLY 有，STUDIO 无）
+        # 泳道是项目级字段（POLY 有，STUDIO 无）；"-" 是板面"无泳道"哨兵而非枚举值
+        # （STUDIO-37 实录：list() 无泳道折成 "-"，照传建单必 400）——哨兵=无泳道，不带字段
+        if lane and lane != "-":
             cfs.append({"name": "泳道", "$type": "SingleEnumIssueCustomField", "value": {"name": lane}})
         body = {"project": {"id": CONFIG.proj_id(pid)}, "summary": summary,
                 "description": desc, "customFields": cfs}
