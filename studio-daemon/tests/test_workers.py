@@ -140,3 +140,33 @@ def test_launch签发wkey_网关端到端放行(tmp_config, fake_yt, lanes, monk
     assert client.post("/api/yt/heartbeat",
                        json={"iid": iid, "key": reg["wkey"]}).json()["ok"]
     assert int(yt.f(iid, "心跳")) > 0
+
+
+# ---- STUDIO-77：wkey 签发补全（三类执行体统一网关） ----
+
+def test_launch_explore泳道同样签发wkey(tmp_config, fake_yt, lanes, monkeypatch):
+    """explore 泳道 worker 与交付泳道同一 launch 链——凭证不因泳道缺席（STUDIO-77 验收：
+    三类执行体全走网关；explore 直连 YouTrack 的旧教学随模板收口一并消失）。"""
+    import json as _json
+    from studio import workers as W
+    from studio.workers import Worker
+    from studio.yt import YT
+    monkeypatch.setattr(W.subprocess, "Popen",
+                        lambda *a, **k: type("P", (), {"pid": -1})())
+    yt = YT("agent-8")
+    iid = yt.new("STUDIO", "explore签发", "d", lane="explore", typ="需求", track="L2 常规")
+    Worker(iid).launch(yt.get(iid), "explore")
+    reg = _json.loads((CONFIG.workers_dir / f"{iid}.json").read_text(encoding="utf-8"))
+    assert reg["wkey"].startswith("wk-") and len(reg["wkey"]) == 3 + 32
+    wrap = (CONFIG.workers_dir / f"{iid}.wrap.sh").read_text(encoding="utf-8")
+    assert f'export STUDIO_WKEY="{reg["wkey"]}"' in wrap
+
+
+def test_任务书只教网关_无直连YouTrack教学(tmp_config):
+    """STUDIO-77 直连收口：任务书不再教 Bearer token 直发 /api/articles——
+    Article 草稿唯一路径=网关 /api/yt/article（worker 拿不到也不该知道 token 用法）。"""
+    from studio.workers import WORKER_TEMPLATE
+    assert "Bearer" not in WORKER_TEMPLATE
+    assert "/api/articles" not in WORKER_TEMPLATE          # 直连端点（复数）不再出现
+    assert "/api/yt/article" in WORKER_TEMPLATE            # 网关端点仍教
+    assert "/api/yt/heartbeat" in WORKER_TEMPLATE

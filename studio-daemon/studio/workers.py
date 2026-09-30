@@ -12,7 +12,9 @@ from .config import CONFIG
 # ——打回率按版本归因的地基（与 STUDIO-43 复盘闭环联动）。
 # W-2026-09-30.1（STUDIO-82）：注入 org.yaml 人事四要素（部门/角色/职责/上级），
 # 占位 {org_profile} 紧贴 {profile} 行尾——无档案时为空串，任务书与旧版逐字节一致。
-PROMPT_VERSION = "W-2026-09-30.1"
+# W-2026-09-30.2（STUDIO-77 撞号化解）：30.1 与「第 5 条删 Bearer 直发教学、Article
+# 唯一路径=网关 /api/yt/article」两改因分头升过同名次号，合并时按次号纪律 +1 归并一版。
+PROMPT_VERSION = "W-2026-09-30.2"
 
 WIKI_TEAM = "全局/团队公约"
 WIKI_WORKER_PROFILE = "编制/worker"                  # 三类 worker（dev/designer/artist）共用执行层档案
@@ -79,9 +81,9 @@ WORKER_TEMPLATE = """你是虚拟工作室的 {title}（身份 {role}），以�
 3. 完工自检：自跑冻结验收命令，绿了才算完。
 4. 交付：把 REPORT（格式照手册）全文写入 {report} —— 唯一交付物。不要写板面单据状态，不要 push。
 5. 过程沉淀：bug 修复过程/意外发现/来不及做的优化/有趣发现 → 写 Article 草稿留档
-   （curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json"
-   -d '{{"project":{{"id":"{projid}"}},"summary":"草稿: <主题>","content":"<内容>"}}' {yturl}/api/articles，
-   发布走网关 `curl -s -X POST http://{gwhost}/api/yt/article -H 'Content-Type: application/json' -d "{{\"iid\":\"{issue}\",\"key\":\"$STUDIO_WKEY\",\"title\":\"<标题>\",\"content\":\"<正文>\"}}"`；PM 巡田时收割转正。绝不读取 youtrack.json）。
+   （唯一合法路径是网关：`curl -s -X POST http://{gwhost}/api/yt/article -H 'Content-Type: application/json' -d "{{\"iid\":\"{issue}\",\"key\":\"$STUDIO_WKEY\",\"title\":\"<标题>\",\"content\":\"<正文>\"}}"`，
+   网关自动署名 [项目·单号·worker] 并记账，PM 巡田时收割转正。
+   直连 YouTrack 的任何端点一律禁止（无 token、不教用法，越权即拒）；绝不读取 youtrack.json/token）。
 """
 
 
@@ -112,7 +114,8 @@ def wrap_script(issue: str, repo: str, prompt, stream, claude_bin: str,
     """wrap 生成（纯函数便于测试）。约束三件套（审计 P0-3）：固定模型 + 预算帽 +
     wall-clock 看门狗。多执行器（STUDIO-47C）：命令行由 EXECUTOR_SPECS 按执行器映射。
     wkey（STUDIO-79 修复）：派单签发的网关凭证导出给 worker 进程——YouTrack 网关
-    （web._worker_key_ok）读 reg 里的 wkey 认证，任务书教的 curl 用 $STUDIO_WKEY。"""
+    （ytgw.verify，STUDIO-77 起三类执行体统一）读 reg 里的 wkey 认证，
+    任务书教的 curl 用 $STUDIO_WKEY。"""
     return f"""#!/bin/bash
 cd "{repo}"
 git checkout feature/{issue} >/dev/null 2>&1
@@ -177,11 +180,10 @@ class Worker:
             lane=lane, type=ticket["fields"].get("Type") or "需求",
             attempt=ticket["fields"].get("attempt") or 0,
             gate=ticket["fields"].get("验收命令"), repo=lc["path"],
-            branch=f"feature/{self.issue}", wacct=lc.get("yt_acct", "agent-2"),
+            branch=f"feature/{self.issue}",
             report=self.report, producer_notes=notes,
             wteam=WIKI_TEAM, team=team, profile=profile, org_profile=org_blk,
             wcommon=WIKI_COMMON, common=common,
-            yturl=CONFIG.yt_url, projid=CONFIG.proj_id("STUDIO"),
             gwhost=f"{CONFIG.web_host}:{CONFIG.web_port}")
         self.prompt.write_text(prompt)
         # 清上一轮残留（退回重派时旧 REPORT 会被误判 DONE）
@@ -191,8 +193,10 @@ class Worker:
                 f.rename(f.with_name(f"{f.stem}.a{att}{f.suffix}"))
         # STUDIO-79 修复：派单即签发网关凭证（reg 钉存 + wrap 导出）——
         # 此前 web 网关收权（ac12fe1）只建了校验端，签发端从未接线，worker 心跳/评论/文章全 403
-        import secrets as _sec
-        wkey = "wk-" + _sec.token_hex(16)
+        # STUDIO-77：签发统一进 ytgw.sign（交付/explore worker 与 patrol 巡逻岛同一形态），
+        # 校验收敛为 ytgw.verify（web HTTP 面薄壳化）
+        from . import ytgw
+        wkey = ytgw.sign()
         self.wrap.write_text(wrap_script(self.issue, lc["path"], self.prompt, self.stream,
                                          claude_bin, executor=lc.get("executor", "claude"),
                                          wkey=wkey))
