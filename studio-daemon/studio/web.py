@@ -194,6 +194,7 @@ TRIGGER_MAP = {  # 立即执行的路由表（job id → 可调用）——与 _
     "report-daily": ("studio.reports", "daily_report", {}),
     "report-weekly": ("studio.reports", "weekly_report", {}),
     "report-monthly": ("studio.reports", "monthly_report", {}),
+    "steward": ("studio.steward", "steward_tick", {}),   # STUDIO-83 框架管家（与 _sched 装配对齐）
 }
 
 
