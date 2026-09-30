@@ -18,7 +18,10 @@ def env(fake_yt, lanes, monkeypatch):
     from studio import llm
     monkeypatch.setattr(llm, "dod_gen",
                         lambda t: "test -f docs/out.md && grep -q 关键 docs/out.md")
-    monkeypatch.setattr(llm, "extra_test_gen", lambda t, g: "test -f docs/out.md")
+    # cwd 形参对齐 1191138 演进后的签名（同 test_orchestrator.env；本文件随 STUDIO-79
+    # 并入时未同步——orchestrator 3 参调用打在 2 参桩上 TypeError，verify 环卡死误红）
+    monkeypatch.setattr(llm, "extra_test_gen",
+                        lambda t, g, cwd="": "test -f docs/out.md")
 
     def fake_launch(self, ticket, lane=None):
         self.reg.parent.mkdir(parents=True, exist_ok=True)

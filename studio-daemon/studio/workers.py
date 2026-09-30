@@ -10,9 +10,11 @@ from .config import CONFIG
 
 # 提示词版本次号（STUDIO-47E）：改 WORKER_TEMPLATE 必须同步 +1 并在 git commit 里写明改因
 # ——打回率按版本归因的地基（与 STUDIO-43 复盘闭环联动）。
-# W-2026-09-30.1（STUDIO-77）：任务书第 5 条删 Bearer token 直发 /api/articles 教学，
-# Article 草稿唯一路径=网关 /api/yt/article——三类执行体直连 YouTrack 路径收口。
-PROMPT_VERSION = "W-2026-09-30.1"
+# W-2026-09-30.1（STUDIO-82）：注入 org.yaml 人事四要素（部门/角色/职责/上级），
+# 占位 {org_profile} 紧贴 {profile} 行尾——无档案时为空串，任务书与旧版逐字节一致。
+# W-2026-09-30.2（STUDIO-77 撞号化解）：30.1 与「第 5 条删 Bearer 直发教学、Article
+# 唯一路径=网关 /api/yt/article」两改因分头升过同名次号，合并时按次号纪律 +1 归并一版。
+PROMPT_VERSION = "W-2026-09-30.2"
 
 WIKI_TEAM = "全局/团队公约"
 WIKI_WORKER_PROFILE = "编制/worker"                  # 三类 worker（dev/designer/artist）共用执行层档案
@@ -33,6 +35,23 @@ def fetch_profile(yt, wiki_path: str) -> str:
         return fb.read_text(encoding="utf-8") if fb and fb.exists() else ""
 
 
+def org_profile_block(identity: str, pid: str = "STUDIO") -> str:
+    """org.yaml agents 人事档案 → 任务书注入块（STUDIO-82：部门/角色/职责/上级四要素）。
+    无档案或无部门 → ""（{org_profile} 占位随之消失，任务书与注入前逐字节一致——行为不变）。"""
+    from . import org
+    p = org.agent_profile(identity, pid)
+    if not p or not p.get("部门"):
+        return ""
+    up = p.get("上级")
+    up_s = "、".join(str(u) for u in up) if isinstance(up, list) else str(up or "（未登记）")
+    return (f"\n\n# ══════ 人事档案（kernel/org.yaml agents 段，唯一事实源）══════\n"
+            f"- 部门: {'、'.join(p['部门'])}\n"
+            f"- 角色: {p['角色'] or '（未登记）'}\n"
+            f"- 职责: {'；'.join(p['职责']) or '（未登记）'}\n"
+            f"- 上级: {up_s}\n"
+            f"（职责以部门职能为边界；与单据要求冲突或需越界时，报上列上级裁决，不自行扩权。）")
+
+
 WORKER_TEMPLATE = """你是虚拟工作室的 {title}（身份 {role}），以独立 Claude Code 进程完成单据 {issue}，一单一命。
 团队公约、角色档案、worker 手册已从 YouTrack Articles 拉取并注入下方（知识库唯一事实源），
 开工先通读（尤其公约"成员名册"中你的权限边界），再读目标仓库的 AGENTS.md（如有）。
@@ -41,7 +60,7 @@ WORKER_TEMPLATE = """你是虚拟工作室的 {title}（身份 {role}），以�
 {team}
 
 # ══════ 角色档案（Articles: 编制/worker）══════
-{profile}
+{profile}{org_profile}
 
 # ══════ worker 通用手册（Articles: {wcommon}）══════
 {common}
@@ -153,6 +172,7 @@ class Worker:
         team = fetch_profile(t, WIKI_TEAM)            # 知识库在 Articles（STUDIO-13 迁移）
         profile = fetch_profile(t, WIKI_WORKER_PROFILE)
         common = fetch_profile(t, WIKI_COMMON)
+        org_blk = org_profile_block(role)             # org.yaml 人事四要素（无档案→空，行为不变）
 
         prompt = WORKER_TEMPLATE.format(
             issue=self.issue, title=title, role=role, summary=ticket["summary"],
@@ -162,7 +182,8 @@ class Worker:
             gate=ticket["fields"].get("验收命令"), repo=lc["path"],
             branch=f"feature/{self.issue}",
             report=self.report, producer_notes=notes,
-            wteam=WIKI_TEAM, team=team, profile=profile, wcommon=WIKI_COMMON, common=common,
+            wteam=WIKI_TEAM, team=team, profile=profile, org_profile=org_blk,
+            wcommon=WIKI_COMMON, common=common,
             gwhost=f"{CONFIG.web_host}:{CONFIG.web_port}")
         self.prompt.write_text(prompt)
         # 清上一轮残留（退回重派时旧 REPORT 会被误判 DONE）

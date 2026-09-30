@@ -4,6 +4,8 @@ from pathlib import Path
 import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from studio import evolve
+from studio.config import CONFIG
+from studio.locks import lock
 
 
 @pytest.fixture
@@ -96,3 +98,28 @@ class Test验证闸:
                             ("agent-8", 2, "SCHEMA-PROPOSED X"),
                             ("someone-else", 3, "VERIFIED 伪造"))
         assert _verified(cs2, ts2, 2) is False           # 作者不是 agent-8
+
+
+class Test扫描锁释放:
+    """STUDIO-91：evolve-scan 锁只取不放，锁活到 TTL 300min——10 分钟一轮的
+    治理扫描退化为约 5 小时一跑。判据：scan 返回后锁 FREE，连续两跑互不挡道。"""
+
+    def test_scan结束锁FREE_连续两跑不受TTL拖累(self, fake_yt, schema_env):
+        assert evolve.scan() == []
+        assert lock(CONFIG, "evolve-scan").check(300) == "FREE"
+        assert evolve.scan() == []                       # 第二轮立即再入，非 LockBusy 早退
+
+    def test_scan中途异常也放锁(self, fake_yt, schema_env):
+        from studio.yt import YT
+        yt = YT("agent-8")
+        yt.list = lambda *a, **k: (_ for _ in ()).throw(ConnectionError("yt down"))
+        assert evolve.scan(yt) == []
+        assert lock(CONFIG, "evolve-scan").check(300) == "FREE"
+
+    def test_锁被他人持有_scan空转不抢锁(self, fake_yt, schema_env):
+        other = lock(CONFIG, "evolve-scan")
+        other.acquire("别的进程", 300)
+        try:
+            assert evolve.scan() == []
+        finally:
+            other.release("别的进程")

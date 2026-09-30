@@ -111,8 +111,8 @@ def patrol_comment(iid: str, key: str, text: str) -> None:
 def patrol_derive(iid: str, key: str, summary: str, desc: str, *, lane, typ, track,
                   state: str, gate: str) -> str:
     """巡逻岛孵化子单（derive + 冻结验收命令 + 来源署名 + 记账，一体完成）。
-    DeriveRefused 原样上抛（调用方跳过该子单、父单已留痕），其余异常上抛炸整轮
-    ——行为对齐旧直发链，只是收口进网关。"""
+    DeriveRefused 原样上抛（调用方跳过该子单、父单已留痕），其余异常上抛由
+    调用方单点容错（STUDIO-37：只废该子单，不炸整轮）——行为对齐直发链，只是收口进网关。"""
     _require(iid, key, "patrol")
     from .yt import YT
     from .metrics import append_event
