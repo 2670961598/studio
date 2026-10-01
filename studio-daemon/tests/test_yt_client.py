@@ -107,3 +107,51 @@ def test_派生等级违规拒建评论留痕(fake_yt, yt):
     yt.set_field(parent, "等级", 8, "SimpleIssueCustomField")         # 新轨：等级字段优先
     kid = yt.derive(parent, "高阶父再拆", "d", typ="提案", track="G1 知识", state="草稿")
     assert yt.parents(kid) == [parent]                     # 5<8 放行
+
+
+# ---- STUDIO-93：link_subtask 新端点契约（三重实测照抄，405 漏修补丁） ----
+def test_link_subtask_请求形态_类型id_内部id_方向(fake_yt, yt, requests_mock):
+    """URL=/api/issues/{child}/links/{类型数字id}/issues?direction=inward，body={"id": 父单
+    内部数字id}——类型名进 URL（真库 404）与 idReadable 进 body（真库 400）一次也不能发。"""
+    parent = yt.new("POLY", "p", "d", typ="提案", track="G3 编制", state="草稿")
+    kid = yt.derive(parent, "k", "d2", typ="需求", track="L2 常规", state="新单")
+    posts = [r for r in requests_mock.request_history
+             if r.method == "POST" and "/links/" in r.path]
+    assert len(posts) == 1                                 # 建链恰好一次
+    p = posts[0]
+    ltid = fake_yt.link_types["Subtask"]
+    assert p.path == f"/api/issues/{kid}/links/{ltid}/issues".lower()   # path 记录为小写
+    assert p.qs["direction"] == ["inward"]
+    assert p.json() == {"id": fake_yt.issues[parent]["id"]}   # 内部 id，非 idReadable
+
+
+def test_link_subtask_类型id只查一次_缓存(fake_yt, yt, requests_mock):
+    """issueLinkTypes 进程内缓存一次：多次建链只发一次 GET，不每链一查。"""
+    parent = yt.new("POLY", "战役", "d", typ="提案", track="G3 编制", state="草稿")
+    k1 = yt.derive(parent, "k1", "d", typ="需求", track="L2 常规", state="新单")
+    k2 = yt.derive(parent, "k2", "d", typ="需求", track="L2 常规", state="新单")
+    gets = [r for r in requests_mock.request_history if "issuelinktypes" in r.path]
+    assert len(gets) == 1
+    assert set(yt.subtasks(parent)) == {k1, k2}
+
+
+def test_link_subtask_幂等跳过_零新建链请求_parents往返(fake_yt, yt, requests_mock):
+    def _link_posts():
+        return [r for r in requests_mock.request_history
+                if r.method == "POST" and "/links/" in r.path]
+    parent = yt.new("POLY", "p", "d", typ="提案", track="G3 编制", state="草稿")
+    kid = yt.new("POLY", "k", "d", typ="需求", track="L2 常规", state="新单")
+    yt.link_subtask(parent, kid)
+    assert yt.parents(kid) == [parent]                     # 往返：子侧 INWARD
+    assert yt.subtasks(parent) == [kid]                    # 父侧 OUTWARD 镜像
+    yt.link_subtask(parent, kid)                           # 已挂 → 幂等跳过（检查本身仅 1 次 GET）
+    assert len(_link_posts()) == 1                         # 零新建链 POST
+
+
+def test_旧links端点POST_405契约锁(fake_yt, yt):
+    """旧端点 POST /api/issues/{id}/links 真机无 POST（405，POLY-45 实弹）——
+    假库照抄 405：客户端若回归旧形态，测试层当场炸红，不再静默容错。"""
+    r = yt.s.post(f"{yt.base}/api/issues/POLY-1/links", json={
+        "linkType": {"name": "Subtask"}, "direction": "INWARD",
+        "issues": [{"idReadable": "POLY-2"}]})
+    assert r.status_code == 405
