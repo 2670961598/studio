@@ -79,7 +79,7 @@ class FakeBackend:
 
     def _issue_api(self, iid):
         it = self.issues[iid]
-        return {"idReadable": iid, "summary": it["summary"],
+        return {"id": it["id"], "idReadable": iid, "summary": it["summary"],
                 "description": it.get("description") or "",
                 "created": it.get("created", 0),
                 "customFields": [self._cf_api(n, v) for n, v in it["fields"].items()]}
@@ -90,9 +90,11 @@ class FakeBackend:
         self.articles = {}                     # idReadable -> {summary, content, parent, project}
         self.acounters = {"POLY": 0, "STUDIO": 0}
         self.links = {}                        # iid -> [{type, direction, ids}]（STUDIO-60）
+        self.link_types = {"Subtask": "169-3", "Relates": "169-4"}   # 类型名→数字 id
         self.workflows = {}                    # id -> {name, scripts: [{name, content}]}
         self.usages = {}                       # project_id -> [{id, workflow_id}]
         self._wf_seq, self._usage_seq = 150, 900
+        self._iid_seq = 0                      # 内部数字 id 序（真库形态 2-<n>）
         self._clock = 1000                     # 单调时钟，评论排序用
 
     def link(self, src: str, typ: str, direction: str, dst: str):
@@ -121,7 +123,9 @@ class FakeBackend:
             raise ValueError("泳道 '-' 非法（板面无泳道哨兵，不带字段；真实 YouTrack 会 400）")
         self.counters[pid] += 1
         iid = f"{pid}-{self.counters[pid]}"
-        self.issues[iid] = {"summary": summary, "description": desc, "created": self.now_ms(),
+        self._iid_seq += 1
+        self.issues[iid] = {"id": f"2-{self._iid_seq}", "summary": summary,
+                            "description": desc, "created": self.now_ms(),
                             "fields": dict(fields), "comments": []}
         return iid
 
@@ -263,14 +267,33 @@ def fake_yt(tmp_config, requests_mock):
                  "issues": [{"idReadable": i} for i in g["ids"]]}
                 for g in be.links.get(iid, [])]
 
+    def _links_post_405(request, ctx):
+        # 契约锁（STUDIO-93 三重实测之一）：旧端点 POST /api/issues/{id}/links
+        # 无 POST → 405（POLY-45 实弹实录）。客户端若回归旧形态，测试层当场炸红。
+        ctx.status_code = 405
+        return {"error": "method_not_allowed",
+                "error_description": "POST /api/issues/{id}/links → 405（真机实测）"}
+
     def _links_post(request, ctx):
+        # 新契约（STUDIO-93 实测照抄）：POST /api/issues/{child}/links/{类型数字id}/issues
+        # ?direction=inward，body {"id": 对端内部id}。类型名进 URL → 404 Entity not found；
+        # idReadable 进 body → 400；旧端点行为已删（405 桩独立锁死，见上）。
+        ltid = request.path.split("/links/")[1].split("/")[0]
+        name = next((n for n, i in be.link_types.items() if i == ltid), None)
+        if name is None:
+            ctx.status_code = 404
+            return {"error": "Entity not found",
+                    "error_description": f"链接类型 id 不存在: {ltid}"}
         iid = _iid(request)
-        body = request.json()
-        lt = (body.get("linkType") or {}).get("name", "?")
-        dr = body.get("direction", "OUTWARD")
-        for tgt in body.get("issues", []):
-            be.link(iid, lt, dr, tgt.get("idReadable") or tgt.get("id"))
-        return {"id": f"{iid}-L{len(be.links.get(iid, []))}"}
+        want = request.json().get("id")
+        tgt = next((k for k, it in be.issues.items() if it["id"] == want), None)
+        if tgt is None:
+            ctx.status_code = 400        # 实测：body 放 idReadable → 400（只认内部 id）
+            return {"error": "bad_request",
+                    "error_description": "对端只认内部数字 id（idReadable → 400）"}
+        dr = request.qs.get("direction", ["outward"])[0].upper()
+        be.link(iid, name, dr, tgt)
+        return {"id": want}
 
     import re as _re
     issue_re = _re.compile(r"/api/issues/[A-Z0-9]+-\d+([?/].*)?$")
@@ -377,6 +400,7 @@ def fake_yt(tmp_config, requests_mock):
 
     article_re = _re.compile(r"/api/articles/[^/?]+([?/].*)?$")
     links_re = _re.compile(r"/api/issues/[A-Z0-9]+-\d+/links([?/].*)?$")
+    links_new_re = _re.compile(r"/api/issues/[A-Z0-9]+-\d+/links/[^/?]+/issues([?/].*)?$")
     requests_mock.get(f"{U}/api/users/me", json={"login": "agent-8", "name": "Agent PM"})
     requests_mock.get(f"{U}/api/issues", json=_list)
     requests_mock.post(f"{U}/api/issues", json=_create)
@@ -384,8 +408,12 @@ def fake_yt(tmp_config, requests_mock):
     requests_mock.post(issue_re, json=_patch)       # set_field
     requests_mock.get(comments_re, json=_comments_get)
     requests_mock.post(comments_re, json=_comments_post)
+    requests_mock.get(f"{U}/api/issueLinkTypes",    # STUDIO-93：类型名→数字 id
+                      json=lambda r, c: [{"id": i, "name": n}
+                                         for n, i in be.link_types.items()])
     requests_mock.get(links_re, json=_links_get)    # STUDIO-60：issue links（后注册优先于 issue_re）
-    requests_mock.post(links_re, json=_links_post)
+    requests_mock.post(links_re, json=_links_post_405)   # 旧端点契约锁：POST …/links → 405
+    requests_mock.post(links_new_re, json=_links_post)   # 新建链端点（后注册优先命中）
     requests_mock.get(f"{U}/api/articles", json=_articles_list)
     requests_mock.post(f"{U}/api/articles", json=_articles_create)
     requests_mock.post(article_re, json=_articles_update)   # /api/articles/{id} 更新正文

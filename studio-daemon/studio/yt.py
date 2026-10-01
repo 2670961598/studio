@@ -22,6 +22,7 @@ class YT:
         self.base = CONFIG.yt_url
         self.s = requests.Session()
         self.s.headers["Authorization"] = f"Bearer {CONFIG.token(acct)}"
+        self._lt_cache = {}       # 链接类型名→数字 id（issueLinkTypes 全量，只查一次）
 
     # ---- 基础 ----
     def _get(self, path, **kw):
@@ -155,13 +156,33 @@ class YT:
         ps = self.parents(issue)
         return ps[0] if ps else (self.f(issue, "父单") or None)
 
+    def _link_type_id(self, name: str) -> str:
+        """链接类型名 → 数字 id（GET /api/issueLinkTypes?fields=id,name，进程内缓存一次）。
+        实测：建链 URL 里放类型名 → 404 Entity not found——端点只认数字 id。
+        实测值 Subtask=169-3，勿硬编码：真库 id 管理员建型时定，环境间不可移植。"""
+        if not self._lt_cache:
+            rows = self._get("/api/issueLinkTypes", params={"fields": "id,name"})
+            self._lt_cache = {r["name"]: r["id"] for r in rows}
+        return self._lt_cache[name]
+
+    def _issue_id(self, id_readable: str) -> str:
+        """idReadable → 内部数字 id（GET /api/issues/{idReadable}?fields=id）。
+        实测：建链 body 里放 idReadable → 400——对端只认内部数字 id。"""
+        return self._get(f"/api/issues/{id_readable}", params={"fields": "id"})["id"]
+
     def link_subtask(self, parent: str, child: str):
-        """child 挂为 parent 的 Subtask（子侧 INWARD 建链；幂等：已挂跳过）。"""
+        """child 挂为 parent 的 Subtask（子侧 INWARD 建链；幂等：已挂跳过）。
+        端点三重实测契约（2026-10-02 宰相真机实弹，STUDIO-84 漏修项）：
+        ① 链接类型只认数字 id：URL 放类型名 → 404 Entity not found（_link_type_id 换取）；
+        ② 对端只认内部数字 id：body 放 idReadable → 400（_issue_id 换取）；
+        ③ 旧端点 POST /api/issues/{id}/links 无 POST → 405（POLY-45 实弹实录，
+           84 前旧形态即此坑，已弃用）。"""
         if parent in self.parents(child):
             return
-        self._post(f"/api/issues/{child}/links?fields=id", {
-            "linkType": {"name": "Subtask"}, "direction": "INWARD",
-            "issues": [{"idReadable": parent}]})
+        self._post(
+            f"/api/issues/{child}/links/{self._link_type_id('Subtask')}"
+            f"/issues?direction=inward&fields=id",
+            {"id": self._issue_id(parent)})
 
     def derive(self, parent: str, summary: str, desc: str, *, lane="core", prio="normal",
                typ="需求", track="L2 常规", state="新单") -> str:
