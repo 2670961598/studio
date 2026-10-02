@@ -56,8 +56,12 @@ FIELD_TYPE = {"State": "StateIssueCustomField", "Type": "SingleEnumIssueCustomFi
               "轨道": "SingleEnumIssueCustomField", "泳道": "SingleEnumIssueCustomField",
               "Priority": "SingleEnumIssueCustomField",
               "验收命令": "TextIssueCustomField", "来源": "TextIssueCustomField",
-              "父单": "TextIssueCustomField",        # STUDIO-60：降级兼容字段
+              "期望输出哈希": "TextIssueCustomField",
+              # STUDIO-94：真库「父单」= kotlin.Any 字型（SimpleIssueCustomField 裸值，
+              # STUDIO-89 实测 200）；POLY 无此字段——测试从 backend.field_types 移除模拟。
+              "父单": "SimpleIssueCustomField",
               "等级": "SimpleIssueCustomField",      # STUDIO-60：org_level 双轨新轨
+              "部门": "SingleEnumIssueCustomField", "派单人": "SingleEnumIssueCustomField",
               "attempt": "SimpleIssueCustomField", "心跳": "SimpleIssueCustomField"}
 
 
@@ -65,7 +69,7 @@ class FakeBackend:
     """内存 YouTrack：只实现 yt.py 用到的端点语义。"""
 
     def _cf_api(self, name, v):
-        t = FIELD_TYPE.get(name, "SingleEnumIssueCustomField")
+        t = self.field_types.get(name, "SingleEnumIssueCustomField")
         if isinstance(v, (list, tuple)):            # 多值枚举（部门等 org 字段）
             return {"name": name, "$type": t, "value": [
                 {"name": (x.get("name") if isinstance(x, dict) else str(x))} for x in v]}
@@ -73,6 +77,8 @@ class FakeBackend:
             return {"name": name, "$type": t, "value": v}
         if isinstance(v, (int, float)):
             return {"name": name, "$type": t, "value": v}
+        if t.startswith("Simple"):
+            return {"name": name, "$type": t, "value": v}   # kotlin.Any：裸值原样（父单/attempt）
         if t.endswith("TextIssueCustomField"):
             return {"name": name, "$type": t, "value": {"$type": "TextFieldValue", "text": str(v)}}
         return {"name": name, "$type": t, "value": {"name": str(v)}}
@@ -86,6 +92,9 @@ class FakeBackend:
 
     def __init__(self):
         self.issues = {}
+        # 字段注册表（实例级副本）：测试可移除条目模拟项目级字段缺失
+        # （STUDIO-94：POLY 无「父单」→ 真库 500 incompatible-issue-custom-field-name）。
+        self.field_types = dict(FIELD_TYPE)
         self.counters = {"POLY": 100, "STUDIO": 10}
         self.articles = {}                     # idReadable -> {summary, content, parent, project}
         self.acounters = {"POLY": 0, "STUDIO": 0}
@@ -241,6 +250,14 @@ def fake_yt(tmp_config, requests_mock):
     def _patch(request, ctx):
         iid = _iid(request)
         for cf in request.json().get("customFields", []):
+            # 真库实录（STUDIO-94 实弹，POLY-46）：项目无此自定义字段 → 500
+            # incompatible-issue-custom-field-name-<名>。假库对注册表较真（backend
+            # .field_types 移除条目即模拟项目差异）；只锁字段名不锁 $type——
+            # 类型错真库 400/500 不等，客户端 best-effort 兜底（derive 父单回写）。
+            if cf["name"] not in be.field_types:
+                ctx.status_code = 500
+                return {"error": "incompatible-issue-custom-field-name-" + cf["name"],
+                        "error_description": "项目自定义字段不存在"}
             v = cf.get("value")
             if isinstance(v, dict):
                 v = v.get("name", v.get("text"))
