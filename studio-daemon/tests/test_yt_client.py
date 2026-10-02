@@ -155,3 +155,31 @@ def test_旧links端点POST_405契约锁(fake_yt, yt):
         "linkType": {"name": "Subtask"}, "direction": "INWARD",
         "issues": [{"idReadable": "POLY-2"}]})
     assert r.status_code == 405
+
+
+# ---- STUDIO-94：derive 父单回写项目适配（Simple 字型 + 缺失降级不炸链，84③ 漏修） ----
+def test_派生父单回写_STUDIO_Simple字型(fake_yt, yt, requests_mock):
+    """STUDIO-94①：STUDIO「父单」= kotlin.Any 字型（STUDIO-89 实测）——回写走
+    SimpleIssueCustomField 裸值（非 TextFieldValue 包裹），真库 200 的形态不能偏。"""
+    parent = yt.new("STUDIO", "战役", "d", lane=None, typ="提案", track="G3 编制", state="草稿")
+    kid = yt.derive(parent, "落地", "d2", lane=None, typ="需求", track="L2 常规", state="新单")
+    cfs = [cf for r in requests_mock.request_history
+           if r.method == "POST" and r.path == f"/api/issues/{kid}".lower()
+           for cf in r.json().get("customFields", []) if cf["name"] == "父单"]
+    assert len(cfs) == 1                                 # 父单回写恰好一次
+    assert cfs[0]["$type"] == "SimpleIssueCustomField"   # kotlin.Any 字型
+    assert cfs[0]["value"] == parent                     # 裸值，非 {"$type": "TextFieldValue"}
+    assert yt.f(kid, "父单") == parent                   # 写读往返一致
+    assert yt.parents(kid) == [parent]                   # links 主轨照挂
+
+
+def test_派生父单字段缺失_降级注记不炸链(fake_yt, yt):
+    """STUDIO-94②（84③ 事故复现，POLY-46 实弹）：项目无「父单」字段 → 真库 500
+    incompatible-issue-custom-field-name。derive 不抛、正常返回、Subtask link 仍在、
+    kid 评论降级注记——降级兼容层不得反噬派生主链。"""
+    fake_yt.field_types.pop("父单")                      # FakeBackend 移除字段模拟 POLY
+    parent = yt.new("POLY", "战役", "d", typ="提案", track="G3 编制", state="草稿")
+    kid = yt.derive(parent, "落地", "d2", typ="需求", track="L2 常规", state="新单")
+    assert yt.parents(kid) == [parent]                   # link 主轨恒成立
+    assert yt.f(kid, "父单") is None                     # 字段缺失：未写入
+    assert any("父单文本回写不可用" in c["text"] for c in yt.comments(kid))  # 降级注记

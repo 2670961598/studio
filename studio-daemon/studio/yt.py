@@ -190,7 +190,8 @@ class YT:
         ① org_level 双轨校验 子等级<父（YouTrack 等级字段优先，回退轨道映射）；
         ② 违规拒建：不留半成品，parent 评论留痕 + 抛 DeriveRefused；
            「级别:无」族父单（战役=孵化器）豁免等级梯，链路照建；
-        ③ 建单后挂 Subtask link（主轨）+ 回写「父单」文本字段（降级兼容老读方）。"""
+        ③ 建单后挂 Subtask link（主轨恒成立）+ best-effort 回写「父单」字段
+           （项目级降级兼容老读方：存则写、缺则略，失败仅注记不炸链——STUDIO-94）。"""
         if not _levelless(self.f(parent, "Type")):
             from .org import level_of
             plv = level_of(self.f(parent, "轨道") or "", self.f(parent, "等级"))
@@ -202,7 +203,16 @@ class YT:
         kid = self.new(parent.split("-")[0], summary, desc, lane=lane, prio=prio,
                        typ=typ, track=track, state=state)
         self.link_subtask(parent, kid)
-        self.set_text(kid, "父单", parent)
+        # 「父单」回写契约（STUDIO-94，84③ 漏修补齐）：links=主轨恒成立；
+        # 文本字段=项目级降级——存则写、缺则略。STUDIO「父单」是 kotlin.Any
+        # 字型（SimpleIssueCustomField 裸值，STUDIO-89 实测 200）；POLY 无此
+        # 字段（真库 500 incompatible-issue-custom-field-name，POLY-46 实弹）。
+        # best-effort：任何失败不抛不炸派生链（84③ 事故=降级层反噬主链），
+        # 仅在 kid 评论一条降级注记，读方走 Subtask link 主轨。
+        try:
+            self.set_field(kid, "父单", parent, "SimpleIssueCustomField")
+        except Exception:
+            self.comment(kid, "父单文本回写不可用，以 Subtask link 为准")
         return kid
 
     # ---- 知识库（Articles，STUDIO-13 迁移后的档案唯一事实源） ----
