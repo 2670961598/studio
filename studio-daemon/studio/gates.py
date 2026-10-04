@@ -3,6 +3,7 @@
 import hashlib, json, subprocess, time
 from pathlib import Path
 from .config import CONFIG
+from .screen_words import GATE_DANGER
 
 
 class GateResult(dict):
@@ -23,9 +24,11 @@ def run_gate(issue: str, attempt_tag: str, lane: str, acct: str = "agent-8") -> 
     # rm/curl/wget/sudo/push/base64/eval/exec、命令替换 $( 与反引号、系统路径。
     # shell 正常语法（| > < ; for/循环）不拦：手工冻结的合法命令常用
     # （GAMES-84 实录：cd /abs && for g in ... 曾被误杀卡单）。
-    danger = ("rm ", "curl", "wget", "sudo", "push", "base64", "eval", "exec",
-              "$(", "`", "/etc/", "/Users/", "~")
-    if any(d in cmd for d in danger):
+    # STUDIO-98（POLY-53 实录 2026-10-05）：词表同源化至 screen_words.GATE_DANGER
+    # ——裸 "~" 收窄为 "~/"（只拦家目录形态），dotnet FQN 过滤器
+    # --filter "FullyQualifiedName~X" 的中缀波浪号不再误杀；且派发闸词表
+    # 必须是消毒器（llm.CMD_BLACKLIST）词表的子集——凡出生放行的必须可交付。
+    if any(d in cmd for d in GATE_DANGER):
         raise RuntimeError(f"GATE-DANGEROUS {issue} 验收命令含危险特征，拒跑：{cmd[:80]}")
     repo = CONFIG.lane(lane)["path"]
     if lane == "explore":

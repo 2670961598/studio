@@ -85,3 +85,45 @@ def test_手工命令for循环与重定向不再误杀(fake_yt, lanes):
         run_gate(iid, "1", "core")
     except RuntimeError as e:
         assert "GATE-DANGEROUS" not in str(e), "合法手工命令不得再被快筛拒跑"
+
+
+class TestPoly53TildeNarrowing:
+    """STUDIO-98（POLY-53 实录 2026-10-05 05:20）：dotnet FQN 过滤器
+    `--filter "FullyQualifiedName~X"` 语法必含中缀 ~，撞上派发闸裸 "~" 通配
+    → GATE-DANGEROUS 拒跑，巡逻孵化单出生即不可交付、烧 attempt 至断路。"""
+
+    def test_FQN过滤器中缀波浪号过闸(self, fake_yt, lanes):
+        """①POLY-53 原形态命令两道闸都必须放行（出生=消毒器，交付=派发闸）；
+        test -f 沙箱内不存在 → && 短路秒退，不真跑 dotnet。"""
+        from studio.yt import YT
+        from studio.llm import _sanitize_cmd
+        cmd = ('test -f Tests/Game/LevelsIndexDocTests.cs && '
+               'dotnet test Tests/PolyMatch3.Tests.csproj --filter "FullyQualifiedName~LevelsIndexDocTests"')
+        assert _sanitize_cmd(cmd) == cmd, "出生闸（消毒器）必须放行"
+        yt = YT("agent-8")
+        iid = _ticket(fake_yt, yt, lanes, cmd)
+        res = run_gate(iid, "1", "core")     # 不再 GATE-DANGEROUS 拒跑
+        assert not res.ok                    # test -f 短路 → exit 1，无妨：过闸即本案判据
+
+    def test_家目录路径形态拒跑(self, fake_yt, lanes):
+        """②词表收窄只放中缀 ~：家目录路径 ~/ 照拦。"""
+        from studio.yt import YT
+        yt = YT("agent-8")
+        iid = _ticket(fake_yt, yt, lanes, "test -f ~/secrets")
+        with pytest.raises(RuntimeError, match="GATE-DANGEROUS"):
+            run_gate(iid, "1", "core")
+
+    def test_rm破坏原语拒跑_回归锚(self, fake_yt, lanes):
+        """③回归锚：rm 破坏原语照拒——收窄 ~ 不得波及其他词。"""
+        from studio.yt import YT
+        yt = YT("agent-8")
+        iid = _ticket(fake_yt, yt, lanes, "rm -f /tmp/x && test -f docs/hello.md")
+        with pytest.raises(RuntimeError, match="GATE-DANGEROUS"):
+            run_gate(iid, "1", "core")
+
+    def test_出生交付两闸词表同源子集(self):
+        """铁律锁：派发闸词表 ⊆ 消毒器词表（凡出生放行的必须可交付）。
+        POLY-53 根因②即两表各自内联散写漂移——同源引用后此断言锁死再漂移。"""
+        from studio.screen_words import GATE_DANGER, CMD_BLACKLIST
+        assert set(GATE_DANGER) <= set(CMD_BLACKLIST)
+        assert "~" not in GATE_DANGER and "~/" in GATE_DANGER   # 裸 ~ 通配不复存
