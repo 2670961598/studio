@@ -8,14 +8,12 @@ import json, shutil, subprocess, time
 from pathlib import Path
 
 from .config import CONFIG
+from .screen_words import CMD_BLACKLIST   # 出生-交付两闸同源词表（STUDIO-98/POLY-53）：见 screen_words.py
 
 CMD_WHITELIST_FIRST = ("test", "grep", "wc", "cat", "ls", "find", "diff", "head", "tail",
                        "dotnet", "python", "python3", "npm", "cargo", "make",
                        "git diff", "git log", "git status", "git rev-parse", "git show",
                        "git grep", "git ls-files")
-CMD_BLACKLIST = ("rm ", "curl", "wget", "push", "sudo", "base64", "eval", "exec",
-                 "-delete", "-exec", "-execdir", "-ok", "-fprintf", "-fprintf0",
-                 "`", "$(", "|", ">", "<")
 GIT_READONLY = {"diff", "log", "status", "rev-parse", "show", "grep", "ls-files", "blame", "shortlog"}
 FIRST_WORDS = {"test", "grep", "wc", "cat", "ls", "find", "diff", "head", "tail",
                "dotnet", "python", "python3", "npm", "cargo", "make"}
