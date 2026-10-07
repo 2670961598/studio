@@ -114,6 +114,27 @@ class Testpatrol动作:
                    for c in yt.comments(kid))
         assert "GW_DERIVE" in CONFIG.events_path.read_text(encoding="utf-8")
 
+    def test_编制三字段请求体ftype不错位(self, tmp_config, fake_yt, requests_mock):
+        """POLY-58 实录（STUDIO-103）：派单人在真库是 SimpleIssueCustomField
+        （字符串，STUDIO-84 实测 200），patrol_derive 曾误传 SingleEnumIssueCustomField
+        → 真库拒写、出生编制降级留痕。假后端只锁字段名不锁 $type（conftest 契约，
+        类型错真库 400/500 不等），故在请求体层直接断言三字段 $type，防再错位。"""
+        from studio.yt import YT
+        yt = YT("agent-8")
+        iid = yt.new("POLY", "战役：gw编制", "d", lane="-", typ="战役", state="运行中")
+        _pin_patrol(iid, "wk-p")
+        kid = ytgw.patrol_derive(iid, "wk-p", "[X] 补文档", "d", lane="-", typ="需求",
+                                 track="L2 常规", state="新单", gate="test -f docs/a.md")
+        ft = {}
+        for r in requests_mock.request_history:   # POST /api/issues/{kid} = set_field 请求
+            if r.method == "POST" and r.path.lower() == f"/api/issues/{kid.lower()}":
+                for cf in r.json().get("customFields", []):
+                    if cf["name"] in ("等级", "部门", "派单人"):   # 同端点还有冻验/父单回写
+                        ft[cf["name"]] = cf["$type"]
+        assert ft == {"等级": "SimpleIssueCustomField",               # STUDIO-60 实测
+                      "部门": "SingleEnumIssueCustomField",
+                      "派单人": "SimpleIssueCustomField"}             # STUDIO-84 实测（本单）
+
     def test_等级违规DeriveRefused原样上抛(self, tmp_config, fake_yt):
         """拒建语义不变：DeriveRefused 由 ytgw 透传，调用方跳过该子单留痕。
         （子等级须严格低于父：父 L2 常规=3，子同级 3≥3 即拒。）"""
