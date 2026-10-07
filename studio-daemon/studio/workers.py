@@ -84,6 +84,9 @@ WORKER_TEMPLATE = """你是虚拟工作室的 {title}（身份 {role}），以�
    （唯一合法路径是网关：`curl -s -X POST http://{gwhost}/api/yt/article -H 'Content-Type: application/json' -d "{{\"iid\":\"{issue}\",\"key\":\"$STUDIO_WKEY\",\"title\":\"<标题>\",\"content\":\"<正文>\"}}"`，
    网关自动署名 [项目·单号·worker] 并记账，PM 巡田时收割转正。
    直连 YouTrack 的任何端点一律禁止（无 token、不教用法，越权即拒）；绝不读取 youtrack.json/token）。
+6. 项目知识按需查（两层知识分离：全局公约已注入上文，项目知识不预注入）：
+   `curl -s -G "http://{gwhost}/api/yt/kb-search" --data-urlencode "iid={issue}" --data-urlencode "key=$STUDIO_WKEY" --data-urlencode "q=<关键词>" --data-urlencode "project=<PID>"`
+   （只读检索，标题/正文含关键词的 Articles top5：path/id/excerpt；-G --data-urlencode 免中文转码）。
 """
 
 

@@ -5,7 +5,8 @@
   执行体              凭证（签发 → 钉存）                白名单动作                    接入面
   ──────────────────  ─────────────────────────────────  ────────────────────────────  ──────────────────
   交付泳道 worker     Worker.launch 派单签发 → reg        comment / heartbeat /         HTTP /api/yt/*（web）
-  explore 泳道 worker 同一 launch 链（含 explore）        article（web.py 三端点薄壳）  同上
+  explore 泳道 worker 同一 launch 链（含 explore）        article / kb-search           同上
+                                                       （web.py 四端点薄壳）
   patrol 巡逻岛       patrol 每轮签发 → 战役 state        comment / derive_child        进程内（岛禁 Bash，
                                                        （框架持 key 代办岛产物）      设计上不可直连）
 
@@ -96,6 +97,34 @@ def worker_article(iid: str, key: str, title: str, content: str) -> dict:
     YT("agent-8").wiki_create(path, f"[{_pid(iid)}·{iid}·worker] 草稿\n\n{content}", _pid(iid))
     append_event(_pid(iid), iid, "GW_ARTICLE", "gateway", 0, path[:60])
     return {"ok": True, "path": path}
+
+
+def _kb_excerpt(content: str, q: str, lim: int = 200) -> str:
+    """命中窗口摘录：正文含 q 则以命中点为轴截窗，否则从头截；空白压平、≤lim 字。"""
+    flat = " ".join((content or "").split())
+    i = flat.lower().find(q.lower()) if q else -1
+    start = max(0, min(i - 60, len(flat) - lim)) if i >= 0 else 0
+    return flat[start:start + lim]
+
+
+def worker_kb_search(iid: str, key: str, q: str, project: str = "") -> dict:
+    """worker 知识检索（只读，STUDIO-101）：wiki_all 全量拉回内存过滤「标题或正文含 q」，
+    top5 {path, id, excerpt≤200}。实测量级 <100 篇，无需索引；标题（路径）命中排前、
+    正文命中排后。只读不记账（对齐 heartbeat），不写任何 YouTrack 状态；
+    project 缺省取单号前缀（STUDIO-101 → STUDIO），跨项目只读可显式指定。"""
+    _require(iid, key, "worker")
+    from .yt import YT
+    pid = project or _pid(iid)
+    q = (q or "").strip()
+    if not q:
+        return {"ok": True, "project": pid, "q": "", "results": []}
+    ql = q.lower()
+    hits = [(path, a) for path, a in YT("agent-8").wiki_all(pid).items()
+            if ql in path.lower() or ql in (a["content"] or "").lower()]
+    hits.sort(key=lambda x: (0 if ql in x[0].lower() else 1, x[0]))
+    return {"ok": True, "project": pid, "q": q,
+            "results": [{"path": path, "id": a["id"], "excerpt": _kb_excerpt(a["content"], q)}
+                        for path, a in hits[:5]]}
 
 
 # ---------------------------------------------------------------- patrol 类（进程内代办）
