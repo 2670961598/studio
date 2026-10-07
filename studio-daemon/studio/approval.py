@@ -20,11 +20,13 @@ def _accounts_level(author: str) -> int:
     return int((org.load().get("accounts") or {}).get(_norm_login(author)) or 0)
 
 
-def _dispa_logins(dispa: str) -> set[str]:
+def _dispa_logins(dispa: str, pid: str = "STUDIO") -> set[str]:
     """派单人字段值（可能是个体名如"宰相(ZCode)"或 login）→ 归一为 login 集合。
-    org.yaml agents 档案带 login 字段做映射；个体名直存 login 的也兼容。"""
+    org.yaml agents 档案带 login 字段做映射；个体名直存 login 的也兼容。
+    STUDIO-102 泛化：按 projects.{pid} 查；无该项目的 org 段 → 查无此人，
+    兜底 {dispa} 原名（=现行为：生产 agents 无 login 字段，本就只剩原名）。"""
     out = {dispa} if dispa else set()
-    for name, a in (org.load().get("projects") or {}).get("STUDIO", {}).get("agents", {}).items():
+    for name, a in (org.project(pid).get("agents") or {}).items():
         if name == dispa:
             lg = (a or {}).get("login")
             if lg:
@@ -117,7 +119,7 @@ def org_decide(pid, iid, author, lane, level, dispa, cs, at_final: bool,
     if CONFIG.can_approve(pid, author, lane):
         # 豁免之上叠加 org 增量约束：终验收锁派单人（铁律，制作人 09-29 定死）
         if at_final:
-            ok = _norm_login(author) in {_norm_login(d) for d in _dispa_logins(dispa)}
+            ok = _norm_login(author) in {_norm_login(d) for d in _dispa_logins(dispa, pid)}
             return ok, "final-owner-only"
         return True, "exempt"
     # 非豁免账号：等级矩阵（批上限=账号等级+1 帽 8；9 恒制作人）
@@ -125,7 +127,7 @@ def org_decide(pid, iid, author, lane, level, dispa, cs, at_final: bool,
     ceiling = min(lv + 1, 8)
     if lv > 0 and level is not None and 1 <= level <= ceiling:
         if at_final:
-            ok = _norm_login(author) in {_norm_login(d) for d in _dispa_logins(dispa)}
+            ok = _norm_login(author) in {_norm_login(d) for d in _dispa_logins(dispa, pid)}
             return ok, "final-owner-only"
         return True, f"matrix-lv{lv}"
     return False, "no-authority"
