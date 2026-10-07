@@ -173,3 +173,26 @@ class TestYouTrack网关:
         """网关无 transition/set_field 端点——状态推进只归 daemon（状态是唯一控制面焊死）。"""
         import requests as _rq
         assert client.post("/api/yt/transition", json={}).status_code in (404, 405)
+
+    def test_kb检索命中与未命中(self, client, fake_yt):
+        """STUDIO-101 知识检索：标题/正文含 q 命中 top5（excerpt≤200、标题命中排前）；
+        未命中 200 空数组——只读端点，空结果不是错误。"""
+        iid = self._wreg()
+        g = fake_yt.article_create("W", "手册", "")
+        fake_yt.article_create("W", "worker", "# 执行层档案\n干活先过验证闸。", parent=g)
+        fake_yt.article_create("W", "无关", "别的内容")
+        r = client.get("/api/yt/kb-search",
+                       params={"iid": iid, "key": "k77", "q": "验证闸"}).json()
+        assert r["ok"] and r["project"] == "W"
+        assert [x["path"] for x in r["results"]] == ["手册/worker"]   # 标题未中、正文中
+        assert len(r["results"][0]["excerpt"]) <= 200 and "验证闸" in r["results"][0]["excerpt"]
+        r2 = client.get("/api/yt/kb-search",
+                        params={"iid": iid, "key": "k77", "q": "不存在的词"}).json()
+        assert r2["ok"] and r2["results"] == []
+
+    def test_kb检索缺key错key拒(self, client, fake_yt):
+        """wkey 缺失/错误一律 403——GET 无 body，凭证走查询串，门就是 wkey 本身。"""
+        iid = self._wreg()
+        assert client.get("/api/yt/kb-search", params={"iid": iid, "q": "x"}).status_code == 403
+        assert client.get("/api/yt/kb-search",
+                          params={"iid": iid, "key": "bad", "q": "x"}).status_code == 403

@@ -123,7 +123,8 @@ def api_resume_terminal(issue: str):
 # ---- YouTrack 执行体网关（HTTP 面）----
 # STUDIO-77 起网关实现在 ytgw（三类执行体统一：交付/explore worker 走本 HTTP 面，
 # patrol 巡逻岛走进程内代办）；这里只做薄壳：GatewayRefused → 403。
-# 白名单动作 = worker_comment/worker_heartbeat/worker_article 三端点，新增动作先过 ytgw。
+# 白名单动作 = worker_comment/worker_heartbeat/worker_article/worker_kb_search 四端点，
+# 新增动作先过 ytgw。
 
 
 @app.post("/api/yt/comment")
@@ -150,6 +151,17 @@ def gw_article(req: dict):
     try:
         return ytgw.worker_article(req.get("iid", ""), req.get("key", ""),
                                    req.get("title", ""), req.get("content", ""))
+    except ytgw.GatewayRefused:
+        return JSONResponse({"error": "bad worker key"}, status_code=403)
+
+
+@app.get("/api/yt/kb-search")
+def gw_kb_search(iid: str = "", key: str = "", q: str = "", project: str = ""):
+    """知识检索（只读，STUDIO-101）：wkey 同 comment/heartbeat/article 通道（GET 无 body，
+    凭证走查询串）；命中「标题或正文含 q」返回 top5 {path, id, excerpt}。中间件只拦
+    POST 面板令牌，本端点的门就是 wkey 本身——缺失/错误一律 403。"""
+    try:
+        return ytgw.worker_kb_search(iid, key, q, project)
     except ytgw.GatewayRefused:
         return JSONResponse({"error": "bad worker key"}, status_code=403)
 
