@@ -22,8 +22,20 @@ baseline_cmd: ""       # 可选：基准命令（跑分/统计），输出追加
 repo: ""               # 巡逻岛工作目录 + baseline_cmd 执行目录；空=回退泳道映射的仓库路径
 child_type: 需求       # 孵化子单的 Type（v2）
 child_track: "L2 常规"  # 孵化子单的级别（L0/L1 会被强制升 L2）
+child_level: 2         # 孵化子单的等级（V3 编制字段；缺省 2，巡逻子单一律 ≥2 红线不变）
+child_dept: 工程部      # 孵化子单的部门（V3 编制字段；施工默认按工程部派发）
+dispatcher: 巡逻引擎    # 孵化子单的派单人（V3 编制字段；缺省巡逻引擎）
 patrol_brief: ""       # 巡逻任务书补充（对比什么、什么值得开单）
 """
+
+
+def _child_level(spec: dict) -> int:
+    """孵化子单等级（STUDIO-99 V3 编制）：spec.child_level 可配、缺省 2；
+    红线一律 ≥2（对齐 child_track 的 L0/L1 强制升 L2）；坏值回退缺省。"""
+    try:
+        return max(2, int(spec.get("child_level") or 2))
+    except (TypeError, ValueError):
+        return 2
 
 
 def _repo(spec: dict, lane: str) -> str:
@@ -200,6 +212,12 @@ def _patrol_one(yt, row) -> str:
     child_track = spec.get("child_track", "L2 常规")
     if child_track.startswith(("L0", "L1")):
         child_track = "L2 常规"          # 安全红线：巡逻孵化的子单一律 ≥L2（必经制作人批）
+    # STUDIO-99（V3 适配 P0-1）：出生自带编制——等级/部门/派单人随孵化写入子单，
+    # 全部 spec 可配、缺省兜底；存量单不回填（渐进启用：增量合规、存量零迁移）。
+    # 三值经 ytgw.patrol_derive 一体盖章（derive+编制+冻验+署名+记账）。
+    child_level = _child_level(spec)
+    child_dept = str(spec.get("child_dept") or "").strip() or "工程部"
+    dispatcher = str(spec.get("dispatcher") or "").strip() or "巡逻引擎"
     for ch in (data.get("children") or [])[:2]:
         if not (ch.get("summary") and ch.get("gate_cmd")):
             continue
@@ -217,7 +235,8 @@ def _patrol_one(yt, row) -> str:
             kid = ytgw.patrol_derive(iid, wkey, f"[{iid}] {ch['summary'][:60]}",
                                      ch.get("description", ""), lane=row["lane"],
                                      typ=child_type, track=child_track, state=entry,
-                                     gate=gate)
+                                     gate=gate, level=child_level, dept=child_dept,
+                                     dispa=dispatcher)
         except DeriveRefused as e:
             note.append(f"跳过子单「{ch['summary'][:30]}」：{e}")
             continue

@@ -139,6 +139,94 @@ def test_孵化子单走subtask链(fake_yt, tmp_config, monkeypatch):
     assert yt.f(kids[0]["id"], "父单") == iid              # 文本字段降级兼容回写
 
 
+# ---- STUDIO-99：出生自带编制（V3 适配 P0-1，等级/部门/派单人 spec 可配缺省兜底）----
+
+def test_孵化子单出生自带编制_缺省兜底(fake_yt, tmp_config, monkeypatch):
+    """spec 不写三键 → 子单出生即带 等级=2 / 部门=工程部 / 派单人=巡逻引擎
+    （等级=2 即 ≥L2 红线值；V3 四维裁决/批干矩阵/逐环签字从此有粮）。"""
+    from studio.yt import YT
+    from studio import llm
+    yt = YT("agent-8")
+    iid = yt.new("POLY", "战役：编制缺省", "d", lane="-", typ="战役", state="运行中")
+    _camp_files(iid)                       # spec 无三键 → 全走缺省兜底
+    monkeypatch.setattr(llm, "ask", lambda *a, **k:
+                        '{"progress":"ok","findings":[],"children":['
+                        '{"summary":"补文档","description":"d",'
+                        '"gate_cmd":"test -f docs/a.md"}]}')
+    out = patrol._patrol_one(yt, {"id": iid, "state": "运行中", "lane": "-"})
+    assert "+1kids" in out
+    kids = yt.list("POLY", "Type:需求 状态:新单")
+    assert len(kids) == 1
+    assert yt.f(kids[0]["id"], "等级") == 2
+    assert yt.f(kids[0]["id"], "部门") == "工程部"
+    assert yt.f(kids[0]["id"], "派单人") == "巡逻引擎"
+
+
+def test_孵化编制spec三项可覆盖(fake_yt, tmp_config, monkeypatch):
+    """spec 三键全写 → 子单照单全收；child_level 低于 2 强制升 2（≥L2 红线不破）。"""
+    from studio.yt import YT
+    from studio import llm
+    yt = YT("agent-8")
+    iid = yt.new("POLY", "战役：编制覆盖", "d", lane="-", typ="战役", state="运行中")
+    d = CONFIG._root.parent / "kernel" / "campaigns"
+    (d / f"{iid}.yaml").write_text(
+        "theme: 编制\n"
+        "every_h: 1\n"
+        "repo: ''\n"
+        "sources:\n  - https://example.com\n"
+        "baseline_cmd: ''\n"
+        "child_type: 需求\n"
+        'child_track: "L2 常规"\n'
+        "child_level: 4\n"
+        "child_dept: 情报部\n"
+        "dispatcher: 宰相(ZCode)\n"
+        "patrol_brief: b\n", encoding="utf-8")
+    (d / f"{iid}.state.json").write_text('{"last":0,"count":0}')
+    monkeypatch.setattr(llm, "ask", lambda *a, **k:
+                        '{"progress":"ok","findings":[],"children":['
+                        '{"summary":"覆盖单","description":"d",'
+                        '"gate_cmd":"test -f docs/a.md"}]}')
+    patrol._patrol_one(yt, {"id": iid, "state": "运行中", "lane": "-"})
+    kids = yt.list("POLY", "Type:需求 状态:新单")
+    assert len(kids) == 1
+    assert yt.f(kids[0]["id"], "等级") == 4
+    assert yt.f(kids[0]["id"], "部门") == "情报部"
+    assert yt.f(kids[0]["id"], "派单人") == "宰相(ZCode)"
+    assert patrol._child_level({"child_level": 1}) == 2      # 红线：<2 强制升 2
+    assert patrol._child_level({"child_level": "x"}) == 2    # 坏值回退缺省
+
+
+def test_提案型子单草稿态同样携带编制(fake_yt, tmp_config, monkeypatch):
+    """Type=提案 出生即「草稿」（进治理队列不进派发流），编制三字段照带——
+    出生自带编制不挑 Type：提案流的新单同样生而合规。"""
+    from studio.yt import YT
+    from studio import llm
+    yt = YT("agent-8")
+    iid = yt.new("POLY", "战役：编制提案", "d", lane="-", typ="战役", state="运行中")
+    d = CONFIG._root.parent / "kernel" / "campaigns"
+    (d / f"{iid}.yaml").write_text(
+        "theme: 提案编制\n"
+        "every_h: 1\n"
+        "repo: ''\n"
+        "sources:\n  - https://example.com\n"
+        "baseline_cmd: ''\n"
+        "child_type: 提案\n"
+        'child_track: "G1 知识"\n'
+        "patrol_brief: b\n", encoding="utf-8")
+    (d / f"{iid}.state.json").write_text('{"last":0,"count":0}')
+    monkeypatch.setattr(llm, "ask", lambda *a, **k:
+                        '{"progress":"ok","findings":[],"children":['
+                        '{"summary":"引入X设计","description":"d",'
+                        '"gate_cmd":"test -f docs/a.md"}]}')
+    out = patrol._patrol_one(yt, {"id": iid, "state": "运行中", "lane": "-"})
+    assert "+1kids" in out
+    kids = yt.list("POLY", "Type:提案 状态:草稿")
+    assert len(kids) == 1                                   # 草稿态照旧（治理队列）
+    assert yt.f(kids[0]["id"], "等级") == 2                 # 编制照带（缺省兜底）
+    assert yt.f(kids[0]["id"], "部门") == "工程部"
+    assert yt.f(kids[0]["id"], "派单人") == "巡逻引擎"
+
+
 def test_子单孵化异常单点容错(fake_yt, tmp_config, monkeypatch):
     """STUDIO-37 实录：孵化子单炸 400（哨兵泳道等 HTTPError）曾炸出 _patrol_one、
     state 不落盘 → 每小时无断路重烧整轮巡逻。修复后：坏子单只跳过留痕，

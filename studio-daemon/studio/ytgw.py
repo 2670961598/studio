@@ -138,8 +138,13 @@ def patrol_comment(iid: str, key: str, text: str) -> None:
 
 
 def patrol_derive(iid: str, key: str, summary: str, desc: str, *, lane, typ, track,
-                  state: str, gate: str) -> str:
-    """巡逻岛孵化子单（derive + 冻结验收命令 + 来源署名 + 记账，一体完成）。
+                  state: str, gate: str,
+                  level: int = 2, dept: str = "工程部", dispa: str = "巡逻引擎") -> str:
+    """巡逻岛孵化子单（derive + V3 编制 + 冻结验收命令 + 来源署名 + 记账，一体完成）。
+    STUDIO-99（V3 适配 P0-1）：等级/部门/派单人出生自带——值由 patrol 引擎按战役 spec
+    （child_level/child_dept/dispatcher）解析后传入；存量单不回填（渐进启用）。
+    编制字段是项目级自定义字段（GAMES/POLY 有、个别项目可无）：逐字段 best-effort，
+    写不进只留注记（STUDIO-94 父单回写同款——降级层绝不反噬孵化主链）。
     DeriveRefused 原样上抛（调用方跳过该子单、父单已留痕），其余异常上抛由
     调用方单点容错（STUDIO-37：只废该子单，不炸整轮）——行为对齐直发链，只是收口进网关。"""
     _require(iid, key, "patrol")
@@ -147,6 +152,17 @@ def patrol_derive(iid: str, key: str, summary: str, desc: str, *, lane, typ, tra
     from .metrics import append_event
     t = YT("agent-8")
     kid = t.derive(iid, summary, desc, lane=lane, typ=typ, track=track, state=state)
+    miss = []
+    for name, val, ftype in (("等级", level, "SimpleIssueCustomField"),
+                             ("部门", dept, "SingleEnumIssueCustomField"),
+                             ("派单人", dispa, "SingleEnumIssueCustomField")):
+        try:
+            t.set_field(kid, name, val, ftype)
+        except Exception:
+            miss.append(name)
+    if miss:
+        t.comment(kid, f"编制字段「{'、'.join(miss)}」写入不可用（项目无此字段？），"
+                       "V3 编制缺位留痕——存量口径，不回填。")
     t.gate_freeze(kid, gate)
     t.comment(kid, f"[{_pid(iid)}·{iid}·patrol] 来源：战役 {iid} 巡逻孵化")
     append_event(_pid(iid), iid, "GW_DERIVE", "gateway", 0, f"{kid} {summary[:40]}")
