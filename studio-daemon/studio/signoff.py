@@ -80,7 +80,7 @@ def signatures(yt, iid, lane=None, dispa=None) -> dict[str, set[str]]:
                and (c["text"].strip().split() or [""])[0] in HOLD_WORDS for c in cs)
     if dispa is None:
         dispa = yt.f(iid, "派单人") or CONFIG.producer
-    dispa_set = {_ap._norm_login(x) for x in _ap._dispa_logins(dispa)}
+    dispa_set = {_ap._norm_login(x) for x in _ap._dispa_logins(dispa, pid)}   # STUDIO-102：按本单项目段解析
     out: dict[str, set[str]] = {s: set() for s in STAGES}
     for c in cs:
         stage = parse_sign(c["text"])
