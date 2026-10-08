@@ -155,7 +155,7 @@ def patrol_derive(iid: str, key: str, summary: str, desc: str, *, lane, typ, tra
     miss = []
     for name, val, ftype in (("等级", level, "SimpleIssueCustomField"),
                              ("部门", dept, "SingleEnumIssueCustomField"),
-                             ("派单人", dispa, "SingleEnumIssueCustomField")):
+                             ("派单人", dispa, "SimpleIssueCustomField")):
         try:
             t.set_field(kid, name, val, ftype)
         except Exception:
