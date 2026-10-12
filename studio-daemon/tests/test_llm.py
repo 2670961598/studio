@@ -212,6 +212,25 @@ def test_ask_cwd透传到子进程(monkeypatch):
     assert seen["cwd"] is None
 
 
+def test_ask_cwd消失自愈mkdir(monkeypatch, tmp_path):
+    """STUDIO-106：机器休眠/重启清空 /tmp，巡逻岛 cwd（explore 泳道路径）消失
+    → 岛调用 FileNotFoundError 瞬败。ask() 起岛前自愈：目录不存在则先 mkdir。"""
+    class FakeP:
+        returncode = 0
+        stdout = '{"result":"ok"}'
+        stderr = ""
+
+    def fake_run(argv, **kw):
+        assert Path(kw["cwd"]).is_dir()      # 岛起跑时 cwd 必已建好（瞬败根因断根）
+        return FakeP()
+
+    monkeypatch.setattr(llm, "_llm_fail_log", lambda *a, **k: None)   # 测试不得写生产日志
+    monkeypatch.setattr(llm.subprocess, "run", fake_run)
+    gone = tmp_path / "studio-explore" / "sub"   # 多级不存在路径（/tmp 被清形态）
+    assert llm.ask("x", cwd=str(gone)) == "ok"   # ask 正常执行
+    assert gone.is_dir()                          # 且目录被建
+
+
 class TestSanitizeAuditP12:
     """审计 P1-2 绕过面回归网（2026-09-26 五路审计，巡逻读外部源后 LLM 生成 gate_cmd，
     提示注入直达 bash -c——STUDIO-37 前沿战役上线前必须封堵）。"""
