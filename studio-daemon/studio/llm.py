@@ -146,6 +146,10 @@ def ask(prompt: str, timeout_sec: int = 240, allow_web: bool = False,
     误判成战役仓库——凡有明确仓库的岛必须显式传。"""
     dis = ["Bash", "WebSearch", "WebFetch"] if not allow_web else ["Bash", "WebSearch"]
     try:
+        if cwd and not Path(cwd).exists():
+            # 岛工作区自愈（STUDIO-106）：机器休眠/重启清空 /tmp，巡逻岛 cwd（explore 泳道）
+            # 消失 → subprocess FileNotFoundError 瞬败九连；起岛前先补目录。
+            Path(cwd).mkdir(parents=True, exist_ok=True)
         p = subprocess.run(
             [_claude_bin(), "-p", "--dangerously-skip-permissions",
              "--model", model,
