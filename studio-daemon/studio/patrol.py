@@ -1,8 +1,9 @@
 """patrol — 战役巡逻引擎（Type=战役 · 运行中 的永驻母亲单）
-每轮：到点检查 → （可选）跑基准命令存快照 → LLM 岛带 WebFetch 巡逻源清单/对比快照
+每轮：到点检查 → （可选）跑基准命令存快照 → 框架预取巡逻源文本 → LLM 岛纯文本推理/对比快照
 → 战役单贴进展 → 值得做的孵化成子单（正常轨道，制作人审批）。
 spec 文件 kernel/campaigns/<单号>.yaml 是战役的大脑，制作人随时可改。"""
-import json, subprocess, time, yaml
+import json, re, subprocess, time, yaml
+import requests
 from pathlib import Path
 from .config import CONFIG
 
@@ -17,7 +18,7 @@ def _camp_dir() -> Path:
 DEFAULT_SPEC = """\
 theme: {theme}
 every_h: 24            # 巡逻间隔（小时）
-sources: []            # 巡逻源清单（URL，LLM 会用 WebFetch 逐个抓取）
+sources: []            # 巡逻源清单（URL，框架 requests 预取文本进岛提示词）
 baseline_cmd: ""       # 可选：基准命令（跑分/统计），输出追加进快照序列
 repo: ""               # 巡逻岛工作目录 + baseline_cmd 执行目录；空=回退泳道映射的仓库路径
 child_type: 需求       # 孵化子单的 Type（v2）
@@ -55,6 +56,46 @@ def _repo(spec: dict, lane: str) -> str:
 def _yt():
     from .yt import YT
     return YT("agent-8")
+
+
+# STUDIO-104：claude CLI 内置网页抓取工具被本机网络策略封禁（STUDIO-37 九连败
+# 实录：岛逐源重试拖满 600s → ISLAND-FAIL 退避循环），巡逻源改由框架 shell 层
+# requests 预取进提示词——岛对源零网络依赖，纯文本推理。
+_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+       "(KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36")
+
+
+def _prefetch_sources(sources) -> tuple[list, list]:
+    """巡逻源预取：requests.get 逐源抓取（普通浏览器 UA，timeout=10），
+    每源截前 8000 字符文本（去 HTML 标签粗筛）。返回 (成功块, 失败留痕)；
+    源级失败只跳过留痕——单源死不再拖垮整轮（本事故主教训）。"""
+    ok, fails = [], []
+    for u in sources or []:
+        u = str(u).strip()
+        if not u:
+            continue
+        try:
+            r = requests.get(u, timeout=10, headers={"User-Agent": _UA})
+            r.raise_for_status()
+            text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", r.text)).strip()
+            ok.append({"url": u, "text": text[:8000]})
+        except Exception as e:
+            fails.append(f"源 {u} 预取失败跳过（{type(e).__name__}）")
+    return ok, fails
+
+
+def _sources_prompt(sources, blocks) -> str:
+    """预取源文本拼进岛提示词（STUDIO-104）：成功块逐源贴文本，岛对源不做
+    任何网络访问；有源但全失败 → 明示「本轮源全不可用」按空发现处理。"""
+    if not sources:
+        return "巡逻源：（未配置）\n"
+    if not blocks:
+        return ("巡逻源：本轮源全不可用（框架预取全部失败）——按空发现处理："
+                "findings 留空，不要臆测源内容，只按仓库与快照汇报。\n")
+    parts = ["巡逻源（框架已预取，直接读下方文本，对源不再做任何网络访问）："]
+    for b in blocks:
+        parts.append(f"【源 {b['url']}】\n{b['text']}")
+    return "\n".join(parts) + "\n"
 
 
 def _spec(iid: str) -> dict:
@@ -153,6 +194,9 @@ def _patrol_one(yt, row) -> str:
     from .llm import ask, _sanitize_cmd
     from .yt import DeriveRefused
     from . import ytgw
+    # STUDIO-104：源预取进提示词——岛对源零网络动作、无网络等待（超时 600→240），
+    # 也不再放开 allow_web（省权限面；抓取工具本就被环境封禁）。
+    src_blocks, src_fails = _prefetch_sources(spec.get("sources", []))
     # STUDIO-77：巡逻岛 YouTrack 操作纳入 wkey 网关——本轮签发凭证钉进战役 state
     # （下轮签发即轮换，旧 key 自动作废），岛产物（进展评论/孵化子单）全走网关：
     # 署名 [项目·单号·patrol] + GW_* 记账；框架诊断类评论（激活/空壳/岛无响应）
@@ -161,13 +205,13 @@ def _patrol_one(yt, row) -> str:
     st = _state(iid)
     st["wkey"] = wkey
     _save_state(iid, st)
-    res = ask(allow_web=True, cwd=repo or None, prompt=
+    res = ask(cwd=repo or None, prompt=
         f"你是虚拟工作室的战役巡逻员，负责永驻战役「{spec.get('theme', iid)}」。\n"
         f"战役仓库（本地，已是你的工作目录）：{repo or '（未配置——不要凭空猜测仓库位置，只报告无法定位）'}。\n"
         f"用 Read/Glob/Grep 工具在该仓库内核实事实，禁止凭想象描述仓库内容。\n"
         f"YouTrack 纪律：板面操作不归你（进展/子单由框架网关代发）；禁止读取任何凭证文件（youtrack.json/token）。\n"
         f"任务书：{spec.get('patrol_brief', '')}\n"
-        f"巡逻源（用 WebFetch 逐个抓取，失败就跳过）：{json.dumps(spec.get('sources', []), ensure_ascii=False)}\n"
+        f"{_sources_prompt(spec.get('sources', []), src_blocks)}"
         f"最近基准快照：\n{snap_text or '（无基准）'}\n\n"
         "产出（只输出 JSON）：{\"progress\":\"≤120字进展\",\"findings\":[\"≤80字发现\"...],"
         "\"children\":[{\"summary\":\"子单标题\",\"description\":\"需求描述\","
@@ -175,7 +219,7 @@ def _patrol_one(yt, row) -> str:
         "gate_cmd 纪律：只允许 test/grep/wc/cat/ls/diff/dotnet/python 与 git 只读子命令的 && 链"
         "（≤2段；禁管道、重定向、$()、反引号、分号），否则会被消毒器拒掉——"
         "基准阈值类断言写成 grep -c 计数或 dotnet test --filter 形式。",
-        timeout_sec=600)
+        timeout_sec=240)
     if res is None:
         # 岛整体失败（600s 超时/非零退出）≠ 解析失败——POLY-19/20 教训：
         # None 折叠成空串后 rindex("}") 必抛 ValueError，被误标"解析失败"，
@@ -208,6 +252,7 @@ def _patrol_one(yt, row) -> str:
     note = [f"巡逻 #{_state(iid)['count'] + 1} {time.strftime('%F %T')}",
             f"进展：{data.get('progress', '')}"]
     note += [f"发现：{f}" for f in data.get("findings", [])]
+    note += src_fails   # STUDIO-104：预取失败源留痕（"源 X 预取失败跳过"）
     kids = []
     child_track = spec.get("child_track", "L2 常规")
     if child_track.startswith(("L0", "L1")):
