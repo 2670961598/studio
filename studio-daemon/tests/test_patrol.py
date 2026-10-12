@@ -3,10 +3,33 @@
 岛在 daemon 目录落根，把 studio-daemon（Python）误判成战役仓库，巡逻全废。"""
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from studio import patrol                            # noqa: E402
 from studio.config import CONFIG                     # noqa: E402
+
+
+class _FakeResp:
+    """requests 响应替身：text 可含 HTML，status≥400 时 raise_for_status 抛错。"""
+
+    def __init__(self, text="", status=200):
+        self.text = text
+        self.status_code = status
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+@pytest.fixture(autouse=True)
+def _stub_prefetch_net(monkeypatch):
+    """STUDIO-104：源预取进提示词后 _patrol_one 会真发 requests——测试一律打桩
+    （默认预取成功返回空文本），个别预取用例在测试体内显式覆盖 get 行为。"""
+    monkeypatch.setattr(patrol, "requests",
+                        SimpleNamespace(get=lambda *a, **k: _FakeResp("")))
 
 
 class TestRepoResolve:
@@ -387,3 +410,106 @@ def test_巡逻岛prompt明令禁读凭证(fake_yt, tmp_config, monkeypatch):
     monkeypatch.setattr(llm, "ask", fake_ask)
     patrol._patrol_one(yt, {"id": iid, "state": "运行中", "lane": "-"})
     assert "不归你" in calls["p"] and "youtrack.json" in calls["p"]
+
+
+# ---- STUDIO-104：源预取进提示词（框架 requests 替代岛内置抓取工具）----
+
+def test_源预取成功注入岛提示词(fake_yt, tmp_config, monkeypatch):
+    """预取成功：源文本去 HTML 标签后直接进岛 prompt（岛对源零网络指令），
+    ask 不再放开 allow_web，超时降至 240s（无网络等待）。"""
+    from studio.yt import YT
+    from studio import llm
+    yt = YT("agent-8")
+    iid = yt.new("POLY", "战役：预取", "d", lane="-", typ="战役", state="运行中")
+    _camp_files(iid)
+    monkeypatch.setattr(patrol, "requests", SimpleNamespace(
+        get=lambda u, **k: _FakeResp("<html><body>hello patrol</body></html>")))
+    calls = {}
+
+    def fake_ask(prompt, timeout_sec=240, allow_web=False, model=llm.FULL, cwd=None):
+        calls.update(p=prompt, t=timeout_sec, w=allow_web)
+        return '{"progress":"ok","findings":[],"children":[]}'
+
+    monkeypatch.setattr(llm, "ask", fake_ask)
+    patrol._patrol_one(yt, {"id": iid, "state": "运行中", "lane": "-"})
+    assert "hello patrol" in calls["p"]            # 预取文本进岛 prompt
+    assert "<body>" not in calls["p"]              # HTML 标签粗筛掉
+    assert "https://example.com" in calls["p"]     # 源 URL 随块进 prompt
+    assert "WebFetch" not in calls["p"]            # 岛 prompt 零抓取指令残留（验收断言）
+    assert calls["w"] is False and calls["t"] == 240   # 不放开网络权限；超时 600→240
+
+
+def test_源级失败跳过留痕(fake_yt, tmp_config, monkeypatch):
+    """STUDIO-37 主教训：单源死不拖垮整轮——坏源跳过并在父单评论留痕
+    （「源 X 预取失败跳过」），好源照常进岛 prompt。"""
+    from studio.yt import YT
+    from studio import llm
+    yt = YT("agent-8")
+    iid = yt.new("POLY", "战役：预取失败", "d", lane="-", typ="战役", state="运行中")
+    d = CONFIG._root.parent / "kernel" / "campaigns"
+    (d / f"{iid}.yaml").write_text(
+        "theme: 预取失败\nevery_h: 1\nrepo: ''\nsources:\n"
+        "  - https://bad.example.com\n  - https://good.example.com\n"
+        "baseline_cmd: ''\nchild_type: 需求\nchild_track: \"L2 常规\"\npatrol_brief: b\n",
+        encoding="utf-8")
+    (d / f"{iid}.state.json").write_text('{"last":0,"count":0}')
+    calls = {}
+
+    def flaky_get(u, **k):
+        if "bad" in u:
+            raise RuntimeError("timed out")
+        return _FakeResp("good source text")
+
+    monkeypatch.setattr(patrol, "requests", SimpleNamespace(get=flaky_get))
+    monkeypatch.setattr(llm, "ask",
+                        lambda prompt, *a, **k: calls.update(p=prompt) or
+                        '{"progress":"ok","findings":[],"children":[]}')
+    out = patrol._patrol_one(yt, {"id": iid, "state": "运行中", "lane": "-"})
+    assert out.startswith("PATROL") and "ISLAND-FAIL" not in out   # 单源死不废整轮
+    assert "good source text" in calls["p"]         # 好源照常进 prompt
+    assert "bad.example.com" not in calls["p"]      # 坏源不进 prompt（只在评论留痕）
+    texts = "\n".join(c["text"] for c in yt.comments(iid))
+    assert "源 https://bad.example.com 预取失败跳过" in texts   # 留痕进父单评论
+
+
+def test_全部源失败岛按空发现处理(fake_yt, tmp_config, monkeypatch):
+    """有源但预取全失败：岛照常被调（不走 ISLAND-FAIL），prompt 明示
+    「本轮源全不可用」按空发现处理，禁止臆测源内容。"""
+    from studio.yt import YT
+    from studio import llm
+    yt = YT("agent-8")
+    iid = yt.new("POLY", "战役：全失败", "d", lane="-", typ="战役", state="运行中")
+    _camp_files(iid)
+    calls = {}
+
+    def dead_get(u, **k):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(patrol, "requests", SimpleNamespace(get=dead_get))
+    monkeypatch.setattr(llm, "ask",
+                        lambda prompt, *a, **k: calls.update(p=prompt) or
+                        '{"progress":"ok","findings":[],"children":[]}')
+    out = patrol._patrol_one(yt, {"id": iid, "state": "运行中", "lane": "-"})
+    assert out.startswith("PATROL")                # 正常巡逻（非 ISLAND-FAIL 退避）
+    assert "本轮源全不可用" in calls["p"]           # 岛被明确告知源全不可用
+    assert "空发现" in calls["p"]                   # 按空发现处理指令在
+    texts = "\n".join(c["text"] for c in yt.comments(iid))
+    assert "源 https://example.com 预取失败跳过" in texts   # 全失败同样逐源留痕
+
+
+def test_prefetch契约_浏览器头超时与截断(monkeypatch):
+    """_prefetch_sources 契约：普通浏览器 UA、timeout=10、去标签后每源截前
+    8000 字符；空串源跳过不抓。"""
+    seen = {}
+
+    def spy_get(u, **k):
+        seen.update(url=u, **k)
+        return _FakeResp("<p>" + "x" * 20000 + "</p>")
+
+    monkeypatch.setattr(patrol, "requests", SimpleNamespace(get=spy_get))
+    ok, fails = patrol._prefetch_sources(["https://example.com/a", "  "])
+    assert not fails and len(ok) == 1               # 空串源静默跳过
+    assert seen["url"] == "https://example.com/a"
+    assert seen["timeout"] == 10
+    assert "Mozilla" in seen["headers"]["User-Agent"]
+    assert len(ok[0]["text"]) == 8000               # 截前 8000 字符
