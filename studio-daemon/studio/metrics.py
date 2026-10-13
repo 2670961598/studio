@@ -7,7 +7,8 @@ from .config import CONFIG
 
 def append_event(pid: str, issue: str, event: str, actor: str, attempt: int = 0,
                  note: str = "", tokens: int | None = None, cost_cny: float | None = None,
-                 cost_usd: float | None = None, duration_ms: int | None = None):
+                 cost_usd: float | None = None, duration_ms: int | None = None,
+                 usage: dict | None = None):
     rec = {"ts": time.strftime("%F %T"), "pid": pid, "issue": issue, "event": event,
            "actor": actor, "attempt": int(attempt), "note": note}
     if tokens is not None:
@@ -18,8 +19,68 @@ def append_event(pid: str, issue: str, event: str, actor: str, attempt: int = 0,
         rec["cost_usd"] = cost_usd
     if duration_ms is not None:
         rec["duration_ms"] = duration_ms
+    if usage is not None:                      # STUDIO-107：LLM usage 明细（input/output/cache）
+        rec["usage"] = usage
     with open(CONFIG.events_path, "a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+# ---------------------------------------------------------------- 单件成本（STUDIO-107）
+def ticket_cost(iid: str) -> dict:
+    """单件成本汇总：该单全部成本事件（LLM 岛记账 + worker 收割/异常三元组）
+    的 tokens/cost_usd 累加——worker 多 attempt 全程累加、巡逻岛/加测/批示解析
+    各岛全归集到单。返回 {tokens, cost_usd|None, llm_calls, worker_runs}；
+    无任何账记 → tokens=0、cost_usd=None（事实留白，不造零成本）。"""
+    from .reports import _events_all
+    toks, cost, has_cost, calls, runs = 0, 0.0, False, 0, 0
+    for e in _events_all():
+        if e.get("issue") != iid:
+            continue
+        if e.get("event") == "LLM":
+            calls += 1
+        if e.get("tokens") is not None:
+            toks += int(e["tokens"])
+            if e.get("event") != "LLM":
+                runs += 1                      # worker 收割/退回（stream result 三元组）
+        if e.get("cost_usd") is not None:
+            cost += float(e["cost_usd"])
+            has_cost = True
+    return {"tokens": toks, "cost_usd": round(cost, 4) if has_cost else None,
+            "llm_calls": calls, "worker_runs": runs}
+
+
+def cost_line(c: dict) -> str:
+    """单件成本单行摘要（板面字段/收割评论/时间线合计共用同一格式）。"""
+    parts = [f"tokens={c.get('tokens', 0)}"]
+    if c.get("cost_usd") is not None:
+        parts.append(f"cost_usd={c['cost_usd']}")
+    parts += [f"llm_calls={c.get('llm_calls', 0)}", f"worker_runs={c.get('worker_runs', 0)}"]
+    return " ".join(parts)
+
+
+def settle_cost(yt, iid: str) -> dict:
+    """单件成本落板（STUDIO-107）：汇总写 YouTrack「单件成本」字段
+    （youtrack-ids 157-21）。字段字型未知（v2 建 field，老宪章记 float）：
+    text 优先 → float 回退（只写 cost_usd）→ 评论兜底（项目缺字段不炸链，
+    父单回写同款纪律）。落板失败静默——成本视图不得反噬主流程。"""
+    try:
+        c = ticket_cost(iid)
+    except Exception:
+        return {}
+    line = cost_line(c)
+    try:
+        try:
+            yt.set_text(iid, "单件成本", line)
+        except Exception:
+            try:
+                if c.get("cost_usd") is None:
+                    raise ValueError("无 cost_usd 可写 float 字段")
+                yt.set_field(iid, "单件成本", c["cost_usd"], "SimpleIssueCustomField")
+            except Exception:
+                yt.comment(iid, f"单件成本（字段不可用，评论兜底）：{line}")
+    except Exception:
+        pass
+    return c
 
 
 def _events(days: int = 7) -> list[dict]:
@@ -83,7 +144,8 @@ def _postmortem_scan(yt, evs) -> list[str]:
         chain = "\n".join(f"{c['author']}: {(c['text'] or '')[:160]}" for c in cs[-12:])
         md = reviewed_ask(
             f"为下述单据的打回/断路写复盘（四段：## 现象/## 根因/## 解法/## 预防，"
-            f"每段≤80字，结论具体可执行）。打回次数={n}。\n单据评论链：\n{chain}", 400)
+            f"每段≤80字，结论具体可执行）。打回次数={n}。\n单据评论链：\n{chain}", 400,
+            acct=(iid.split("-")[0], iid, "self-eval"))   # STUDIO-107：复盘岛成本归集到单
         if not md or len(md) < 40:
             continue                       # 岛失败不炸，跳过
         pid = iid.split("-")[0]
@@ -141,7 +203,9 @@ def self_eval() -> dict:
         append_event("STUDIO", iid, "SELF_EVAL", "studio-daemon", 0, f[:60])
     postmortems = []
     try:
-        postmortems = _postmortem_scan(yt, evs)     # STUDIO-43：打回自动复盘（每日随自评）
+        # STUDIO-107 修复：evs 从未定义（NameError 被 except 吞成"复盘扫描失败"，
+        # 复盘链上线即静默失效）——与指标窗口同源取 _events(7)
+        postmortems = _postmortem_scan(yt, _events(7))   # STUDIO-43：打回自动复盘（每日随自评）
     except Exception as e:
         append_event("STUDIO", "-", "SELF_EVAL", "studio-daemon", 0,
                      f"复盘扫描失败: {type(e).__name__} {str(e)[:60]}")

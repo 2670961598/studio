@@ -68,13 +68,16 @@ def _resume_payload(issue: str) -> dict:
 @app.get("/api/timeline/{issue}")
 def api_timeline(issue: str):
     """单据全链路时间线（STUDIO-42）：events 账本 + worker 记账聚合——
-    失败单一眼定位卡在哪段（派发→施工时长→闸门→QA→合并）。"""
+    失败单一眼定位卡在哪段（派发→施工时长→闸门→QA→合并）。
+    STUDIO-107：事件附 tokens，末尾附 COST 合计行（LLM 岛+worker 单件成本汇总）。"""
     import json as _json
     from .reports import _events_all
+    from .metrics import ticket_cost, cost_line
     evs = [e for e in _events_all() if e.get("issue") == issue]
     out = [{"ts": e["ts"], "kind": e["event"], "attempt": e.get("attempt", 0),
             "detail": (e.get("note") or "")[:100],
             **({"cost_usd": e["cost_usd"]} if e.get("cost_usd") is not None else {}),
+            **({"tokens": e["tokens"]} if e.get("tokens") is not None else {}),
             **({"duration_ms": e["duration_ms"]} if e.get("duration_ms") is not None else {})}
            for e in evs]
     for f in (CONFIG.workers_dir / f"{issue}.done.json",
@@ -91,6 +94,12 @@ def api_timeline(issue: str):
                             "cost_usd": r.get("cost_usd"),
                             "duration_ms": r.get("duration_ms"),
                             "turns": r.get("turns")})
+    c = ticket_cost(issue)
+    if c["tokens"] or c["llm_calls"] or c["worker_runs"]:
+        out.append({"ts": "合计", "kind": "COST", "attempt": 0,
+                    "detail": cost_line(c),
+                    "cost_usd": c.get("cost_usd"),
+                    "tokens": c["tokens"]})
     return _redact(sorted(out, key=lambda x: x["ts"]))
 
 

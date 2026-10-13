@@ -148,7 +148,8 @@ def _propose_kb(yt, iid: str, desc: str) -> str:
     res = ask(
         f"你是虚拟工作室的知识库编辑。目标文件 {target.relative_to(KB_ROOT)} 当前内容：\n"
         f"```\n{cur}\n```\n制作人修改说明：{desc}\n\n"
-        "产出修改后的文件完整内容。保持既有结构与语气，只改说明涉及的部分，其余原样保留。只输出文件内容。", 420)
+        "产出修改后的文件完整内容。保持既有结构与语气，只改说明涉及的部分，其余原样保留。只输出文件内容。",
+        420, acct=("STUDIO", iid, "agent-8"))   # STUDIO-107：知识库编辑岛成本归集到单
     if not res or len(res) < 20:
         yt.comment(iid, "kb 草案生成失败，请补充说明后重发 kb-propose")
         return f"KB-PROPOSE-FAIL {iid}"
@@ -189,7 +190,8 @@ def _propose(yt, iid: str, desc: str) -> str:
         "\n\n请设计新单子类型（或修改现有类型）。只输出 JSON："
         '{"type":"类型名(2-6字)","yaml":"该类型在 types: 下的条目(单层YAML对象字符串,'
         '含 定位/目的/流转/执行 等键)","type_edges":"若是专用流,输出 [[from,to],...] 的JSON字符串,'
-        '否则输出空字符串","rationale":"为什么这么设计(≤80字)"}', 300)
+        '否则输出空字符串","rationale":"为什么这么设计(≤80字)"}',
+        300, acct=("STUDIO", iid, "agent-8"))    # STUDIO-107：schema 岛成本归集到单
     try:
         data = json.loads(res[res.index("{"):res.rindex("}") + 1])
         name = data["type"]

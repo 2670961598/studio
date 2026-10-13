@@ -465,7 +465,7 @@ class Test裸批准原始词元优先:
         批示陷入不消费死循环。裸批准的原始词元必须优先于 LLM 口味猜测。"""
         from studio import llm
         monkeypatch.setattr(llm, "parse_directive",
-                            lambda text, ctx: {"directive": "approve-plan", "confidence": 0.9})
+                            lambda text, ctx, **kw: {"directive": "approve-plan", "confidence": 0.9})
         monkeypatch.setattr(CONFIG, "delegated_approvals", {"POLY": ["agent-8"]})
         yt = env
         iid = yt.new("POLY", "裸批", "d", lane="core", typ="需求", track="L2 常规")
@@ -536,6 +536,10 @@ class Test收割记账:
         assert gp["tokens"] == 500
         done = _json.loads((CONFIG.workers_dir / f"{iid}.done.json").read_text(encoding="utf-8"))
         assert done["result"]["cost_usd"] == 16.48      # 归档钉存，stream 改名后仍在
+        # STUDIO-107 单件成本：收割即落板字段 + 收割评论附成本行（与 events 对得上）
+        fv = yt.f(iid, "单件成本")
+        assert fv and "tokens=500" in fv and "worker_runs=1" in fv
+        assert any("单件成本: tokens=" in c["text"] for c in yt.comments(iid))
 
 
 

@@ -423,6 +423,16 @@ def lane_of(yt, iid) -> str:
     return dept_lane(yt, iid, yt.f(iid, "泳道") or "core")   # P3-b：合并路径同部门解析
 
 
+def _cost_note(yt, iid) -> str:
+    """收割/合并后的单件成本行（STUDIO-107）：events 汇总落板「单件成本」字段，
+    返回单行摘要供评论附行；汇总/落板失败返回空串（成本视图不炸主流程）。"""
+    from .metrics import settle_cost, cost_line
+    try:
+        return cost_line(settle_cost(yt, iid))
+    except Exception:
+        return ""
+
+
 def _harvest(yt, pid, iid, lane, w: Worker, lv) -> str:
     report = w.report.read_text() if w.report.exists() else "(REPORT 缺失)"
     rs = w.result_stats()          # stream 改名归档前取记账三元组（审计 P0-1 断点C）
@@ -432,14 +442,19 @@ def _harvest(yt, pid, iid, lane, w: Worker, lv) -> str:
             res = run_gate(iid, str(int(yt.f(iid, "attempt") or 0) + 1), lane)
             if res.ok:
                 yt.transition(iid, "证据就绪")
-                yt.comment(iid, f"{report}\n\n— 代发 claude worker（studio-daemon 探索通道）")
                 _event(pid, iid, "GATE_PASS", "agent-8", 0, f"evidence {res['log']}",
                        tokens=rs.get("tokens"), cost_usd=rs.get("cost_usd"),
                        duration_ms=rs.get("duration_ms"))
+                cl = _cost_note(yt, iid)       # STUDIO-107：本次用量入账后收割落板
+                yt.comment(iid, f"{report}\n\n— 代发 claude worker（studio-daemon 探索通道）"
+                              + (f"\n单件成本: {cl}" if cl else ""))
                 return f"HARVEST {iid} →证据就绪(探索)"
             n = yt.attempt_inc(iid)
             yt.comment(iid, f"GATE-FAIL attempt={n} 退回重做，evidence {res['log']}")
-            _event(pid, iid, "GATE_FAIL", "agent-8", n, res["log"])
+            _event(pid, iid, "GATE_FAIL", "agent-8", n, res["log"],
+                   tokens=rs.get("tokens"), cost_usd=rs.get("cost_usd"),
+                   duration_ms=rs.get("duration_ms"))   # 退回也烧了 token（STUDIO-107）
+            _cost_note(yt, iid)
             return f"GATE-FAIL {iid} attempt={n}"
         finally:
             w.archive()
@@ -461,8 +476,10 @@ def _harvest(yt, pid, iid, lane, w: Worker, lv) -> str:
         res = run_gate(iid, str(int(yt.f(iid, "attempt") or 0) + 1), lane)
         if res.ok:
             yt.transition(iid, "证据就绪")
-            yt.comment(iid, f"{report}\n\n— 代发 claude worker（studio-daemon v2）")
             _event(pid, iid, "GATE_PASS", "agent-8", 0, f"evidence {res['log']}", **acct)
+            cl = _cost_note(yt, iid)           # STUDIO-107：本次用量入账后收割落板
+            yt.comment(iid, f"{report}\n\n— 代发 claude worker（studio-daemon v2）"
+                          + (f"\n单件成本: {cl}" if cl else ""))
             return f"HARVEST {iid} →证据就绪"
         n = yt.attempt_inc(iid)
         flow = sm._flow(lv, yt.f(iid, "Type"))
@@ -478,13 +495,17 @@ def _harvest(yt, pid, iid, lane, w: Worker, lv) -> str:
         else:
             yt.comment(iid, f"GATE-FAIL attempt={n} 退回重做，evidence {res['log']}")
             _event(pid, iid, "GATE_FAIL", "agent-8", n, res["log"], **acct)
+        _cost_note(yt, iid)                     # STUDIO-107：退回的 token 也进单件成本
         return f"GATE-FAIL {iid} attempt={n}"
     except Exception:
         # 收割异常（gate 拒跑/HTTP 抖动等）也计 attempt（审计 P1-6）：
         # 曾"异常冒泡→ARCHIVED 不罚→下拍立即重派"= 无断路的重派风暴，每 10 分钟白烧一轮 worker
         n = yt.attempt_inc(iid)
         yt.comment(iid, f"收割异常计 attempt={n}（断路保护生效，不再无罚重派）")
-        _event(pid, iid, "GATE_FAIL", "agent-8", n, "harvest-exception")
+        _event(pid, iid, "GATE_FAIL", "agent-8", n, "harvest-exception",
+               tokens=acct.get("tokens"), cost_usd=acct.get("cost_usd"),
+               duration_ms=acct.get("duration_ms"))   # 异常单也烧了 token（STUDIO-107）
+        _cost_note(yt, iid)
         raise
     finally:
         w.archive()                              # REPORT 随之归档，防止旧卷反复收割
@@ -530,6 +551,7 @@ def _merge(yt, pid, iid, lane) -> str:
             yt.transition(iid, "已交付")
             _event(pid, iid, "MERGE", "agent-8", 0, f"→{lc['base_branch']} verify绿")
             _event(pid, iid, "CLOSE", "agent-8", 0, "未push(无批示)")
+            _cost_note(yt, iid)                 # STUDIO-107：关单时终结算（老宪章口径）
             return f"DELIVERED {iid}"
         # verify 红：回滚 base 上的 merge commit，退回重做（P2-4）
         _git(lc["path"], "reset", "--hard", "ORIG_HEAD", check=False)
@@ -696,7 +718,9 @@ def _directives(yt, iid, lv, typ, lane=None) -> str | None:
             approvals.append(("approve", c["created"]))
             continue
         from .llm import parse_directive
-        parsed = parse_directive(c["text"], f"{iid} 级别={lv} 类型={typ} 当前态={yt.f(iid, 'State')}")
+        parsed = parse_directive(
+            c["text"], f"{iid} 级别={lv} 类型={typ} 当前态={yt.f(iid, 'State')}",
+            acct=(iid.split("-")[0], iid, "agent-8"))   # STUDIO-107：解析成本归集到单
         if parsed and parsed.get("directive", "").startswith("approve"):
             approvals.append((parsed["directive"], c["created"]))
         elif norm0.startswith("approve"):
