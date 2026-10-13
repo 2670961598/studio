@@ -17,3 +17,5 @@ projects/
 kernel/metrics/prompts.jsonl
 kernel/campaigns/*.snapshots.jsonl
 kernel/campaigns/*.state.json
+# 运营报告（本地生成，远端不入库——制作人 2026-10-13 清洁指令）
+kernel/metrics/reports/
