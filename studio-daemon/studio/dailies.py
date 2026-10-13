@@ -140,7 +140,8 @@ def _flash_digest(topic: str, facts: list[str]) -> str | None:
 def _quality_profile() -> str:
     """GAMES 质量档案扫描：projects/GAMES/repo/docs/game-quality.json 档案计数
     （ZCode GAMES 专岗知识库迭代的回填对象——125 款档案是质量战役的粮）。
-    防御性解析：list→长度；dict→最长 list 值；不可读写「无」。"""
+    防御性解析：实际结构 {"_meta", "games": {<款名>: 档案}}；通用规则取最大
+    子集合计数（list/dict 皆可），不可读写「无」。"""
     f = CONFIG._root.parent / "projects" / "GAMES" / "repo" / "docs" / "game-quality.json"
     try:
         data = json.loads(f.read_text(encoding="utf-8"))
@@ -149,8 +150,11 @@ def _quality_profile() -> str:
     if isinstance(data, list):
         return f"{len(data)} 款"
     if isinstance(data, dict):
-        best = max((v for v in data.values() if isinstance(v, list)), key=len, default=[])
-        return f"{len(best)} 款（{len(data)} 键）" if best else f"{len(data)} 键"
+        best_k, best_n = "", 0
+        for k, v in data.items():
+            if isinstance(v, (list, dict)) and len(v) > best_n:
+                best_k, best_n = k, len(v)
+        return f"{best_n} 款（{best_k} 段）" if best_n else f"{len(data)} 键"
     return "（档案结构未知）"
 
 

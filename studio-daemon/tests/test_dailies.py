@@ -85,6 +85,19 @@ class Test首跑产物路径:
         for sec in ("daemon 健康", "影子分歧", "断路单", "队列积压"):
             assert sec in pmmd                                   # 巡检四件事齐
 
+    def test_质量档案扫描计数(self, tmp_config):
+        """game-quality.json 实际结构 {"_meta", "games": {款: 档案}}——计数取最大子集合。"""
+        f = CONFIG._root.parent / "projects" / "GAMES" / "repo" / "docs"
+        f.mkdir(parents=True, exist_ok=True)
+        (f / "game-quality.json").write_text(
+            json.dumps({"_meta": {"v": 1}, "games": {"a": {}, "b": {}, "c": {}}}),
+            encoding="utf-8")
+        assert D._quality_profile() == "3 款（games 段）"
+        (f / "game-quality.json").write_text(json.dumps([1, 2]), encoding="utf-8")
+        assert D._quality_profile() == "2 款"
+        (f / "game-quality.json").unlink()
+        assert "缺失" in D._quality_profile()
+
     def test_org_yaml三岗登记(self):
         """org.yaml agents 段三岗档案在册（岗位身份/定时/上级=宰相，STUDIO-109 注册要求）。
         直读仓内真实文件（org.ORG_PATH 是 import 期常量，随 tmp_config 漂移，不可用）。"""
