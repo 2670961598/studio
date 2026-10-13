@@ -25,6 +25,12 @@ projects:
         {level: 1, 部门: [情报部], 角色: 情报部主管, 上级: 宰相(ZCode), 定时: patrol(每小时05分)}
       worker池:
         {level: 1, 部门: [工程部], 角色: 施工执行, 上级: 宰相(ZCode), 身份: agent-dev}
+      GAMES专岗:                   # STUDIO-109：ZCode 定时岗归框架（games-daily 日巡汇报）
+        {level: 1, 部门: [质量部], 角色: GAMES 日巡汇报, 上级: 宰相(ZCode), 定时: games-daily(每日09:10)}
+      三消专岗:                   # STUDIO-109：同上（poly-daily 双仓/core 积压/审查呈报）
+        {level: 1, 部门: [质量部], 角色: 三消日巡汇报, 上级: 宰相(ZCode), 定时: poly-daily(每日09:20)}
+      巡检引擎:                   # STUDIO-109：宰相巡检四件事（pm-daily 08:30 健康巡视，零批示权）
+        {level: 1, 部门: [质量部], 角色: 宰相巡检代理（健康/影子分歧/断路/积压）, 上级: 宰相(ZCode), 定时: pm-daily(每日08:30)}
     approvals:                    # 分权引擎配置
       engine: shadow              # 影子期启动（制作人 09-29 定则：零分歧 3 天切 org；legacy 保留可回滚）
       派单人终验收: true           # 铁律（定死）
