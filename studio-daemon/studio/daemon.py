@@ -1,7 +1,7 @@
 """daemon — 入口：APScheduler 装配 + uvicorn 仪表盘
 用法:
   python -m studio.daemon run          # 常驻（launchd KeepAlive 拉起）
-  python -m studio.daemon tick pm|selfeval|report|steward  # 手动跑一岗（调试/冒烟）
+  python -m studio.daemon tick pm|selfeval|report|steward|gamesdaily|polydaily|pmdaily  # 手动跑一岗（调试/冒烟）
   python -m studio.daemon board        # 打印板面快照
 环境隔离（实验场）：
   STUDIO_ROOT=<dir>   换 kernel 状态根（锁定/证据/战役/日志全部跟着走）
@@ -93,6 +93,15 @@ def _sched():
                       id="drain-watch", replace_existing=True)   # 平时 5 分钟拍；drain 激活后内联快轮询（降噪：30s 拍曾 2880 条/天占 runs 九成）
         sched.add_job("studio.steward:steward_tick", CronTrigger.from_crontab("9,39 * * * *"),
                       id="steward", replace_existing=True)   # 框架管家（STUDIO-83）：半小时拍收割校验+@宰相终验提醒；错峰 9/39 避开 pm(0/4/7 分位)/patrol(5)/evolve(3,13..)
+        # 项目日巡三岗（STUDIO-109：ZCode 四定时岗归框架收官，制作人 2026-10-12 定则）。
+        # 错峰：pm-daily 08:30（巡检四件事，需求钦点）在 self-eval(08:50) 前扫完前 24h 窗口；
+        # games/poly 09:10/09:20 在 self-eval 后取当日消化、weekly(周一9:30)/monthly(1日9:40) 前。
+        sched.add_job("studio.dailies:pm_daily", CronTrigger.from_crontab("30 8 * * *"),
+                      id="pm-daily", replace_existing=True)
+        sched.add_job("studio.dailies:games_daily", CronTrigger.from_crontab("10 9 * * *"),
+                      id="games-daily", replace_existing=True)
+        sched.add_job("studio.dailies:poly_daily", CronTrigger.from_crontab("20 9 * * *"),
+                      id="poly-daily", replace_existing=True)
     from . import runtime
     runtime.SCHED = sched
     runtime.STARTED = time.time()
@@ -155,6 +164,12 @@ def main():
             from .steward import steward_tick
             import json
             print(json.dumps(steward_tick(), ensure_ascii=False, indent=2))
+        elif role in ("gamesdaily", "polydaily", "pmdaily"):
+            from .dailies import games_daily, poly_daily, pm_daily
+            import json
+            job = {"gamesdaily": games_daily, "polydaily": poly_daily,
+                   "pmdaily": pm_daily}[role]
+            print(json.dumps(job(), ensure_ascii=False, indent=2))
     elif cmd == "board":
         from .yt import YT
         from .config import CONFIG
