@@ -69,7 +69,7 @@ class Test打回自动复盘:
             encoding="utf-8")
         from studio import llm as _llm
         monkeypatch.setattr(_llm, "reviewed_ask",
-                            lambda prompt, timeout=400: "## 现象\n闸门复跑失败缺关键词段\n## 根因\n任务书未强调\n## 解法\n模板提醒\n## 预防\n注入复盘"
+                            lambda prompt, timeout=400, **kw: "## 现象\n闸门复跑失败缺关键词段\n## 根因\n任务书未强调\n## 解法\n模板提醒\n## 预防\n注入复盘"
 ## 根因
 ## 解法
 ## 预防
@@ -91,5 +91,5 @@ class Test打回自动复盘:
             {"ts": _t.strftime("%F %T"), "pid": "POLY", "issue": iid, "event": "QA_BACK",
              "actor": "a", "attempt": 1, "note": ""}, ensure_ascii=False) + "\n", encoding="utf-8")
         from studio import llm as _llm
-        monkeypatch.setattr(_llm, "reviewed_ask", lambda p, timeout=400: None)
+        monkeypatch.setattr(_llm, "reviewed_ask", lambda p, timeout=400, **kw: None)
         assert M._postmortem_scan(yt, M._events(7)) == []      # 不炸、不开单

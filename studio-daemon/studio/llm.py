@@ -137,13 +137,37 @@ def _llm_fail_log(note: str):
         pass
 
 
+def _acct_usage(acct: tuple, model: str, data: dict):
+    """ask() 成功调用的 usage 落账（STUDIO-107 单据级 token 成本）：
+    events.jsonl 记 LLM 事件——tokens=input+output（与 worker result_stats 同口径）、
+    cache 细分入 usage 字段、total_cost_usd/duration 原样入账。
+    记账失败静默：账不得反噬岛调用本身。"""
+    try:
+        from .metrics import append_event
+        pid, iid, actor = acct
+        u = data.get("usage") or {}
+        usage = {k: u[k] for k in ("input_tokens", "output_tokens",
+                "cache_creation_input_tokens", "cache_read_input_tokens")
+                if isinstance(u.get(k), int)}
+        toks = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+        append_event(pid, iid, "LLM", actor, 0, f"model={model}",
+                     tokens=toks or None, usage=usage or None,
+                     cost_usd=data.get("total_cost_usd"),
+                     duration_ms=data.get("duration_ms") or data.get("duration_api_ms"))
+    except Exception:
+        pass
+
+
 def ask(prompt: str, timeout_sec: int = 240, allow_web: bool = False,
-        model: str = FULL, cwd: str | None = None) -> str | None:
+        model: str = FULL, cwd: str | None = None,
+        acct: tuple[str, str, str] | None = None) -> str | None:
     """单次 claude 调用。prompt 经 stdin 直传（P1-7）；
     文本岛默认禁 Bash/WebFetch/WebSearch；model=FLASH 用小模型。
     cwd：岛的工作目录（巡逻岛=战役仓库根），None=继承调用方 cwd。
     POLY-14 #5 教训：不给 cwd 时岛在 daemon 目录里落根，把 studio-daemon
-    误判成战役仓库——凡有明确仓库的岛必须显式传。"""
+    误判成战役仓库——凡有明确仓库的岛必须显式传。
+    acct=(pid, iid, actor)（STUDIO-107）：给定则 usage 随返回落账 events.jsonl
+    （LLM 事件，归集到单）；None=不落账（调用替身兼容：缺省不进 kwargs）。"""
     dis = ["Bash", "WebSearch", "WebFetch"] if not allow_web else ["Bash", "WebSearch"]
     try:
         if cwd and not Path(cwd).exists():
@@ -160,15 +184,19 @@ def ask(prompt: str, timeout_sec: int = 240, allow_web: bool = False,
             _llm_fail_log(f"model={model} rc={p.returncode} stderr={p.stderr[:200]!r}")
             return None
         data = json.loads(p.stdout)
+        if acct:
+            _acct_usage(acct, model, data)
         return data.get("result") or None
     except Exception as e:
         _llm_fail_log(f"model={model} {type(e).__name__}: {e}")
         return None
 
 
-def review_output(prompt: str, output: str, timeout_sec: int = 60) -> dict | None:
+def review_output(prompt: str, output: str, timeout_sec: int = 60,
+                  acct: tuple[str, str, str] | None = None) -> dict | None:
     """Flash 审查岛：用 GLM-5.3-Flash 审查主 LLM 输出的语义正确性（STUDIO-12）。
     四查：与 prompt 要求一致 / 内容自洽（说做了X就真的做了X）/ 格式符合（JSON完整字段齐全）/ 明显幻觉。
+    acct（STUDIO-107）：审查调用的 usage 同样归集到单。
     返回 {"verdict": "pass|fail", "issues": [str], "corrected": str|None}；
     审查自身失败（超时/非JSON/verdict不可识别）返回 None——调用方放行原稿，宁可放过不可误杀。"""
     try:
@@ -181,7 +209,7 @@ def review_output(prompt: str, output: str, timeout_sec: int = 60) -> dict | Non
             f'"corrected":"修正后的完整输出，无把握就给空字符串"}}\n'
             "规则：合格必须 pass；只有发现确凿问题时才 fail，并尽量给 corrected"
             "（corrected 必须是完整可用的输出，不是片段）；issues 没有就空数组。",
-            timeout_sec, model=FLASH)
+            timeout_sec, model=FLASH, **({"acct": acct} if acct else {}))
     except Exception:
         return None
     if not res:
@@ -201,21 +229,24 @@ def review_output(prompt: str, output: str, timeout_sec: int = 60) -> dict | Non
 
 
 def reviewed_ask(prompt: str, timeout_sec: int = 240, allow_web: bool = False,
-                 model: str = FULL) -> str | None:
+                 model: str = FULL, acct: tuple[str, str, str] | None = None) -> str | None:
     """ask() 的 Flash 语义审查兜底版（纯函数：不写板面不写文件，STUDIO-12）。
     主 LLM 出稿（timeout_sec，默认240s）→ review_output 审查（Flash，60s）→
     pass 放行原稿 / fail+corrected 用修正稿 / fail 无 corrected 重试一次（重试稿同样过审，
     仍无修正则放行重试稿）/ 审查自身失败放行原稿——宁可放过不可误杀。
-    主 LLM 失败仍返回 None，调用方走确定性兜底（与 ask() 契约一致）。"""
+    主 LLM 失败仍返回 None，调用方走确定性兜底（与 ask() 契约一致）。
+    acct（STUDIO-107）：主稿/审查/重试全部调用同一 acct 落账（成本归集到单）。"""
     kw = {}                    # 只传非默认项，兼容 ask(prompt, timeout) 形状的调用替身
     if allow_web:
         kw["allow_web"] = True
     if model != FULL:
         kw["model"] = model
+    if acct:
+        kw["acct"] = acct
     out = ask(prompt, timeout_sec, **kw)
     if out is None:
         return None
-    review = review_output(prompt, out)
+    review = review_output(prompt, out, acct=acct)
     if review is None or review.get("verdict") == "pass":
         return out
     if review.get("corrected"):
@@ -247,8 +278,16 @@ def _one_line(res: str | None) -> str | None:
     return best
 
 
+def _ticket_acct(ticket: dict, actor: str) -> tuple[str, str, str] | None:
+    """ticket dict → 落账三元组（STUDIO-107）：yt.get(iid) 产物天然带 id，
+    派发/QA 链调用方零改动；无 id（老调用形状/替身）→ None 不落账。"""
+    iid = ticket.get("id") or ""
+    return (iid.split("-")[0], iid, actor) if "-" in iid else None
+
+
 def dod_gen(ticket: dict) -> str | None:
-    """为无验收命令的新单生成冻结验收命令（一行 bash，退出码即判据）——过消毒白名单。"""
+    """为无验收命令的新单生成冻结验收命令（一行 bash，退出码即判据）——过消毒白名单。
+    岛调用 usage 记到该单（STUDIO-107，actor=agent-8 PM 岛）。"""
     typ = ticket["fields"].get("Type") or "需求"
     res = reviewed_ask(
         f"为下述 YouTrack 单据生成**一条冻结验收命令**（bash 单行，可机器执行、退出码0=过，"
@@ -257,7 +296,7 @@ def dod_gen(ticket: dict) -> str | None:
         f"严禁恒真断言充数（test -e /dev/null 之类：空证据=无证据）。"
         f"命令只允许 test/grep/wc/cat/ls/diff/git 子命令，禁止 ; && || $() 反引号 重定向。"
         f"只输出命令本身一行，不要解释。\nType={typ}\n标题: {ticket['summary']}\n"
-        f"描述: {ticket['description']}")
+        f"描述: {ticket['description']}", acct=_ticket_acct(ticket, "agent-8"))
     out = _one_line(res)
     if out and out.strip().upper() == "SKIP":
         return None                            # 无可断言产物 → DOD-MISSING 人工补，不造空证据
@@ -275,7 +314,8 @@ def extra_test_gen(ticket: dict, frozen_gate: str, cwd: str = "") -> str | None:
         f"QA 复测加测命令生成。单据: {ticket['summary']}\n冻结验收命令(工人已跑): {frozen_gate}\n"
         f"生成**一条不同角度**的 bash 验证命令（检查冻结命令没覆盖的点），"
         f"命令只允许 test/grep/wc/cat/ls/diff，禁止 ; && || $() 反引号 重定向。"
-        f"只输出命令本身一行。{where}", 240, model=FLASH)
+        f"只输出命令本身一行。{where}", 240, model=FLASH,
+        acct=_ticket_acct(ticket, "agent-4"))
     return _sanitize_cmd(_one_line(res))
 
 
@@ -297,8 +337,10 @@ def epic_split(ticket: dict) -> list[dict] | None:
         return None
 
 
-def parse_directive(comment_text: str, context: str = "") -> dict | None:
+def parse_directive(comment_text: str, context: str = "",
+                    acct: tuple[str, str, str] | None = None) -> dict | None:
     """批示理解岛：让 LLM 读制作人评论，返回结构化指令 JSON。
+    acct（STUDIO-107）：批示解析成本归集到单（调用方 orchestrator 传入）。
     返回 {"directive": "approve-plan|approve-merge|approve-design|approve|reject|kill|promote|track|none",
           "level": "L0|L1|L2|L3|A|B|C", "confidence": 0.95}
     失败返回 None（调用方回退到字符串匹配兜底）。"""
@@ -310,7 +352,8 @@ def parse_directive(comment_text: str, context: str = "") -> dict | None:
         '{{"directive":"approve-plan|approve-merge|approve-design|approve|reject|kill|promote|track|none",'
         '"level":"L0|L1|L2|L3|none","confidence":0.95}}\n'
         "规则：批准/同意/通过→approve 或 approve-plan/approve-merge/approve-design（按上下文判断是哪一批）；"
-        "否决/取消/杀→reject/kill；转正→promote；改级别→track+level；无法判断→none。", 120, model=FLASH)
+        "否决/取消/杀→reject/kill；转正→promote；改级别→track+level；无法判断→none。",
+        120, model=FLASH, acct=acct)
     if not res:
         return None
     try:

@@ -246,7 +246,7 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);
           <h3>时间线 {{tl.length}} 事件 <button class="btn" style="float:right" @click="tl=null">关闭</button></h3>
           <table style="font-size:12px"><tr v-for="(e,i) in tl" :key="i" style="border-bottom:1px solid #333">
             <td style="opacity:.6;padding:2px 8px">{{e.ts}}</td><td style="padding:2px 8px">{{e.kind}}</td>
-            <td style="opacity:.8;padding:2px 8px">{{e.detail||''}} {{e.cost_usd?('$'+e.cost_usd.toFixed(2)):''}} {{e.duration_ms?((e.duration_ms/1000/60).toFixed(1)+'min'):''}}</td></tr></table>
+            <td style="opacity:.8;padding:2px 8px">{{e.detail||''}} {{e.tokens?((e.tokens/1000).toFixed(1)+'k tok'):''}} {{e.cost_usd?('$'+e.cost_usd.toFixed(2)):''}} {{e.duration_ms?((e.duration_ms/1000/60).toFixed(1)+'min'):''}}</td></tr></table>
         </div>
       </div>
       <div v-if="resume" style="position:fixed;inset:0;background:#0009;z-index:60;display:flex;align-items:center;justify-content:center">

@@ -126,6 +126,31 @@ def _patrol_notes(evs: list[dict]) -> list[str]:
     return out
 
 
+def _cost_notes(evs: list[dict]) -> list[str]:
+    """当日 token 成本归集（STUDIO-107）：LLM 岛与 worker 的成本事件按单累加；
+    单号 = - 的公共岗成本（管家/自评等按 tick 记账）单列；末行合计。"""
+    by: dict[str, dict] = {}
+    for e in evs:
+        t, c = e.get("tokens"), e.get("cost_usd")
+        if t is None and c is None:
+            continue
+        s = by.setdefault(e.get("issue") or "-", {"tokens": 0, "cost": 0.0, "has": False})
+        if t is not None:
+            s["tokens"] += int(t)
+        if c is not None:
+            s["cost"] += float(c)
+            s["has"] = True
+    out = []
+    for iid, s in sorted(by.items(), key=lambda kv: -kv[1]["tokens"]):
+        cost = f" cost_usd={round(s['cost'], 2)}" if s["has"] else ""
+        out.append(f"- {iid}：tokens={s['tokens']}{cost}")
+    if out:
+        tot = sum(s["tokens"] for s in by.values())
+        tc = round(sum(s["cost"] for s in by.values() if s["has"]), 2)
+        out.append(f"- 合计：tokens={tot} cost_usd={tc}")
+    return out
+
+
 def _proposal_queue() -> list[str]:
     """治理队列快照（草稿/待批 提案）——报告的核心读者是制作人，待决事项置顶。"""
     try:
@@ -189,6 +214,7 @@ def daily_report() -> dict:
     m = _metrics(_slice(evs, s, e))
     lines = [f"# 工作室运营日报 {day}", "",
              "## 指标（当日）", _fmt_metrics(m), "",
+             "## Token 成本（按单归集，STUDIO-107）", *(_cost_notes(_slice(evs, s, e)) or ["- 无"]), "",
              "## 岗哨运行", *_runs_summary(_runs_of(day)), "",
              "## 异常（daemon ERROR 归并）", *(_err_digest(day) or ["- 无"]), "",
              "## 自评发现", *(_selfeval_findings(day) or ["- 无"]), "",

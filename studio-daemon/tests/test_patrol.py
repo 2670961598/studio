@@ -68,7 +68,7 @@ def test_巡逻带仓库路径与cwd(fake_yt, tmp_config, monkeypatch):
     _camp_files(iid)                       # spec 无 repo → 回退 game 泳道路径
     calls = {}
 
-    def fake_ask(prompt, timeout_sec=240, allow_web=False, model=llm.FULL, cwd=None):
+    def fake_ask(prompt, timeout_sec=240, allow_web=False, model=llm.FULL, cwd=None, acct=None):
         calls["p"], calls["cwd"] = prompt, cwd
         return '{"progress":"ok","findings":[],"children":[]}'
 
@@ -88,7 +88,7 @@ def test_巡逻spec_repo优先于泳道(fake_yt, tmp_config, monkeypatch):
     _camp_files(iid, repo="/tmp/camp")
     calls = {}
 
-    def fake_ask(prompt, timeout_sec=240, allow_web=False, model=llm.FULL, cwd=None):
+    def fake_ask(prompt, timeout_sec=240, allow_web=False, model=llm.FULL, cwd=None, acct=None):
         calls["cwd"] = cwd
         return '{"progress":"ok","findings":[],"children":[]}'
 
@@ -105,7 +105,7 @@ def test_巡逻无仓库时cwd为None且prompt声明不可猜(fake_yt, tmp_confi
     _camp_files(iid)
     calls = {}
 
-    def fake_ask(prompt, timeout_sec=240, allow_web=False, model=llm.FULL, cwd=None):
+    def fake_ask(prompt, timeout_sec=240, allow_web=False, model=llm.FULL, cwd=None, acct=None):
         calls["p"], calls["cwd"] = prompt, cwd
         return '{"progress":"ok","findings":[],"children":[]}'
 
@@ -403,7 +403,7 @@ def test_巡逻岛prompt明令禁读凭证(fake_yt, tmp_config, monkeypatch):
     _camp_files(iid)
     calls = {}
 
-    def fake_ask(prompt, timeout_sec=240, allow_web=False, model=llm.FULL, cwd=None):
+    def fake_ask(prompt, timeout_sec=240, allow_web=False, model=llm.FULL, cwd=None, acct=None):
         calls["p"] = prompt
         return '{"progress":"ok","findings":[],"children":[]}'
 
@@ -426,7 +426,7 @@ def test_源预取成功注入岛提示词(fake_yt, tmp_config, monkeypatch):
         get=lambda u, **k: _FakeResp("<html><body>hello patrol</body></html>")))
     calls = {}
 
-    def fake_ask(prompt, timeout_sec=240, allow_web=False, model=llm.FULL, cwd=None):
+    def fake_ask(prompt, timeout_sec=240, allow_web=False, model=llm.FULL, cwd=None, acct=None):
         calls.update(p=prompt, t=timeout_sec, w=allow_web)
         return '{"progress":"ok","findings":[],"children":[]}'
 

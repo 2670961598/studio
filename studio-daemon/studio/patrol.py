@@ -219,7 +219,8 @@ def _patrol_one(yt, row) -> str:
         "gate_cmd 纪律：只允许 test/grep/wc/cat/ls/diff/dotnet/python 与 git 只读子命令的 && 链"
         "（≤2段；禁管道、重定向、$()、反引号、分号），否则会被消毒器拒掉——"
         "基准阈值类断言写成 grep -c 计数或 dotnet test --filter 形式。",
-        timeout_sec=240)
+        timeout_sec=240,
+        acct=(iid.split("-")[0], iid, "patrol"))   # STUDIO-107：巡逻岛成本记到战役母亲单
     if res is None:
         # 岛整体失败（600s 超时/非零退出）≠ 解析失败——POLY-19/20 教训：
         # None 折叠成空串后 rindex("}") 必抛 ValueError，被误标"解析失败"，
@@ -298,9 +299,10 @@ def _patrol_one(yt, row) -> str:
         kids.append(kid)
         note.append(f"孵化子单：{kid}")
     ytgw.patrol_comment(iid, wkey, "\n".join(note))
-    from .metrics import append_event
+    from .metrics import append_event, settle_cost
     append_event(iid.split("-")[0], iid, "PATROL", "patrol", 0,
                  f"{len(kids)} 子单；{data.get('progress', '')[:60]}")
+    settle_cost(yt, iid)            # STUDIO-107：本轮巡逻岛 token 累计进战役单件成本
     st = _state(iid); st.update(last=time.time(), count=st["count"] + 1)
     _save_state(iid, st)
     return f"PATROL {iid} +{len(kids)}kids"
