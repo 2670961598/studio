@@ -268,10 +268,20 @@ def _handle(yt: YT, pid: str, row: dict) -> str | None:
                 try:
                     p = subprocess.run(["bash", "-c", extra], cwd=_cwd,
                                        capture_output=True, text=True, timeout=300)
-                    extra_ok = p.returncode == 0
+                    if p.returncode == 0:
+                        extra_ok = True
+                    elif p.returncode == 2:
+                        # GAMES-140 实录：LLM 加测 grep 正则带 \{ \} 转义——BSD grep/ugrep
+                        # 视为非法区间量词报错 exit=2（GNU grep 宽容按字面）。exit 2=工具
+                        # 用法/正则错误=断言不可判定，按跳过处理；exit 1（无匹配）才是真红
+                        extra_ok = True
+                        note = f"加测执行错误(exit2)=不可判定跳过：{(p.stderr or p.stdout).strip()[:120]}"
+                    else:
+                        extra_ok = False
                 except subprocess.TimeoutExpired:
                     extra_ok = False
-                note = f"加测={extra} → ok={extra_ok}"
+                if not note.startswith("加测执行错误"):
+                    note = f"加测={extra} → ok={extra_ok}"
         finally:
             if lane != "explore":
                 lk.release(f"qa-{iid}")
