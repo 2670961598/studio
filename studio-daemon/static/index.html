@@ -3,13 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>虚拟工作室 · 控制台</title>
+<title>虚拟工作室 · 制作人门户</title>
 <script src="/vendor/vue.global.prod.js"></script>
 <style>
 :root{
   --bg:#0d1117;--panel:#161b27;--panel2:#1c2333;--line:#252d40;--line2:#303a55;
   --tx:#d7e0f0;--tx2:#8a97b5;--tx3:#5a6684;
   --acc:#6ea8fe;--acc2:#8b5cf6;--ok:#3fb950;--warn:#d29922;--err:#f85149;--idle:#58a6ff;
+  /* 图表系列色（dataviz 六检定：暗面 #161b27 上 ΔE/CVD/对比度全过；
+     红↔绿 deutan 落 6–8 地板带，以标记形状+虚线+图例次级编码补足） */
+  --c-dispatch:#4493f8;--c-close:#2ea043;--c-fail:#f85149;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--tx);
@@ -20,11 +23,13 @@ h1{font-size:19px;margin:0;letter-spacing:.5px}
 h1 small{color:var(--tx2);font-weight:400;font-size:12px;margin-left:10px}
 header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
 .clock{color:var(--tx2);font-size:13px}.clock b{color:var(--tx)}
-nav{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:20px}
-nav button{background:none;border:none;color:var(--tx2);padding:9px 16px;font-size:14px;
+nav{display:flex;gap:2px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--line);margin-bottom:20px}
+nav button{background:none;border:none;color:var(--tx2);padding:9px 14px;font-size:14px;
   cursor:pointer;border-bottom:2px solid transparent;transition:.15s}
 nav button:hover{color:var(--tx)}
 nav button.on{color:var(--acc);border-bottom-color:var(--acc)}
+nav .sep{width:1px;align-self:stretch;margin:8px 8px;background:var(--line)}
+nav .grp{color:var(--tx3);font-size:11px;margin-right:2px;user-select:none}
 .grid{display:grid;gap:14px}
 .cards{grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:18px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
@@ -34,6 +39,7 @@ nav button.on{color:var(--acc);border-bottom-color:var(--acc)}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;
   padding:16px 18px;margin-bottom:16px}
 .panel h3{margin:0 0 12px;font-size:14px;color:var(--acc);font-weight:600;letter-spacing:.3px}
+.panel h4{margin:0 0 8px;font-size:12px;color:var(--tx2);font-weight:500}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th{color:var(--tx2);text-align:left;font-weight:500;padding:6px 10px;border-bottom:1px solid var(--line);
   white-space:nowrap}
@@ -70,25 +76,195 @@ a{color:var(--acc);text-decoration:none}a:hover{text-decoration:underline}
 .m-err{background:#3a1d1f}
 details summary{cursor:pointer;color:var(--acc);font-size:12px;user-select:none}
 .fade-enter-active{transition:.2s}.fade-enter-from{opacity:0}
-.kpi-bad{color:var(--err)}.kpi-warn{color:var(--warn)}
+.kpi-bad{color:var(--err)}.kpi-warn{color:var(--warn)}.kpi-ok{color:var(--ok)}
 select{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);
   border-radius:6px;padding:4px 8px;font-size:12px}
 .empty{color:var(--tx2);text-align:center;padding:30px 0;font-size:13px}
+.scroll-x{overflow-x:auto;-webkit-overflow-scrolling:touch}
+/* ---------------- 制作人门户（STUDIO-112） ---------------- */
+.pcards{grid-template-columns:repeat(auto-fit,minmax(250px,1fr));margin-bottom:16px}
+.pcard{cursor:pointer;transition:.15s;display:flex;flex-direction:column;gap:2px}
+.pcard:hover{border-color:var(--acc);transform:translateY(-1px)}
+.pcard .k b{font-size:15px;letter-spacing:1px}
+.pcard .spark{width:100%;height:30px;margin-top:8px;display:block}
+.two{grid-template-columns:1fr 1fr}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--tx2);margin-bottom:8px}
+.legend .lk{display:inline-flex;align-items:center;gap:6px}
+.legend i{display:inline-block;width:14px;height:3px;border-radius:2px;background:var(--c-dispatch)}
+.legend i.sq{width:10px;height:10px;border-radius:2px;background:var(--c-close)}
+.legend i.tri{width:11px;height:9px;border-radius:0;background:var(--c-fail);
+  clip-path:polygon(50% 0,100% 100%,0 100%)}
+.chart-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.chart-in{position:relative;min-width:520px}
+.chart-in svg{width:100%;display:block}
+.tt{position:absolute;top:10px;pointer-events:none;background:#10141f;border:1px solid var(--line2);
+  border-radius:8px;padding:7px 10px;font-size:12px;z-index:5;min-width:132px;box-shadow:0 4px 14px #0009}
+.tt.right{transform:translateX(calc(-100% - 14px))}
+.tt .d{color:var(--tx3);margin-bottom:3px;font-size:11px}
+.tt .row{display:flex;align-items:center;gap:6px;color:var(--tx);line-height:1.8}
+.tt .row b{margin-left:auto;font-weight:600;font-variant-numeric:tabular-nums}
+.tt .row i{width:8px;height:8px;border-radius:2px;display:inline-block;flex:none}
+.rpts{display:flex;flex-wrap:wrap;gap:8px}
+.btn.rpt{text-align:left}
+.btn.rpt b{font-weight:600}
+.rpt-md{white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:13px;
+  color:var(--tx);margin:0;line-height:1.7}
+.mini{font-size:12px;color:var(--tx2)}
+@media(max-width:860px){
+  .two{grid-template-columns:1fr}
+  .chart-in{min-width:460px}
+}
+@media(max-width:720px){
+  .wrap{padding:12px 12px 48px}
+  header{flex-direction:column;align-items:flex-start;gap:6px}
+  h1 small{display:block;margin:4px 0 0}
+  nav button{padding:8px 10px;font-size:13px}
+  .card .v{font-size:20px}
+  .panel{padding:13px 13px}
+  .cards{grid-template-columns:repeat(2,1fr)}
+  td,th{padding:6px 7px}
+}
 </style>
 </head>
 <body>
 <div id="app" class="wrap">
   <header>
-    <h1>虚拟工作室 控制台<small>studio-daemon · 运维驾驶舱（板面以 <a :href="ov.youtrack" target="_blank">YouTrack</a> 为准）</small></h1>
-    <div class="clock mono"><b>{{ov.now||'…'}}</b></div>
+    <h1>虚拟工作室<small>制作人门户 · 运维驾驶舱（板面以 <a :href="ov.youtrack||pov.youtrack" target="_blank">YouTrack</a> 为准）</small></h1>
+    <div class="clock mono"><b>{{now||ov.now||'…'}}</b></div>
   </header>
 
   <nav>
-    <button v-for="t in tabs" :key="t.k" :class="{on:tab===t.k}" @click="tab=t.k">{{t.n}}</button>
-    <button class="btn warn" style="float:right" @click="gracefulRestart">优雅重载</button>
+    <span class="grp">门户</span>
+    <button v-for="t in ptabs" :key="t.k" :class="{on:tab===t.k}" @click="tab=t.k">{{t.n}}</button>
+    <span class="sep"></span>
+    <span class="grp">运维</span>
+    <button v-for="t in otabs" :key="t.k" :class="{on:tab===t.k}" @click="tab=t.k">{{t.n}}</button>
+    <button class="btn warn" style="float:right;margin-left:auto" @click="gracefulRestart">优雅重载</button>
   </nav>
 
-  <!-- 总览 -->
+  <!-- ══════════ 制作人门户 · 概览（宰相巡查视角） ══════════ -->
+  <div v-if="tab==='pov'">
+    <div v-if="pov.err" class="empty">⚠ {{pov.err}}</div>
+    <div class="grid pcards">
+      <div class="card pcard" v-for="p in pov.projects" :key="p.pid" @click="tab='p'+p.pid">
+        <div class="k"><b>{{p.pid}}</b>
+          <span style="float:right">在途 <b style="color:var(--tx)">{{p.in_flight}}</b> · 队列 <b style="color:var(--tx)">{{p.queue}}</b></span></div>
+        <div class="v">{{p.today_deliver}}<span style="font-size:13px;color:var(--tx2);font-weight:400"> 今日交付</span></div>
+        <div class="s">7日成本 {{fmtUsd(p.cost7.cost_usd)}} · {{fmtTok(p.cost7.tokens)}} tok</div>
+        <svg class="spark" viewBox="0 0 120 30" preserveAspectRatio="none" aria-hidden="true">
+          <path :d="sparkPath(p.spark)" fill="none" stroke="#5a6684" stroke-width="2"
+                stroke-linejoin="round" stroke-linecap="round"/>
+          <circle :cx="sparkEnd(p.spark).x" :cy="sparkEnd(p.spark).y" r="3"
+                  fill="#6ea8fe" stroke="#161b27" stroke-width="2"/>
+        </svg>
+        <div class="s" style="color:var(--tx3)">近 7 日成本走势 · 点击进项目页 →</div>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>收件箱 · 待制作人处理（{{pov.inbox.length}}）</h3>
+      <div class="scroll-x" v-if="pov.inbox.length">
+        <table>
+          <tr><th>项目</th><th>单号</th><th>状态</th><th>Type</th><th>标题</th></tr>
+          <tr v-for="x in pov.inbox" :key="x.id">
+            <td><span class="badge b-mut">{{x.pid}}</span></td>
+            <td class="mono"><a :href="x.yt" target="_blank">{{x.id}}</a></td>
+            <td><span class="badge b-warn">{{x.state}}</span></td>
+            <td>{{x.type}}</td><td>{{x.summary}}</td></tr>
+        </table>
+      </div>
+      <div v-else class="empty">收件箱清空 —— 无待制作人处理事项</div>
+    </div>
+  </div>
+
+  <!-- ══════════ 制作人门户 · 项目页 ══════════ -->
+  <div v-if="curPid">
+    <div v-if="!d" class="empty">加载 {{curPid}} 数据…</div>
+    <template v-if="d">
+    <div v-if="d.err" class="empty">⚠ {{d.err}}</div>
+    <div v-if="d.board_err" class="mini" style="margin-bottom:10px">⚠ 板面不可达：{{d.board_err}}（队列/热点已降级，其余面板照常）</div>
+
+    <div class="grid cards">
+      <div class="card"><div class="k">在途工人</div><div class="v" :class="{'kpi-ok':d.in_flight>0}">{{d.in_flight}}</div><div class="s">RUNNING</div></div>
+      <div class="card"><div class="k">队列单</div><div class="v">{{d.queue}}</div><div class="s">{{ Object.entries(d.counts||{}).map(([k,v])=>k+' '+v).join(' · ')||'板面无活动单' }}</div></div>
+      <div class="card"><div class="k">今日派发</div><div class="v">{{d.today.dispatch}}</div><div class="s">DISPATCH</div></div>
+      <div class="card"><div class="k">今日交付</div><div class="v">{{d.today.deliver}}</div><div class="s">MERGE + CLOSE</div></div>
+    </div>
+
+    <div class="panel">
+      <h3>进度趋势（近 14 日）</h3>
+      <line-chart :days="d.series" :series="TREND" :h="185"></line-chart>
+    </div>
+
+    <div class="grid two">
+      <div class="panel">
+        <h3>板面热点 · 活跃单（{{d.board.length}}）</h3>
+        <div class="scroll-x" v-if="d.board.length">
+          <table>
+            <tr><th>单号</th><th>状态</th><th>泳道</th><th>标题</th></tr>
+            <tr v-for="b in d.board" :key="b.id">
+              <td class="mono"><a :href="b.yt" target="_blank">{{b.id}}</a></td>
+              <td><span class="badge b-mut">{{b.state}}</span></td>
+              <td>{{b.lane}}</td><td class="mini">{{b.summary}}</td></tr>
+          </table>
+        </div>
+        <div v-else class="empty">板面无活动单</div>
+      </div>
+      <div class="panel">
+        <h3>最近交付（今日）</h3>
+        <table v-if="d.today.delivered.length">
+          <tr v-for="x in d.today.delivered" :key="x.ts+x.issue">
+            <td class="mono mini" style="white-space:nowrap">{{x.ts?.slice(11)}}</td>
+            <td><span class="badge" :class="x.event==='MERGE'?'b-ok':'b-idle'">{{x.event}}</span></td>
+            <td class="mono"><a v-if="x.issue" :href="ytIssue(x.issue)" target="_blank">{{x.issue}}</a></td>
+            <td class="mini" style="color:var(--tx2)">{{x.note}}</td></tr>
+        </table>
+        <div v-else class="empty">今日暂无交付</div>
+        <h3 style="margin-top:16px">项目事件流（近 15）</h3>
+        <div style="max-height:220px;overflow-y:auto">
+          <table><tr v-for="(e,i) in d.events" :key="i">
+            <td class="mono mini" style="color:var(--tx3);white-space:nowrap">{{e.ts?.slice(5,16)}}</td>
+            <td class="mono"><a v-if="e.issue&&e.issue!=='-'" :href="ytIssue(e.issue)" target="_blank">{{e.issue}}</a></td>
+            <td class="mono mini">{{e.event}}</td><td class="mini" style="color:var(--tx2)">{{e.note}}</td></tr></table>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>成本（STUDIO-107 单据级记账聚合）</h3>
+      <div class="chips" style="margin-bottom:14px">
+        <span class="chip">7日 <b>{{fmtTok(d.cost.d7.tokens)}}</b> tok · <b>{{fmtUsd(d.cost.d7.cost_usd)}}</b></span>
+        <span class="chip">30日 <b>{{fmtTok(d.cost.d30.tokens)}}</b> tok · <b>{{fmtUsd(d.cost.d30.cost_usd)}}</b></span>
+        <span class="chip">30日按单 TOP{{d.cost.top.length}}</span>
+      </div>
+      <div class="grid two">
+        <div><h4>日成本 USD</h4>
+          <bar-chart :days="d.series" field="cost_usd" :h="150" :fmt="v=>'$'+(+v).toFixed(2)"></bar-chart></div>
+        <div><h4>日 tokens</h4>
+          <bar-chart :days="d.series" field="tokens" :h="150" :fmt="fmtTok"></bar-chart></div>
+      </div>
+      <div class="scroll-x" style="margin-top:14px" v-if="d.cost.top.length">
+        <table>
+          <tr><th>单号</th><th>tokens</th><th>cost_usd</th></tr>
+          <tr v-for="t in d.cost.top" :key="t.issue">
+            <td class="mono"><a v-if="t.issue!=='-'" :href="ytIssue(t.issue)" target="_blank">{{t.issue}}</a><span v-else class="mini">（公共岗）</span></td>
+            <td class="mono">{{fmtTok(t.tokens)}}</td>
+            <td class="mono">{{t.cost_usd!=null?('$'+t.cost_usd.toFixed(3)):'—'}}</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>报告（本地留底 · 点击内嵌阅读）</h3>
+      <div class="rpts" v-if="d.reports.length">
+        <button class="btn rpt" v-for="r in d.reports" :key="r.name" @click="openRpt(r.name)">
+          <b>{{kindName(r.kind)}}</b> {{r.day}} <span style="color:var(--tx3)">{{r.ts}}</span></button>
+      </div>
+      <div v-else class="empty">尚无报告产出（日报 21:30 / 周报周一 / 月报 1 日 / 专岗日跑）</div>
+    </div>
+    </template>
+  </div>
+
+  <!-- ══════════ 运维 · 总览 ══════════ -->
   <div v-if="tab==='ov'">
     <div class="grid cards">
       <div class="card"><div class="k">7日派工</div><div class="v">{{ov.metrics?.dispatch??'—'}}</div><div class="s">DISPATCH</div></div>
@@ -100,16 +276,18 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);
 
     <div class="panel">
       <h3>活动单（只读快照 · 点击进 YouTrack）</h3>
-      <table v-if="ov.board?.length">
+      <div class="scroll-x" v-if="ov.board?.length">
+      <table>
         <tr><th>单号</th><th>状态</th><th>轨道</th><th>泳道</th><th>Type</th><th>标题</th></tr>
         <tr v-for="b in ov.board"><td class="mono"><a :href="b.yt" target="_blank">{{b.id}}</a></td>
           <td><span class="badge b-mut">{{b.state}}</span></td>
           <td>{{b.track}}</td><td>{{b.lane}}</td><td>{{b.type}}</td><td>{{b.summary}}</td></tr>
       </table>
+      </div>
       <div v-else class="empty">板面无活动单 —— 全部关闭或等待中</div>
     </div>
 
-    <div class="grid" style="grid-template-columns:1fr 1fr">
+    <div class="grid two">
       <div class="panel"><h3>锁</h3>
         <div class="chips"><span v-for="(o,k) in ov.locks" :key="k" class="chip mono">{{k}} → <b>{{o}}</b></span>
         <span v-if="!Object.keys(ov.locks||{}).length" class="empty">全部空闲</span></div>
@@ -128,7 +306,7 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);
   <!-- 定时任务 -->
   <div v-if="tab==='jobs'">
     <div class="panel" v-for="j in jobs" :key="j.id">
-      <h3 style="display:flex;justify-content:space-between;align-items:center">
+      <h3 style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
         <span>{{jName(j.id)}} <span class="mono" style="color:var(--tx2);font-size:12px">{{j.trigger}}</span></span>
         <span>
           <button class="btn" @click="ctl(j.id,'trigger')">立即执行</button>
@@ -155,7 +333,8 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);
       <h3>运行历史 <select v-model="runFilter" style="float:right">
         <option value="">全部任务</option>
         <option v-for="j in jobs" :value="j.id">{{jName(j.id)}}</option></select></h3>
-      <table v-if="runs.length">
+      <div class="scroll-x" v-if="runs.length">
+      <table>
         <tr><th>时间</th><th>任务</th><th>结果</th><th>摘要</th></tr>
         <tr v-for="(r,i) in runs" :key="i">
           <td class="mono" style="white-space:nowrap">{{r.ts}}</td>
@@ -163,6 +342,7 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);
           <td><span class="badge" :class="outCls(r.outcome)">{{r.outcome}}</span></td>
           <td style="color:var(--tx2)">{{r.summary}}</td></tr>
       </table>
+      </div>
       <div v-else class="empty">暂无运行记录</div>
     </div>
   </div>
@@ -171,7 +351,8 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);
   <div v-if="tab==='wk'">
     <div class="panel">
       <h3>Claude 工人（执行层 · 对话记录已归档到本工程）</h3>
-      <table v-if="workers.length">
+      <div class="scroll-x" v-if="workers.length">
+      <table>
         <tr><th>单号</th><th>状态</th><th>开工</th><th>分支</th><th>成本$</th><th>轮次</th><th></th></tr>
         <tr v-for="w in workers">
           <td class="mono"><a :href="ytIssue(w.issue)" target="_blank">{{w.issue}}</a></td>
@@ -185,6 +366,7 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);
             <button class="btn" @click="openTl(w.issue)">时间线</button></td>
         </tr>
       </table>
+      </div>
       <div v-else class="empty">尚无工人记录</div>
     </div>
   </div>
@@ -219,7 +401,8 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);
     </div>
     <div class="panel">
       <h3>单子类型（唯一事实源 kernel/schema/ticket-types.yaml · PM 经 evolve-schema 提案、制作人 approve 后生效）</h3>
-      <table v-if="sc.types">
+      <div class="scroll-x" v-if="sc.types">
+      <table>
         <tr><th>类型</th><th>定位</th><th>目的</th><th>流转</th><th>执行</th></tr>
         <tr v-for="(t,k) in sc.types" :key="k">
           <td class="mono"><b>{{k}}</b><div v-if="sc.type_edges[k]" style="color:var(--acc2);font-size:11px">专用流</div></td>
@@ -227,6 +410,7 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);
           <td class="mono" style="font-size:12px">{{t['流转']}}<span v-if="sc.type_edges[k]"><br>{{sc.type_edges[k].map(e=>e[0]+'→'+e[1]).join('，')}}</span></td>
           <td>{{t['执行']||'—'}}</td></tr>
       </table>
+      </div>
       <div v-else class="empty">加载中…</div>
     </div>
     <div class="panel" v-for="(txt,role) in sc.agents_kb" :key="role">
@@ -234,6 +418,17 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);
       <pre style="white-space:pre-wrap;font-size:12px;color:var(--tx2);margin:0;font-family:inherit">{{txt}}</pre>
     </div>
   </div>
+
+  <!-- 报告阅读弹窗（门户） -->
+  <transition name="fade">
+  <div class="modal-bg" v-if="rpt" @click.self="rpt=null">
+    <div class="modal">
+      <header><h1 style="font-size:16px">{{kindName(rpt.kind)}} · {{rpt.name}}
+        <button class="btn" style="float:right" @click="rpt=null">关闭</button></h1></header>
+      <div class="chat"><pre class="rpt-md">{{rpt.content}}</pre></div>
+    </div>
+  </div>
+  </transition>
 
   <!-- 对话记录弹窗 -->
   <transition name="fade">
@@ -274,14 +469,180 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line2);
   </transition>
 </div>
 
+<!-- ══════════ 图表组件：模板放 JS 字符串（in-DOM 模板会把 :viewBox 小写成 :viewbox，
+              SVG viewBox 大小写敏感，字符串模板由 Vue 编译器处理、大小写可控） ══════════ -->
+
 <script>
-const {createApp,ref,reactive,onMounted} = Vue
-createApp({
+const {createApp,ref,reactive,computed,onMounted,watch} = Vue
+
+/* ---- 图表公共：整洁刻度（1/2/5×10^k）与紧凑数字 ---- */
+function niceCeil(m){const p=Math.pow(10,Math.floor(Math.log10(m)));const u=m/p
+  return (u<=1?1:u<=2?2:u<=5?5:10)*p}
+function fmtTok(t){t=+t||0;return t>=1e6?(t/1e6).toFixed(1)+'M':t>=1e3?(t/1e3).toFixed(1)+'k':''+t}
+function fmtUsd(v){return v==null?'—':'$'+(+v).toFixed(2)}
+
+/* ---- 折线图（2px 线 / ≥8px 标记带表面环 / 悬停十字线+tooltip） ---- */
+const LineChart={
+  props:{days:Array,series:Array,h:{type:Number,default:185}},
+  setup(props){
+    const W=640,H=props.h,L=38,R=40
+    const tt=ref(null)
+    const maxV=computed(()=>niceCeil(Math.max(1,...props.days.flatMap(d=>props.series.map(s=>+(d[s.k]||0))))))
+    const n=()=>props.days.length
+    const X=i=>L+(W-L-8)*(n()<2?0:i/(n()-1))
+    const Y=v=>8+(H-30)*(1-v/maxV.value)
+    const pathOf=s=>props.days.map((d,i)=>(i?'L':'M')+X(i).toFixed(1)+','+Y(d[s.k]||0).toFixed(1)).join(' ')
+    const pts=s=>props.days.map((d,i)=>({x:X(i),y:Y(d[s.k]||0)}))
+    const tri=(x,y)=>'M'+x+','+(y-4.5)+' L'+(x+4.2)+','+(y+3.4)+' L'+(x-4.2)+','+(y+3.4)+' Z'
+    const grid=computed(()=>{const m=maxV.value
+      return [0,m/2,m].map(v=>({y:Y(v),t:fmtTok(v)}))})
+    const xt=computed(()=>{const st=Math.max(1,Math.ceil(n()/7))
+      return props.days.map((d,i)=>({x:X(i),t:d.day.slice(5)}))
+        .filter((d,i)=>i===n()-1||((i+1)%st===0))})
+    const hits=computed(()=>{const w=(W-L-8)/Math.max(1,n())
+      return props.days.map((d,i)=>({x0:L+i*w-w/2,w}))})
+    function on(i){tt.value={i,x:X(i)}}
+    function off(){tt.value=null}
+    const endOf=s=>{const d=props.days[n()-1]
+      return {x:X(n()-1),y:Y(d[s.k]||0),v:d[s.k]||0}}
+    function endLbl(s){                                    // 线尾直标：仅各线分离无碰撞时给
+      const ys=props.series.map(x=>endOf(x).y).sort((a,b)=>a-b)
+      if(!ys.every((y,i)=>i===0||y-ys[i-1]>=12))return false
+      return endOf(s).x>0}
+    return {W,H,L,tt,maxV,pathOf,pts,tri,grid,xt,hits,on,off,endOf,endLbl}
+  },
+  template:`
+<div>
+  <div class="legend">
+    <span class="lk" v-for="s in series" :key="s.k"><i :class="s.lc" :style="{background:s.c}"></i>{{s.n}}</span>
+  </div>
+  <div class="chart-wrap">
+    <div class="chart-in">
+      <svg :viewBox="'0 0 '+W+' '+H">
+        <g v-for="g in grid" :key="g.t">
+          <line :x1="L" :x2="W-8" :y1="g.y" :y2="g.y" stroke="#232b3f" stroke-width="1"/>
+          <text :x="L-6" :y="g.y+3" text-anchor="end" font-size="10" fill="#5a6684">{{g.t}}</text>
+        </g>
+        <text v-for="(d,i) in xt" :key="'x'+i" :x="d.x" :y="H-6" text-anchor="middle" font-size="10" fill="#5a6684">{{d.t}}</text>
+        <g v-for="s in series" :key="s.k">
+          <path :d="pathOf(s)" fill="none" :stroke="s.c" stroke-width="2"
+                stroke-linejoin="round" stroke-linecap="round" :stroke-dasharray="s.dash||''"/>
+          <g v-for="(p,i) in pts(s)" :key="i">
+            <circle v-if="s.m==='circle'" :cx="p.x" :cy="p.y" r="4" :fill="s.c" stroke="#161b27" stroke-width="2"/>
+            <rect v-else-if="s.m==='square'" :x="p.x-3.5" :y="p.y-3.5" width="7" height="7" rx="1.5"
+                  :fill="s.c" stroke="#161b27" stroke-width="2"/>
+            <path v-else :d="tri(p.x,p.y)" :fill="s.c" stroke="#161b27" stroke-width="2"/>
+          </g>
+          <text v-if="endLbl(s)" :x="endOf(s).x+8" :y="endOf(s).y+3" font-size="10" fill="#8a97b5">{{endOf(s).v}}</text>
+        </g>
+        <line v-if="tt" :x1="tt.x" :x2="tt.x" :y1="6" :y2="H-20" stroke="#3a4664" stroke-width="1"/>
+        <rect v-for="(h,i) in hits" :key="'h'+i" :x="h.x0" y="6" :width="h.w" :height="H-26"
+              fill="transparent" style="cursor:crosshair" @mouseenter="on(i)" @mouseleave="off"/>
+      </svg>
+      <div v-if="tt" class="tt" :class="{right:tt.x>W*0.62}" :style="{left:(tt.x/W*100)+'%'}">
+        <div class="d">{{days[tt.i].day}}</div>
+        <div class="row" v-for="s in series" :key="s.k">
+          <i :style="{background:s.c}"></i>{{s.n}}<b>{{days[tt.i][s.k]}}</b></div>
+      </div>
+    </div>
+  </div>
+</div>`
+}
+
+/* ---- 柱图（≤24px 柱厚 / 顶部 4px 圆角底部平方 / 悬停 tooltip） ---- */
+const BarChart={
+  props:{days:Array,field:String,fmt:{type:Function,default:v=>v},h:{type:Number,default:150}},
+  setup(props){
+    const W=640,H=props.h,L=52
+    const c=getComputedStyle(document.body).getPropertyValue('--c-dispatch').trim()||'#4493f8'
+    const tt=ref(null)
+    const maxV=computed(()=>niceCeil(Math.max(0.001,...props.days.map(d=>+(d[props.field]||0)))))
+    const n=()=>props.days.length
+    const slot=computed(()=>(W-L-8)/Math.max(1,n()))
+    const bw=computed(()=>Math.min(24,slot.value-2))
+    const Y=v=>8+(H-30)*(1-v/maxV.value)
+    const grid=computed(()=>{const m=maxV.value
+      return [0,m/2,m].map(v=>({y:Y(v),t:fmtTok(+v.toFixed(2))}))})
+    const xt=computed(()=>{const st=Math.max(1,Math.ceil(n()/7))
+      return props.days.map((d,i)=>({x:L+i*slot.value+slot.value/2,t:d.day.slice(5)}))
+        .filter((d,i)=>i===n()-1||((i+1)%st===0))})
+    const iMax=computed(()=>props.days.reduce((mi,d,i)=>+(d[props.field]||0)>+(props.days[mi][props.field]||0)?i:mi,0))
+    const bars=computed(()=>{const y0=Y(0)
+      return props.days.map((d,i)=>{
+        const v=+(d[props.field]||0),y1=Y(v),x=L+i*slot.value+(slot.value-bw.value)/2,w=bw.value
+        const p=v<=0?'':('M'+x+','+y0+' L'+x+','+(y1+4)+' Q'+x+','+y1+' '+(x+4)+','+y1+
+          ' L'+(x+w-4)+','+y1+' Q'+(x+w)+','+y1+' '+(x+w)+','+(y1+4)+' L'+(x+w)+','+y0+' Z')
+        return {d:p,x:x+w/2,y:y1,tip:i===iMax.value&&v>0?props.fmt(v):''}})})
+    const hits=computed(()=>props.days.map((d,i)=>({x0:L+i*slot.value,w:slot.value})))
+    function on(i){tt.value={i,x:L+i*slot.value+slot.value/2}}
+    function off(){tt.value=null}
+    return {W,H,L,c,tt,grid,xt,bars,hits,on,off}
+  },
+  template:`
+<div>
+  <div class="chart-wrap">
+    <div class="chart-in">
+      <svg :viewBox="'0 0 '+W+' '+H">
+        <g v-for="g in grid" :key="g.t">
+          <line :x1="L" :x2="W-8" :y1="g.y" :y2="g.y" stroke="#232b3f" stroke-width="1"/>
+          <text :x="L-6" :y="g.y+3" text-anchor="end" font-size="10" fill="#5a6684">{{g.t}}</text>
+        </g>
+        <text v-for="(d,i) in xt" :key="'x'+i" :x="d.x" :y="H-6" text-anchor="middle" font-size="10" fill="#5a6684">{{d.t}}</text>
+        <g v-for="(b,i) in bars" :key="i">
+          <path :d="b.d" :fill="c" :opacity="tt&&tt.i!==i?0.45:1"/>
+          <text v-if="b.tip" :x="b.x" :y="b.y-5" text-anchor="middle" font-size="10" fill="#8a97b5">{{b.tip}}</text>
+        </g>
+        <rect v-for="(h,i) in hits" :key="'h'+i" :x="h.x0" y="6" :width="h.w" :height="H-26"
+              fill="transparent" style="cursor:crosshair" @mouseenter="on(i)" @mouseleave="off"/>
+      </svg>
+      <div v-if="tt" class="tt" :class="{right:tt.x>W*0.62}" :style="{left:(tt.x/W*100)+'%'}">
+        <div class="d">{{days[tt.i].day}}</div>
+        <div class="row"><i :style="{background:c}"></i>{{fmt(days[tt.i][field])}}</div>
+      </div>
+    </div>
+  </div>
+</div>`
+}
+
+const app=createApp({
   setup(){
-    const tab=ref('ov'), tabs=[{k:'ov',n:'总览'},{k:'jobs',n:'定时任务'},{k:'runs',n:'运行历史'},{k:'wk',n:'工人'},{k:'sc',n:'单子知识库'},{k:'se',n:'自评'}]
+    const now=ref('')
+    const ptabs=[{k:'pov',n:'概览'},{k:'pSTUDIO',n:'STUDIO'},{k:'pGAMES',n:'GAMES'},{k:'pPOLY',n:'POLY'}]
+    const otabs=[{k:'ov',n:'总览'},{k:'jobs',n:'定时任务'},{k:'runs',n:'运行历史'},{k:'wk',n:'工人'},{k:'sc',n:'单子知识库'},{k:'se',n:'自评'}]
+    const _VALID=['pov','pSTUDIO','pGAMES','pPOLY','ov','jobs','runs','wk','sc','se']
+    const tab=ref(_VALID.includes(location.hash.slice(1))?location.hash.slice(1):'pov')  // hash 直达/书签
+    watch(tab,v=>location.hash=v)
     const ov=reactive({}), jobs=ref([]), runs=ref([]), workers=ref([]), tr=ref(null), runFilter=ref(''), sc=reactive({})
     const ytIssue=id=>`http://localhost:8080/issue/${id}`
     const jName=id=>({ 'pm-poly':'子PM·POLY','pm-studio':'子PM·STUDIO','qa':'全局QA','self-eval':'自评引擎','patrol':'战役巡逻','evolve-scan':'schema自进化'}[id]||id)
+
+    /* ---- 制作人门户状态 ---- */
+    const pov=reactive({projects:[],inbox:[],now:'',err:''})
+    const dash=reactive({})
+    const rpt=ref(null)
+    const TREND=[
+      {k:'dispatch',n:'派发',c:'#4493f8',m:'circle',lc:''},
+      {k:'close',n:'交付',c:'#2ea043',m:'square',lc:'sq'},
+      {k:'gate_fail',n:'闸门失败',c:'#f85149',m:'tri',lc:'tri',dash:'4 3'}]
+    const curPid=computed(()=>/^p(STUDIO|GAMES|POLY)$/.test(tab.value)?tab.value.slice(1):null)
+    const d=computed(()=>curPid.value?dash[curPid.value]:null)
+    const kindName=k=>({daily:'日报',weekly:'周报',monthly:'月报',pm:'巡检日报',games:'GAMES 专岗',poly:'三消专岗'}[k]||k)
+    async function fetchPov(){try{const r=await(await fetch('/api/dashboard')).json()
+      if(r.error)pov.err=r.error;else Object.assign(pov,r),pov.err=''}catch(e){pov.err='概览加载失败 '+e}}
+    async function fetchDash(pid){try{dash[pid]=await(await fetch('/api/dashboard/'+pid)).json()}catch(e){dash[pid]={err:'加载失败 '+e}}}
+    function portalTick(){if(tab.value==='pov')fetchPov();else if(curPid.value)fetchDash(curPid.value)}
+    async function openRpt(name){rpt.value={kind:name.split('-',1)[0],name,content:'加载中…'}
+      try{rpt.value=await(await fetch('/api/report/'+encodeURIComponent(name))).json()}
+      catch(e){rpt.value={kind:'daily',name,content:'加载失败 '+e}}}
+    function sparkPath(a){const W=120,H=30,P=4
+      const mx=Math.max(...a,0.000001),mn=Math.min(...a,0)
+      const Y=v=>H-P-(H-2*P)*((v-mn)/((mx-mn)||1))
+      return a.map((v,i)=>(i?'L':'M')+(i*W/(a.length-1)).toFixed(1)+','+Y(v).toFixed(1)).join(' ')}
+    function sparkEnd(a){const W=120,H=30,P=4
+      const mx=Math.max(...a,0.000001),mn=Math.min(...a,0)
+      const Y=v=>H-P-(H-2*P)*((v-mn)/((mx-mn)||1))
+      return {x:W,y:Y(a[a.length-1]||0)}}
+
     async function j(){try{Object.assign(ov,await (await fetch('/api/overview')).json())}catch(e){ov.now='⚠ '+e}}
     async function refresh(){
       j()
@@ -289,7 +650,10 @@ createApp({
       try{runs.value=await (await fetch('/api/runs?job='+runFilter.value+'&limit=150')).json()}catch(e){}
       try{workers.value=await (await fetch('/api/workers')).json()}catch(e){}
       try{Object.assign(sc,await (await fetch('/api/schema')).json())}catch(e){}
+      now.value=pov.now||timeStr()
     }
+    function timeStr(){const d=new Date(),p=x=>String(x).padStart(2,'0')
+      return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds())}
     let TOK=null
     async function gracefulRestart(){
       if(!confirm('优雅重载：停派新工，等在途 worker 收割完自动重启。继续？'))return
@@ -322,10 +686,17 @@ createApp({
     const wCls=s=>s.startsWith('RUNNING')?'b-ok pulse':s.startsWith('DONE')?'b-idle':s.startsWith('UNKNOWN')?'b-mut':'b-err'
     const wStatus=s=>s.split(' ')[0]
     const msgCls=m=>m.role==='sys'?'m-sys':m.kind==='tool'?'m-tool':m.kind==='result'?(m.ok===false?'m-res m-err':'m-res'):'m-ai'
-    onMounted(()=>{refresh();setInterval(refresh,5000)})
-    return {tab,tabs,ov,jobs,runs,workers,tr,runFilter,sc,ytIssue,jName,ctl,openTr,outCls,wCls,wStatus,msgCls,gracefulRestart,resume,takeover,openTerminal,tl,openTl}
+    watch(tab,portalTick)
+    onMounted(()=>{refresh();setInterval(refresh,5000)
+      portalTick();setInterval(portalTick,15000);setInterval(()=>{now.value=timeStr()},1000)})
+    return {now,tab,ptabs,otabs,ov,jobs,runs,workers,tr,runFilter,sc,ytIssue,jName,ctl,openTr,
+      outCls,wCls,wStatus,msgCls,gracefulRestart,resume,takeover,openTerminal,tl,openTl,
+      pov,dash,rpt,TREND,curPid,d,kindName,openRpt,sparkPath,sparkEnd,fmtTok,fmtUsd}
   }
-}).mount('#app')
+})
+app.component('line-chart',LineChart)
+app.component('bar-chart',BarChart)
+app.mount('#app')
 </script>
 </body>
 </html>

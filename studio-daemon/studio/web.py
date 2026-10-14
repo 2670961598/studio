@@ -327,6 +327,170 @@ def _transcript(issue: str) -> dict:
     return {"issue": issue, "messages": msgs, "count": len(msgs)}
 
 
+# ---------------------------------------------------------------- 制作人门户（STUDIO-112）
+DASH_DAYS = 14                                    # 项目页趋势/成本窗口（日）
+REPORT_KINDS = {                                  # pid → 本地 reports/ 归属该项目的报告前缀
+    "STUDIO": ("daily", "weekly", "monthly", "pm"),
+    "GAMES": ("games",), "POLY": ("poly",),
+}
+
+
+def _in_flight(pid: str) -> int:
+    """该项目在途 worker 数（reg 文件在=未收割；done=已归档不算）。"""
+    return len([f for f in CONFIG.workers_dir.glob(f"{pid}-*.json")
+                if not f.name.endswith(".done.json")])
+
+
+def _dash_series(evs: list[dict], days: int = DASH_DAYS) -> list[dict]:
+    """近 N 日逐日序列：进度三线（派发/交付/闸门败）与成本（tokens/USD）同一窗口。
+    交付 = MERGE+CLOSE 事件数（事件为记账单位，同日并发生不去重——口径与日报一致）。"""
+    t0 = time.mktime(time.strptime(time.strftime("%F"), "%Y-%m-%d"))
+    out = []
+    for i in range(days - 1, -1, -1):
+        d = time.strftime("%F", time.localtime(t0 - i * 86400))
+        row = {"day": d, "dispatch": 0, "close": 0, "gate_fail": 0, "qa_back": 0,
+               "tokens": 0, "cost_usd": 0.0}
+        for e in evs:
+            if e["ts"][:10] != d:
+                continue
+            ev = e.get("event")
+            if ev == "DISPATCH":
+                row["dispatch"] += 1
+            elif ev in ("MERGE", "CLOSE"):
+                row["close"] += 1
+            elif ev == "GATE_FAIL":
+                row["gate_fail"] += 1
+            elif ev == "QA_BACK":
+                row["qa_back"] += 1
+            if e.get("tokens") is not None:
+                row["tokens"] += int(e["tokens"])
+            if e.get("cost_usd") is not None:
+                row["cost_usd"] += float(e["cost_usd"])
+        row["cost_usd"] = round(row["cost_usd"], 4)
+        out.append(row)
+    return out
+
+
+def _dash_cost(evs: list[dict]) -> dict:
+    """成本面板数据（STUDIO-107 记账聚合）：7/30 日合计 + 近 30 日按单 TOP10。"""
+    series = _dash_series(evs)
+    t0 = time.mktime(time.strptime(time.strftime("%F"), "%Y-%m-%d"))
+    cutoff = time.strftime("%F", time.localtime(t0 - 30 * 86400))
+    by: dict[str, dict] = {}
+    for e in evs:
+        if e["ts"][:10] < cutoff:
+            continue
+        if e.get("tokens") is None and e.get("cost_usd") is None:
+            continue
+        s = by.setdefault(e.get("issue") or "-",
+                          {"issue": e.get("issue") or "-", "tokens": 0,
+                           "cost_usd": 0.0, "has": False})
+        if e.get("tokens") is not None:
+            s["tokens"] += int(e["tokens"])
+        if e.get("cost_usd") is not None:
+            s["cost_usd"] += float(e["cost_usd"])
+            s["has"] = True
+    top = sorted(by.values(), key=lambda s: -s["cost_usd"])[:10]
+
+    def tot(rows):
+        return {"tokens": sum(r["tokens"] for r in rows),
+                "cost_usd": round(sum(r["cost_usd"] for r in rows), 4)}
+    return {"d7": tot(series[-7:]), "d30": tot(_dash_series(evs, 30)), "top": top}
+
+
+def _dash_reports(pid: str) -> list[dict]:
+    """该项目报告清单（本地 reports/ 留底为可靠源——Articles 发布失败也有底可读）。"""
+    d = CONFIG.events_path.parent / "reports"
+    out = []
+    if d.exists():
+        for f in sorted(d.glob("*.md"), reverse=True):
+            kind = f.name.split("-", 1)[0]
+            if kind not in REPORT_KINDS.get(pid, ()):
+                continue
+            out.append({"name": f.name, "kind": kind, "day": f.stem.split("-", 1)[1],
+                        "size": f.stat().st_size,
+                        "ts": time.strftime("%m-%d %H:%M", time.localtime(f.stat().st_mtime))})
+    return out[:30]
+
+
+def _dash_board(pid: str) -> list[dict]:
+    from .yt import YT
+    board = YT("agent-8").list(pid, "状态:" + ",".join(statemachine.PM_ACTIONABLE))
+    for b in board:
+        b["yt"] = _yt_url(b["id"])
+    return board
+
+
+def _dashboard(pid: str) -> dict:
+    """项目页聚合：队列/在途/今日交付/趋势/成本/热点/报告（数据全接真源，不写死）。"""
+    from .reports import _events_all
+    if pid not in REPORT_KINDS:
+        raise HTTPException(404, f"未知项目 {pid}")
+    evs = [e for e in _events_all() if e.get("pid") == pid]
+    today = time.strftime("%F")
+    board, board_err = [], ""
+    try:
+        board = _dash_board(pid)
+    except Exception as e:                         # 板面不可达不炸整个仪表盘
+        board_err = f"{type(e).__name__}: {e}"[:120]
+    counts: dict[str, int] = {}
+    for b in board:
+        counts[b["state"]] = counts.get(b["state"], 0) + 1
+    deliver = [e for e in evs if e["ts"][:10] == today and e.get("event") in ("MERGE", "CLOSE")]
+    return {
+        "pid": pid, "now": time.strftime("%F %T"),
+        "in_flight": _in_flight(pid), "queue": sum(counts.values()), "counts": counts,
+        "board": board, "board_err": board_err,
+        "today": {"deliver": len(deliver),
+                  "dispatch": sum(1 for e in evs
+                                  if e["ts"][:10] == today and e.get("event") == "DISPATCH"),
+                  "delivered": [{"ts": e["ts"], "issue": e.get("issue"), "event": e.get("event"),
+                                 "note": (e.get("note") or "")[:80]} for e in deliver[::-1]][:10]},
+        "series": _dash_series(evs),
+        "cost": _dash_cost(evs),
+        "reports": _dash_reports(pid),
+        "events": [{"ts": e["ts"], "issue": e.get("issue"), "event": e.get("event"),
+                    "note": (e.get("note") or "")[:80]} for e in evs[::-1][:15]],
+    }
+
+
+def _dash_overview() -> dict:
+    """概览页：三项目一屏对比卡（宰相巡查视角）+ 收件箱（待制作人处理聚合）。"""
+    from .yt import YT
+    from .reports import _events_all
+    yt = YT("agent-8")
+    evs = _events_all()
+    today = time.strftime("%F")
+    projects, inbox = [], []
+    for pid in REPORT_KINDS:
+        pevs = [e for e in evs if e.get("pid") == pid]
+        series = _dash_series(pevs, 7)
+        try:
+            board = _dash_board(pid)
+        except Exception:
+            board = []
+        for b in board:
+            if b["state"] == "待批":
+                inbox.append({"pid": pid, **b})
+        projects.append({
+            "pid": pid, "queue": len(board), "in_flight": _in_flight(pid),
+            "today_deliver": sum(1 for e in pevs if e["ts"][:10] == today
+                                 and e.get("event") in ("MERGE", "CLOSE")),
+            "cost7": {"tokens": sum(r["tokens"] for r in series),
+                      "cost_usd": round(sum(r["cost_usd"] for r in series), 4)},
+            "spark": [r["cost_usd"] for r in series],
+        })
+    try:                                           # STUDIO 提案草稿/待批也等制作人（promote/批）
+        for r in yt.list("STUDIO", "Type:提案 状态:草稿,待批"):
+            if not any(x["id"] == r["id"] for x in inbox):
+                inbox.append({"pid": "STUDIO", **r, "yt": _yt_url(r["id"])})
+    except Exception:
+        pass
+    inbox.sort(key=lambda x: x["id"])
+    return {"now": time.strftime("%F %T"), "projects": projects, "inbox": inbox,
+            "youtrack": CONFIG.yt_url}
+
+
 # ---------------------------------------------------------------- API
 @app.get("/api/overview")
 def api_overview():
@@ -393,6 +557,39 @@ def api_job_ctl(job_id: str, action: str):
 def api_runs(job: str = "", limit: int = 100):
     from .runs import list_runs
     return list_runs(job or None, limit)
+
+
+@app.get("/api/dashboard")
+def api_dashboard_overview():
+    """制作人门户 · 概览（三项目对比卡 + 收件箱）。"""
+    try:
+        return _redact(_dash_overview())
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/dashboard/{pid}")
+def api_dashboard(pid: str):
+    """制作人门户 · 项目页（队列/在途/今日交付/趋势/成本/热点/报告聚合）。"""
+    try:
+        return _redact(_dashboard(pid))
+    except HTTPException:
+        raise
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/report/{name}")
+def api_report(name: str):
+    """门户报告正文（本地 reports/ 留底；名字白名单防路径穿越）。"""
+    import re as _re
+    if not _re.fullmatch(r"(daily|weekly|monthly|pm|games|poly)-[0-9A-Za-z\-]+\.md", name):
+        raise HTTPException(404, "未知报告")
+    f = CONFIG.events_path.parent / "reports" / name
+    if not f.exists():
+        raise HTTPException(404, f"无报告 {name}")
+    return {"name": name, "kind": name.split("-", 1)[0],
+            "content": f.read_text(encoding="utf-8", errors="replace")[:60000]}
 
 
 @app.get("/api/schema")
