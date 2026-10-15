@@ -264,8 +264,18 @@ class YT:
         return self._post("/api/articles?fields=idReadable", body)["idReadable"]
 
     def comments(self, issue: str) -> list[dict]:
-        rows = self._get(f"/api/issues/{issue}/comments",
-                         params={"fields": "author(login),text,created"})
+        """全量评论（分页拉取）。GAMES-148 实录（2026-10-16）：YouTrack 集合端点默认页容量 42，
+        无分页参数时长 saga 单（断路×3+失败合并+重派）评论数超限 → 最新批示落在页外对
+        批示扫描器隐形 → approval-unconsumed 卡死多拍。$skip 翻页直到短页。"""
+        rows, skip, page = [], 0, 100
+        while True:
+            chunk = self._get(f"/api/issues/{issue}/comments",
+                              params={"fields": "author(login),text,created",
+                                      "$top": page, "$skip": skip})
+            rows.extend(chunk)
+            if len(chunk) < page:
+                break
+            skip += page
         cs = [{"author": (c.get("author") or {}).get("login", "?"),
                "text": c.get("text", ""), "created": c.get("created")} for c in rows]
         cs.sort(key=lambda c: c["created"] or 0)   # 统一时间序（旧→新），消费方按此假设
