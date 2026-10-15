@@ -19,3 +19,8 @@ kernel/campaigns/*.snapshots.jsonl
 kernel/campaigns/*.state.json
 # 运营报告（本地生成，远端不入库——制作人 2026-10-13 清洁指令）
 kernel/metrics/reports/
+# 公私边界（制作人 2026-10-15，蓝图 §10.1）：台账库/备份/人事档案永不出本机
+*.sqlite
+*.sqlite-*
+kernel/backups/
+kernel/org/people/
