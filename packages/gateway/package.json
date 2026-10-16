@@ -1,0 +1,19 @@
+{
+  "name": "@studio-next/gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Studio Next 网关：写路径收口闸——wkey 签发/校验/吊销 + 动作词结构化校验 + 署名注入（纯逻辑零 IO，docs/17-§7、docs/24-§二、docs/25-§4.1）",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@studio-next/contract": "workspace:*",
+    "zod": "^4.0.0"
+  }
+}
