@@ -338,3 +338,52 @@ describe('并发三闸：泳道占用与每拍上限', () => {
     stack.ledger.close()
   })
 })
+
+describe('store v4 切换回归：daemon 全路径无自建 DDL', () => {
+  it('createEngine（含初始化持久化触点）+ 一整拍后 sqlite_master 快照不变、版本不漂（无自建表/索引）', async () => {
+    // 切换前 daemon 在 createEngine 即 ledger.db.exec(CREATE TABLE IF NOT EXISTS daemon_kv ...)；
+    // 切 store v4 后引擎对库只剩正式读写面（kvGet/kvSet/endWorkRecord/appendEvent/...）——
+    // 本测试是对「daemon 不再执行任何 DDL」的直证（v4-debts.test.ts 侧 store 面对照的同题互证）。
+    const ledger = openLedger(path.join(root, 'no-ddl.sqlite'))
+    const schemaOf = (): string =>
+      JSON.stringify(ledger.db.prepare('SELECT type, name, sql FROM sqlite_master ORDER BY type, name').all())
+    const before = schemaOf()
+    const person = snapshot.people[0] as PersonRef
+    let t = T0
+    const platform = createFakePlatform({ now: () => new Date(t).toISOString() })
+    const registry = createRegistry()
+    registry.register(createFakeAdapter(), { default: true })
+    const engine = createEngine({
+      platform,
+      ledger,
+      registry,
+      assembler: createDefaultAssembler({
+        fwkVersion: 'v0.5-demo',
+        frameworkPrompts: '你是 demo worker：按任务书产出 REPORT 与 summary。',
+        snapshot,
+        acceptance: ['echo demo-ok'],
+        docRefs: ['docs/17-§2（主循环七相位）'],
+      }),
+      gateRunner: createDefaultGateRunner(),
+      clock: (): number => t,
+      config: {
+        ...ENGINE_CONFIG_DEFAULTS,
+        company: snapshot.slug,
+        rootDir: path.join(root, 'no-ddl'),
+        defaultPersonId: person.id,
+        deptFallback: snapshot.departments[0]?.path ?? 'departments/工程部',
+        defaultLane: snapshot.departments[0]?.lanes[0] ?? 'core',
+      },
+      people: snapshot.people,
+    })
+    // 空拍全路径：采集（kvGet/kvSet 游标与拍序）→ 镜像对账 → 决策 → HEARTBEAT 落账
+    t += 1000
+    const report = await engine.tick()
+    expect(report.errors).toEqual([])
+    expect(report.phases.account.heartbeat).toBe(true)
+    expect(ledger.kvGet('tick.seq')).toBe('1')
+    expect(schemaOf()).toBe(before)
+    expect(ledger.version()).toBe(4)
+    ledger.close()
+  })
+})
