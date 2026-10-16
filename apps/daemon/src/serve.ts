@@ -32,15 +32,31 @@
  *     snapshot**——packages/company 校验器只收形状、toSnapshot 恒置 jobs:[]（v0.1-M3 边界，
  *     见 validator.ts 头注「留后续单」），本刀不动 packages/*——公司目录岗进台账归该单；
  *     现行岗入口=快照 jobs（demo）/upsertJob 热更（测试与 API）。
- *   - SIGINT/SIGTERM 优雅停：等当前拍收口 → 停调度器 → 在途 drain（v0=对内存 handle 优雅杀，
- *     work_records 留 running——重启接管归后续刀）→ 关台账。
+ *   - 唤起源注册表（v0.8 地基，22-§一）：scheduler 源（jobs: true 时注册——源开关=既有 jobs
+ *     键，缺省语义不动）+ matrix 源（matrix: true + 注入工厂，daemon 不强依赖 @studio-next/matrix）
+ *     + watch-file 示例源（fileWatch: true + fileWatchPath，22-§三.1 验收靶子）。
+ *     startAll 的 emit 统一进 engine.ingest——源零直驱（注册表与源实现见 src/sources.ts）。
+ *     意图消费门在引擎：v0.4 面只物化 schedule 意图，webhook/mention 等明报不支持
+ *     （六源全通归 v0.8 后续刀）——注册面先行，消费面按刀推进。
+ *   - SIGINT/SIGTERM 优雅停：等当前拍收口 → **先 stopAll 唤起源**（不再进新意图）→ 在途
+ *     drain（v0=对内存 handle 优雅杀，work_records 留 running——重启接管归后续刀）→ 关台账。
+ *     队列中未消费意图停机即弃（at-most-once，与调度器 markRan 已提交而 ingest 未消费的
+ *     既有边界同语义——engine.ts 头注）。
  */
 import { createRegistry } from '@studio-next/adapters'
 import { createModelCatalog, fingerprint, parseModelsYaml } from '@studio-next/core'
 import { createGateway, CONTROL_TICKET } from '@studio-next/gateway'
 import type { SignatureContext } from '@studio-next/gateway'
 import { openLedger, type Ledger } from '@studio-next/store'
-import type { CompanySnapshot, FlowPlatform, ModelCatalog, PersonRef, ScheduledJob } from '@studio-next/contract'
+import type {
+  CompanySnapshot,
+  FlowPlatform,
+  InvokeSource,
+  ModelCatalog,
+  PersonRef,
+  ScheduledJob,
+  SourceManifest,
+} from '@studio-next/contract'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import {
@@ -54,8 +70,16 @@ import { createFakeAdapter, createFakePlatform } from './fakes.ts'
 import { createGatedPlatform } from './gated-platform.ts'
 import { createDefaultGateRunner } from './gate.ts'
 import { createDefaultAssembler } from './prompt-assembly.ts'
-import { createScheduler, nextRunAt, scheduleIntent, type Scheduler } from './scheduler.ts'
+import { nextRunAt, type Scheduler } from './scheduler.ts'
 import type { WorkerKeyDeps } from './worker-key.ts'
+import {
+  createFileWatchSource,
+  createSchedulerSource,
+  createSourceRegistry,
+  FILE_WATCH_MANIFEST,
+  SCHEDULER_SOURCE_MANIFEST,
+  type SourceRegistry,
+} from './sources.ts'
 
 // ————————————————————————— 配置 —————————————————————————
 
@@ -82,10 +106,25 @@ export interface ServeConfig {
   breakerThreshold: number
   /** demo 自动批（真制作人批准信号经网关动作词归一） */
   autoApprove: boolean
-  /** 定时岗调度开关（v0.4，16-§四）：true=scheduler + engine 同栈起（demo 样例岗见 DEMO_SNAPSHOT） */
+  /** 定时岗调度开关（v0.4，16-§四）：true=scheduler + engine 同栈起（demo 样例岗见 DEMO_SNAPSHOT）。
+   *  v0.8 地基起 jobs 兼作 scheduler 源开关（22-§一/§二：注册表注册并随 startAll 起） */
   jobs: boolean
   /** 调度轮询间隔 ms（22-§二「节奏可配」；缺省 15 秒） */
   jobPollMs: number
+  /**
+   * matrix @唤醒源开关（22-§二；缺省关）：true 时经**注入工厂**装配（buildServeRuntime
+   * opts.matrixSource）——daemon 不强依赖 @studio-next/matrix（装配单元注入
+   * createMentionSource 产物；start/stop 签名对齐 InvokeSource 端口即可接入）。
+   * 开而未注入工厂=CONFIG_INVALID 拒启动（不静默空转）。
+   */
+  matrix: boolean
+  /**
+   * watch-file 示例源开关（22-§三.1 验收靶子；缺省关）：true 时监听 fileWatchPath 指定
+   * 文件的变化，JSON 行各产一条 webhook 意图（dedupKey=mtime#行号，见 src/sources.ts）。
+   */
+  fileWatch: boolean
+  /** watch-file 监听文件路径（fileWatch: true 时必配；文件须先存在——CONFIG_INVALID 明报） */
+  fileWatchPath?: string
   /** 公司目录路径（可选：装载 CompanySnapshot；缺省用内置 demo 快照） */
   companyDir?: string
   /**
@@ -126,6 +165,8 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   autoApprove: false,
   jobs: false,
   jobPollMs: 15_000,
+  matrix: false,
+  fileWatch: false,
   gateway: true,
 }
 
@@ -242,6 +283,15 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         break
       case 'jobPollMs':
         cfg.jobPollMs = num(value, key)
+        break
+      case 'matrix':
+        cfg.matrix = bool(value, key)
+        break
+      case 'fileWatch':
+        cfg.fileWatch = bool(value, key)
+        break
+      case 'fileWatchPath':
+        cfg.fileWatchPath = str(value, key)
         break
       case 'gateway':
         cfg.gateway = bool(value, key)
@@ -422,12 +472,25 @@ export function seedJobs(
   return { seeded, kept }
 }
 
-/** serve 运行栈（engine + 可选 scheduler + 统一停机面；runServe 与测试共用装配） */
+/** serve 运行栈（engine + 唤起源注册表 + 统一停机面；runServe 与测试共用装配） */
 export interface ServeRuntime {
   engine: Engine
   scheduler: Scheduler | null
-  /** 优雅停：停调度器 → 在途 drain → 关台账（SIGINT/SIGTERM 同一收口；可重入） */
+  /** 唤起源注册表（22-§一）：startAll 的 emit 统一进 engine.ingest（runServe 接线） */
+  sources: SourceRegistry
+  /**
+   * 优雅停：先 stopAll 唤起源（不再进新意图）→ 在途 drain → 关台账
+   * （SIGINT/SIGTERM 同一收口；可重入）。队列中未消费意图停机即弃（at-most-once，
+   * 与调度器 markRan 已提交而 ingest 未消费的既有边界同语义——engine.ts 头注）。
+   */
   stop(): Promise<void>
+}
+
+/** matrix 源 manifest（工厂注入面——daemon 不强依赖 @studio-next/matrix，22-§二） */
+const MATRIX_MANIFEST: SourceManifest = {
+  name: 'matrix',
+  kind: 'mention',
+  configSchema: '注入工厂（装配单元供 createMentionSource 产物；daemon.yaml matrix 开关）',
 }
 
 /**
@@ -437,14 +500,24 @@ export interface ServeRuntime {
 const ACCEPTANCE: string[] = ['echo demo-ok（v0 占位闸门不执行验收命令）']
 
 /**
- * 装配 serve 运行栈：jobs=true 时快照播种 + scheduler 起在 engine 边上——
- * onDue 只产 schedule 意图入 engine.ingest（22-§一 源零直驱），决策归主循环。
+ * 装配 serve 运行栈：唤起源统一走注册表（22-§一）——
+ *   - jobs=true：快照播种 + scheduler 源注册（源开关=既有 jobs 键，缺省语义不动）；
+ *   - matrix=true：注入工厂装配（开而未注入=CONFIG_INVALID 拒启动）；
+ *   - fileWatch=true：watch-file 示例源注册（fileWatchPath 必配）。
+ * 源的 emit 由 runServe 的 startAll 统一接进 engine.ingest——源零直驱，决策归主循环。
+
  */
 export function buildServeRuntime(
   config: ServeConfig,
   ledger: Ledger,
   snapshot: CompanySnapshot,
-  opts?: { log?: (line: string) => void; clock?: () => number; quarantineMs?: number },
+  opts?: {
+    log?: (line: string) => void
+    clock?: () => number
+    quarantineMs?: number
+    /** matrix 源工厂（matrix: true 时调用；不注入=CONFIG_INVALID——daemon 不强依赖 matrix 包） */
+    matrixSource?: () => InvokeSource
+  },
 ): ServeRuntime {
   const log = opts?.log ?? ((line: string): void => console.log(line))
   const clock = opts?.clock ?? ((): number => Date.now())
@@ -506,28 +579,60 @@ export function buildServeRuntime(
     ...(catalog !== undefined ? { catalog } : {}),
   })
 
+  // —— 唤起源注册表（22-§一）：三源按配置接入，emit 统一进 engine.ingest（runServe 接线） ——
+  const sources = createSourceRegistry({ log })
+  const ingestSink = (intent: Parameters<Engine['ingest']>[0][number]): void => {
+    engine.ingest([intent])
+  }
+
   let scheduler: Scheduler | null = null
   if (config.jobs) {
     const seeded = seedJobs(ledger, snapshot.jobs, clock())
     log(`[serve] 定时岗播种：新 ${seeded.seeded} / 保留 ${seeded.kept}（快照共 ${snapshot.jobs.length} 岗）`)
-    scheduler = createScheduler({
+    // scheduler 源：包装现有调度器（零改 scheduler.ts）——手动泵（poll）经 sink 直达 ingest
+    // （serve 测试面），start 后由注册表 emit 接管同一队列（src/sources.ts 头注）
+    const schedulerSource = createSchedulerSource({
       ledger,
       clock,
       intervalMs: config.jobPollMs,
       ...(opts?.quarantineMs !== undefined ? { quarantineMs: opts.quarantineMs } : {}),
-      onDue: (job, firedAt) => {
-        engine.ingest([scheduleIntent(job, firedAt)])
-        log(`[scheduler] job ${job.job_id} 到点（firedAt=${new Date(firedAt).toISOString()}）→ schedule 意图入队`)
-      },
+      sink: ingestSink,
       log,
     })
+    scheduler = schedulerSource.scheduler
+    sources.register(schedulerSource, SCHEDULER_SOURCE_MANIFEST)
   }
+
+  if (config.matrix) {
+    if (opts?.matrixSource === undefined) {
+      throw new Error(
+        'CONFIG_INVALID：matrix: true 需注入 matrix 源工厂（buildServeRuntime opts.matrixSource）——' +
+          'daemon 不强依赖 @studio-next/matrix；装配单元注入 createMentionSource 产物（22-§二，' +
+          'start/stop 签名对齐 InvokeSource 端口即可接入）',
+      )
+    }
+    sources.register(opts.matrixSource(), MATRIX_MANIFEST)
+  }
+
+  if (config.fileWatch) {
+    if (config.fileWatchPath === undefined || config.fileWatchPath === '') {
+      throw new Error('CONFIG_INVALID：fileWatch: true 需配 fileWatchPath（监听文件路径，文件须先存在——22-§三.1）')
+    }
+    sources.register(
+      createFileWatchSource({ company: config.company, file: path.resolve(config.fileWatchPath), log }),
+      FILE_WATCH_MANIFEST,
+    )
+  }
+
+  log(`[serve] 唤起源注册表：${sources.list().map((e) => e.source.name).join('、') || '（空）'}——emit 统一进 engine.ingest（22-§一 源零直驱）`)
 
   return {
     engine,
     scheduler,
+    sources,
     async stop(): Promise<void> {
-      if (scheduler !== null && scheduler.running) scheduler.stop()
+      // 先停源（不再进新意图）→ 再停引擎（在途 drain）→ 关台账（SIGINT 停机顺序，22-§三.3）
+      sources.stopAll()
       await engine.dispose()
       ledger.close()
     },
@@ -584,11 +689,15 @@ export async function runServe(configPath: string): Promise<ServeResult> {
     snapshot = mounted.snapshot
   }
 
-  const { engine, scheduler, stop } = buildServeRuntime(config, ledger, snapshot)
+  const { engine, sources, stop } = buildServeRuntime(config, ledger, snapshot)
 
   console.log(`[serve] studio-next daemon 启动（company=${config.company} platform=${config.platform} db=${path.resolve(config.db)} tickMs=${config.tickMs}${config.jobs ? ` jobs=on pollMs=${config.jobPollMs}` : ''}）`)
   console.log('[serve] v0 demo 栈：fake platform + fake executor + 默认占位闸门（诚实边界见 src/serve.ts 头注）')
-  scheduler?.start()
+  // 唤起源统一启动（22-§一）：各源 start(emit)——emit 统一进引擎 ingest 队列，
+  // 下一拍 state-diff 前消费；单源启动异常由注册表隔离（捕获+计数+继续，src/sources.ts）
+  sources.startAll((intent) => {
+    engine.ingest([intent])
+  })
 
   let ticks = 0
   while (!stopped) {
@@ -609,7 +718,7 @@ export async function runServe(configPath: string): Promise<ServeResult> {
     }
   }
 
-  console.log(`[serve] 停机（${stopReason}${lastError !== undefined ? `：${lastError}` : ''}）——停调度器 + 在途 drain`)
+  console.log(`[serve] 停机（${stopReason}${lastError !== undefined ? `：${lastError}` : ''}）——先停唤起源（不进新意图）+ 在途 drain`)
   await stop()
   console.log('[serve] 已优雅关闭（台账落盘；work_records 在途项接管归后续刀）')
   process.off('SIGINT', onSignal)
