@@ -8,6 +8,9 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "bin": {
+    "studio-next": "./src/bin.ts"
+  },
   "scripts": {
     "start": "node src/index.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
