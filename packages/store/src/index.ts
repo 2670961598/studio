@@ -22,11 +22,28 @@
  *       ticket_mirror / budgets；syncCompany 镜像 upsert（只覆盖快照所载字段）+ budgets
  *       落账/查询 + appendPersonnelEvent（触发器机制兜底 append-only）+ personnelTimeline
  *       三表归并时间线（C1-04 最小面）
+ *   [x] v3 jobs 调度表（migration v3，17-§2 / 18-§三）：upsertJob（job_id 幂等覆盖，热更单岗
+ *       不动他岗）/ dueJobs（补跑扫描）/ markRan（两列同语句原子）/ removeJob + getJob/listJobs 读面
+ *   [x] 演习与维护 CLI 面（F2-12 可操作化）：runLedgerDrill 删库重建演习（daemon bin 出
+ *       `ledger drill/dump/rebuild` 子命令组，薄壳转调本包）
+ *   [ ] cron 表达式解析（croner，daemon/core 侧）+ 补跑 coalesce / 同岗不重叠（18-§三，core 后续单）
  *   [ ] 17-§3 其余表（后续 migration 逐版本补）：ledgers / candidates / reports / probes_runs
  *   [ ] 回填工具（F2-13：done.json/REPORT/stream/events → 对账 → 幂等回填；旁路关单标注规则）
  *   [ ] rebuild --from yt,org 两源通道（F2-12 全量再生；现仅 jsonl 源）
- *   [ ] 季度删库演习脚本化留证（cron 岗，v0.4 定时岗落地后挂）
+ *   [ ] 季度删库演习挂 cron 岗留证（`ledger drill` 已可操作化，v0.4 定时岗落地后挂）
  *   [ ] 数据保留与归档（>90 天事件按月导出，热表留索引，见 docs/19-§四）
+ *
+ * v3 拟稿待批 / 疑点（只记录，不改文档）：
+ *   - budget_cap 存 REAL（USD）而非 INTEGER 微美分：对齐 contract Money{usd:number} 与库内
+ *     cost_usd/estimated_usd/actual_usd 全 REAL 口径（一库一种货币单位）；jobs 不在 events
+ *     JSONL 派生路径上，无 F2-11 字节确定性强约束——待批
+ *   - upsertJob 冲突时 last_run_at 不随覆盖（运行时状态归 markRan，公司目录热更不清跑史）；
+ *     首插允许带 last_run_at（存量回填用）——语义待批
+ *   - jobs.status 可空且值域不锁（active/paused 归 core 调度域后续单）；dueJobs 不按 status
+ *     过滤（v0 store 不猜暂停语义，扫描面留全量）——待批
+ *   - cron 仅形状闸（非空 + ≤6 空白分隔段），段内语法不校验；解析归 core 后续单（18-§三 croner
+ *     只在 daemon 侧引）——本包零新依赖
+ *   - model_tier 锁 'high'|'mid'|'low'（contract ports/models.ts ModelTier 冻结口径）
  *
  * v2 拟稿待批 / 疑点（只记录，不改文档）：
  *   - people 表无 company 列（17-§3/任务口径均未列）：多公司同库时工号全局唯一是前提
@@ -63,10 +80,11 @@ export type { Migration } from './migrations.ts'
 export { openLedger } from './ledger.ts'
 export type { AppendResult, BudgetScope, CompanySyncResult, DumpResult, EventQuery, Ledger, PersonnelTimelineEntry } from './ledger.ts'
 
-// work_records / sessions + v2 五表记录形状（store 层临时闸，contract schema 落地后替换）
+// work_records / sessions + v2 五表 + v3 jobs 记录形状（store 层临时闸，contract schema 落地后替换）
 export {
   BudgetRecordSchema,
   DepartmentRecordSchema,
+  JobRecordSchema,
   PersonRecordSchema,
   PersonnelEventRecordSchema,
   SessionRecordSchema,
@@ -76,6 +94,7 @@ export {
 export type {
   BudgetRecord,
   DepartmentRecord,
+  JobRecord,
   PersonRecord,
   PersonnelEventRecord,
   SessionRecord,
@@ -86,3 +105,7 @@ export type {
 // 快照与重建
 export { rebuild } from './rebuild.ts'
 export type { RebuildResult } from './rebuild.ts'
+
+// 删库重建演习（F2-12 可操作化；`studio-next ledger drill` 的库内通道）
+export { renderDrillReport, runLedgerDrill } from './drill.ts'
+export type { DrillCheck, DrillReport } from './drill.ts'
