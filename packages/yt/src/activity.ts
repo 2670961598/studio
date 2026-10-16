@@ -11,9 +11,22 @@
  * 取法（绝不用 after/start——会被静默忽略，docs/03 N10）：
  *   1. GET /api/activities?$top&$skip 倒序取头——**显式 reverse=true**（真实例冒烟 2026-10-17
  *      实证：不带 reverse 时服务端默认旧→新，且 categories 过滤参数必带否则 400）
- *   2. 翻页直到**命中边界活动 id**或取尽；边界（含）之后的旧活动全部截断
+ *   2. 翻页直到**命中边界活动 id**或取尽；边界（含）之后的旧活动全部截断。
+ *      边界在 **raw feed 上找（公司作用域过滤之前）**——raw 序=全局时间序，
+ *      故「raw 新于边界」再滤作用域即为「作用域内新于边界」，与他项目活动穿插无关
  *   3. 截断结果反转成升序返回；超出 pageSize 取最旧 pageSize 条，
  *      nextCursor=本批最新一条 id——并集不重不漏（与 localplatform 同式切页）
+ *
+ * 边界可达性裁决（(a) 视为全量——2026-10-17 宰相真实例探针坐实后冻结）：
+ *   - 边界在 raw feed 命中且**通过公司作用域** → 正常截断（严格新于边界，升序）
+ *   - 边界命中但**被公司作用域滤除**（他项目单据活动——探针实录：STUDIO 作用域拿
+ *     POLY 前缀活动 id 当边界 → items:0 + nextCursor:null 静默空转）→ 该 id 在本
+ *     作用域流内**永不可见** = 调用方游标跨了作用域变化（如公司改绑项目）→
+ *     **视为全量增量**：返回全部作用域内活动（升序、与 cursor=null 同式切页），
+ *     上游重放去重（对齐 22-§三.2 意图幂等哲学：重放只费一次全量；错报会停摆、
+ *     静默空转/截断会永久丢存量增量——daemon 采集相位游标永不推进）
+ *   - **取尽未命中边界**（活动被清理/类别集外）→ 同上视为全量（现行行为，显式化）
+ *   - 翻页上限内既未命中也未取尽 → 防御性显式报错 boundary-not-found（实例异常）
  *
  * kind 词表：已知类别归一成与 localplatform 对齐的动词（created/commented/
  * transitioned/field-set），未知类别原样透传类别 id（契约疑点：kind 词表未冻结，
@@ -123,7 +136,8 @@ function toPlatformActivity(json: ActivityJson, project: string | undefined): Pl
 
 /**
  * since(cursor)：
- *   1. 倒序翻页（$top/$skip）收集新于边界的活动
+ *   1. 倒序翻页（$top/$skip）收集新于边界的活动；边界在 raw feed 上找（过滤前，
+ *      raw 序=全局时间序）——命中但被公司作用域滤除的边界=永不可达 → 全量重放（头注裁决(a)）
  *   2. 公司作用域过滤
  *   3. 升序返回；≤pageSize 全量返回且 nextCursor=null，否则切最旧 pageSize 条
  */
@@ -134,39 +148,54 @@ export async function activitySince(
   pageSize: number,
 ): Promise<ActivityPage> {
   const boundary = cursor === null ? null : decodeCursor(cursor)
+  const scope = project === undefined || project === '' ? undefined : project
   const desc: ActivityJson[] = []
   let skip = 0
-  let hitBoundary = boundary === null
+  let hitBoundary = false
+  let exhausted = false
+  // 全量重放模式：cursor=null，或边界判定不可达（作用域外命中/取尽未命中）后置真
+  let fullReplay = boundary === null
   for (let page = 0; page < MAX_FETCH_PAGES; page++) {
     const batch = await http.request(z.array(activityJsonSchema), {
       method: 'GET',
       path: '/api/activities',
       query: { fields: ACTIVITY_FIELDS, $top: String(pageSize), $skip: String(skip), reverse: 'true', categories: ACTIVITY_CATEGORIES },
     })
-    if (batch.length === 0) break // 取尽
-    if (boundary === null) {
-      desc.push(...batch)
-    } else {
+    if (batch.length === 0) {
+      exhausted = true
+      break // 取尽
+    }
+    if (!fullReplay && boundary !== null) {
       const idx = batch.findIndex((a) => a.id === boundary)
       if (idx >= 0) {
-        desc.push(...batch.slice(0, idx))
-        hitBoundary = true
-        break
+        const boundaryJson = batch[idx]
+        if (boundaryJson !== undefined && toPlatformActivity(boundaryJson, scope) === null) {
+          // 边界活动被他项目占位（公司作用域滤除）→ 本作用域流内永不可达
+          // = 调用方游标跨了作用域变化 → 裁决(a)：视为全量增量，继续翻页取尽
+          fullReplay = true
+        } else {
+          desc.push(...batch.slice(0, idx))
+          hitBoundary = true
+          break
+        }
       }
-      desc.push(...batch)
     }
-    if (batch.length < pageSize) break // 取尽（服务端窗口尾）
+    desc.push(...batch)
+    if (batch.length < pageSize) {
+      exhausted = true
+      break // 取尽（服务端窗口尾）
+    }
     skip += pageSize
   }
-  if (!hitBoundary && boundary !== null && desc.length >= MAX_FETCH_PAGES * pageSize) {
-    // 翻页上限内未命中边界且未取尽：如实上报而非漏报（防御分支）
+  if (boundary !== null && !hitBoundary && !fullReplay && !exhausted) {
+    // 翻页上限内既未命中边界也未取尽：如实上报而非漏报（防御分支——非作用域问题，
+    // 是实例异常/巨 feed；取尽未命中已在上文归入全量重放）
     throw new YouTrackPlatformError(
       'CONFIG_INVALID',
       'boundary-not-found',
       `边界活动 ${boundary} 在 ${String(MAX_FETCH_PAGES)} 页内未命中（活动被清理或实例异常）`,
     )
   }
-  const scope = project === undefined || project === '' ? undefined : project
   const ascending: PlatformActivity[] = []
   for (let i = desc.length - 1; i >= 0; i--) {
     const item = desc[i] === undefined ? null : toPlatformActivity(desc[i] as ActivityJson, scope)
