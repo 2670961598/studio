@@ -134,6 +134,16 @@
         "zod": "^4.0.0",
       },
     },
+    "packages/studio-tools": {
+      "name": "@studio-next/studio-tools",
+      "version": "0.1.0",
+      "dependencies": {
+        "@modelcontextprotocol/server": "^2.3.1",
+        "@studio-next/contract": "workspace:*",
+        "@studio-next/gateway": "workspace:*",
+        "zod": "^4.0.0",
+      },
+    },
     "packages/yt": {
       "name": "@studio-next/yt",
       "version": "0.1.0",
@@ -289,6 +299,8 @@
     "@studio-next/prompt": ["@studio-next/prompt@workspace:packages/prompt"],
 
     "@studio-next/store": ["@studio-next/store@workspace:packages/store"],
+
+    "@studio-next/studio-tools": ["@studio-next/studio-tools@workspace:packages/studio-tools"],
 
     "@studio-next/yt": ["@studio-next/yt@workspace:packages/yt"],
 

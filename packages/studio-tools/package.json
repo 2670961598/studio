@@ -1,0 +1,21 @@
+{
+  "name": "@studio-next/studio-tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Studio Next 内部 MCP server（studio-tools）：工具集=网关白名单的机器化——六工具与 GATEWAY_ACTIONS 一一对应，wkey 初始化注入 fail-closed，typed schema 拒坏输入（docs/24-§二、docs/25-§4.1）",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.3.1",
+    "@studio-next/contract": "workspace:*",
+    "@studio-next/gateway": "workspace:*",
+    "zod": "^4.0.0"
+  }
+}
