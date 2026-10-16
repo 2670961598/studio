@@ -21,6 +21,7 @@
     "@studio-next/company": "workspace:*",
     "@studio-next/contract": "workspace:*",
     "@studio-next/core": "workspace:*",
+    "@studio-next/gateway": "workspace:*",
     "@studio-next/panel": "workspace:*",
     "@studio-next/prompt": "workspace:*",
     "@studio-next/store": "workspace:*",
