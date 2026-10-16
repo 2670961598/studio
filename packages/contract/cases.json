@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "C-meta-001",
+      "domain": "meta",
+      "docs": "25-§二",
+      "title": "runner 自证：echo 全链（对象/数组/原语匹配）",
+      "input": {
+        "echo": {
+          "a": 1,
+          "b": [
+            "x",
+            "y"
+          ]
+        }
+      },
+      "expected": {
+        "out": {
+          "a": 1,
+          "b": [
+            "x",
+            "y"
+          ]
+        }
+      }
+    },
+    {
+      "id": "C-meta-002",
+      "domain": "meta",
+      "docs": "25-§二",
+      "title": "runner 自证：__NULL__ 哨兵断言显式 null",
+      "input": {
+        "echo": {
+          "n": null
+        }
+      },
+      "expected": {
+        "out": {
+          "n": "__NULL__"
+        }
+      }
+    },
+    {
+      "id": "C-meta-003",
+      "domain": "meta",
+      "docs": "25-§二",
+      "title": "runner 自证：err 期望（category+subcause）",
+      "input": {
+        "boom": true
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID",
+          "subcause": "meta-boom"
+        }
+      }
+    },
+    {
+      "id": "C-dir-001",
+      "domain": "dir",
+      "docs": "04-§二",
+      "title": "合法最小 2 级公司目录通过校验并产快照",
+      "input": {
+        "files": {
+          "org-config.yaml": "schema: org-config/v1\ncompany:\n  name: 演示公司\n  slug: demo-corp\n  mission: 最小可用\n  charter_ref: charter.md\n  level: 2\n  level_distribution:\n    2: 1\ndepartments:\n  - name: 工程部\n    path: departments/工程部\n    leader: AGENT-1\n    level: 2\n    parent: null\n    lanes: [core]\n    functions: [交付]\npeople:\n  - id: AGENT-1\n    name: 演示工程师\n    login: agent-1\n    level: 2\n    dept: departments/工程部\n"
+        }
+      },
+      "expected": {
+        "out": {
+          "ok": true,
+          "snapshot": {
+            "slug": "demo-corp",
+            "level": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "C-dir-002",
+      "domain": "dir",
+      "docs": "04-§二",
+      "title": "缺必填字段（company.charter_ref）→ 结构不合法",
+      "input": {
+        "files": {
+          "org-config.yaml": "schema: org-config/v1\ncompany:\n  name: 演示公司\n  slug: demo-corp\n  mission: 最小可用\n  level: 2\n  level_distribution:\n    2: 1\ndepartments:\n  - name: 工程部\n    path: departments/工程部\n    leader: AGENT-1\n    level: 2\n    parent: null\n    lanes: [core]\n    functions: [交付]\npeople:\n  - id: AGENT-1\n    name: 演示工程师\n    login: agent-1\n    level: 2\n    dept: departments/工程部\n"
+        }
+      },
+      "expected": {
+        "out": {
+          "ok": false,
+          "issues": [
+            {
+              "file": "org-config.yaml",
+              "rule": "org-config/missing-field:company.charter_ref"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "C-dir-003",
+      "domain": "dir",
+      "docs": "04-§二",
+      "title": "等级分布与 people 实数不符 → 结构不合法",
+      "input": {
+        "files": {
+          "org-config.yaml": "schema: org-config/v1\ncompany:\n  name: 演示公司\n  slug: demo-corp\n  mission: 最小可用\n  charter_ref: charter.md\n  level: 2\n  level_distribution:\n    2: 2\ndepartments:\n  - name: 工程部\n    path: departments/工程部\n    leader: AGENT-1\n    level: 2\n    parent: null\n    lanes: [core]\n    functions: [交付]\npeople:\n  - id: AGENT-1\n    name: 演示工程师\n    login: agent-1\n    level: 2\n    dept: departments/工程部\n"
+        }
+      },
+      "expected": {
+        "out": {
+          "ok": false,
+          "issues": [
+            {
+              "file": "org-config.yaml",
+              "rule": "org-config/level-count-mismatch"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

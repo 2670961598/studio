@@ -2,7 +2,7 @@
  * 唤起源端口 —— 源注册表协议（docs/25-§3.4，依据 22 原文冻结）
  * 源只产意图，绝不直接驱动 worker；决策归状态机主循环。
  */
-import type { CompanySlug, TicketId } from './kernel.js'
+import type { CompanySlug, TicketId } from './kernel.ts'
 
 export interface InvokeIntent {
   kind: 'ticket' | 'mention' | 'schedule' | 'relay' | 'resume' | 'webhook'

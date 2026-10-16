@@ -2,7 +2,7 @@
  * Executor 端口 —— 执行体适配协议（docs/25-§3.1，依据 18-§一）
  * 实现归 packages/adapters（及未来任意新 CLI 适配）；核心零 if executor，只读能力声明。
  */
-import type { Money, ResultStats, StreamEvent, TaskBrief } from './kernel.js'
+import type { Money, ResultStats, StreamEvent, TaskBrief } from './kernel.ts'
 
 export interface ExecutorCapabilities {
   budget_cap: boolean

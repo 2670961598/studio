@@ -3,7 +3,7 @@
  * YouTrack=参考实现（packages/yt 改造）；LocalFile=第二实现（契约靶子）。
  * 写入面只被 gateway 调用；游标是不透明字符串（NA1 教训），核心不解释。
  */
-import type { CompanySlug, PersonId, TicketId } from './kernel.js'
+import type { CompanySlug, PersonId, TicketId } from './kernel.ts'
 
 export interface IssueRecord {
   id: TicketId
