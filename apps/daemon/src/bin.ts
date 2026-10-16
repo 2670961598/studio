@@ -14,16 +14,20 @@
  *       events 全量导出 JSONL（F2-11 库→JSONL 单向派生）
  *   ledger rebuild <源.jsonl> <目标库>
  *       JSONL → 新库重放（单事务原子，坏行中止指明行号；F2-12）
+ *   panel --db <库路径> [--port 8787]
+ *       :8787 只读监控面（v0.3）：jobs/runs/workers/事件流（SSE），全部读 SQLite 零写；
+ *       库不存在即拒启（panel 不代建库）；SIGINT/SIGTERM 优雅关闭
  *   serve
  *       常驻进程：未实现（v0.5 主循环，docs/16-§四），exit 2 占位防误用
  *
  * argv 解析零依赖手写（单命令薄壳不值得引库；16-§二 选型纪律：引新依赖须登记选型表）。
- * 退出码：0 成功｜1 用法错误 / 校验不通过 / init 失败 / 演习 FAIL｜2 serve 未实现。
+ * 退出码：0 成功｜1 用法错误 / 校验不通过 / init 失败 / 演习 FAIL / panel 失败｜2 serve 未实现。
  * 用 process.exitCode 而非 process.exit 收尾：让管道下的 stdout/stderr 先冲刷再自然退出。
  */
 import path from 'node:path'
 import { initCompany, loadCompanyDirectory, readDirectoryFiles } from '@studio-next/company'
 import type { InitOptions } from '@studio-next/company'
+import { servePanel } from '@studio-next/panel'
 import { openLedger, rebuild, renderDrillReport, runLedgerDrill } from '@studio-next/store'
 
 const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
@@ -40,11 +44,14 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
       events 全量导出 JSONL（F2-11 单向派生）
   studio-next ledger rebuild <源.jsonl> <目标库>
       JSONL → 新库重放（单事务原子；F2-12）
+  studio-next panel --db <库路径> [--port 8787]
+      :8787 只读监控面（v0.3，docs/16-§四）：jobs/runs/workers/事件流（SSE），
+      全部读 SQLite 零写；库不存在即拒启；Ctrl-C 优雅关闭
   studio-next serve
       常驻进程（未实现，v0.5 主循环，docs/16-§四）：占位 exit 2 防误用
 
-默认值：--dir 缺省 ./<slug>；--name 缺省 <slug>
-文档：docs/04-公司目录与等级体系.md §二/§九；docs/16-技术实现与里程碑.md §四；docs/02-需求-框架面.md F2-11/F2-12`
+默认值：--dir 缺省 ./<slug>；--name 缺省 <slug>；--port 缺省 8787（panel）
+文档：docs/04-公司目录与等级体系.md §二/§九；docs/16-技术实现与里程碑.md §四；docs/02-需求-框架面.md F2-11/F2-12；docs/17-整体技术设计.md §8`
 
 interface Argv {
   positionals: string[]
@@ -209,6 +216,53 @@ async function cmdLedger(argv: string[]): Promise<number> {
   }
 }
 
+/** panel 子命令：薄壳转 servePanel（语义全在 @studio-next/panel；默认只绑本机） */
+async function cmdPanel(argv: string[]): Promise<number> {
+  const parsed = parseArgv(argv, new Set(['db', 'port']))
+  if ('error' in parsed) {
+    console.error(`panel：${parsed.error}`)
+    console.error(USAGE)
+    return 1
+  }
+  if (parsed.positionals.length > 0) {
+    console.error(`panel：多余的位置参数：${parsed.positionals.join(' ')}`)
+    console.error(USAGE)
+    return 1
+  }
+  const dbPath = parsed.flags.db
+  if (dbPath === undefined) {
+    console.error('panel：缺少 --db <库路径>')
+    console.error(USAGE)
+    return 1
+  }
+  let port = 8787
+  if (parsed.flags.port !== undefined) {
+    port = Number.parseInt(parsed.flags.port, 10)
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      console.error(`panel：--port 取值非法：${parsed.flags.port}（须为 1-65535 整数）`)
+      return 1
+    }
+  }
+  let handle
+  try {
+    handle = await servePanel(port, path.resolve(dbPath))
+  } catch (err) {
+    // 库不存在 / 端口占用等：CONFIG_INVALID 形状，如实分类上报
+    console.error(`panel 启动失败：${errText(err)}`)
+    return 1
+  }
+  console.log(`[panel] :8787 监控面已监听 → http://${handle.hostname}:${String(handle.port)}/（只读，Ctrl-C 退出）`)
+  console.log(`[panel] 台账：${path.resolve(dbPath)}（零写；端面 /api/health|jobs|runs|workers|events|events/stream|snapshot）`)
+  await new Promise<void>((resolve) => {
+    const stop = (): void => resolve()
+    process.once('SIGINT', stop)
+    process.once('SIGTERM', stop)
+  })
+  await handle.close()
+  console.log('[panel] 已优雅关闭')
+  return 0
+}
+
 async function main(): Promise<number> {
   const [command, ...rest] = process.argv.slice(2)
   switch (command) {
@@ -218,8 +272,10 @@ async function main(): Promise<number> {
       return cmdValidate(rest)
     case 'ledger':
       return cmdLedger(rest)
+    case 'panel':
+      return cmdPanel(rest)
     case 'serve':
-      console.error('studio-next serve：未实现（v0.5 主循环，docs/16-§四）。当前可用子命令：init / validate / ledger')
+      console.error('studio-next serve：未实现（v0.5 主循环，docs/16-§四）。当前可用子命令：init / validate / ledger / panel')
       return 2
     case undefined:
     case '-h':
