@@ -4,7 +4,7 @@
 
 ## 一、能力矩阵（实测三态）
 
-**已用**：issues CRUD/状态迁移/评论、activities（categories+epoch 游标）、articles 读写、issueLinks（Subtask/Relates）、customFields 写值、网关 wkey。
+**已用**：issues CRUD/状态迁移/评论、articles 读写、issueLinks（Subtask/Relates）、customFields 写值、网关 wkey。**已探测可用、未接线**：activities 活动流（categories+epoch 游标，代码零引用，现网派单靠状态查询——F2-10 标注为新增实现）。
 
 **可用未用（红利）**：
 - `/api/agiles` + sprints（**注意：网上流传的 `/api/agileBoards` 是错的，实测 404**；本机零看板）
@@ -49,7 +49,7 @@
 | N3 | 字段分层：全局共享（等级/泳道/Type/Priority/attempt/验收命令）；公司级（State、部门 bundle 可写已实测） | 新公司不改旧公司 bundle，互不污染 |
 | N4 | 等级升枚举 1-9 + 新增工号字段；`派单人` 改存工号（现存人名） | 存量不回填，渐进启用 |
 | N5 | bundle 自动 provisioning 按名幂等（存在则复用+比 diff）；四级顺序固定，每级可 dry-run | 值只增不删，旧的置 archived |
-| N6 | workflow 护栏按公司安装（复用 ytguard.GuardAdmin 三步法），guard 由 config.yaml 分权矩阵生成 | 该端点在 openapi.json 之外，需锁版本+回归 |
+| N6 | workflow 护栏按公司安装（复用 ytguard.GuardAdmin 三步法），guard 由 **ticket-types.yaml 同源生成**（经 statemachine 渲染；分权不进平台 guard，归 org 引擎，见 N8） | 该端点在 openapi.json 之外，需锁版本+回归 |
 | N7 | 板自动化：`POST /api/agiles`，列=State 序，泳道=部门；**禁用工号当泳道**（9 级退化成数千行） | 2 级与 9 级同模板 |
 | N8 | 权限两层：公司级隔离=项目团队（有 API）；等级分权不进平台角色（无 API），交 guard+org 引擎；6 内置角色映射 9 账号=一次性 UI setup 文档 | 产出"平台层能否拒绝 X"可执行断言清单 |
 | N9 | 账号恒为等级锚点，永不新增第 11 个活跃账号 | 任一单据 actor 可还原（公司,工号,账号,署名）四元组 |

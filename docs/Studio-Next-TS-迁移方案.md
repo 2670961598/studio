@@ -47,7 +47,7 @@ Stack Overflow 2026 调查 AI 用语言 Python 39% 居首；微软 Agent Framewo
 ```
 studio-next/
 ├── apps/
-│   └── daemon/            # Node 24/26 LTS 长驻（唯一常驻进程）
+│   └── daemon/            # Node 24 LTS 长驻（唯一常驻进程；Node 26 转 LTS 后跟进）
 ├── packages/
 │   ├── contract/          # 语言无关契约：cases.json + 双 runner + JSON Schema（§4）
 │   ├── core/              # 状态机/调度/收割/闸门/记账（纯逻辑，零 IO 依赖）
@@ -74,7 +74,7 @@ gates/metrics→core、web→panel、yt/ytgw→yt、org/approval/signoff→core/
 | 面板 | **Hono（streamSSE，Node 上跑）** | SSE 单向推 worker 流，浏览器自动重连；不用 WebSocket |
 | 子进程 | **execa**（`killDescendants:true` + `forceKillAfterDelay`） | 唯一内建进程组杀法；禁裸 exec |
 | 打包分发 | 需要时 **bun build --compile**（产物跑 Bun，仅分发场景） | 四方案中最成熟，支持交叉编译 |
-| MCP | 锁 **v1.x**（v2 pre-alpha） | 生产推荐 |
+| MCP | 锁 **v2**（spec 2026-07-28 已 stable；v1.x 转 legacy 维护线） | 2026-10-16 复查更正 |
 
 **协议蓝本（重要）**：抄 **Codex App Server** 的 JSON-RPC 模型——thread=YouTrack 单、
 turn=一次派工、item 带 started/delta/completed 生命周期、**审批=服务端发起的请求**。
