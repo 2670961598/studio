@@ -27,8 +27,8 @@
  * 天然安全（store/driver.ts journal_mode=WAL）。注意 openLedger 对不存在的路径会建库迁移
  * （=写），故 servePanel 前置 existsSync 闸：库不存在即拒启，不代建。
  *
- * 依赖纪律：本包仅 hono（16-§二 已登记）。**不引 @hono/node-server**——panel 端面全 GET
- * 无请求体，真监听壳用 node:http 手写 ~60 行 fetch 适配器（含流式回写与断连取消，SSE 可用）。
+ * 依赖纪律：本包仅 hono（16-§二 已登记）。**不引 @hono/node-server**——真监听壳用 node:http
+ * 手写 ~60 行 fetch 适配器（含请求体收集 [:8788 POST 面]、流式回写与断连取消，SSE 可用）。
  *
  * ledger 注入：openLedger 为工厂，app 内懒调用**恰一次**并缓存（句柄生命周期归注入方——
  * servePanel 开/关自己的句柄；测试注入共享库零文件依赖）。工厂抛错 → 该次请求 503，不缓存失败。
@@ -276,8 +276,13 @@ const HOP_BY_HOP_REQUEST = new Set(['host', 'connection', 'keep-alive', 'proxy-c
 /** 回写侧逐出的逐跳头（node:http 自管 chunked/连接语义） */
 const HOP_BY_HOP_RESPONSE = new Set(['connection', 'keep-alive', 'proxy-connection', 'te', 'trailer', 'transfer-encoding', 'upgrade'])
 
-/** IncomingMessage → 标准 Request（panel 全 GET 无请求体，body 恒空）；断连经 AbortSignal 传给 hono */
-export function toWebRequest(req: IncomingMessage, signal: AbortSignal): Request {
+/**
+ * IncomingMessage → 标准 Request；断连经 AbortSignal 传给 hono。
+ * v0.9 起 :8788 对外面有 POST 请求体：非 GET/HEAD 方法收集 body 为 Buffer（Request BodyInit）。
+ * 客户端键注入：socket.remoteAddress 以 `x-sn-client-key` 头写入（**覆写**同名入站头——
+ * 外部不可伪造），供对外面配额按客户端分桶；:8787/:8789 不读此头，行为不变。
+ */
+export async function toWebRequest(req: IncomingMessage, signal: AbortSignal): Promise<Request> {
   const host = typeof req.headers.host === 'string' && req.headers.host !== '' ? req.headers.host : '127.0.0.1'
   const headers = new Headers()
   for (const [key, value] of Object.entries(req.headers)) {
@@ -285,7 +290,16 @@ export function toWebRequest(req: IncomingMessage, signal: AbortSignal): Request
     if (value === undefined) continue
     for (const item of Array.isArray(value) ? value : [value]) headers.append(key, item)
   }
-  return new Request(`http://${host}${req.url ?? '/'}`, { method: req.method ?? 'GET', headers, body: null, signal })
+  const clientKey = req.socket.remoteAddress
+  if (clientKey !== undefined) headers.set('x-sn-client-key', clientKey)
+  let body: Uint8Array | null = null
+  const method = req.method ?? 'GET'
+  if (method !== 'GET' && method !== 'HEAD') {
+    const chunks: Buffer[] = []
+    for await (const chunk of req) chunks.push(chunk as Buffer)
+    body = Buffer.concat(chunks)
+  }
+  return new Request(`http://${host}${req.url ?? '/'}`, { method, headers, body, signal })
 }
 
 /** Response → ServerResponse 流式回写（SSE 走同一条 pipe 路径）；客户端断开 → 取消上游流 */
@@ -339,7 +353,8 @@ export async function listenHono(app: Hono, port: number, opts?: ListenHonoOptio
   const server = createServer((req, res) => {
     const controller = new AbortController()
     res.on('close', () => controller.abort())
-    void Promise.resolve(app.fetch(toWebRequest(req, controller.signal)))
+    void toWebRequest(req, controller.signal)
+      .then((request) => app.fetch(request))
       .then((response: Response) => forwardResponse(res, response))
       .catch(() => {
         if (!res.headersSent) {
