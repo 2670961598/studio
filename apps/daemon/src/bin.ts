@@ -24,6 +24,18 @@
  *       【选型说明（拟稿）】独立子命令而非 serve --overview-port：:8787 本就是独立 panel
  *       子命令（serve 主循环不内嵌面板），:8789 同款——只读壳与 daemon 生命周期解耦，
  *       WAL 同库并存安全；待制作人批示后固化
+ *   external --company <目录> [--company <目录2> …] [--db <库路径>] [--port 8788]
+ *            [--token <触发面令牌>] [--requests-per-minute N] [--lan]
+ *       :8788 对外 API（v0.9 信息/触发骨架）：信息端点全 GET 全公开（D5）——/v1/company、
+ *       /v1/org、/v1/people、/v1/projects、/v1/issues、/v1/finance、/v1/reports；
+ *       触发端点 POST /v1/requests（X-SN-Token 必带，**只落单不派工**，幂等键防重，IP 配额
+ *       429）；/v1/agent-card（名片带版本）；SSE 订阅 501 占位。越权调用全部 fail-closed
+ *       （16-§四 v0.9）。--token 缺省=触发面全 401；--db 给出才装配触发面（必须已存在——
+ *       不代建库）。【绑定面（D4 拟稿反转说明）】D4「默认局域网」是部署意图，安全缺省取
+ *       **127.0.0.1** 只绑本机；对局域网开放须显式 --lan（绑 0.0.0.0）。
+ *       【触发面平台（拟稿）】本子命令以 fake 平台过真网关闸（demo 骨架，与 serve demo 模式
+ *       同款：DEV_GATEWAY_SECRET 开发密钥+警告）；真 YouTrack/localfile 接线与生产密钥归
+ *       daemon 装配后续刀（写闸已在网关侧收口——panel 包不碰 gateway）
  *   serve --config <daemon.yaml>
  *       常驻主循环（v0.5）：七相位引擎 + 心跳日志；SIGINT/SIGTERM 优雅停（等当前拍收口→
  *       在途 drain→关台账）。配置最小面 {db, platform: localfile|fake, company, rootDir,
@@ -32,7 +44,7 @@
  *     逐项清单见 src/serve.ts 与 src/engine.ts 头注）
  *
  * argv 解析零依赖手写（单命令薄壳不值得引库；16-§二 选型纪律：引新依赖须登记选型表）。
- * 退出码：0 成功｜1 用法错误 / 校验不通过 / init 失败 / 演习 FAIL / panel 失败 / overview 失败 / serve 配置错｜
+ * 退出码：0 成功｜1 用法错误 / 校验不通过 / init 失败 / 演习 FAIL / panel 失败 / overview 失败 / external 失败 / serve 配置错｜
  * 2 serve 运行中出错（tick 异常）。
  * 用 process.exitCode 而非 process.exit 收尾：让管道下的 stdout/stderr 先冲刷再自然退出。
  */
@@ -42,7 +54,16 @@ import type { InitOptions } from '@studio-next/company'
 import { servePanel } from '@studio-next/panel'
 import { serveOverview } from '@studio-next/panel/overview'
 import type { OverviewCompanySource } from '@studio-next/panel/overview'
+import { serveExternal } from '@studio-next/panel/external'
+import type { ExternalCompanySource } from '@studio-next/panel/external'
 import { openLedger, rebuild, renderDrillReport, runLedgerDrill } from '@studio-next/store'
+import type { CompanySnapshot } from '@studio-next/contract'
+import { CONTROL_TICKET, createGateway } from '@studio-next/gateway'
+import type { SignatureContext } from '@studio-next/gateway'
+import { DEV_GATEWAY_SECRET } from './serve.ts'
+import { createFakePlatform } from './fakes.ts'
+import { createGatedPlatform } from './gated-platform.ts'
+import { ENGINE_CONFIG_DEFAULTS } from './engine.ts'
 import { runServe } from './serve.ts'
 
 const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
@@ -66,6 +87,13 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
       :8789 公司概览面（v0.7 读面，docs/04-§七）：挂载公司目录（可多家，校验不过拒绝挂载）
       → /<slug>/ 概览/组织/人事/进度/财务五读面（全 GET 只读、零前端依赖）；
       --db 可选（给出则进度/财务页读台账，必须已存在——只读不代建）；Ctrl-C 优雅关闭
+  studio-next external --company <目录> [--company <目录2> …] [--db <库路径>] [--port 8788]
+                      [--token <触发面令牌>] [--requests-per-minute N] [--lan]
+      :8788 对外 API（v0.9 信息/触发骨架，docs/16-§四/17-§8/25-§4.2）：信息端点全 GET 全公开
+      （/v1/company|org|people|projects|issues|finance|reports|agent-card）；触发端点
+      POST /v1/requests（X-SN-Token 必带——只落单不派工、幂等键防重、IP 每分钟配额 429）；
+      越权调用全部 fail-closed；--token 缺省=触发面全 401；--lan 才绑 0.0.0.0（缺省 127.0.0.1，
+      D4 拟稿反转：局域网开放须显式旗标）；Ctrl-C 优雅关闭
   studio-next serve --config <daemon.yaml>
       常驻主循环（v0.5，docs/16-§四）：七相位引擎 + 心跳日志 + SIGINT/SIGTERM 优雅停。
       配置最小面（扁平 YAML 子集）：db / platform(fake|localfile) / company / rootDir / tickMs /
@@ -76,28 +104,36 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
       预算预留-结算不落即不派（20-§六.8）；demo 模式=fake 全家桶零外部依赖
       （真 dsh/YouTrack/网关未接线，见 src/serve.ts 头注）
 
-默认值：--dir 缺省 ./<slug>；--name 缺省 <slug>；--port 缺省 8787（panel）/ 8789（overview）
+默认值：--dir 缺省 ./<slug>；--name 缺省 <slug>；--port 缺省 8787（panel）/ 8789（overview）/ 8788（external）
 文档：docs/04-公司目录与等级体系.md §二/§七/§九；docs/16-技术实现与里程碑.md §四；docs/02-需求-框架面.md F2-11/F2-12；docs/17-整体技术设计.md §8`
 
 interface Argv {
   positionals: string[]
   flags: Record<string, string>
+  /** 布尔旗标（无值，出现即 true） */
+  booleans: Set<string>
   /** 可重复旗标的全部取值（按出现序；不可重复旗标不进此面） */
   multi: Record<string, string[]>
 }
 
 /**
- * 零依赖 argv 解析：--key value 成对消费；未知旗标 / 缺值即用法错误。
- * repeatableFlags 中的旗标可多次出现（取值收集进 multi，后值不覆盖前值）。
+ * 零依赖 argv 解析：--key value 成对消费（booleanFlags 中的旗标无值，出现即真）；
+ * 未知旗标 / 缺值即用法错误。repeatableFlags 中的旗标可多次出现（取值收集进 multi，
+ * 后值不覆盖前值）。
  */
-function parseArgv(argv: string[], valueFlags: ReadonlySet<string>, repeatableFlags?: ReadonlySet<string>): Argv | { error: string } {
+function parseArgv(argv: string[], valueFlags: ReadonlySet<string>, repeatableFlags?: ReadonlySet<string>, booleanFlags?: ReadonlySet<string>): Argv | { error: string } {
   const positionals: string[] = []
   const flags: Record<string, string> = {}
+  const booleans = new Set<string>()
   const multi: Record<string, string[]> = {}
-  for (let i = 0; i < argv.length; i++) {
+  for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i] ?? ''
     if (arg.startsWith('--')) {
       const key = arg.slice(2)
+      if (booleanFlags?.has(key)) {
+        booleans.add(key)
+        continue
+      }
       if (!valueFlags.has(key)) return { error: `未知参数：${arg}` }
       const value = argv[i + 1]
       if (value === undefined || value.startsWith('--')) return { error: `${arg} 缺少取值` }
@@ -110,7 +146,7 @@ function parseArgv(argv: string[], valueFlags: ReadonlySet<string>, repeatableFl
       positionals.push(arg)
     }
   }
-  return { positionals, flags, multi }
+  return { positionals, flags, booleans, multi }
 }
 
 function errText(err: unknown): string {
@@ -407,6 +443,139 @@ async function cmdOverview(argv: string[]): Promise<number> {
   return 0
 }
 
+/**
+ * external 子命令：:8788 对外 API 薄壳（语义全在 @studio-next/panel/external）。
+ * 挂载语义与 overview 同款（逐目录 readDirectoryFiles → loadCompanyDirectory，校验不过
+ * 拒绝挂载）；报表清单从目录文件集派生（reports/ 前缀——v0 只出清单不出正文）。
+ * 触发面平台（拟稿）：fake 平台过真网关闸（createGatedPlatform——17-§7 写收口在 daemon
+ * 侧装配，panel 包不碰 gateway）；DEV_GATEWAY_SECRET 开发密钥+警告，与 serve demo 同款，
+ * 真平台接线与生产密钥归 daemon 装配后续刀。绑定面：缺省 127.0.0.1，--lan 显式绑 0.0.0.0
+ * （D4 拟稿反转：D4「默认局域网」是部署意图，安全缺省只绑本机）。
+ */
+async function cmdExternal(argv: string[]): Promise<number> {
+  const parsed = parseArgv(argv, new Set(['company', 'db', 'port', 'token', 'requests-per-minute']), new Set(['company']), new Set(['lan']))
+  if ('error' in parsed) {
+    console.error(`external：${parsed.error}`)
+    console.error(USAGE)
+    return 1
+  }
+  if (parsed.positionals.length > 0) {
+    console.error(`external：多余的位置参数：${parsed.positionals.join(' ')}`)
+    console.error(USAGE)
+    return 1
+  }
+  const companyDirs = parsed.multi.company ?? []
+  if (companyDirs.length === 0) {
+    console.error('external：至少给一个 --company <公司目录>（可重复给多家）')
+    console.error(USAGE)
+    return 1
+  }
+  let port = 8788
+  if (parsed.flags.port !== undefined) {
+    port = Number.parseInt(parsed.flags.port, 10)
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      console.error(`external：--port 取值非法：${parsed.flags.port}（须为 1-65535 整数）`)
+      return 1
+    }
+  }
+  let requestsPerMinute: number | undefined
+  if (parsed.flags['requests-per-minute'] !== undefined) {
+    requestsPerMinute = Number.parseInt(parsed.flags['requests-per-minute'], 10)
+    if (!Number.isInteger(requestsPerMinute) || requestsPerMinute < 1) {
+      console.error(`external：--requests-per-minute 取值非法：${parsed.flags['requests-per-minute']}（须为正整数）`)
+      return 1
+    }
+  }
+
+  const companies: ExternalCompanySource[] = []
+  let firstSnapshot: CompanySnapshot | undefined
+  for (const dir of companyDirs) {
+    const resolved = path.resolve(dir)
+    let files: Record<string, string>
+    try {
+      files = await readDirectoryFiles(resolved)
+    } catch (err) {
+      console.error(`external：读取公司目录失败 ${resolved}：${errText(err)}`)
+      return 1
+    }
+    const mounted = loadCompanyDirectory(files)
+    if (!mounted.ok) {
+      console.error(`external：公司目录校验不通过（拒绝挂载，docs/04-§九）：${resolved}`)
+      for (const issue of mounted.issues) console.error(`  ${issue.file}:${issue.line} [${issue.rule}] ${issue.fix}`)
+      return 1
+    }
+    const snapshot = mounted.snapshot
+    if (firstSnapshot === undefined) firstSnapshot = snapshot
+    companies.push({
+      slug: snapshot.slug,
+      snapshotProvider: () => snapshot,
+      listReports: () =>
+        Object.entries(files)
+          .filter(([p]) => p.startsWith('reports/'))
+          .map(([file, content]) => ({ file: file.slice('reports/'.length), bytes: content.length }))
+          .filter((r) => !r.file.startsWith('.') && r.file !== ''), // 点文件（.gitkeep 占位）与目录本身不出清单
+    })
+  }
+
+  // 触发面平台装配（拟稿）：fake 平台 + 真网关闸（issues.create 过 comment 动作词收口）。
+  // 身份取首家快照（控制面无人员档案——与 serve daemonIdentity 同拟稿）；开发密钥+警告。
+  const snapshotForIdentity = firstSnapshot as CompanySnapshot
+  const ctx: SignatureContext = {
+    company: snapshotForIdentity.name,
+    dept: snapshotForIdentity.departments[0]?.path ?? 'departments/未挂部门',
+    role: 'daemon',
+    level: Math.max(1, snapshotForIdentity.level),
+  }
+  const author = ENGINE_CONFIG_DEFAULTS.actor
+  const gateway = createGateway({
+    secret: new TextEncoder().encode(DEV_GATEWAY_SECRET),
+    clock: () => Date.now(),
+    ticket: CONTROL_TICKET,
+    ctx,
+    author,
+  })
+  const platform = createGatedPlatform(createFakePlatform(), gateway, { ctx, author })
+  console.warn('[external] 警告：触发面平台为 fake demo 骨架，网关密钥用开发缺省值（生产装配必配强密钥——17-§7；真平台接线归 daemon 后续刀）')
+
+  const token = parsed.flags.token
+  if (token === undefined && parsed.flags.db !== undefined) {
+    console.warn('[external] 警告：给了 --db 但未给 --token——触发面全 401（fail-closed），只读信息面可用')
+  }
+
+  let handle
+  try {
+    handle = await serveExternal(port, companies, {
+      ...(parsed.flags.db !== undefined ? { ledgerPath: path.resolve(parsed.flags.db) } : {}),
+      ...(token !== undefined ? { token } : {}),
+      platform,
+      ...(requestsPerMinute !== undefined ? { requestsPerMinute } : {}),
+      ...(parsed.booleans.has('lan') ? { hostname: '0.0.0.0' } : {}),
+    })
+  } catch (err) {
+    // 重复 slug / 库不存在 / 端口占用等：CONFIG_INVALID 形状，如实分类上报
+    console.error(`external 启动失败：${errText(err)}`)
+    return 1
+  }
+  console.log(
+    `[external] :8788 对外 API 已监听 → http://${handle.hostname}:${String(handle.port)}/v1/agent-card` +
+      `${parsed.booleans.has('lan') ? '' : '（默认只绑本机——对局域网开放须 --lan，D4 拟稿反转）'}`,
+  )
+  console.log(
+    `[external] 已挂载：${companies.map((c) => c.slug).join('、')}；` +
+      (parsed.flags.db !== undefined ? `台账：${path.resolve(parsed.flags.db)}（触发面 kv 幂等写；信息面零写）` : '无台账（issues/finance 如实降级；触发面 501）') +
+      (token !== undefined ? '' : '；触发面未配令牌（POST /v1/requests 全 401——fail-closed）'),
+  )
+  console.log('[external] 端面：/v1/agent-card｜/v1/company｜/v1/org｜/v1/people｜/v1/projects｜/v1/issues｜/v1/finance｜/v1/reports｜POST /v1/requests（token）｜/v1/events（501 占位）')
+  await new Promise<void>((resolve) => {
+    const stop = (): void => resolve()
+    process.once('SIGINT', stop)
+    process.once('SIGTERM', stop)
+  })
+  await handle.close()
+  console.log('[external] 已优雅关闭')
+  return 0
+}
+
 /** serve 子命令：薄壳转 runServe（配置装载/循环/优雅停语义全在 src/serve.ts） */
 async function cmdServe(argv: string[]): Promise<number> {
   const parsed = parseArgv(argv, new Set(['config']))
@@ -454,6 +623,8 @@ async function main(): Promise<number> {
       return cmdPanel(rest)
     case 'overview':
       return cmdOverview(rest)
+    case 'external':
+      return cmdExternal(rest)
     case 'serve':
       return cmdServe(rest)
     case undefined:
