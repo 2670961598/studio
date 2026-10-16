@@ -23,7 +23,7 @@
  *   [ ] 挂载器：加载 → 校验 → 汇总为内存快照 → 供 prompt/store 消费
  *   [ ] 定时岗装载：目录配置 → jobs 表（热更一个岗不影响其他岗）
  *   [ ] 报表聚合器：按 `<date>-<type>-<节点>-<一句话>.md` 约定归并
- *   [ ] init 脚手架：从 templates 生成新公司目录
+ *   [x] init 脚手架：从 templates 生成新公司目录（v0.1-M3，src/init.ts）
  *   [ ] schema 版本迁移脚本（migrate，由 daemon 执行、挂单留痕、可 git revert）
  */
 
@@ -35,3 +35,6 @@ export const PACKAGE_STATUS = "skeleton";
 
 // 目录契约校验器 v0（docs/04-§二/§九；docs/25-§3.5 目录端口）
 export * from './validator.ts'
+
+// init 脚手架 + 目录读取壳（v0.1-M3，docs/16-§四 验收口径「init 出模板公司并通过自检」）
+export * from './init.ts'
