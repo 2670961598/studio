@@ -20,3 +20,6 @@ export const PACKAGE_NAME = "@studio-next/contract";
 
 /** 骨架状态标记：实现落地后改为 "ready" 或直接删除 */
 export const PACKAGE_STATUS = "skeleton";
+
+// 端口与协议（docs/25-端口与协议.md）——全部并行开发的共享接口面
+export * from "./ports/index.js";
