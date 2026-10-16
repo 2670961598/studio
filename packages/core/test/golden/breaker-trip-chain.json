@@ -1,0 +1,73 @@
+{
+  "name": "breaker-trip-chain",
+  "description": "断路器触发链（L0 · T-202）：同签名连击 0→2 照常重派（dispositions retry），第 3 击熔断——停重派（hold BREAKER_OPEN），成功信号复位后恢复派发。熔断瞬间的 open_bug 动作由 breaker.onWorkerError 产生（code=BREAKER_TRIPPED，breaker 单测覆盖），回首批位=已派发→新单 rollback（flows 单测覆盖）。本链 seen 恒空：聚焦断路器，意图键记账语义见 dedup 链。",
+  "inputs": [
+    {
+      "issue": { "id": "T-202", "title": "报表聚合修正", "state": "新单", "type": "bug", "dept": "eng", "level": 0, "assignee": "P-3", "lane": "main", "updated": "2026-10-16T00:00:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "ticket", "company": "acme", "ticket": "T-202", "source": "poll", "priority": 1 },
+      "seenIntentKeys": [],
+      "breaker": { "strikes": 0, "threshold": 3 },
+      "now": 1792108860000,
+      "stallAfterMs": 3600000
+    },
+    {
+      "issue": { "id": "T-202", "title": "报表聚合修正", "state": "新单", "type": "bug", "dept": "eng", "level": 0, "assignee": "P-3", "lane": "main", "updated": "2026-10-16T00:10:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "ticket", "company": "acme", "ticket": "T-202", "source": "poll", "priority": 1 },
+      "seenIntentKeys": [],
+      "breaker": { "strikes": 1, "threshold": 3 },
+      "now": 1792108860000,
+      "stallAfterMs": 3600000
+    },
+    {
+      "issue": { "id": "T-202", "title": "报表聚合修正", "state": "新单", "type": "bug", "dept": "eng", "level": 0, "assignee": "P-3", "lane": "main", "updated": "2026-10-16T00:20:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "ticket", "company": "acme", "ticket": "T-202", "source": "poll", "priority": 1 },
+      "seenIntentKeys": [],
+      "breaker": { "strikes": 2, "threshold": 3 },
+      "now": 1792108860000,
+      "stallAfterMs": 3600000
+    },
+    {
+      "issue": { "id": "T-202", "title": "报表聚合修正", "state": "新单", "type": "bug", "dept": "eng", "level": 0, "assignee": "P-3", "lane": "main", "updated": "2026-10-16T00:30:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "ticket", "company": "acme", "ticket": "T-202", "source": "poll", "priority": 1 },
+      "seenIntentKeys": [],
+      "breaker": { "strikes": 3, "threshold": 3 },
+      "now": 1792108860000,
+      "stallAfterMs": 3600000
+    },
+    {
+      "issue": { "id": "T-202", "title": "报表聚合修正", "state": "新单", "type": "bug", "dept": "eng", "level": 0, "assignee": "P-3", "lane": "main", "updated": "2026-10-16T00:40:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "ticket", "company": "acme", "ticket": "T-202", "source": "poll", "priority": 1 },
+      "seenIntentKeys": [],
+      "breaker": { "strikes": 0, "threshold": 3 },
+      "now": 1792108860000,
+      "stallAfterMs": 3600000
+    }
+  ],
+  "expected": [
+    { "type": "dispatch", "code": "DISPATCH" },
+    { "type": "dispatch", "code": "DISPATCH" },
+    { "type": "dispatch", "code": "DISPATCH" },
+    { "type": "hold", "code": "HOLD_BREAKER_OPEN" },
+    { "type": "dispatch", "code": "DISPATCH" }
+  ]
+}
