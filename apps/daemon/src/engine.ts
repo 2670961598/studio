@@ -14,6 +14,13 @@
  *     同 tick 重放 / 重启重放均不双写。
  *   - docs/23-§四 demo 模式：fake 全家桶（platform/adapter/台账/公司目录）零外部依赖跑通——
  *     端到端预演见 apps/daemon/test/e2e.test.ts。
+ *   - docs/22-§一/§二 唤起源（schedule 源，v0.4）：ingest() 是意图注入口——调度器
+ *     onDue 产 kind='schedule' 意图（payload 携 job_id，dedupKey=job_id+触发时刻），
+ *     **只产意图不直接干活**；引擎在 state-diff 前把意图物化为「岗单据」进 decide 主链：
+ *     PATROL 留痕 → 新单 → 派发 → 收割 → …（定时岗结果落台账的机制面，16-§四 v0.4）。
+ *     意图幂等（22-§三.2）：同键 schedule 意图只物化一次——PATROL 留痕派生键集
+ *     （append-only **不释放**：markRan 已记账，源重投不得重跑）+ 拍内去重。
+ *   - docs/18-§三 状态归位：调度器不是控制面——岗单据与普通单走同一状态机同一收割链。
  *
  * v0 占位与诚实边界（真单前逐项补齐，详见 serve.ts 头注与汇报）：
  *   - gateRunner：默认实现=REPORT 存在性 + exit0 模拟（真验收命令执行归 v0.5 真单刀）；
@@ -41,6 +48,15 @@
  *     取 max(1, level)（0 级单按 1 记）。两口径混用为文档疑点，已上报不改文档。
  *   - ticket_mirror.created：IssueRecord 无 created 字段，以 updated 近似（镜像可重建，17-§3）。
  *   - HEARTBEAT 哨兵单号：events.issue 必填（contract），零动作拍挂 config.heartbeatIssue（'-'）。
+ *
+ * schedule 意图消费口径（v0.4 拟稿待批，见 scheduler.ts 头注）：
+ *   - 岗单据物化形态：type='task'、level=0（走 L0 状态流——定时岗无人审批环：岗的设立即
+ *     授权，每跑再挂制作人审批与 48h 无人值守矛盾）、assignee=job.role（RoleName 恰为工号则
+ *     精确命中，否则回退 defaultPersonId——岗位名→工号映射待人事档案面）；
+ *   - job.level/model_tier/budget_cap 落 jobs 表随行，不进 v0 派发链（模型档接线归后续刀）；
+ *   - markRan 已提交而进程崩溃于 ingest 消费前：该次触发丢失（at-most-once）——已物化岗单据
+ *     经活动流重启后仍被主循环接管；
+ *   - 非 schedule 意图 ingest 明报不支持（六源其余五源归 v0.8 唤起六源刀）。
  */
 import { createHash } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -50,6 +66,7 @@ import type {
   ExecutorAdapter,
   FlowPlatform,
   Handle,
+  InvokeIntent,
   IssueRecord,
   PersonRef,
   ResultStats,
@@ -62,6 +79,7 @@ import {
   emptyBreakerState,
   flowAnchors,
   flowLevelKey,
+  intentKeyOf,
   onWorkerError,
   onSuccess,
   resolveFlow,
@@ -239,6 +257,8 @@ interface EventIndex {
   seenKeys: readonly string[]
   /** 已 CLOSE 单（不再进 state-diff 候选） */
   closed: ReadonlySet<TicketId>
+  /** schedule 意图已物化键集（PATROL 留痕派生，append-only 不释放——重投不重跑） */
+  patrolKeys: ReadonlySet<string>
 }
 
 // ————————————————————————— 引擎本体 —————————————————————————
@@ -246,6 +266,13 @@ interface EventIndex {
 /** 引擎句柄：serve 循环每拍调 tick()；停机走 dispose()（在途 drain=优雅杀） */
 export interface Engine {
   tick(): Promise<TickReport>
+  /**
+   * 意图注入口（22-§一 源协议在引擎侧的落点）：唤起源（v0.4=scheduler 的 schedule 源）
+   * 把意图推入队列，下一拍 state-diff 前消费——物化/去重/决策全在 tick 内（源零直驱）。
+   */
+  ingest(intents: readonly InvokeIntent[]): void
+  /** 队列深度（观测/测试断言：未消费意图数） */
+  readonly pendingIntents: number
   /** 在途 drain（v0：对内存 handle 优雅 kill；work_records 留 running——重启接管归后续刀） */
   dispose(): Promise<void>
   readonly config: EngineConfig
@@ -263,6 +290,7 @@ export function createEngine(deps: EngineDeps): Engine {
   let breaker: BreakerState = emptyBreakerState()
   const lanes = new Map<string, LaneLease>()
   const inflight = new Map<TicketId, Inflight>()
+  const intentQueue: InvokeIntent[] = []
   let seq = 0
 
   // daemon_kv（拟稿：store 升 kv 表后迁移，见文件头注）
@@ -362,12 +390,13 @@ export function createEngine(deps: EngineDeps): Engine {
     })
   }
 
-  /** events 派生索引（幂等三件套：attempt/seen/closed；见文件头注拟稿） */
+  /** events 派生索引（幂等件：attempt/seen/closed + schedule 意图键；见文件头注拟稿） */
   function indexEvents(): EventIndex {
     const dispatchCount = new Map<TicketId, number>()
     const lastDispatch = new Map<TicketId, { ts: number; key: string | null }>()
     const lastOutcome = new Map<TicketId, number>()
     const closed = new Set<TicketId>()
+    const patrolKeys = new Set<string>()
     for (const e of ledger.queryEvents()) {
       if (e.event === 'DISPATCH') {
         dispatchCount.set(e.issue, (dispatchCount.get(e.issue) ?? 0) + 1)
@@ -377,6 +406,11 @@ export function createEngine(deps: EngineDeps): Engine {
         lastOutcome.set(e.issue, Math.max(lastOutcome.get(e.issue) ?? 0, e.ts))
       } else if (e.event === 'CLOSE') {
         closed.add(e.issue)
+      } else if (e.event === 'PATROL') {
+        // schedule 意图物化留痕（append-only 不释放）：同键意图恒只物化一次——
+        // 与 DISPATCH 键的「结论后释放」语义相反（定时触发=markRan 已记账，重投不得重跑）
+        const key = e.note?.split(';').find((s) => s.startsWith('intent='))?.slice('intent='.length)
+        if (key !== undefined) patrolKeys.add(key)
       }
     }
     const seen: string[] = []
@@ -387,6 +421,7 @@ export function createEngine(deps: EngineDeps): Engine {
       attemptOf: (ticket: TicketId): number => (dispatchCount.get(ticket) ?? 0) + 1,
       seenKeys: seen,
       closed,
+      patrolKeys,
     }
   }
 
@@ -744,21 +779,80 @@ export function createEngine(deps: EngineDeps): Engine {
     const stallQ: Array<Extract<Action, { type: 'stall_alarm' }>> = []
     let provisionalActions = 0
 
+    // —— 相位 2 前置：意图队列消费（schedule 源，22-§一）——排程意图物化为岗单据进候选 ——
+    const candidates: Array<{ ticket: TicketId; intent: InvokeIntent }> = []
+    const drained = intentQueue.splice(0)
+    const drainSeen = new Set<string>()
+    for (const intent of drained) {
+      if (intent.kind !== 'schedule') {
+        errors.push(`意图消费：kind='${intent.kind}' 不支持（v0.4 只落 schedule 源；六源全通归 v0.8）——丢弃`)
+        continue
+      }
+      if (intent.company !== config.company) {
+        errors.push(`意图消费：公司不匹配（intent=${intent.company} engine=${config.company}）——丢弃`)
+        continue
+      }
+      const payload = (intent.payload ?? {}) as { job_id?: unknown }
+      if (typeof intent.dedupKey !== 'string' || intent.dedupKey === '') {
+        errors.push('意图消费：schedule 意图缺 dedupKey（无 ticket 意图必填，invoke v1.3）——丢弃')
+        continue
+      }
+      if (typeof payload.job_id !== 'string' || payload.job_id === '') {
+        errors.push('意图消费：schedule 意图 payload 缺 job_id——丢弃')
+        continue
+      }
+      const intentKey = intentKeyOf(intent)
+      // 意图幂等（22-§三.2）：PATROL 已留痕的键（append-only 不释放——markRan 已记账，
+      // 重投不得重跑）或本拍重复键，只物化一次
+      if (index.patrolKeys.has(intentKey) || drainSeen.has(intentKey)) continue
+      const job = ledger.getJob(payload.job_id)
+      if (job === undefined) {
+        errors.push(`意图消费：job ${payload.job_id} 不在台账（热更移除？）——丢弃`)
+        continue
+      }
+      try {
+        // 物化岗单据：L0 流（无人审批环）+ job.role 命工号则精确指派（口径见文件头注拟稿）
+        const created = await platform.issues.create({
+          title: `[定时岗] ${job.job_id} ${new Date(startedAt).toISOString()}`,
+          type: 'task',
+          dept: job.dept,
+          level: 0,
+          assignee: job.role,
+        })
+        syncMirror(created)
+        makeEvent('PATROL', created, 1, tickEvents, {
+          note: `intent=${intentKey};job=${job.job_id};cron=${job.cron};role=${job.role};dedup=${intent.dedupKey};来源=${intent.source}`,
+        })
+        mutations += 1
+        drainSeen.add(intentKey)
+        candidates.push({ ticket: created.id, intent })
+      } catch (err) {
+        errors.push(`意图消费：job ${job.job_id} 岗单据物化失败：${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+
     for (const ticket of [...affected].sort()) {
       if (index.closed.has(ticket)) continue // 已 CLOSE 单不再进决策
+      candidates.push({
+        ticket,
+        intent: {
+          kind: 'ticket',
+          company: config.company,
+          ticket,
+          source: config.intentSource,
+          priority: 1,
+        },
+      })
+    }
+    for (const cand of candidates) {
+      const ticket = cand.ticket
       const issue = issueById.get(ticket) ?? (await platform.issues.get(ticket).catch(() => undefined))
       if (issue === undefined) {
         errors.push(`state-diff：单 ${ticket} 平台取不到（跳过本拍）`)
         continue
       }
       const lane = issue.lane ?? config.defaultLane
-      const intent = {
-        kind: 'ticket' as const,
-        company: config.company,
-        ticket,
-        source: config.intentSource,
-        priority: 1,
-      }
+      const intent = cand.intent
       const out = decide({
         issue,
         laneLease: laneState(lane),
@@ -962,7 +1056,7 @@ export function createEngine(deps: EngineDeps): Engine {
           cursorBefore,
           cursorAfter: cursor,
         },
-        stateDiff: { candidates: affected.length, decisions },
+        stateDiff: { candidates: candidates.length, decisions },
         dispatch: {
           dispatched,
           approvals,
@@ -995,6 +1089,12 @@ export function createEngine(deps: EngineDeps): Engine {
 
   const engine: Engine = {
     tick,
+    ingest(intents: readonly InvokeIntent[]): void {
+      intentQueue.push(...intents)
+    },
+    get pendingIntents(): number {
+      return intentQueue.length
+    },
     dispose,
     get config(): EngineConfig {
       return config

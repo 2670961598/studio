@@ -57,7 +57,9 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
       常驻主循环（v0.5，docs/16-§四）：七相位引擎 + 心跳日志 + SIGINT/SIGTERM 优雅停。
       配置最小面（扁平 YAML 子集）：db / platform(fake|localfile) / company / rootDir / tickMs /
       maxActionsPerTick / maxInflight / stallAfterMs / laneTtlMs / breakerThreshold / autoApprove /
-      companyDir；demo 模式=fake 全家桶零外部依赖（真 dsh/YouTrack/网关未接线，见 src/serve.ts 头注）
+      companyDir / jobs / jobPollMs；jobs: true 起定时岗调度器（v0.4：cron 到点→schedule 意图→
+      主循环，结果落台账）；demo 模式=fake 全家桶零外部依赖（真 dsh/YouTrack/网关未接线，
+      见 src/serve.ts 头注）
 
 默认值：--dir 缺省 ./<slug>；--name 缺省 <slug>；--port 缺省 8787（panel）
 文档：docs/04-公司目录与等级体系.md §二/§九；docs/16-技术实现与里程碑.md §四；docs/02-需求-框架面.md F2-11/F2-12；docs/17-整体技术设计.md §8`
