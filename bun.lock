@@ -76,6 +76,13 @@
         "zod": "^4.0.0",
       },
     },
+    "packages/localplatform": {
+      "name": "@studio-next/localplatform",
+      "version": "0.1.0",
+      "dependencies": {
+        "@studio-next/contract": "workspace:*",
+      },
+    },
     "packages/panel": {
       "name": "@studio-next/panel",
       "version": "0.1.0",
@@ -247,6 +254,8 @@
     "@studio-next/core": ["@studio-next/core@workspace:packages/core"],
 
     "@studio-next/daemon": ["@studio-next/daemon@workspace:apps/daemon"],
+
+    "@studio-next/localplatform": ["@studio-next/localplatform@workspace:packages/localplatform"],
 
     "@studio-next/panel": ["@studio-next/panel@workspace:packages/panel"],
 
