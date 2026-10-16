@@ -21,7 +21,9 @@
  *   [ ] zod schema：org-config / 部门 config / 人事档案 front-matter / .studio-next.yaml
  *   [ ] 校验器：错误定位到 文件:行 + 给出修法
  *   [ ] 挂载器：加载 → 校验 → 汇总为内存快照 → 供 prompt/store 消费
- *   [ ] 定时岗装载：目录配置 → jobs 表（热更一个岗不影响其他岗）
+ *   [x] 定时岗装载：org-config.yaml jobs 段 → snapshot.jobs（v0.1-M4，映射表冻结在
+ *        validator.ts OrgJobSchema 头注；daemon seedJobs 消费快照播种 jobs 表——18-§三）
+ *   [ ] 定时岗热更：目录改动重注册对应岗、不动其他岗（18-§三；daemon 侧收口）
  *   [ ] 报表聚合器：按 `<date>-<type>-<节点>-<一句话>.md` 约定归并
  *   [x] init 脚手架：从 templates 生成新公司目录（v0.1-M3，src/init.ts）
  *   [ ] schema 版本迁移脚本（migrate，由 daemon 执行、挂单留痕、可 git revert）
