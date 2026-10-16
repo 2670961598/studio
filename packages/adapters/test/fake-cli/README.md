@@ -22,6 +22,7 @@ FAKE_FIXTURE=../fixtures/dsh/turn-completed.ndjson node fake-cli.mjs
 | `FAKE_EXIT` | 进程退出码 | `0` |
 | `FAKE_HANG` | `1` = 输出后挂起不退出，直到被 SIGTERM/SIGKILL | 不挂起 |
 | `FAKE_DELAY_MS` | 逐行输出间隔（毫秒），用于测增量流消费 | `0`（整块输出） |
+| `FAKE_SIGTERM_EXIT` | 设置后吞掉 SIGTERM 默认终止，改以该码退出（dsh 已知坑模拟）；配 `FAKE_HANG` 用 | 不启用（SIGTERM 默认终止） |
 
 ## 场景示例
 
@@ -37,12 +38,15 @@ FAKE_FIXTURE=../fixtures/codex/turn-completed.jsonl FAKE_HANG=1 node fake-cli.mj
 
 # 缓慢吐行：测 stream() 的异步增量消费
 FAKE_FIXTURE=../fixtures/kimi/stdout-basic.jsonl FAKE_DELAY_MS=50 node fake-cli.mjs
+
+# dsh 已知坑：挂起后吞 SIGTERM、以退出码 0 死（docs/17-§6——成功判定只认流内终态，非退出码）
+FAKE_FIXTURE=../fixtures/dsh/killed-mid-step.ndjson FAKE_HANG=1 FAKE_SIGTERM_EXIT=0 node fake-cli.mjs
 ```
 
 ## 边界语义
 
-- 未注册信号处理器：SIGTERM 走 Node 默认终止（被杀即死，无退出码）。
-  「dsh 被 kill 后退出码=0 且 final 为空」的坑位模拟（docs/17-§6）属于 dsh 适配器
-  kill 测试的专用旋钮，落地时在此追加。
+- 未设 `FAKE_SIGTERM_EXIT` 时不注册信号处理器：SIGTERM 走 Node 默认终止（被杀即死，无退出码）。
+- 设置 `FAKE_SIGTERM_EXIT=<码>` 即注册处理器：吞掉 SIGTERM 默认终止，以该码 `process.exit`
+  ——模拟 dsh「被 kill 后退出码=0 且 final 为空」的坑位（docs/17-§6）；SIGKILL 仍不可吞。
 - stdout 写入用同步 `writeSync`：`process.exit` 前无缓冲残留，管道场景不会截断。
 - 消费端提前关管道（EPIPE）按被终止处理，静默退出。

@@ -6,13 +6,14 @@
  * `node fake-cli.mjs` 直接拉起。各家的真实流形态由 golden fixtures 提供（../fixtures/）。
  *
  * 环境变量旋钮（详见 README.md）：
- *   FAKE_FIXTURE    golden fixture 文件路径：内容逐行写到 stdout（缺省则无输出）
- *   FAKE_EXIT       退出码（缺省 0）
- *   FAKE_HANG       =1：输出完毕后挂起不退出，直到被 SIGTERM/SIGKILL——测 kill 路径
- *   FAKE_DELAY_MS   逐行输出间隔毫秒（缺省 0：一次性整块输出）——测增量流消费
+ *   FAKE_FIXTURE        golden fixture 文件路径：内容逐行写到 stdout（缺省则无输出）
+ *   FAKE_EXIT           退出码（缺省 0）
+ *   FAKE_HANG           =1：输出完毕后挂起不退出，直到被 SIGTERM/SIGKILL——测 kill 路径
+ *   FAKE_DELAY_MS       逐行输出间隔毫秒（缺省 0：一次性整块输出）——测增量流消费
+ *   FAKE_SIGTERM_EXIT   设置后注册 SIGTERM 处理器：吞掉默认终止，改以该码退出
+ *                       （=0 即 dsh 已知坑「被 kill 后退出码=0」；配 FAKE_HANG 使用）
  *
- * 注：未注册任何信号处理器——SIGTERM 走 Node 默认终止行为；
- * 「dsh 被 kill 后退出码=0」的坑位模拟属于 dsh 适配器 kill 测试的旋钮，届时再加。
+ * 注：除 FAKE_SIGTERM_EXIT 外不注册任何信号处理器——SIGTERM 走 Node 默认终止行为。
  */
 import { readFileSync, writeSync } from 'node:fs'
 
@@ -24,6 +25,16 @@ const exitCode = Number.isNaN(parsedExit) ? 0 : parsedExit
 const hang = env.FAKE_HANG === '1'
 const parsedDelay = Number.parseInt(env.FAKE_DELAY_MS ?? '0', 10)
 const delayMs = Number.isNaN(parsedDelay) || parsedDelay < 0 ? 0 : parsedDelay
+const sigtermExitRaw = env.FAKE_SIGTERM_EXIT ?? ''
+const parsedSigtermExit = Number.parseInt(sigtermExitRaw, 10)
+const sigtermExit =
+  sigtermExitRaw === '' ? undefined : Number.isNaN(parsedSigtermExit) ? 0 : parsedSigtermExit
+
+if (sigtermExit !== undefined) {
+  // dsh 已知坑模拟（docs/17-§6）：吞掉 SIGTERM 的默认终止，改以指定退出码退出——
+  // FAKE_SIGTERM_EXIT=0 即「被 kill 后退出码=0 且 final 为空」，成功判定绝不能只看退出码
+  process.on('SIGTERM', () => process.exit(sigtermExit))
+}
 
 const sleep = (ms) => new Promise((resolve) => {
   setTimeout(resolve, ms)
