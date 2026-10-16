@@ -205,13 +205,19 @@ describe('kill 已知坑（17-§6：被 kill 后退出码=0 且 final 为空—�
       const adapter = new DshAdapter([
         process.execPath,
         '-e',
-        'process.on("SIGTERM", () => {}); setInterval(() => {}, 1e9)',
+        'process.on("SIGTERM", () => {}); process.stdout.write("READY\\n"); setInterval(() => {}, 1e9)',
       ])
       const h = await adapter.launch(makeBrief())
+      const events: unknown[] = []
       const consuming = (async () => {
-        for await (const ev of adapter.stream(h)) void ev
+        for await (const ev of adapter.stream(h)) events.push(ev)
       })()
-      await new Promise((r) => setTimeout(r, 100))
+      // 竞态修复（2026-10-17 宰相）：等 READY 首事件再杀——SIGTERM 早于子进程装好处理器时
+      // 子进程秒死，宽限断言必翻（负载下首现）；READY=处理器已装好的就绪信号
+      await new Promise<void>((resolve) => {
+        const tick = setInterval(() => { if (events.length > 0) { clearInterval(tick); resolve() } }, 5)
+        setTimeout(() => { clearInterval(tick); resolve() }, 5_000)
+      })
       const t0 = Date.now()
       await adapter.kill(h, 300)
       expect(Date.now() - t0).toBeGreaterThanOrEqual(250) // 确实等满宽限才升级
