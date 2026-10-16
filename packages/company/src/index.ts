@@ -4,7 +4,7 @@
  * 定位（docs/04，需求 C1/C2）：公司 = 代码外部的一个 git 目录；目录即 API。
  *
  * 职责：
- *   - 目录契约校验：org-config.yaml + departments/**/config.yaml + people/** 档案 +
+ *   - 目录契约校验：org-config.yaml + departments 嵌套 config.yaml + people 档案 +
  *     reports/ docs/ prompts/ .studio-next.yaml；结构不合法给 **文件:行 + 修法**（04-§九）
  *   - 挂载：`serve --company <dir>`，可挂多家；校验不过拒绝启动
  *   - 模板与建议，不写死：目录结构/部门模板/报表约定/等级映射/定时岗配置全是默认模板，公司可覆盖
