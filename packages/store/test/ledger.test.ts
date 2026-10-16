@@ -63,8 +63,8 @@ function expectConfigInvalid(fn: () => unknown, subcausePrefix: string, messageC
 }
 
 describe('建库与迁移（schema_version 薄 runner）', () => {
-  it('建库即迁移：首刀三表 + v2 五表 + 索引 + schema_version 落两行，version=2', () => {
-    expect(ledger.version()).toBe(2)
+  it('建库即迁移：首刀三表 + v2 五表 + v3 jobs + 索引 + schema_version 落三行，version=3', () => {
+    expect(ledger.version()).toBe(3)
     const tables = (
       ledger.db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as Array<{
         name: unknown
@@ -79,9 +79,16 @@ describe('建库与迁移（schema_version 薄 runner）', () => {
         name: unknown
       }>
     ).map((r) => String(r.name))
-    expect(indexes).toEqual(['idx_budgets_scope', 'idx_events_company_ts', 'idx_events_issue', 'idx_work_records_issue'])
+    expect(indexes).toEqual([
+      'idx_budgets_scope',
+      'idx_events_company_ts',
+      'idx_events_issue',
+      'idx_jobs_company',
+      'idx_jobs_next_run_at',
+      'idx_work_records_issue',
+    ])
     const rows = ledger.db.prepare('SELECT version, sha8 FROM schema_version').all() as Array<{ version: unknown; sha8: unknown }>
-    expect(rows.length).toBe(2)
+    expect(rows.length).toBe(3)
     for (const row of rows) expect(String(row.sha8)).toMatch(/^[0-9a-f]{8}$/)
   })
 
@@ -94,9 +101,9 @@ describe('建库与迁移（schema_version 薄 runner）', () => {
 
   it('重开库 migrate 幂等：版本不变、schema_version 不重复落行', () => {
     const again = openLedger(path.join(root, 'ledger.db'))
-    expect(again.version()).toBe(2)
+    expect(again.version()).toBe(3)
     const rows = again.db.prepare('SELECT COUNT(*) AS c FROM schema_version').get() as { c?: unknown }
-    expect(Number(rows.c)).toBe(2)
+    expect(Number(rows.c)).toBe(3)
     again.close()
   })
 })
