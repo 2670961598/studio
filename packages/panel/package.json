@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Studio Next 面板：:8787 框架监控 / :8789 公司概览（Hono + SSE）",
+  "description": "Studio Next 面板：:8787 框架监控（v0.3 只读面；:8789 公司概览归后续版本）（Hono + SSE）",
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts"
@@ -13,9 +13,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@studio-next/company": "workspace:*",
+    "@studio-next/contract": "workspace:*",
     "@studio-next/store": "workspace:*",
-    "hono": "^4.6.0",
-    "zod": "^4.0.0"
+    "hono": "^4.6.0"
   }
 }
