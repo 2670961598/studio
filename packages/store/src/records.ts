@@ -1,17 +1,21 @@
 /**
- * records —— work_records / sessions 的 store 层记录形状（v0.2 首刀）
+ * records —— store 层记录形状与临时校验闸（v0.2 首刀三表 + 第二刀五表）
  *
- * 依据：docs/17-§3 行条目（id/issue/工号/instance_id/executor/session_id/lane/branch/
- * started/ended/cost/tokens/attempt/status/report_ref/summary_ref 与 session_id/issue/工号/
- * archive_path/started/ended/turns）。
+ * 依据：docs/17-§3 行条目。
+ *   - 首刀三表（work_records / sessions）：id/issue/工号/instance_id/executor/session_id/lane/branch/
+ *     started/ended/cost/tokens/attempt/status/report_ref/summary_ref 与 session_id/issue/工号/
+ *     archive_path/started/ended/turns。
+ *   - 第二刀五表（people / personnel_events / departments / ticket_mirror / budgets）：
+ *     列语义对齐 17-§3 表清单（people=公司目录镜像｜personnel_events=本库 append-only｜
+ *     departments=公司目录镜像｜ticket_mirror=YouTrack 镜像｜budgets=本库）。
  *
- * **拟稿待批（docs 未细化处，contract 的 work_records schema 尚在 TODO——见 contract index）**：
+ * **拟稿待批（docs 未细化处逐条标明，contract 落地后替换为契约校验）**：
  *   - 「工号」列名 person_id；「started/ended」→ started_at/ended_at（epoch ms，ended 可空=在途）；
  *     「cost」→ cost_usd（对齐 events 列名）；
  *   - tokens 形状取 kernel.TokenCounts（executor 归一化三字段口径——work_records 来自收割
  *     ResultStats，与 events 四桶不同源，F2-04 只冻结 events 侧）；
  *   - status 先为非空串（done/failed 具体枚举归收割域，contract 落地时收口）；
- *   - id / session_id 暂不锁 ULID（与 events 不同：17-§3 未标 id 形状，先非空）。
+ *   - id / session_id 暂不锁 ULID（与 events 不同：17-§3 未标 id 形状，先非空）——五张新表同此口径。
  * 本文件是 store 层临时闸（拒明显坏行入账），contract schema 落地后替换为契约校验。
  */
 import { z } from 'zod'
@@ -48,6 +52,81 @@ export interface SessionRecord {
   turns?: number
 }
 
+// —— v0.2 第二刀五表（17-§3 列语义；各表拟稿点见行注） ——
+
+/** people 记录（公司目录镜像，17-§3「工号(PK), 名称, login, level, dept, 岗位, skills[], side_effects, 能力档, executor 偏好, 状态」） */
+export interface PersonRecord {
+  person_id: string
+  name: string
+  login: string
+  level: number
+  dept: string
+  role?: string
+  skills?: string[]
+  /** 副作用等级（写库/改单/对外发言）；17-§3 未标数组形，模板 front-matter 形如 [写盘]——拟稿按字符串数组 */
+  side_effects?: string[]
+  /** 能力档 0-3（V4-V7-§4.2/§14 拟稿口径；contract 冻结时收口） */
+  capability_tier?: number
+  executor_pref?: string
+  /** 模板口径 active | paused | retired；v0 不锁枚举，先非空串 */
+  status?: string
+}
+
+/** personnel_events 记录（本库 append-only，17-§3「id, ts, 工号, type(入/调/升/降/停/复/退), 前值, 新值, 单据号, 批准人」） */
+export interface PersonnelEventRecord {
+  id: string
+  ts: number
+  person_id: string
+  /** 变动类型：入/调/升/降/停/复/退（17-§3）——值域 v0 不锁，contract 冻结时收口，先非空串 */
+  type: string
+  /** 前值（标量文本：等级数字 / 部门 path / 状态串等；复合变动拆多条——拟稿） */
+  prev?: string
+  next?: string
+  /** 必挂单（F2-06/C1-06：无单号拒绝——列级 NOT NULL + 本闸双兜底） */
+  ticket: string
+  approver: string
+}
+
+/** departments 记录（公司目录镜像，17-§3「path(PK), company, 主管工号, 职能, 泳道, 上级 path」） */
+export interface DepartmentRecord {
+  path: string
+  company: string
+  leader: string
+  functions: string[]
+  lanes: string[]
+  parent_path?: string
+}
+
+/** ticket_mirror 记录（YouTrack 镜像，17-§3「issue(PK), company, created, updated, state, type, dept, level, dispatcher, parent, lane」） */
+export interface TicketMirrorRecord {
+  issue: string
+  company: string
+  created: number
+  updated: number
+  state: string
+  type: string
+  dept: string
+  /** 单据等级：拟稿取 1..9（04-§四 口径，同 events.level） */
+  level: number
+  dispatcher: string
+  parent?: string
+  /** 泳道；可空=未定泳道 */
+  lane?: string
+}
+
+/** budgets 记录（本库，17-§3「id, issue/工号/公司, kind(reserve/settle/refusal), estimated, actual, ts」） */
+export interface BudgetRecord {
+  id: string
+  /** 预算主体类别：issue（单号）/ person（工号）/ company（公司 slug）——scope_id 对应取值 */
+  scope_kind: 'issue' | 'person' | 'company'
+  scope_id: string
+  /** F1-09 预算三节点：reserve（预留）/ settle（结算释放）/ refusal（超额拒绝落账） */
+  kind: 'reserve' | 'settle' | 'refusal'
+  estimated_usd?: number
+  actual_usd?: number
+  ts: number
+}
+
 /** store 层临时校验（拟稿待批，见文件头注） */
 export const WorkRecordSchema = z.strictObject({
   id: z.string().min(1),
@@ -79,4 +158,70 @@ export const SessionRecordSchema = z.strictObject({
   started_at: z.number().int().min(0),
   ended_at: z.number().int().min(0).optional(),
   turns: z.number().int().min(0).optional(),
+})
+
+// —— v0.2 第二刀五表临时闸（拟稿点见接口行注；strict：未知列拒收，加列走批示+SCHEMA_EVOLVE） ——
+
+/** store 层临时校验（拟稿待批，见文件头注） */
+export const PersonRecordSchema = z.strictObject({
+  person_id: z.string().min(1),
+  name: z.string().min(1),
+  login: z.string().min(1),
+  /** agent 等级 1-9（04-§四；同 events.level 拟稿口径） */
+  level: z.number().int().min(1).max(9),
+  dept: z.string().min(1),
+  role: z.string().min(1).optional(),
+  skills: z.array(z.string().min(1)).optional(),
+  side_effects: z.array(z.string().min(1)).optional(),
+  capability_tier: z.number().int().min(0).max(3).optional(),
+  executor_pref: z.string().min(1).optional(),
+  status: z.string().min(1).optional(),
+})
+
+/** store 层临时校验（拟稿待批，见文件头注） */
+export const PersonnelEventRecordSchema = z.strictObject({
+  id: z.string().min(1),
+  ts: z.number().int().min(0),
+  person_id: z.string().min(1),
+  type: z.string().min(1),
+  prev: z.string().min(1).optional(),
+  next: z.string().min(1).optional(),
+  ticket: z.string().min(1),
+  approver: z.string().min(1),
+})
+
+/** store 层临时校验（拟稿待批，见文件头注） */
+export const DepartmentRecordSchema = z.strictObject({
+  path: z.string().min(1),
+  company: z.string().min(1),
+  leader: z.string().min(1),
+  functions: z.array(z.string().min(1)),
+  lanes: z.array(z.string().min(1)),
+  parent_path: z.string().min(1).optional(),
+})
+
+/** store 层临时校验（拟稿待批，见文件头注） */
+export const TicketMirrorRecordSchema = z.strictObject({
+  issue: z.string().min(1),
+  company: z.string().min(1),
+  created: z.number().int().min(0),
+  updated: z.number().int().min(0),
+  state: z.string().min(1),
+  type: z.string().min(1),
+  dept: z.string().min(1),
+  level: z.number().int().min(1).max(9),
+  dispatcher: z.string().min(1),
+  parent: z.string().min(1).optional(),
+  lane: z.string().min(1).optional(),
+})
+
+/** store 层临时校验（拟稿待批，见文件头注） */
+export const BudgetRecordSchema = z.strictObject({
+  id: z.string().min(1),
+  scope_kind: z.enum(['issue', 'person', 'company']),
+  scope_id: z.string().min(1),
+  kind: z.enum(['reserve', 'settle', 'refusal']),
+  estimated_usd: z.number().min(0).optional(),
+  actual_usd: z.number().min(0).optional(),
+  ts: z.number().int().min(0),
 })
