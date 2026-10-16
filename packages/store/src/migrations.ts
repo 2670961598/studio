@@ -239,6 +239,46 @@ const MIGRATIONS: readonly Migration[] = [
       '',
     ].join('\n'),
   },
+  {
+    version: 5,
+    name: 'v0.10 进化管线：candidates 候选制品表（17-§3 / core evolution 首刀 / 02-F3）',
+    sql: [
+      // candidates：进化管线候选制品谱系（17-§3「id, 资产类型, version, diff_hash, blast_radius,
+      //   验证结果, 谱系父 id, 状态」+ asset_path / created_at，列名逐列对齐 core CandidateRecord
+      //   ——core evolution.ts 头注「store 建表时以此为准」；与 17-§3/任务草案的形状差异取舍
+      //   见 records.ts v5 段与 test 一致性用例）：
+      //   - asset_type（列名取 core 字段名，非草案的 asset_kind——行↔记录零改名，漂移面最小）；
+      //   - asset_path（17-§3 未列；core 首刀裁定加入——判负面「生产改动按 (asset_path,
+      //     diff_hash) 匹配授权态」的机制需要，纯 diff 会把改动授权给任意同内容资产）；
+      //   - version TEXT（core CandidateRecord.version 为 string——「v0.3」类版本号可往返；
+      //     core 形状闸校验非空串，INTEGER 列既容不下语义也回读不出原串）；
+      //   - verification：JSON 文本快照（core 的 GateEvidence 序列化；同 jobs.payload 口径，
+      //     读写面 JSON 往返）。可空=draft 期未跑沙箱（core：进 gated 前必须非 null）；
+      //   - parent_id 可空=初代（core：null 显式标记）；无 FK——软引用，存在性/成环闸在
+      //     写面（insertCandidate 应用层检查，容忍按序重建的插入顺序）；
+      //   - created_at INTEGER（epoch ms）：超出 core 记录形状的库侧列（台账表惯例，daemon
+      //     供时钟——core 零 Date.now）；CandidateRow = core 形状 + 本列，一致性测试钉死。
+      // 幂等键 = (asset_path, diff_hash) 且非终态（core 拟稿裁定）：终态（rejected/retired）
+      // 命中放行新建=换代重提；谱系父不可变（fork-only）。三索引即三查询面：
+      //   幂等查 (asset_path, diff_hash) / 谱系查 (parent_id) / 判负查 active 集 (status)。
+      'CREATE TABLE candidates (',
+      '  id TEXT PRIMARY KEY,',
+      '  asset_type TEXT NOT NULL,',
+      '  asset_path TEXT NOT NULL,',
+      '  version TEXT NOT NULL,',
+      '  diff_hash TEXT NOT NULL,',
+      '  blast_radius TEXT NOT NULL,',
+      '  verification TEXT,',
+      '  parent_id TEXT,',
+      '  status TEXT NOT NULL,',
+      '  created_at INTEGER NOT NULL',
+      ');',
+      'CREATE INDEX idx_candidates_asset_path_diff_hash ON candidates (asset_path, diff_hash);',
+      'CREATE INDEX idx_candidates_parent_id ON candidates (parent_id);',
+      'CREATE INDEX idx_candidates_status ON candidates (status);',
+      '',
+    ].join('\n'),
+  },
 ]
 
 /** 内置迁移的最高版本（0 = 无迁移可用，仅占位防呆） */
