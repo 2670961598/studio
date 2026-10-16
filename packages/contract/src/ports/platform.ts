@@ -9,6 +9,7 @@ export interface IssueRecord {
   id: TicketId
   title: string
   state: string
+  description?: string
   type?: string
   dept?: string
   level?: number
@@ -19,7 +20,6 @@ export interface IssueRecord {
 }
 
 export interface IssueQuery {
-  project?: string
   stateIn?: string[]
   assignee?: PersonId
   lane?: string
@@ -45,8 +45,10 @@ export interface Comment {
 }
 
 export interface SignedBody {
+  /** 署名者工号（gateway 组装；Comment.author 由此派生） */
+  author: PersonId
   body: string
-  /** 署名 [公司·部门·岗位·级别] 自动注入（17-§7），实现负责拼装 */
+  /** 署名展示形态 [公司·部门·岗位·级别] 自动注入（17-§7），实现负责拼装 */
   signature: string
 }
 
@@ -60,6 +62,8 @@ export interface FieldSchema {
 export interface FieldProvisionMap {
   /** 业务字段名 → 平台字段名（模板与建议不写死：公司目录声明映射，适配器翻译） */
   fields: Record<string, string>
+  /** 业务字段名 → 字段类型（缺省 string） */
+  types?: Record<string, 'string' | 'int' | 'enum' | 'date' | 'text'>
   states: string[]
   stateFlow: Record<string, string[]>
 }
@@ -73,7 +77,8 @@ export interface KbHit {
 export interface PlatformActivity {
   id: string
   ts: string
-  issue: TicketId
+  /** 单据类活动必填；kb/fields/guards 类平台级变更可无单 */
+  issue?: TicketId
   kind: string
   actor?: string
 }
