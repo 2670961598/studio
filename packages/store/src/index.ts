@@ -24,6 +24,10 @@
  *       三表归并时间线（C1-04 最小面）
  *   [x] v3 jobs 调度表（migration v3，17-§2 / 18-§三）：upsertJob（job_id 幂等覆盖，热更单岗
  *       不动他岗）/ dueJobs（补跑扫描）/ markRan（两列同语句原子）/ removeJob + getJob/listJobs 读面
+ *   [x] v4 吸收单（migration v4，daemon 合龙件三债）：daemon_kv 表接管（DDL/语句与 daemon
+ *       现行字节级一致，存量数据原地接管；kvGet/kvSet 读写面）+ work_records 收口面
+ *       endWorkRecord（一次性收口，可选列 COALESCE 不动）+ queryEvents 倒序通道
+ *       （order='desc'，desc+limit=最近 N 条；panel 消费接线归后续单）
  *   [x] 演习与维护 CLI 面（F2-12 可操作化）：runLedgerDrill 删库重建演习（daemon bin 出
  *       `ledger drill/dump/rebuild` 子命令组，薄壳转调本包）
  *   [ ] cron 表达式解析（croner，daemon/core 侧）+ 补跑 coalesce / 同岗不重叠（18-§三，core 后续单）
@@ -32,6 +36,20 @@
  *   [ ] rebuild --from yt,org 两源通道（F2-12 全量再生；现仅 jsonl 源）
  *   [ ] 季度删库演习挂 cron 岗留证（`ledger drill` 已可操作化，v0.4 定时岗落地后挂）
  *   [ ] 数据保留与归档（>90 天事件按月导出，热表留索引，见 docs/19-§四）
+ *
+ * v4 拟稿待批 / 疑点（只记录，不改文档）：
+ *   - kv 接管：DDL/读写语句与 daemon 现行 engine.ts 字节级一致（IF NOT EXISTS 双向幂等共存）；
+ *     daemon 后续单删自建语句切本面，数据原地续用——接管关系见 migrations v4 头注
+ *   - kv 键闸=非空串（空键=调用方 bug 拒收）；value 不闸（空串=daemon「游标 null」持久形态，
+ *     回读方还原 null）。键命名空间（前缀/点分约定）不锁——daemon 现行 'activity.cursor'/
+ *     'tick.seq' 直用——待批
+ *   - endWorkRecord 无 tokens 列写面：daemon 现行 closeWorkRecord 直发 UPDATE 会回填 tokens
+ *     （ResultStats）；切 store API 时需扩 tokens 入参或收割面另行落账——待批
+ *   - endWorkRecord status 终态值域不锁（done/failed 枚举归收割域/contract 后续收口）；
+ *     无此行返回 false（markRan 同风格）而非 CONFIG_INVALID——口径待批
+ *   - queryEvents order 白名单闸（运行期防注入，CONFIG_INVALID）；desc 索引兼容性：company
+ *     过滤+desc 走 idx_events_company_ts 反向扫描，issue 过滤走 idx_events_issue 定位后排序，
+ *     无过滤面全表排序（与 asc 同量级；量大后再评估独立 ts 索引）——见 EventQuery.order 行注
  *
  * v3 拟稿待批 / 疑点（只记录，不改文档）：
  *   - budget_cap 存 REAL（USD）而非 INTEGER 微美分：对齐 contract Money{usd:number} 与库内
@@ -80,10 +98,11 @@ export type { Migration } from './migrations.ts'
 export { openLedger } from './ledger.ts'
 export type { AppendResult, BudgetScope, CompanySyncResult, DumpResult, EventQuery, Ledger, PersonnelTimelineEntry } from './ledger.ts'
 
-// work_records / sessions + v2 五表 + v3 jobs 记录形状（store 层临时闸，contract schema 落地后替换）
+// work_records / sessions + v2 五表 + v3 jobs + v4 收口面 记录形状（store 层临时闸，contract schema 落地后替换）
 export {
   BudgetRecordSchema,
   DepartmentRecordSchema,
+  EndWorkRecordSchema,
   JobRecordSchema,
   PersonRecordSchema,
   PersonnelEventRecordSchema,
@@ -94,6 +113,7 @@ export {
 export type {
   BudgetRecord,
   DepartmentRecord,
+  EndWorkRecord,
   JobRecord,
   PersonRecord,
   PersonnelEventRecord,

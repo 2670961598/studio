@@ -1,5 +1,5 @@
 /**
- * ledger —— 台账句柄：打开/迁移/事件入账/查询面/公司镜像同步（v0.2 首刀 + 第二刀 + v3 jobs）
+ * ledger —— 台账句柄：打开/迁移/事件入账/查询面/公司镜像同步（v0.2 首刀 + 第二刀 + v3 jobs + v4 吸收）
  *
  * 依据：docs/16-§四 v0.2（三表建库 + 快照/重建）、docs/17-§3（数据模型）、
  * docs/02 F2-01（可重建投影，daemon 唯一写入者）、F2-11（JSONL 单向派生）。
@@ -32,6 +32,18 @@
  *     不清 last_run_at**（运行时状态归 markRan）；cron 只做形状闸，解析归 core 后续单。
  *   - dueJobs：next_run_at <= now 升序（补跑扫描）；markRan：last_run_at/next_run_at 单语句
  *     原子落库。
+ *
+ * v4 吸收面（daemon 合龙件三债，migrations v4 同批）：
+ *   - kvGet / kvSet：daemon_kv 表正式读写面（活动流游标 / tick.seq 的家）。接管关系与切换
+ *     路径见 migrations v4 头注——DDL 与读写语句均与 daemon 现行 engine.ts **字节级一致**
+ *     （daemon 后续单删自建语句切本面，数据原地续用）；value 允空串（daemon「游标 null」的
+ *     持久形态，回读方负责还原 null）。
+ *   - endWorkRecord：work_records 收口面（daemon 现行直发 UPDATE 的正式化）——只允许一次
+ *     （已 ended 再收=CONFIG_INVALID）；cost_usd/report_ref/summary_ref 未给值的列不动
+ *     （COALESCE 语义，对齐 daemon 现行语句）；无此行=false（markRan 同风格，如实上报）。
+ *     tokens 列不在本面（拟稿待批，见 index.ts 疑点清单）。
+ *   - queryEvents 增 order:'asc'|'desc'：desc+limit=「最近 N 条」（panel 倒序通道的库侧
+ *     落点；panel 消费接线归后续单）。
  */
 import { writeFileSync } from 'node:fs'
 import type { DatabaseSync } from 'node:sqlite'
@@ -48,6 +60,7 @@ import { currentVersion, migrate } from './migrations.ts'
 import {
   BudgetRecordSchema,
   DepartmentRecordSchema,
+  EndWorkRecordSchema,
   JobRecordSchema,
   PersonRecordSchema,
   PersonnelEventRecordSchema,
@@ -56,6 +69,7 @@ import {
   WorkRecordSchema,
   type BudgetRecord,
   type DepartmentRecord,
+  type EndWorkRecord,
   type JobRecord,
   type PersonRecord,
   type PersonnelEventRecord,
@@ -64,7 +78,10 @@ import {
   type WorkRecord,
 } from './records.ts'
 
-/** events 查询面：全部条件可选，ts 双端闭区间，返回恒升序（ts, id 稳定序） */
+/**
+ * events 查询面：全部条件可选，ts 双端闭区间。行序缺省升序（ts, id 稳定序）；
+ * order='desc' 时倒序（ts, id 同刻稳定序的镜像反序），与 limit 组合=「最近 N 条」。
+ */
 export interface EventQuery {
   company?: string
   issue?: string
@@ -73,6 +90,13 @@ export interface EventQuery {
   /** ts <= until（闭端，epoch ms） */
   until?: number
   limit?: number
+  /**
+   * 行序（缺省 'asc'）。索引兼容性：company 过滤 + desc 走 idx_events_company_ts
+   * (company, ts) 反向扫描（SQLite B-tree 索引双向可走，无新索引需求）；issue 过滤走
+   * idx_events_issue 定位后按 (ts,id) 排序；无过滤面全表排序（与 asc 同量级，量大后
+   * 再评估独立 ts 索引——拟稿，见 index.ts 疑点清单）。
+   */
+  order?: 'asc' | 'desc'
 }
 
 /** appendEvent 结果：appended=false 表示命中幂等规则（同 id 全列一致的重复入账被跳过） */
@@ -115,7 +139,7 @@ export interface Ledger {
   version(): number
   /** events 唯一写口：先契约校验后插入（append-only） */
   appendEvent(record: unknown): AppendResult
-  /** events 查询面（恒升序） */
+  /** events 查询面（缺省升序；order='desc' 倒序——desc+limit=「最近 N 条」，见 EventQuery） */
   queryEvents(query?: EventQuery): EventRecord[]
   /** events 全量 → JSONL（逐行含 ULID；F2-11 库→JSONL 单向派生） */
   dumpEvents(path: string): DumpResult
@@ -153,6 +177,16 @@ export interface Ledger {
   markRan(jobId: string, now: number, nextRunAt: number): boolean
   /** 定时岗下线（公司目录删岗）；返回是否真删了行 */
   removeJob(jobId: string): boolean
+  // —— v4 吸收面（daemon 合龙件三债；见文件头注 v4 段） ——
+  /** daemon_kv 读：缺键=null；键闸=非空串（拟稿）。接管关系见 migrations v4 头注 */
+  kvGet(key: string): string | null
+  /** daemon_kv 写（upsert 语义；语句与 daemon 现行 kvSet 字节级一致；value 允空串） */
+  kvSet(key: string, value: string): void
+  /**
+   * work_records 收口面（在途→终态，一次性）：已 ended 再收=CONFIG_INVALID；
+   * cost_usd/report_ref/summary_ref 未给值的列不动（COALESCE 语义）；无此行=false。
+   */
+  endWorkRecord(id: string, end: EndWorkRecord): boolean
 }
 
 /** tokens 四桶 canonical 序（F2-04 列名序）：同内容恒同字节串 */
@@ -231,6 +265,20 @@ const INSERT_EVENT_SQL = `INSERT INTO events (
   id, ts, company, issue, event, actor, attempt, level, dept,
   correlation_id, causation_id, tokens, cost_usd, duration_ms, size, payload_hash, note
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+// —— v4 daemon_kv 读写语句（与 daemon 现行 engine.ts 的 kvGetStmt/kvSetStmt 逐字一致——字节级兼容；
+//     DDL 见 migrations v4：接管期间 daemon 自建语句与本面共存，同表同语义） ——
+
+const KV_GET_SQL = 'SELECT value FROM daemon_kv WHERE key = ?'
+const KV_SET_SQL =
+  'INSERT INTO daemon_kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+
+/** kv 键闸（拟稿）：非空字符串——空键=调用方 bug，拒收；value 不设闸（空串=daemon「游标 null」持久形态） */
+function assertKvKey(key: string): void {
+  if (typeof key !== 'string' || key === '') {
+    configInvalid('store/kv:bad-key', 'kv 键须为非空字符串')
+  }
+}
 
 /** 入账前契约闸：非法 record → ClassifiedError(CONFIG_INVALID)（拒非法入账，第一道闸） */
 function assertValidEvent(record: unknown): asserts record is EventRecord {
@@ -346,6 +394,12 @@ export function openLedger(path: string): Ledger {
   }
 
   const queryEvents = (query: EventQuery = {}): EventRecord[] => {
+    // order 白名单闸：方向内插进 SQL（无法参数化绑定），非 'asc'|'desc' 即 CONFIG_INVALID——
+    // TS 字面量类型挡编译期，运行期（JS 调用方/配置驱动）仍须如实拒
+    if (query.order !== undefined && query.order !== 'asc' && query.order !== 'desc') {
+      configInvalid('store/evt:bad-order', `order=${String(query.order)} 须为 'asc' | 'desc'`)
+    }
+    const dir = query.order === 'desc' ? 'DESC' : 'ASC'
     const where: string[] = []
     const params: Array<string | number> = []
     if (query.company !== undefined) {
@@ -366,7 +420,8 @@ export function openLedger(path: string): Ledger {
     }
     let sql = 'SELECT * FROM events'
     if (where.length > 0) sql += ` WHERE ${where.join(' AND ')}`
-    sql += ' ORDER BY ts ASC, id ASC'
+    // desc 是 asc 的镜像反序（ts,id 双列同向取反）——同集两序互为 reverse，desc+limit=最近 N 条
+    sql += ` ORDER BY ts ${dir}, id ${dir}`
     if (query.limit !== undefined) {
       sql += ' LIMIT ?'
       params.push(query.limit)
@@ -855,6 +910,40 @@ export function openLedger(path: string): Ledger {
     return Number(result.changes) > 0
   }
 
+  // —— v4 吸收面实现（daemon 合龙件三债；接口行注与文件头注 v4 段为语义依据） ——
+
+  const kvGet = (key: string): string | null => {
+    assertKvKey(key)
+    const row = db.prepare(KV_GET_SQL).get(key) as { value: string } | undefined
+    return row === undefined ? null : row.value
+  }
+
+  const kvSet = (key: string, value: string): void => {
+    assertKvKey(key)
+    db.prepare(KV_SET_SQL).run(key, value)
+  }
+
+  /**
+   * work_records 收口面（一次性）：先读后写防重——已 ended（ended_at 非空）再收=CONFIG_INVALID
+   * （收口=终态迁移，重复收口意味着调用方状态机错乱，如实拒）；可选列未给值走 COALESCE 不动
+   * 既有值（对齐 daemon 现行 closeWorkRecord 语句——tokens 列除外，不在本面，拟稿待批）。
+   * 单条 UPDATE 即单事务，无中间态可观测。无此行=false（markRan 同风格）。
+   */
+  const endWorkRecord = (id: string, end: EndWorkRecord): boolean => {
+    const r = assertRecord(EndWorkRecordSchema, end, 'store/work-record:end-invalid')
+    const existing = db.prepare('SELECT ended_at FROM work_records WHERE id = ?').get(id) as { ended_at: unknown } | undefined
+    if (existing === undefined) return false
+    if (existing.ended_at !== null && existing.ended_at !== undefined) {
+      configInvalid('store/work-record:already-ended', `工时单 ${id} 已收口（ended_at=${String(existing.ended_at)}）——收口只允许一次`)
+    }
+    db.prepare(
+      `UPDATE work_records SET ended_at = ?, status = ?,
+         cost_usd = COALESCE(?, cost_usd), report_ref = COALESCE(?, report_ref), summary_ref = COALESCE(?, summary_ref)
+       WHERE id = ?`,
+    ).run(r.ended_at, r.status, r.cost_usd ?? null, r.report_ref ?? null, r.summary_ref ?? null, id)
+    return true
+  }
+
   return {
     db,
     close: () => db.close(),
@@ -894,6 +983,9 @@ export function openLedger(path: string): Ledger {
     dueJobs,
     markRan,
     removeJob,
+    kvGet,
+    kvSet,
+    endWorkRecord,
   }
 }
 
