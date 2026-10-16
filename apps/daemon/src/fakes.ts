@@ -281,7 +281,9 @@ export function createFakeAdapter(opts?: FakeAdapterOptions): ExecutorAdapter {
       return { name, version: '0.0.0-fake', ok: true, gaps: [] }
     },
     async estimate(_task: TaskBrief): Promise<BudgetEstimate> {
-      return { estimated: { usd: 0 }, confidence: 0 }
+      // 估算与固定 resultStats.cost 同额（0.01）：demo 账面自洽——态 B（无价目表）下
+      // 预算闸以本值为预留/冲销依据（0 值预留在 core 折叠视图不可见，见 budget-gate 头注接缝）
+      return { estimated: { usd: 0.01 }, confidence: 1 }
     },
     async launch(task: TaskBrief): Promise<Handle> {
       sessionSeq += 1
