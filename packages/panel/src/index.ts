@@ -14,9 +14,14 @@
  *
  *   :8789 公司概览（老板的公司，制作人/内部）—— v0.7 首刀（读面，独立入口 ./overview——
  *     packages/panel/src/overview/，不另开包：沿 16-§一 九包结构）：
- *     路由 /<slug>/…（04-§七：按挂载公司目录 slug，未知名 404，根路径列公司清单）；
+ *     路由 /<slug>/…（04-§七：按挂载公司目录 slug，未出名 404，根路径列公司清单）；
  *     概览/组织/人事/进度/财务五读面（全 GET 只读、服务端渲染零前端依赖）；
  *     项目/报表 tab 与编辑中心（草稿→批示→写回）归后续刀。
+ *
+ *   :8788 对外 API（外部 AI 的面，对外）—— v0.9 首刀（信息/触发骨架，独立入口 ./external）：
+ *     信息端点全 GET 全公开（D5：company/org/people/projects/issues/finance/reports）；
+ *     触发端点 POST /v1/requests（X-SN-Token 必带，只落单不派工，幂等键防重，IP 配额 429）；
+ *     /v1/agent-card（名片带版本）+ SSE 订阅 v0 占位（501）。越权调用全部 fail-closed。
  *
  * 实现纪律：Hono + streamSSE（浏览器自动重连，不引 WebSocket）；纯函数层（views.ts）
  * 与服务器层（server.ts）分离——app.fetch() 进程内可测，serve* 是薄监听壳
@@ -30,12 +35,16 @@
  *   [x] :8789 slug 路由 + 公司清单页（v0.7 首刀，./overview）
  *   [x] 组织/人事/进度/财务读面 tab（服务端聚合，不整树前端渲染；v0.7 首刀）
  *   [x] daemon bin 子命令 `studio-next overview --company <目录>… [--db <库路径>] [--port 8789]`
+ *   [x] :8788 对外 API 信息/触发端点骨架 + agent-card（v0.9 首刀，./external——独立入口）
  *   [ ] 漂移告警卡（17-§8 另半张：模型行为/成本漂移判据未冻结，待 daemon 机制落地）
  *   [ ] budgets 全量读面（store 现 only queryBudgets by-scope——panel 以镜像枚举 scope
  *       近似，见 views.COSTS_BUDGETS_BASIS_NOTE；store 增 listBudgets 后替换）
  *   [ ] workers 真源切换（daemon 内存态，v0.4 接管后台账近似口径整体替换）
  *   [ ] :8789 项目/报表 tab（v0.7 后续刀）
  *   [ ] 编辑中心：草稿态 → 批示 → 写回链路（带前值快照可逐字 diff；daemon 单点写回）
+ *   [ ] :8788 SSE 订阅真实现（events.subscribe 语义归后续刀——现 501 占位）
+ *   [ ] :8788 触发端点扩面（explore/tasks/intel，17-§8 端面）与对外 MCP server（25-§4.2）
+ *   [ ] :8788 台账写纪律批示（触发面 kv 幂等写 vs daemon 唯一写入者——见 external/server.ts 头注）
  *   [ ] 界面截图基线（进 CI，防 UI 回归）
  */
 

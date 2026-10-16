@@ -3,11 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Studio Next 面板：:8787 框架监控（v0.3 只读面）+ :8789 公司概览（v0.7 读面）（Hono + SSE）",
+  "description": "Studio Next 面板：:8787 框架监控（v0.3 只读面）+ :8789 公司概览（v0.7 读面）+ :8788 对外 API（v0.9 信息/触发骨架）（Hono + SSE）",
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./overview": "./src/overview/index.ts"
+    "./overview": "./src/overview/index.ts",
+    "./external": "./src/external/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",

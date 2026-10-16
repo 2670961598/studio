@@ -32,12 +32,23 @@
  *   [x] reserve 判定面（重复预留拒 / 票级帽+岗级帽超帽落 refusal 行；预留不落即不派）
  *   [x] settle（冲销该票全部未结预留，成本按每成功交付记账；无预留可结=CONFIG_INVALID）
  *
+ * v0.10 增量（feature/core-evolution，进化管线+健壮性首刀；16-§四 v0.10 / 02-F3 / 20-§九）：
+ *   [x] 候选制品谱系纯逻辑（CandidateRecord 对齐 17-§3 candidates 列；draft→…→retired
+ *       状态机非法迁移显式拒；parent_id 链 fork-only + 环/断链 fail-closed；同
+ *       asset_path×diff_hash 幂等提案）——evolution.ts
+ *   [x] 三态闸门纯决策 gate()（approve/reject/escalate，fail-closed；判据类资产恒
+ *       escalate——L4 宪法锁死非策略项，08-§五 D8 护栏外置）——evolution.ts
+ *   [x] 「无 candidate id 的生产改动判负」判定面 assertChangeAuthorized()
+ *       （CONFIG_INVALID/evolve/unauthorized + nearMisses 诊断）——evolution.ts
+ *
  * TODO（后续刀）：
  *   [ ] 主循环相位机骨架（每相位幂等、tick 聚合结构化 actions 落账）
  *   [ ] 泳道租约状态机本体（TTL+续租+死主回收的纯逻辑核）
  *   [ ] 预算链 store 对接（appendBudget/queryBudgets 喂 foldBudgets；扇出不超父单预留 F1-09）
  *   [ ] 收割四要件判定纯函数（17-§6）
  *   [ ] golden trace 格式升 contract 包（F3-01 进化管线）
+ *   [ ] 进化管线 daemon 接线：store candidates 表 migration、沙箱执行器、灰度/切权/
+ *       复盘、判负面挂主循环与网关写径（evolution.ts 头注「后续刀」清单）
  */
 
 // 状态机（docs/18-§二）
@@ -60,6 +71,9 @@ export * from './models.ts'
 
 // 预算链纯逻辑（16-§三 预算行 / 20-§六.8 / F1-09：reserve→settle→refusal）
 export * from './budget.ts'
+
+// 进化管线纯逻辑（16-§四 v0.10 / 02-F3 / 20-§九：候选谱系+三态闸门+判负面）
+export * from './evolution.ts'
 
 /** 包名常量 */
 export const PACKAGE_NAME = '@studio-next/core'
