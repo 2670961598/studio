@@ -76,6 +76,13 @@
         "zod": "^4.0.0",
       },
     },
+    "packages/matrix": {
+      "name": "@studio-next/matrix",
+      "version": "0.1.0",
+      "dependencies": {
+        "@studio-next/contract": "workspace:*",
+      },
+    },
     "packages/panel": {
       "name": "@studio-next/panel",
       "version": "0.1.0",
@@ -247,6 +254,8 @@
     "@studio-next/core": ["@studio-next/core@workspace:packages/core"],
 
     "@studio-next/daemon": ["@studio-next/daemon@workspace:apps/daemon"],
+
+    "@studio-next/matrix": ["@studio-next/matrix@workspace:packages/matrix"],
 
     "@studio-next/panel": ["@studio-next/panel@workspace:packages/panel"],
 

@@ -1,0 +1,5 @@
+{
+  // 包级类型门禁（继承仓根 tsconfig.base.json：strict 全开 + 可擦除语法 + .ts 显式扩展名）
+  "extends": "../../tsconfig.base.json",
+  "include": ["src/**/*.ts"]
+}
