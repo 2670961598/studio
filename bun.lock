@@ -13,6 +13,9 @@
     "apps/daemon": {
       "name": "@studio-next/daemon",
       "version": "0.1.0",
+      "bin": {
+        "studio-next": "./src/bin.ts",
+      },
       "dependencies": {
         "@studio-next/adapters": "workspace:*",
         "@studio-next/api": "workspace:*",
@@ -36,6 +39,7 @@
         "@studio-next/contract": "workspace:*",
         "execa": "^9.4.0",
         "simple-git": "^3.27.0",
+        "yaml": "^2.0.0",
         "zod": "^4.0.0",
       },
     },
@@ -58,6 +62,7 @@
         "@studio-next/contract": "workspace:*",
         "@studio-next/store": "workspace:*",
         "simple-git": "^3.27.0",
+        "yaml": "^2.6.0",
         "zod": "^4.0.0",
       },
     },
@@ -76,6 +81,13 @@
         "zod": "^4.0.0",
       },
     },
+    "packages/localplatform": {
+      "name": "@studio-next/localplatform",
+      "version": "0.1.0",
+      "dependencies": {
+        "@studio-next/contract": "workspace:*",
+      },
+    },
     "packages/matrix": {
       "name": "@studio-next/matrix",
       "version": "0.1.0",
@@ -87,10 +99,9 @@
       "name": "@studio-next/panel",
       "version": "0.1.0",
       "dependencies": {
-        "@studio-next/company": "workspace:*",
+        "@studio-next/contract": "workspace:*",
         "@studio-next/store": "workspace:*",
         "hono": "^4.6.0",
-        "zod": "^4.0.0",
       },
     },
     "packages/prompt": {
@@ -107,7 +118,6 @@
       "version": "0.1.0",
       "dependencies": {
         "@studio-next/contract": "workspace:*",
-        "drizzle-orm": "^0.44.0",
         "zod": "^4.0.0",
       },
     },
@@ -255,6 +265,8 @@
 
     "@studio-next/daemon": ["@studio-next/daemon@workspace:apps/daemon"],
 
+    "@studio-next/localplatform": ["@studio-next/localplatform@workspace:packages/localplatform"],
+
     "@studio-next/matrix": ["@studio-next/matrix@workspace:packages/matrix"],
 
     "@studio-next/panel": ["@studio-next/panel@workspace:packages/panel"],
@@ -302,8 +314,6 @@
     "debug": ["debug@4.4.3", "https://registry.npmmirror.com/debug/-/debug-4.4.3.tgz", { "dependencies": { "ms": "^2.1.3" }, "peerDependencies": { "supports-color": "*" }, "optionalPeers": ["supports-color"] }, "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA=="],
 
     "deep-eql": ["deep-eql@5.0.2", "https://registry.npmmirror.com/deep-eql/-/deep-eql-5.0.2.tgz", {}, "sha512-h5k/5U50IJJFpzfL6nO9jaaumfjO/f2NjK/oYB2Djzm4p9L+3T9qWpZqZ2hAbLPuuYq9wrU08WQyBTL5GbPk5Q=="],
-
-    "drizzle-orm": ["drizzle-orm@0.44.7", "https://registry.npmmirror.com/drizzle-orm/-/drizzle-orm-0.44.7.tgz", { "peerDependencies": { "@aws-sdk/client-rds-data": ">=3", "@cloudflare/workers-types": ">=4", "@electric-sql/pglite": ">=0.2.0", "@libsql/client": ">=0.10.0", "@libsql/client-wasm": ">=0.10.0", "@neondatabase/serverless": ">=0.10.0", "@op-engineering/op-sqlite": ">=2", "@opentelemetry/api": "^1.4.1", "@planetscale/database": ">=1.13", "@prisma/client": "*", "@tidbcloud/serverless": "*", "@types/better-sqlite3": "*", "@types/pg": "*", "@types/sql.js": "*", "@upstash/redis": ">=1.34.7", "@vercel/postgres": ">=0.8.0", "@xata.io/client": "*", "better-sqlite3": ">=7", "bun-types": "*", "expo-sqlite": ">=14.0.0", "gel": ">=2", "knex": "*", "kysely": "*", "mysql2": ">=2", "pg": ">=8", "postgres": ">=3", "prisma": "*", "sql.js": ">=1", "sqlite3": ">=5" }, "optionalPeers": ["@aws-sdk/client-rds-data", "@cloudflare/workers-types", "@electric-sql/pglite", "@libsql/client", "@libsql/client-wasm", "@neondatabase/serverless", "@op-engineering/op-sqlite", "@opentelemetry/api", "@planetscale/database", "@prisma/client", "@tidbcloud/serverless", "@types/better-sqlite3", "@types/pg", "@types/sql.js", "@upstash/redis", "@vercel/postgres", "@xata.io/client", "better-sqlite3", "bun-types", "expo-sqlite", "gel", "knex", "kysely", "mysql2", "pg", "postgres", "prisma", "sql.js", "sqlite3"] }, "sha512-quIpnYznjU9lHshEOAYLoZ9s3jweleHlZIAWR/jX9gAWNg/JhQ1wj0KGRf7/Zm+obRrYd9GjPVJg790QY9N5AQ=="],
 
     "es-module-lexer": ["es-module-lexer@1.7.0", "https://registry.npmmirror.com/es-module-lexer/-/es-module-lexer-1.7.0.tgz", {}, "sha512-jEQoCwk8hyb2AZziIOLhDqpm5+2ww5uIE6lkO/6jcOCusfk6LhMHpXXfBLXTZ7Ydyt0j4VoUQv6uGNYbdW+kBA=="],
 
@@ -412,6 +422,8 @@
     "which": ["which@2.0.2", "https://registry.npmmirror.com/which/-/which-2.0.2.tgz", { "dependencies": { "isexe": "^2.0.0" }, "bin": { "node-which": "./bin/node-which" } }, "sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA=="],
 
     "why-is-node-running": ["why-is-node-running@2.3.0", "https://registry.npmmirror.com/why-is-node-running/-/why-is-node-running-2.3.0.tgz", { "dependencies": { "siginfo": "^2.0.0", "stackback": "0.0.2" }, "bin": { "why-is-node-running": "cli.js" } }, "sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w=="],
+
+    "yaml": ["yaml@2.9.1", "https://registry.npmmirror.com/yaml/-/yaml-2.9.1.tgz", { "bin": { "yaml": "bin.mjs" } }, "sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw=="],
 
     "yoctocolors": ["yoctocolors@2.2.0", "https://registry.npmmirror.com/yoctocolors/-/yoctocolors-2.2.0.tgz", {}, "sha512-xYqdZFUK/VYazNl/oCDYN+3WloWQwMfZxBoiNt6qNyk+xfOdi598muWE42rNZFp1kNOiqW936q5RhUdnpqElSg=="],
 

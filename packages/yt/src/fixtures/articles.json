@@ -1,0 +1,34 @@
+[
+  {
+    "id": "2-1",
+    "idReadable": "ka-1",
+    "summary": "guide",
+    "content": "",
+    "parentArticle": null,
+    "$type": "Article"
+  },
+  {
+    "id": "2-2",
+    "idReadable": "ka-2",
+    "summary": "deploy",
+    "content": "# 部署指南\n\nrun the daemon",
+    "parentArticle": { "id": "2-1" },
+    "$type": "Article"
+  },
+  {
+    "id": "2-3",
+    "idReadable": "ka-3",
+    "summary": "rollback",
+    "content": "# 回滚\n\nhow to rollback the daemon",
+    "parentArticle": { "id": "2-1" },
+    "$type": "Article"
+  },
+  {
+    "id": "2-4",
+    "idReadable": "ka-4",
+    "summary": "notes",
+    "content": "nothing here（无标题文档）",
+    "parentArticle": null,
+    "$type": "Article"
+  }
+]

@@ -1,0 +1,6 @@
+# golden fixture · claude · kill 后 result 未到（无终态面）
+# 依据 docs/17-§6——claude 的唯一终态是 result 事件：进程被杀半程时 result 未产出，
+# 归一序列只有 system/assistant 的 log，无 turn_end、无原生账目（cost/tokens/turns 零值）
+# 配 FAKE_HANG=1 使用：输出后挂起，等 SIGTERM/SIGKILL——测适配器 kill 的「无终态」测试面
+{"type":"system","subtype":"init","session_id":"sess_2fb7","model":"claude-sonnet-4-5","cwd":"/ws/task-103"}
+{"type":"assistant","message":{"id":"msg_01","role":"assistant","content":[{"type":"text","text":"首轮执行中：读任务书、列改动面…"}]}}

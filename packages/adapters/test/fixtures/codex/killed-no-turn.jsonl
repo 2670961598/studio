@@ -1,0 +1,6 @@
+# golden fixture · codex · killed-no-turn（kill 无终态面：turn.completed 未到——对齐 claude killed-no-result 先例）
+# 依据 docs/17-§6——kill 半程到达：流内无任何 turn 终态事件，tokens 无来源（零值面）；step 事件照收作 turns 计数
+# 注：井号开头行为 fixture 元数据，streams.ts 解析时容忍并跳过
+{"type":"item.started","item":{"type":"command_execution","id":"cmd_1","command":"rg -n \"TODO\" src/"}}
+{"type":"item.completed","item":{"type":"command_execution","id":"cmd_1","exit_code":0,"aggregated_output":"src/streams.ts:12"}}
+{"type":"item.started","item":{"type":"agent_message","id":"msg_1"}}

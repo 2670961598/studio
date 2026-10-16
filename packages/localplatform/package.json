@@ -1,0 +1,18 @@
+{
+  "name": "@studio-next/localplatform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Studio Next LocalFile 协作平台：FlowPlatform 端口的文件驱动第二实现（P8 零依赖 demo / 契约靶子 / 端口有效性证明）",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@studio-next/contract": "workspace:*"
+  }
+}

@@ -3,7 +3,7 @@
  * GATEWAY_ACTIONS 与内部 MCP（studio-tools）工具集同一张表；
  * 状态推进不在白名单内（agent 永远拿不到改状态通道）。
  */
-import type { TicketId } from './kernel.js'
+import type { TicketId } from './kernel.ts'
 
 export const GATEWAY_ACTIONS = [
   'comment',

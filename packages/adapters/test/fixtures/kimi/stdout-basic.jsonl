@@ -1,0 +1,6 @@
+# golden fixture · kimi · stdout JSONL（手工构造的最小完整形态）
+# 依据 docs/17-§6——kimi -p --output-format stream-json：stdout 不含 usage（已知坑：usage 在 session wire.jsonl，见伴生文件 stdout-basic.wire.jsonl）
+# 注：井号开头行为 fixture 元数据，streams.ts 解析时容忍并跳过
+{"type":"system","subtype":"init","session_id":"k_sess_0007","cwd":"/ws/task-103"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"开始实现流归一化…"}]}}
+{"type":"result","subtype":"success","result":"交付归一化实现与测试用例"}

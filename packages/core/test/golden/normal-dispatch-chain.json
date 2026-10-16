@@ -1,0 +1,73 @@
+{
+  "name": "normal-dispatch-chain",
+  "description": "正常派发链（L0 · T-101）：七相位全走一遍——新单派发 → 在工等证据 → 证据就绪收割 → 复验通过合并 → 已交付回收。每拍一个唤起源（poll/relay/resume/patrol/hook），意图键随拍入 seen 集合（幂等闭环故事）。",
+  "inputs": [
+    {
+      "issue": { "id": "T-101", "title": "落地页文案修订", "state": "新单", "type": "task", "dept": "eng", "level": 0, "assignee": "P-7", "lane": "main", "updated": "2026-10-16T00:00:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "ticket", "company": "acme", "ticket": "T-101", "source": "poll", "priority": 1 },
+      "seenIntentKeys": [],
+      "breaker": { "strikes": 0, "threshold": 3 },
+      "now": 1792108860000,
+      "stallAfterMs": 3600000
+    },
+    {
+      "issue": { "id": "T-101", "title": "落地页文案修订", "state": "已派发", "type": "task", "dept": "eng", "level": 0, "assignee": "P-7", "lane": "main", "updated": "2026-10-16T00:01:00.000Z" },
+      "laneLease": { "lane": "main", "holder": "P-7", "expiresAt": 1792109400000 },
+      "inflightCount": 1,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "relay", "company": "acme", "ticket": "T-101", "source": "relay" },
+      "seenIntentKeys": ["poll|ticket|acme|T-101"],
+      "breaker": { "strikes": 0, "threshold": 3 },
+      "now": 1792108860000,
+      "stallAfterMs": 3600000
+    },
+    {
+      "issue": { "id": "T-101", "title": "落地页文案修订", "state": "证据就绪", "type": "task", "dept": "eng", "level": 0, "assignee": "P-7", "lane": "main", "updated": "2026-10-16T00:02:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "resume", "company": "acme", "ticket": "T-101", "source": "resume" },
+      "seenIntentKeys": ["poll|ticket|acme|T-101", "relay|relay|acme|T-101"],
+      "breaker": { "strikes": 0, "threshold": 3 },
+      "now": 1792108860000,
+      "stallAfterMs": 3600000
+    },
+    {
+      "issue": { "id": "T-101", "title": "落地页文案修订", "state": "复验通过", "type": "task", "dept": "eng", "level": 0, "assignee": "P-7", "lane": "main", "updated": "2026-10-16T00:03:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "ticket", "company": "acme", "ticket": "T-101", "source": "patrol" },
+      "seenIntentKeys": ["poll|ticket|acme|T-101", "relay|relay|acme|T-101", "resume|resume|acme|T-101"],
+      "breaker": { "strikes": 0, "threshold": 3 },
+      "now": 1792108860000,
+      "stallAfterMs": 3600000
+    },
+    {
+      "issue": { "id": "T-101", "title": "落地页文案修订", "state": "已交付", "type": "task", "dept": "eng", "level": 0, "assignee": "P-7", "lane": "main", "updated": "2026-10-16T00:04:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "webhook", "company": "acme", "ticket": "T-101", "source": "hook" },
+      "seenIntentKeys": ["poll|ticket|acme|T-101", "relay|relay|acme|T-101", "resume|resume|acme|T-101", "patrol|ticket|acme|T-101"],
+      "breaker": { "strikes": 0, "threshold": 3 },
+      "now": 1792108860000,
+      "stallAfterMs": 3600000
+    }
+  ],
+  "expected": [
+    { "type": "dispatch", "code": "DISPATCH" },
+    { "type": "wait_evidence", "code": "EVIDENCE_PENDING" },
+    { "type": "collect", "code": "EVIDENCE_READY" },
+    { "type": "merge", "code": "MERGE_DUE" },
+    { "type": "recycle", "code": "LANE_RELEASE" }
+  ]
+}

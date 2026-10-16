@@ -1,0 +1,64 @@
+[
+  {
+    "id": "2-1",
+    "idReadable": "STUDIO-1",
+    "summary": "甲：走通全流程",
+    "description": "甲单描述",
+    "created": 1767225600000,
+    "updated": 1767225605000,
+    "customFields": [
+      { "name": "State", "value": { "name": "待批", "id": "sf-1", "$type": "StateBundleElement" } },
+      { "name": "Type", "value": { "name": "需求", "id": "tb-1", "$type": "EnumBundleElement" } },
+      { "name": "部门", "value": { "name": "平台部", "owner": { "login": "agent-3" }, "$type": "OwnedBundleElement" } },
+      { "name": "等级", "value": 2 },
+      { "name": "派单人", "value": { "login": "emp-1", "id": "hub-1", "$type": "User" } },
+      { "name": "泳道", "value": { "name": "platform", "id": "lb-1", "$type": "EnumBundleElement" } }
+    ],
+    "links": [
+      {
+        "id": "il-1",
+        "direction": "OUTWARD",
+        "linkType": { "id": "lt-1", "name": "Subtask", "localizedName": "parent for" },
+        "issues": [{ "id": "2-2", "idReadable": "STUDIO-2", "summary": "乙：甲的子单" }]
+      }
+    ]
+  },
+  {
+    "id": "2-2",
+    "idReadable": "STUDIO-2",
+    "summary": "乙：甲的子单",
+    "description": null,
+    "created": 1767225601000,
+    "updated": 1767225606000,
+    "customFields": [
+      { "name": "State", "value": { "name": "已派发" } },
+      { "name": "派单人", "value": { "login": "emp-2" } }
+    ],
+    "links": [
+      {
+        "id": "il-1",
+        "direction": "INWARD",
+        "linkType": { "id": "lt-1", "name": "Subtask", "localizedName": "subtask of" },
+        "issues": [{ "id": "2-1", "idReadable": "STUDIO-1", "summary": "甲：走通全流程" }]
+      }
+    ]
+  },
+  {
+    "id": "2-3",
+    "idReadable": "STUDIO-3",
+    "summary": "丙：极简单（只有 State）",
+    "created": 1767225602000,
+    "updated": 1767225602000,
+    "customFields": [{ "name": "State", "value": { "name": "新单" } }],
+    "links": []
+  },
+  {
+    "id": "3-1",
+    "idReadable": "POLY-1",
+    "summary": "别家项目的单（公司作用域滤除用）",
+    "created": 1767225603000,
+    "updated": 1767225607000,
+    "customFields": [{ "name": "State", "value": { "name": "待批" } }],
+    "links": []
+  }
+]

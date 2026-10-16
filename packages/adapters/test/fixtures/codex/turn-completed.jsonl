@@ -1,0 +1,8 @@
+# golden fixture · codex · turn.completed（手工构造的最小完整形态）
+# 依据 docs/17-§6——codex exec --json：tokens 取自 turn.completed.usage；无成本字段（价目表折算归 resultStats，不在流层处理）
+# 注：井号开头行为 fixture 元数据，streams.ts 解析时容忍并跳过
+{"type":"item.started","item":{"type":"command_execution","id":"cmd_1","command":"rg -n \"TODO\" src/"}}
+{"type":"item.completed","item":{"type":"command_execution","id":"cmd_1","exit_code":0,"aggregated_output":"src/streams.ts:12"}}
+{"type":"item.started","item":{"type":"agent_message","id":"msg_1"}}
+{"type":"item.completed","item":{"type":"agent_message","id":"msg_1","text":"TODO 扫描完成，1 处待办"}}
+{"type":"turn.completed","usage":{"input_tokens":2100,"output_tokens":640}}

@@ -1,0 +1,20 @@
+{
+  "projects": [
+    { "id": "0-1", "shortName": "STUDIO", "name": "Studio" },
+    { "id": "0-2", "shortName": "POLY", "name": "Poly" }
+  ],
+  "issueLinks": [
+    { "id": "lt-1", "name": "Subtask", "directed": true, "sourceToTarget": "parent for", "targetToSource": "subtask of" },
+    { "id": "lt-2", "name": "Depends", "directed": true, "sourceToTarget": "depends on", "targetToSource": "depends for" },
+    { "id": "lt-3", "name": "Relates", "directed": false, "sourceToTarget": "relates to", "targetToSource": "relates to" }
+  ],
+  "customFields": [
+    { "name": "State", "fieldType": { "presentation": "enum[1]" } },
+    { "name": "Type", "fieldType": { "presentation": "enum[1]" } },
+    { "name": "部门", "fieldType": { "presentation": "enum[1]" } },
+    { "name": "等级", "fieldType": { "presentation": "integer" } },
+    { "name": "派单人", "fieldType": { "presentation": "user" } },
+    { "name": "泳道", "fieldType": { "presentation": "enum[1]" } },
+    { "name": "Estimation", "fieldType": { "presentation": "float" } }
+  ]
+}

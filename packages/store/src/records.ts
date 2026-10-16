@@ -1,0 +1,284 @@
+/**
+ * records —— store 层记录形状与临时校验闸（v0.2 首刀三表 + 第二刀五表）
+ *
+ * 依据：docs/17-§3 行条目。
+ *   - 首刀三表（work_records / sessions）：id/issue/工号/instance_id/executor/session_id/lane/branch/
+ *     started/ended/cost/tokens/attempt/status/report_ref/summary_ref 与 session_id/issue/工号/
+ *     archive_path/started/ended/turns。
+ *   - 第二刀五表（people / personnel_events / departments / ticket_mirror / budgets）：
+ *     列语义对齐 17-§3 表清单（people=公司目录镜像｜personnel_events=本库 append-only｜
+ *     departments=公司目录镜像｜ticket_mirror=YouTrack 镜像｜budgets=本库）。
+ *   - v3 jobs 调度表（17-§2 调度表列集 / 18-§三）：公司目录定时岗配置（D9）的持久化投影；
+ *     cron 只做形状闸（非空 + ≤6 空白分隔段），表达式解析归 core 后续单——**不引 croner**。
+ *
+ * **拟稿待批（docs 未细化处逐条标明，contract 落地后替换为契约校验）**：
+ *   - 「工号」列名 person_id；「started/ended」→ started_at/ended_at（epoch ms，ended 可空=在途）；
+ *     「cost」→ cost_usd（对齐 events 列名）；
+ *   - tokens 形状取 kernel.TokenCounts（executor 归一化三字段口径——work_records 来自收割
+ *     ResultStats，与 events 四桶不同源，F2-04 只冻结 events 侧）；
+ *   - status 先为非空串（done/failed 具体枚举归收割域，contract 落地时收口）；
+ *   - id / session_id 暂不锁 ULID（与 events 不同：17-§3 未标 id 形状，先非空）——五张新表同此口径。
+ * 本文件是 store 层临时闸（拒明显坏行入账），contract schema 落地后替换为契约校验。
+ */
+import { z } from 'zod'
+import type { TokenCounts } from '@studio-next/contract'
+
+/** work_records 记录（done.json 索引化，17-§3「权威源」列） */
+export interface WorkRecord {
+  id: string
+  issue: string
+  person_id: string
+  instance_id?: string
+  executor: string
+  session_id?: string
+  lane?: string
+  branch?: string
+  started_at: number
+  ended_at?: number
+  cost_usd?: number
+  tokens?: TokenCounts
+  attempt: number
+  status: string
+  report_ref?: string
+  summary_ref?: string
+}
+
+/** sessions 记录（归档文件的索引，17-§3） */
+export interface SessionRecord {
+  session_id: string
+  issue: string
+  person_id: string
+  archive_path?: string
+  started_at: number
+  ended_at?: number
+  turns?: number
+}
+
+// —— v0.2 第二刀五表（17-§3 列语义；各表拟稿点见行注） ——
+
+/** people 记录（公司目录镜像，17-§3「工号(PK), 名称, login, level, dept, 岗位, skills[], side_effects, 能力档, executor 偏好, 状态」） */
+export interface PersonRecord {
+  person_id: string
+  name: string
+  login: string
+  level: number
+  dept: string
+  role?: string
+  skills?: string[]
+  /** 副作用等级（写库/改单/对外发言）；17-§3 未标数组形，模板 front-matter 形如 [写盘]——拟稿按字符串数组 */
+  side_effects?: string[]
+  /** 能力档 0-3（V4-V7-§4.2/§14 拟稿口径；contract 冻结时收口） */
+  capability_tier?: number
+  executor_pref?: string
+  /** 模板口径 active | paused | retired；v0 不锁枚举，先非空串 */
+  status?: string
+}
+
+/** personnel_events 记录（本库 append-only，17-§3「id, ts, 工号, type(入/调/升/降/停/复/退), 前值, 新值, 单据号, 批准人」） */
+export interface PersonnelEventRecord {
+  id: string
+  ts: number
+  person_id: string
+  /** 变动类型：入/调/升/降/停/复/退（17-§3）——值域 v0 不锁，contract 冻结时收口，先非空串 */
+  type: string
+  /** 前值（标量文本：等级数字 / 部门 path / 状态串等；复合变动拆多条——拟稿） */
+  prev?: string
+  next?: string
+  /** 必挂单（F2-06/C1-06：无单号拒绝——列级 NOT NULL + 本闸双兜底） */
+  ticket: string
+  approver: string
+}
+
+/** departments 记录（公司目录镜像，17-§3「path(PK), company, 主管工号, 职能, 泳道, 上级 path」） */
+export interface DepartmentRecord {
+  path: string
+  company: string
+  leader: string
+  functions: string[]
+  lanes: string[]
+  parent_path?: string
+}
+
+/** ticket_mirror 记录（YouTrack 镜像，17-§3「issue(PK), company, created, updated, state, type, dept, level, dispatcher, parent, lane」） */
+export interface TicketMirrorRecord {
+  issue: string
+  company: string
+  created: number
+  updated: number
+  state: string
+  type: string
+  dept: string
+  /** 单据等级：拟稿取 1..9（04-§四 口径，同 events.level） */
+  level: number
+  dispatcher: string
+  parent?: string
+  /** 泳道；可空=未定泳道 */
+  lane?: string
+}
+
+/** budgets 记录（本库，17-§3「id, issue/工号/公司, kind(reserve/settle/refusal), estimated, actual, ts」） */
+export interface BudgetRecord {
+  id: string
+  /** 预算主体类别：issue（单号）/ person（工号）/ company（公司 slug）——scope_id 对应取值 */
+  scope_kind: 'issue' | 'person' | 'company'
+  scope_id: string
+  /** F1-09 预算三节点：reserve（预留）/ settle（结算释放）/ refusal（超额拒绝落账） */
+  kind: 'reserve' | 'settle' | 'refusal'
+  estimated_usd?: number
+  actual_usd?: number
+  ts: number
+}
+
+// —— v3 jobs 调度表（17-§2 调度表列集 / 18-§三 调度设计；v0.4 定时岗地基） ——
+
+/** jobs 记录（daemon 调度表；权威源=公司目录定时岗配置 D9，本表为持久化投影） */
+export interface JobRecord {
+  job_id: string
+  company: string
+  dept: string
+  /** cron 表达式原样文本（解析归 core 后续单——18-§三 croner 只在 daemon 侧引，store 不依赖） */
+  cron: string
+  role: string
+  level: number
+  /** 模型三档（contract ports/models.ts ModelTier['tier']='high'|'mid'|'low' 冻结口径） */
+  model_tier: 'high' | 'mid' | 'low'
+  /** 预算上限 REAL（USD；对齐 contract Money{usd:number} 与库内 *_usd 列，见 migrations v3 头注） */
+  budget_cap?: number
+  /** 任务载荷（JSON 文本落列；任意 JSON 值，写入时序列化、读出时解析） */
+  payload?: unknown
+  /** 下次应跑时刻（epoch ms；补跑扫描 dueJobs 的判据列） */
+  next_run_at: number
+  /** 上次实跑时刻（epoch ms；可空=从未跑过——运行时状态，markRan 落账） */
+  last_run_at?: number
+  /** 岗位状态；值域 v0 不锁（active/paused 语义归 core 调度域后续单收口），可空=未定 */
+  status?: string
+}
+
+/** store 层临时校验（拟稿待批，见文件头注） */
+export const WorkRecordSchema = z.strictObject({
+  id: z.string().min(1),
+  issue: z.string().min(1),
+  person_id: z.string().min(1),
+  instance_id: z.string().min(1).optional(),
+  executor: z.string().min(1),
+  session_id: z.string().min(1).optional(),
+  lane: z.string().min(1).optional(),
+  branch: z.string().min(1).optional(),
+  started_at: z.number().int().min(0),
+  ended_at: z.number().int().min(0).optional(),
+  cost_usd: z.number().min(0).optional(),
+  tokens: z
+    .strictObject({ input: z.number().int().min(0), output: z.number().int().min(0), cached: z.number().int().min(0).optional() })
+    .optional(),
+  attempt: z.number().int().min(1),
+  status: z.string().min(1),
+  report_ref: z.string().min(1).optional(),
+  summary_ref: z.string().min(1).optional(),
+})
+
+/** store 层临时校验（拟稿待批，见文件头注） */
+export const SessionRecordSchema = z.strictObject({
+  session_id: z.string().min(1),
+  issue: z.string().min(1),
+  person_id: z.string().min(1),
+  archive_path: z.string().min(1).optional(),
+  started_at: z.number().int().min(0),
+  ended_at: z.number().int().min(0).optional(),
+  turns: z.number().int().min(0).optional(),
+})
+
+// —— v0.2 第二刀五表临时闸（拟稿点见接口行注；strict：未知列拒收，加列走批示+SCHEMA_EVOLVE） ——
+
+/** store 层临时校验（拟稿待批，见文件头注） */
+export const PersonRecordSchema = z.strictObject({
+  person_id: z.string().min(1),
+  name: z.string().min(1),
+  login: z.string().min(1),
+  /** agent 等级 1-9（04-§四；同 events.level 拟稿口径） */
+  level: z.number().int().min(1).max(9),
+  dept: z.string().min(1),
+  role: z.string().min(1).optional(),
+  skills: z.array(z.string().min(1)).optional(),
+  side_effects: z.array(z.string().min(1)).optional(),
+  capability_tier: z.number().int().min(0).max(3).optional(),
+  executor_pref: z.string().min(1).optional(),
+  status: z.string().min(1).optional(),
+})
+
+/** store 层临时校验（拟稿待批，见文件头注） */
+export const PersonnelEventRecordSchema = z.strictObject({
+  id: z.string().min(1),
+  ts: z.number().int().min(0),
+  person_id: z.string().min(1),
+  type: z.string().min(1),
+  prev: z.string().min(1).optional(),
+  next: z.string().min(1).optional(),
+  ticket: z.string().min(1),
+  approver: z.string().min(1),
+})
+
+/** store 层临时校验（拟稿待批，见文件头注） */
+export const DepartmentRecordSchema = z.strictObject({
+  path: z.string().min(1),
+  company: z.string().min(1),
+  leader: z.string().min(1),
+  functions: z.array(z.string().min(1)),
+  lanes: z.array(z.string().min(1)),
+  parent_path: z.string().min(1).optional(),
+})
+
+/** store 层临时校验（拟稿待批，见文件头注） */
+export const TicketMirrorRecordSchema = z.strictObject({
+  issue: z.string().min(1),
+  company: z.string().min(1),
+  created: z.number().int().min(0),
+  updated: z.number().int().min(0),
+  state: z.string().min(1),
+  type: z.string().min(1),
+  dept: z.string().min(1),
+  level: z.number().int().min(1).max(9),
+  dispatcher: z.string().min(1),
+  parent: z.string().min(1).optional(),
+  lane: z.string().min(1).optional(),
+})
+
+/** store 层临时校验（拟稿待批，见文件头注） */
+export const BudgetRecordSchema = z.strictObject({
+  id: z.string().min(1),
+  scope_kind: z.enum(['issue', 'person', 'company']),
+  scope_id: z.string().min(1),
+  kind: z.enum(['reserve', 'settle', 'refusal']),
+  estimated_usd: z.number().min(0).optional(),
+  actual_usd: z.number().min(0).optional(),
+  ts: z.number().int().min(0),
+})
+
+// —— v3 jobs 临时闸（拟稿点见接口行注；strict：未知列拒收，加列走批示+SCHEMA_EVOLVE） ——
+
+/**
+ * cron 形状闸（**不引 croner**——解析归 core 后续单，store 只挡明显坏串）：
+ * 非空且 trim 后至多 6 个空白分隔段（5 段标准 cron / croner 6 段含秒变体）。
+ * 段内语法（步进、范围、列表、别名等）不在本闸职责内。
+ */
+function cronShapeOk(expr: string): boolean {
+  const trimmed = expr.trim()
+  return trimmed !== '' && trimmed.split(/\s+/).length <= 6
+}
+
+/** store 层临时校验（拟稿待批，见文件头注；cron 仅形状闸，见 cronShapeOk） */
+export const JobRecordSchema = z.strictObject({
+  job_id: z.string().min(1),
+  company: z.string().min(1),
+  dept: z.string().min(1),
+  cron: z.string().min(1).refine(cronShapeOk, { message: 'cron 须为非空串且至多 6 个空白分隔段（段内语法解析归 core）' }),
+  role: z.string().min(1),
+  /** agent 等级 1-9（04-§四；同表系拟稿口径） */
+  level: z.number().int().min(1).max(9),
+  /** contract ModelTier['tier'] 冻结枚举（ports/models.ts） */
+  model_tier: z.enum(['high', 'mid', 'low']),
+  budget_cap: z.number().min(0).optional(),
+  payload: z.unknown().optional(),
+  next_run_at: z.number().int().min(0),
+  last_run_at: z.number().int().min(0).optional(),
+  status: z.string().min(1).optional(),
+})

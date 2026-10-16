@@ -22,12 +22,36 @@
  *
  * TODO(骨架阶段)：
  *   [ ] ExecutorAdapter 抽象基类 + ExecutorCapabilities 能力声明 schema（先定 schema 再谈实现，B7）
- *   [ ] fake CLI harness（shell 脚本模拟各家 stdout/退出行为）+ golden fixtures
- *   [ ] dsh 适配器（默认主力，锁版本 + 探针回归专线）
- *   [ ] claude 适配器（参考实现，含预算帽）
- *   [ ] codex / kimi 适配器
+ *   [x] fake CLI harness（Node 脚本模拟各家 stdout/退出行为，test/fake-cli/）+ golden fixtures（test/fixtures/，四家流样本落库）
+ *   [x] 流归一化器 streams.ts：parseStream 把四家原始流文本归一为 contract StreamEvent（对 fixture 全绿）
+ *   [x] dsh 适配器首刀（对 fake harness 全绿；锁版本比对 + 通道 env 映射为拟稿，真 CLI 行为留探针单）
+ *   [x] claude 适配器（参考实现，含预算帽 --max-budget-usd、版本门槛 2.1.277 降级、原生 cost 账目）
+ *   [x] codex 适配器首刀（对 fake harness 全绿；续跑旗标 + 通道 env 映射为拟稿，真 CLI 行为留探针单）
+ *   [x] kimi 适配器（对 fake harness 全绿；wire 路径约定 + `-S` 旗标形为拟稿，真 CLI 行为留探针单）
+ *   [x] 注册表 registry.ts + agent.yaml 装载 agentconfig.ts（能力路由零名单硬编码；17-§2/§4，18-§1.2）
  *   [ ] 探针 runner：适配器写完先过探针集才允许注册
  */
+
+/** 流归一化器：四家 CLI 原始流 → contract StreamEvent（docs/17-§6 / docs/18-§1.3） */
+export * from "./streams.ts";
+
+/** dsh 适配器（默认主力）：四原语实现，已知坑沉淀见文件头注（docs/17-§6 / docs/18-§1.2） */
+export * from "./dsh.ts";
+
+/** claude 适配器（参考实现）：预算帽/续跑/版本门槛降级/原生 cost 账目，头注见 docs/17-§6 claude 行 */
+export * from "./claude.ts";
+
+/** codex 适配器：exec --json 流、turn.completed.usage 记 tokens、成本价目表折算（cost_native=false），头注见 docs/17-§6 codex 行 */
+export * from "./codex.ts";
+
+/** kimi 适配器：stdout claude 同构无 usage、会话结束后读 session wire.jsonl 合流总账，头注见 docs/17-§6 kimi 行 */
+export * from "./kimi.ts";
+
+/** 注册表：agent.yaml 驱动注册 + 能力路由 pick/pickAll（调度零 if executor，docs/17-§2） */
+export * from "./registry.ts";
+
+/** agent.yaml 装载与注册表接线：loadAgentConfig / wireRegistry / registerBuiltins（docs/17-§4） */
+export * from "./agentconfig.ts";
 
 /** 包名常量（占位导出） */
 export const PACKAGE_NAME = "@studio-next/adapters";

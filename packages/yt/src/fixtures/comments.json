@@ -1,0 +1,16 @@
+{
+  "STUDIO-1": [
+    {
+      "id": "c-1",
+      "text": "<!-- actor: AGENT-1 -->\n第一行\n第二行\n[demo·平台部·工兵·L2]",
+      "created": 1767225601500,
+      "author": { "id": "hub-9", "login": "svc-agent", "$type": "User" }
+    },
+    {
+      "id": "c-2",
+      "text": "外来评论全文（无机器头，逐字保留含末行）",
+      "created": 1767225602500,
+      "author": { "id": "hub-7", "login": "foreign-user", "$type": "User" }
+    }
+  ]
+}
