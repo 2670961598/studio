@@ -49,6 +49,21 @@
 | `evt` / `rpt` | contract 自身（src/schemas/，M1.2 已落：evt 5 条 + rpt 3 条） | 事件记录/REPORT+summary 格式 |
 | `exe` / `plat` / `inv` / `mdl` / `gw` | 各泳道 | 端口冒烟 case |
 
+### dir 域 v1 语义增补（v0.1-M2.2，拟稿待批）
+
+> 本节为增补说明，头注明示**拟稿待制作人批示后固化**（改本文件=改契约，20-§二）。
+
+company 校验器自 v0.1-M2.2 起对 `loadCompanyDirectory` 缺省做**多文件全目录校验**
+（departments/**/config.yaml、人事档案 front-matter、charter_ref、.studio-next.yaml 交叉——
+docs/04-§二 契约全貌；实现 packages/company/src/multifile.ts）。`dir` 域 3 case 的 input
+只有 org-config.yaml 单文件（v0 语料），按全检语义 C-dir-001 将因部门/档案/元信息文件缺失翻红；
+契约语料单写者纪律（不为本单改 cases.json），故：
+
+- `dir` 域 v1 语义冻结为「**org-config.yaml 单文件校验**」：subject（company 的 `dirSubject`）
+  以宽容位 `strictFiles:false` 包装 `loadCompanyDirectory`，既有 3 case 口径零漂移。
+- 多文件全目录校验的契约面留给后续批次的 `dir2` 域（开批时落 case，`strictFiles` 宽容位
+  届时随契约化收口）；多文件行为面暂由 company 单测（multifile.test.ts）承载。
+
 ## 运行方式
 
 ```ts
