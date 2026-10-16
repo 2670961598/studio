@@ -294,8 +294,13 @@ function toUsage(v: unknown): TokenCounts | undefined {
   return { input, output, ...(cached !== undefined ? { cached } : {}) }
 }
 
-/** wire.jsonl 逐轮 usage 求和（kimi 伴生文件里多条记录=多轮，合计才是 turn 总账） */
-function sumWireUsage(wireJsonlText: string): TokenCounts | undefined {
+/**
+ * wire.jsonl 逐轮 usage 求和（kimi 伴生文件里多条记录=多轮，合计才是 turn 总账）。
+ * v0.3 新增导出（kimi 适配器 stream() 会话结束后读 wire 合流复用）——函数体与
+ * parseKimi 既有行为一概不动。注意 docs/25-§3.1 裁决#4：「逐轮求和=turn 总账」是
+ * 假设，真实 wire 验证待办仍在（探针前不改本口径）。
+ */
+export function sumWireUsage(wireJsonlText: string): TokenCounts | undefined {
   let input = 0
   let output = 0
   let cached = 0
