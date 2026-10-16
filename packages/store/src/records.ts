@@ -8,6 +8,8 @@
  *   - 第二刀五表（people / personnel_events / departments / ticket_mirror / budgets）：
  *     列语义对齐 17-§3 表清单（people=公司目录镜像｜personnel_events=本库 append-only｜
  *     departments=公司目录镜像｜ticket_mirror=YouTrack 镜像｜budgets=本库）。
+ *   - v3 jobs 调度表（17-§2 调度表列集 / 18-§三）：公司目录定时岗配置（D9）的持久化投影；
+ *     cron 只做形状闸（非空 + ≤6 空白分隔段），表达式解析归 core 后续单——**不引 croner**。
  *
  * **拟稿待批（docs 未细化处逐条标明，contract 落地后替换为契约校验）**：
  *   - 「工号」列名 person_id；「started/ended」→ started_at/ended_at（epoch ms，ended 可空=在途）；
@@ -127,6 +129,31 @@ export interface BudgetRecord {
   ts: number
 }
 
+// —— v3 jobs 调度表（17-§2 调度表列集 / 18-§三 调度设计；v0.4 定时岗地基） ——
+
+/** jobs 记录（daemon 调度表；权威源=公司目录定时岗配置 D9，本表为持久化投影） */
+export interface JobRecord {
+  job_id: string
+  company: string
+  dept: string
+  /** cron 表达式原样文本（解析归 core 后续单——18-§三 croner 只在 daemon 侧引，store 不依赖） */
+  cron: string
+  role: string
+  level: number
+  /** 模型三档（contract ports/models.ts ModelTier['tier']='high'|'mid'|'low' 冻结口径） */
+  model_tier: 'high' | 'mid' | 'low'
+  /** 预算上限 REAL（USD；对齐 contract Money{usd:number} 与库内 *_usd 列，见 migrations v3 头注） */
+  budget_cap?: number
+  /** 任务载荷（JSON 文本落列；任意 JSON 值，写入时序列化、读出时解析） */
+  payload?: unknown
+  /** 下次应跑时刻（epoch ms；补跑扫描 dueJobs 的判据列） */
+  next_run_at: number
+  /** 上次实跑时刻（epoch ms；可空=从未跑过——运行时状态，markRan 落账） */
+  last_run_at?: number
+  /** 岗位状态；值域 v0 不锁（active/paused 语义归 core 调度域后续单收口），可空=未定 */
+  status?: string
+}
+
 /** store 层临时校验（拟稿待批，见文件头注） */
 export const WorkRecordSchema = z.strictObject({
   id: z.string().min(1),
@@ -224,4 +251,34 @@ export const BudgetRecordSchema = z.strictObject({
   estimated_usd: z.number().min(0).optional(),
   actual_usd: z.number().min(0).optional(),
   ts: z.number().int().min(0),
+})
+
+// —— v3 jobs 临时闸（拟稿点见接口行注；strict：未知列拒收，加列走批示+SCHEMA_EVOLVE） ——
+
+/**
+ * cron 形状闸（**不引 croner**——解析归 core 后续单，store 只挡明显坏串）：
+ * 非空且 trim 后至多 6 个空白分隔段（5 段标准 cron / croner 6 段含秒变体）。
+ * 段内语法（步进、范围、列表、别名等）不在本闸职责内。
+ */
+function cronShapeOk(expr: string): boolean {
+  const trimmed = expr.trim()
+  return trimmed !== '' && trimmed.split(/\s+/).length <= 6
+}
+
+/** store 层临时校验（拟稿待批，见文件头注；cron 仅形状闸，见 cronShapeOk） */
+export const JobRecordSchema = z.strictObject({
+  job_id: z.string().min(1),
+  company: z.string().min(1),
+  dept: z.string().min(1),
+  cron: z.string().min(1).refine(cronShapeOk, { message: 'cron 须为非空串且至多 6 个空白分隔段（段内语法解析归 core）' }),
+  role: z.string().min(1),
+  /** agent 等级 1-9（04-§四；同表系拟稿口径） */
+  level: z.number().int().min(1).max(9),
+  /** contract ModelTier['tier'] 冻结枚举（ports/models.ts） */
+  model_tier: z.enum(['high', 'mid', 'low']),
+  budget_cap: z.number().min(0).optional(),
+  payload: z.unknown().optional(),
+  next_run_at: z.number().int().min(0),
+  last_run_at: z.number().int().min(0).optional(),
+  status: z.string().min(1).optional(),
 })

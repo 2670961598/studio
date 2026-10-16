@@ -13,6 +13,9 @@
     "apps/daemon": {
       "name": "@studio-next/daemon",
       "version": "0.1.0",
+      "bin": {
+        "studio-next": "./src/bin.ts",
+      },
       "dependencies": {
         "@studio-next/adapters": "workspace:*",
         "@studio-next/api": "workspace:*",
@@ -75,6 +78,13 @@
       "dependencies": {
         "@studio-next/contract": "workspace:*",
         "zod": "^4.0.0",
+      },
+    },
+    "packages/localplatform": {
+      "name": "@studio-next/localplatform",
+      "version": "0.1.0",
+      "dependencies": {
+        "@studio-next/contract": "workspace:*",
       },
     },
     "packages/panel": {
@@ -247,6 +257,8 @@
     "@studio-next/core": ["@studio-next/core@workspace:packages/core"],
 
     "@studio-next/daemon": ["@studio-next/daemon@workspace:apps/daemon"],
+
+    "@studio-next/localplatform": ["@studio-next/localplatform@workspace:packages/localplatform"],
 
     "@studio-next/panel": ["@studio-next/panel@workspace:packages/panel"],
 
