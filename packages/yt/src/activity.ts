@@ -85,7 +85,8 @@ export function encodeCursor(lastActivityId: string): string {
  *      （轮询方直接拿 items 末条 id 当游标续问，见 activity.test 基线）
  */
 export function decodeCursor(cursor: string): string {
-  if (/^\d+-\d+$/.test(cursor)) return cursor
+  // 裸活动 id 形（2026-10-17 真实例实证：YouTrack id 形如 0-0.14-11914 / 3-22.0-0——数字+点+线段）
+  if (/^\d[\d.-]*$/.test(cursor)) return cursor
   let payload: unknown
   try {
     payload = JSON.parse(fromBase64Url(cursor)) as unknown

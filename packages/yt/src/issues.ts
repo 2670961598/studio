@@ -58,8 +58,10 @@ export const issueJsonSchema = z.looseObject({
 })
 export type IssueJson = z.infer<typeof issueJsonSchema>
 
+/** 真实例冒烟实证（2026-10-17 宰相）：customFields 必须请求 value(name,login) 子选择器——
+ * 裸 value 只返回 {$type}，枚举捆绑值/用户值一律无法解码（全量单据面瘫）。 */
 export const ISSUE_FIELDS =
-  'id,idReadable,summary,description,created,updated,customFields(name,value),links(direction,linkType(name),issues(idReadable))'
+  'id,idReadable,summary,description,created,updated,customFields(name,value(name,login)),links(direction,linkType(name),issues(idReadable))'
 
 /** issues 面依赖（platform.ts 组装注入；links 供 parent 维度落链） */
 export interface IssueDeps {
