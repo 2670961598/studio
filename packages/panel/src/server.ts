@@ -259,6 +259,8 @@ export function createPanelApp(opts: PanelAppOptions): PanelApp {
 }
 
 // —— 真监听壳（薄）：node:http fetch 适配器 + 生命周期 ——
+// ①② 提取为共用件（:8787 servePanel 与 :8789 serveOverview 同一实现——overview/server.ts 复用）：
+// toWebRequest / forwardResponse / listenHono 导出；错误兜底文案按 label 参数化。
 
 /** servePanel 选项 */
 export interface ServePanelOptions extends PanelAppOptions {
@@ -267,11 +269,7 @@ export interface ServePanelOptions extends PanelAppOptions {
 }
 
 /** servePanel 返回句柄：真端口 + 优雅关闭（断 SSE 长连、关 server、关 ledger） */
-export interface PanelHandle {
-  port: number
-  hostname: string
-  close(): Promise<void>
-}
+export type PanelHandle = HonoShellHandle
 
 /** 请求侧逐出的逐跳头（host 走 URL、其余由 node:http 自管） */
 const HOP_BY_HOP_REQUEST = new Set(['host', 'connection', 'keep-alive', 'proxy-connection', 'te', 'trailer', 'transfer-encoding', 'upgrade'])
@@ -279,7 +277,7 @@ const HOP_BY_HOP_REQUEST = new Set(['host', 'connection', 'keep-alive', 'proxy-c
 const HOP_BY_HOP_RESPONSE = new Set(['connection', 'keep-alive', 'proxy-connection', 'te', 'trailer', 'transfer-encoding', 'upgrade'])
 
 /** IncomingMessage → 标准 Request（panel 全 GET 无请求体，body 恒空）；断连经 AbortSignal 传给 hono */
-function toWebRequest(req: IncomingMessage, signal: AbortSignal): Request {
+export function toWebRequest(req: IncomingMessage, signal: AbortSignal): Request {
   const host = typeof req.headers.host === 'string' && req.headers.host !== '' ? req.headers.host : '127.0.0.1'
   const headers = new Headers()
   for (const [key, value] of Object.entries(req.headers)) {
@@ -291,7 +289,7 @@ function toWebRequest(req: IncomingMessage, signal: AbortSignal): Request {
 }
 
 /** Response → ServerResponse 流式回写（SSE 走同一条 pipe 路径）；客户端断开 → 取消上游流 */
-async function forwardResponse(res: ServerResponse, response: Response): Promise<void> {
+export async function forwardResponse(res: ServerResponse, response: Response): Promise<void> {
   const headers: Record<string, string | string[]> = {}
   response.headers.forEach((value, key) => {
     if (!HOP_BY_HOP_RESPONSE.has(key)) headers[key] = value
@@ -315,18 +313,29 @@ async function forwardResponse(res: ServerResponse, response: Response): Promise
   })
 }
 
-/**
- * 真监听壳：打开库文件（不存在即拒——零写纪律不代建库）→ createPanelApp → node:http 监听。
- * 返回句柄 close() 依次：断全部连接（含 SSE 长连）→ 关 server → 关 ledger。
- */
-export async function servePanel(port: number, dbPath: string, opts?: ServePanelOptions): Promise<PanelHandle> {
-  const resolved = path.resolve(dbPath)
-  if (!existsSync(resolved)) {
-    configInvalid(`panel/db-not-found:${resolved}`, `台账库不存在：${resolved}（panel 只读不代建库——先由 daemon/回填侧建库）`)
-  }
-  const ledger = openLedger(resolved)
-  const app = createPanelApp({ ...opts, openLedger: () => ledger })
+/** 共用监听壳句柄：真端口 + 优雅关闭（断长连含 SSE、关 server、调 onClose 关注入方资源） */
+export interface HonoShellHandle {
+  port: number
+  hostname: string
+  close(): Promise<void>
+}
 
+/** listenHono 选项 */
+export interface ListenHonoOptions {
+  /** 绑定地址（缺省 127.0.0.1——内部面板默认只绑本机） */
+  hostname?: string
+  /** server 关闭后回调（关 ledger 等注入方资源；缺省无） */
+  onClose?: () => void
+  /** 内部错误兜底文案标记（缺省 'panel'；overview 传 'overview'） */
+  label?: string
+}
+
+/**
+ * 共用真监听壳：Hono app → node:http 监听（fetch 适配器含流式回写与断连取消，SSE 可用）。
+ * close() 依次：断全部连接（含 SSE 长连）→ 关 server → onClose()（注入方资源）。
+ */
+export async function listenHono(app: Hono, port: number, opts?: ListenHonoOptions): Promise<HonoShellHandle> {
+  const label = opts?.label ?? 'panel'
   const server = createServer((req, res) => {
     const controller = new AbortController()
     res.on('close', () => controller.abort())
@@ -335,7 +344,7 @@ export async function servePanel(port: number, dbPath: string, opts?: ServePanel
       .catch(() => {
         if (!res.headersSent) {
           res.writeHead(500, { 'content-type': 'application/json' })
-          res.end(JSON.stringify({ ok: false, error: 'panel internal error' }))
+          res.end(JSON.stringify({ ok: false, error: `${label} internal error` }))
         } else {
           res.destroy()
         }
@@ -357,7 +366,24 @@ export async function servePanel(port: number, dbPath: string, opts?: ServePanel
     close: async () => {
       server.closeAllConnections()
       await new Promise<void>((resolve) => server.close(() => resolve()))
-      ledger.close()
+      opts?.onClose?.()
     },
   }
+}
+
+/**
+ * 真监听壳：打开库文件（不存在即拒——零写纪律不代建库）→ createPanelApp → 监听。
+ * 句柄 close() 依次：断全部连接（含 SSE 长连）→ 关 server → 关 ledger。
+ */
+export async function servePanel(port: number, dbPath: string, opts?: ServePanelOptions): Promise<PanelHandle> {
+  const resolved = path.resolve(dbPath)
+  if (!existsSync(resolved)) {
+    configInvalid(`panel/db-not-found:${resolved}`, `台账库不存在：${resolved}（panel 只读不代建库——先由 daemon/回填侧建库）`)
+  }
+  const ledger = openLedger(resolved)
+  const app = createPanelApp({ ...opts, openLedger: () => ledger })
+  return listenHono(app, port, {
+    ...(opts?.hostname !== undefined ? { hostname: opts.hostname } : {}),
+    onClose: () => ledger.close(),
+  })
 }

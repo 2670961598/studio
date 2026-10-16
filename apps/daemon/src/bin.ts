@@ -17,6 +17,13 @@
  *   panel --db <库路径> [--port 8787]
  *       :8787 只读监控面（v0.3）：jobs/runs/workers/事件流（SSE），全部读 SQLite 零写；
  *       库不存在即拒启（panel 不代建库）；SIGINT/SIGTERM 优雅关闭
+ *   overview --company <目录> [--company <目录2> …] [--db <库路径>] [--port 8789]
+ *       :8789 公司概览面（v0.7 读面）：挂载公司目录（校验不过拒绝挂载）→ /<slug>/ 概览/
+ *       组织/人事/进度/财务五读面（全 GET 只读、服务端渲染零前端依赖）；--db 可选（给出则
+ *       进度/财务页读台账，必须已存在——只读不代建库）；项目/报表/编辑中心归后续刀。
+ *       【选型说明（拟稿）】独立子命令而非 serve --overview-port：:8787 本就是独立 panel
+ *       子命令（serve 主循环不内嵌面板），:8789 同款——只读壳与 daemon 生命周期解耦，
+ *       WAL 同库并存安全；待制作人批示后固化
  *   serve --config <daemon.yaml>
  *       常驻主循环（v0.5）：七相位引擎 + 心跳日志；SIGINT/SIGTERM 优雅停（等当前拍收口→
  *       在途 drain→关台账）。配置最小面 {db, platform: localfile|fake, company, rootDir,
@@ -25,7 +32,7 @@
  *     逐项清单见 src/serve.ts 与 src/engine.ts 头注）
  *
  * argv 解析零依赖手写（单命令薄壳不值得引库；16-§二 选型纪律：引新依赖须登记选型表）。
- * 退出码：0 成功｜1 用法错误 / 校验不通过 / init 失败 / 演习 FAIL / panel 失败 / serve 配置错｜
+ * 退出码：0 成功｜1 用法错误 / 校验不通过 / init 失败 / 演习 FAIL / panel 失败 / overview 失败 / serve 配置错｜
  * 2 serve 运行中出错（tick 异常）。
  * 用 process.exitCode 而非 process.exit 收尾：让管道下的 stdout/stderr 先冲刷再自然退出。
  */
@@ -33,6 +40,8 @@ import path from 'node:path'
 import { initCompany, loadCompanyDirectory, readDirectoryFiles } from '@studio-next/company'
 import type { InitOptions } from '@studio-next/company'
 import { servePanel } from '@studio-next/panel'
+import { serveOverview } from '@studio-next/panel/overview'
+import type { OverviewCompanySource } from '@studio-next/panel/overview'
 import { openLedger, rebuild, renderDrillReport, runLedgerDrill } from '@studio-next/store'
 import { runServe } from './serve.ts'
 
@@ -53,6 +62,10 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
   studio-next panel --db <库路径> [--port 8787]
       :8787 只读监控面（v0.3，docs/16-§四）：jobs/runs/workers/事件流（SSE），
       全部读 SQLite 零写；库不存在即拒启；Ctrl-C 优雅关闭
+  studio-next overview --company <目录> [--company <目录2> …] [--db <库路径>] [--port 8789]
+      :8789 公司概览面（v0.7 读面，docs/04-§七）：挂载公司目录（可多家，校验不过拒绝挂载）
+      → /<slug>/ 概览/组织/人事/进度/财务五读面（全 GET 只读、零前端依赖）；
+      --db 可选（给出则进度/财务页读台账，必须已存在——只读不代建）；Ctrl-C 优雅关闭
   studio-next serve --config <daemon.yaml>
       常驻主循环（v0.5，docs/16-§四）：七相位引擎 + 心跳日志 + SIGINT/SIGTERM 优雅停。
       配置最小面（扁平 YAML 子集）：db / platform(fake|localfile) / company / rootDir / tickMs /
@@ -63,18 +76,24 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
       预算预留-结算不落即不派（20-§六.8）；demo 模式=fake 全家桶零外部依赖
       （真 dsh/YouTrack/网关未接线，见 src/serve.ts 头注）
 
-默认值：--dir 缺省 ./<slug>；--name 缺省 <slug>；--port 缺省 8787（panel）
-文档：docs/04-公司目录与等级体系.md §二/§九；docs/16-技术实现与里程碑.md §四；docs/02-需求-框架面.md F2-11/F2-12；docs/17-整体技术设计.md §8`
+默认值：--dir 缺省 ./<slug>；--name 缺省 <slug>；--port 缺省 8787（panel）/ 8789（overview）
+文档：docs/04-公司目录与等级体系.md §二/§七/§九；docs/16-技术实现与里程碑.md §四；docs/02-需求-框架面.md F2-11/F2-12；docs/17-整体技术设计.md §8`
 
 interface Argv {
   positionals: string[]
   flags: Record<string, string>
+  /** 可重复旗标的全部取值（按出现序；不可重复旗标不进此面） */
+  multi: Record<string, string[]>
 }
 
-/** 零依赖 argv 解析：--key value 成对消费；未知旗标 / 缺值即用法错误 */
-function parseArgv(argv: string[], valueFlags: ReadonlySet<string>): Argv | { error: string } {
+/**
+ * 零依赖 argv 解析：--key value 成对消费；未知旗标 / 缺值即用法错误。
+ * repeatableFlags 中的旗标可多次出现（取值收集进 multi，后值不覆盖前值）。
+ */
+function parseArgv(argv: string[], valueFlags: ReadonlySet<string>, repeatableFlags?: ReadonlySet<string>): Argv | { error: string } {
   const positionals: string[] = []
   const flags: Record<string, string> = {}
+  const multi: Record<string, string[]> = {}
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i] ?? ''
     if (arg.startsWith('--')) {
@@ -83,12 +102,15 @@ function parseArgv(argv: string[], valueFlags: ReadonlySet<string>): Argv | { er
       const value = argv[i + 1]
       if (value === undefined || value.startsWith('--')) return { error: `${arg} 缺少取值` }
       flags[key] = value
+      if (repeatableFlags?.has(key)) {
+        ;(multi[key] ??= []).push(value)
+      }
       i += 1
     } else {
       positionals.push(arg)
     }
   }
-  return { positionals, flags }
+  return { positionals, flags, multi }
 }
 
 function errText(err: unknown): string {
@@ -276,6 +298,115 @@ async function cmdPanel(argv: string[]): Promise<number> {
   return 0
 }
 
+/** 人事档案文件发现（与 company/multifile isPersonFile 同规则：departments 任意深度下的 people/<工号>.md） */
+const PERSON_FILE_RE = /(?:^|\/)departments\/[^/]+\/people\/([^/]+)\.md$/
+
+/**
+ * org-config.yaml 单行 mission 提取（**拟稿**：契约 CompanySnapshot 无 mission 字段，本 CLI
+ * 以单行 `mission: <标量>` 近似提取——见 panel/overview/server.ts 头注拟稿；块标量形态漏读
+ * → undefined → 页面如实显示「未提供」）。引号壳先剥；裸标量剥「 #」行内注释。
+ */
+function extractMission(orgConfigSrc: string | undefined): string | undefined {
+  if (orgConfigSrc === undefined) return undefined
+  const m = /^[ \t]*mission:[ \t]*(\S.*)$/m.exec(orgConfigSrc)
+  const raw = m?.[1]?.trim()
+  if (raw === undefined || raw === '') return undefined
+  let value = raw
+  if ((value.startsWith('"') && value.endsWith('"') && value.length >= 2) || (value.startsWith("'") && value.endsWith("'") && value.length >= 2)) {
+    value = value.slice(1, -1)
+  } else {
+    const hash = value.indexOf(' #')
+    if (hash >= 0) value = value.slice(0, hash)
+  }
+  const trimmed = value.trim()
+  return trimmed === '' ? undefined : trimmed
+}
+
+/**
+ * overview 子命令：:8789 公司概览面薄壳（语义全在 @studio-next/panel/overview）。
+ * 挂载语义：逐目录 readDirectoryFiles → loadCompanyDirectory（校验不过拒绝挂载——04-§九）；
+ * 快照挂载时装载并缓存（目录变更=重新挂载；热更归 daemon 后续刀）；档案正文按文件名=工号
+ * 建映射（校验器保证文件名与 front-matter id 一致）。默认只绑本机。
+ */
+async function cmdOverview(argv: string[]): Promise<number> {
+  const parsed = parseArgv(argv, new Set(['company', 'db', 'port']), new Set(['company']))
+  if ('error' in parsed) {
+    console.error(`overview：${parsed.error}`)
+    console.error(USAGE)
+    return 1
+  }
+  if (parsed.positionals.length > 0) {
+    console.error(`overview：多余的位置参数：${parsed.positionals.join(' ')}`)
+    console.error(USAGE)
+    return 1
+  }
+  const companyDirs = parsed.multi.company ?? []
+  if (companyDirs.length === 0) {
+    console.error('overview：至少给一个 --company <公司目录>（可重复给多家）')
+    console.error(USAGE)
+    return 1
+  }
+  let port = 8789
+  if (parsed.flags.port !== undefined) {
+    port = Number.parseInt(parsed.flags.port, 10)
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      console.error(`overview：--port 取值非法：${parsed.flags.port}（须为 1-65535 整数）`)
+      return 1
+    }
+  }
+
+  const companies: OverviewCompanySource[] = []
+  for (const dir of companyDirs) {
+    const resolved = path.resolve(dir)
+    let files: Record<string, string>
+    try {
+      files = await readDirectoryFiles(resolved)
+    } catch (err) {
+      console.error(`overview：读取公司目录失败 ${resolved}：${errText(err)}`)
+      return 1
+    }
+    const mounted = loadCompanyDirectory(files)
+    if (!mounted.ok) {
+      console.error(`overview：公司目录校验不通过（拒绝挂载，docs/04-§九）：${resolved}`)
+      for (const issue of mounted.issues) console.error(`  ${issue.file}:${issue.line} [${issue.rule}] ${issue.fix}`)
+      return 1
+    }
+    const snapshot = mounted.snapshot
+    const personFiles = new Map<string, string>()
+    for (const [p, content] of Object.entries(files)) {
+      const m = PERSON_FILE_RE.exec(p)
+      if (m !== null && m[1] !== undefined) personFiles.set(m[1], content)
+    }
+    const mission = extractMission(files['org-config.yaml'])
+    companies.push({
+      slug: snapshot.slug,
+      snapshotProvider: () => snapshot,
+      ...(mission !== undefined ? { mission } : {}),
+      readPersonFile: (personId) => personFiles.get(personId),
+    })
+  }
+
+  let handle
+  try {
+    handle = await serveOverview(port, companies, parsed.flags.db !== undefined ? { ledgerPath: path.resolve(parsed.flags.db) } : undefined)
+  } catch (err) {
+    // 重复 slug / 库不存在 / 端口占用等：CONFIG_INVALID 形状，如实分类上报
+    console.error(`overview 启动失败：${errText(err)}`)
+    return 1
+  }
+  console.log(`[overview] :8789 公司概览面已监听 → http://${handle.hostname}:${String(handle.port)}/（只读，Ctrl-C 退出）`)
+  console.log(`[overview] 已挂载：${companies.map((c) => c.slug).join('、')}${parsed.flags.db !== undefined ? `；台账：${path.resolve(parsed.flags.db)}（零写）` : '；无台账（progress/finance 页如实显示无台账数据）'}`)
+  console.log('[overview] 端面：/ 公司清单｜/<slug>/ 概览｜/<slug>/org 组织｜/<slug>/people 人事｜/<slug>/people/<工号> 档案｜/<slug>/progress 进度｜/<slug>/finance 财务')
+  await new Promise<void>((resolve) => {
+    const stop = (): void => resolve()
+    process.once('SIGINT', stop)
+    process.once('SIGTERM', stop)
+  })
+  await handle.close()
+  console.log('[overview] 已优雅关闭')
+  return 0
+}
+
 /** serve 子命令：薄壳转 runServe（配置装载/循环/优雅停语义全在 src/serve.ts） */
 async function cmdServe(argv: string[]): Promise<number> {
   const parsed = parseArgv(argv, new Set(['config']))
@@ -321,6 +452,8 @@ async function main(): Promise<number> {
       return cmdLedger(rest)
     case 'panel':
       return cmdPanel(rest)
+    case 'overview':
+      return cmdOverview(rest)
     case 'serve':
       return cmdServe(rest)
     case undefined:

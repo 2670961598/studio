@@ -112,6 +112,9 @@
         "@studio-next/store": "workspace:*",
         "hono": "^4.6.0",
       },
+      "devDependencies": {
+        "@studio-next/company": "workspace:*",
+      },
     },
     "packages/prompt": {
       "name": "@studio-next/prompt",
