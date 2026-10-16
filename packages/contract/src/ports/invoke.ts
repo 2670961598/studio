@@ -12,6 +12,8 @@ export interface InvokeIntent {
   /** 来源源名 */
   source: string
   priority?: number
+  /** 去重键（v1.3）：无 ticket 的意图（如 mention）必填——主循环按 (source, kind, company, dedupKey) 幂等 */
+  dedupKey?: string
 }
 
 export interface InvokeSource {

@@ -7,6 +7,8 @@ export interface Notification {
   kind: string
   title: string
   body: string
+  /** 展示性发件人（v1.3，如「宰相」「daemon」）——非安全边界，外部鉴权归 21-§五 token 机制 */
+  from?: string
   links?: { label: string; url: string }[]
 }
 
