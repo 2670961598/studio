@@ -206,10 +206,10 @@ describe('spawn 冒烟（拟冻结验收命令：init demo → validate demo →
     expect(validateRun.stderr).toContain('校验不通过')
   })
 
-  it('serve 占位 → exit 2（未实现，v0.5 主循环）', () => {
+  it('serve 已落地（v0.5 主循环）→ 缺 --config 即用法错误 exit 1（真跑归 e2e：apps/daemon/test/e2e.test.ts）', () => {
     const serveRun = run(['serve'])
-    expect(serveRun.status).toBe(2)
-    expect(serveRun.stderr).toContain('未实现')
+    expect(serveRun.status).toBe(1)
+    expect(serveRun.stderr).toContain('缺少 --config')
   })
 
   it('未知子命令 / 缺参 → exit 1 + 用法到 stderr', () => {
