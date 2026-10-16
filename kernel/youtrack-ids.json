@@ -3,7 +3,8 @@
   "projects": {
     "POLY": "0-1",
     "STUDIO": "0-2",
-    "GAMES": "0-3"
+    "GAMES": "0-3",
+    "SNEXT": "0-4"
   },
   "state_bundle": "161-2",
   "type_bundle": "159-1",
