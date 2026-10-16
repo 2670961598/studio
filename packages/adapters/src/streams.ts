@@ -51,6 +51,33 @@ export function parseStream(
   }
 }
 
+/**
+ * 单行解析入口（流式增量消费用；v0.2 新增导出——parseStream 既有行为一概不动）
+ *
+ * 背景：parseStream 是全文同步解析（v0.1 冻结行为）；适配器 stream() 逐行增量消费时
+ * 需要等价的单行入口。行为契约：一行 → 0..N 个事件（codex 的 item.completed 对
+ * agent_message 产出 log+step_end 两个）；空行/井号注释行 → []；BOM/CRLF 走 lines()
+ * 同款归一。一致性：dsh/claude/codex 家族「text 逐行过 parseLine 再展平」与
+ * parseStream(text) 等价；kimi 家族单行入口只做 claude 同构 stdout 解析——wire 合并
+ * 与缺 wire 明示 log 是全文级附加（伴生文件按 session 而非按行），由适配器另行处理。
+ */
+export function parseLine(line: string, family: ExecutorFamily): StreamEvent[] {
+  // 复用 lines() 的切割归一（BOM/CR/空行/注释跳过），单行场景等价于取切割后的第一行
+  const first = [...lines(line)][0]
+  if (first === undefined) return []
+  switch (family) {
+    case 'dsh':
+      return parseDsh(first)
+    case 'claude':
+      return parseClaude(first)
+    case 'codex':
+      return parseCodex(first)
+    case 'kimi':
+      // 单行入口不做 wire 合并（全文级职责）——行为即 claude 同构 stdout 行
+      return parseClaude(first)
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 各家解析器
 // ---------------------------------------------------------------------------
