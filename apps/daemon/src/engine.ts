@@ -21,6 +21,10 @@
  *     意图幂等（22-§三.2）：同键 schedule 意图只物化一次——PATROL 留痕派生键集
  *     （append-only **不释放**：markRan 已记账，源重投不得重跑）+ 拍内去重。
  *   - docs/18-§三 状态归位：调度器不是控制面——岗单据与普通单走同一状态机同一收割链。
+ *   - docs/16-§三 预算 / docs/20-§六.8：派发前预算闸（reserve→双行落账→才 launch——
+ *     预算预留-结算**不落即不派**的机制化收口）+ 收割成功 settle 冲销（actual=每成功
+ *     交付成本）+ 超帽 refusal 不派。判定引擎=core reserve/settle，接线件=src/budget-gate.ts
+ *     （估算两态/失败保留 adopt/双行落账顺序的拟稿待批点均见该文件头注）。
  *
  * v0 占位与诚实边界（真单前逐项补齐，详见 serve.ts 头注与汇报）：
  *   - gateRunner：默认实现=REPORT 存在性 + exit0 模拟（真验收命令执行归 v0.5 真单刀）；
@@ -73,6 +77,7 @@ import type {
   Handle,
   InvokeIntent,
   IssueRecord,
+  ModelCatalog,
   PersonRef,
   ResultStats,
   TicketId,
@@ -96,6 +101,7 @@ import {
 } from '@studio-next/core'
 import type { ExecutorRegistry } from '@studio-next/adapters'
 import type { Ledger } from '@studio-next/store'
+import { gateDispatch, settleDispatch, type BudgetGateDeps } from './budget-gate.ts'
 import type { GateRunner } from './gate.ts'
 import { makeUlid } from './id.ts'
 import type { PromptAssembler } from './prompt-assembly.ts'
@@ -134,6 +140,16 @@ export interface EngineConfig {
   maxActivityPages: number
   /** dispose() 优雅杀宽限（ms） */
   killGraceMs: number
+  /**
+   * 票级预算帽缺省（USD；docs/16-§三 reserve 票帽面）：TaskBrief.budgetCap（单票面）
+   * 优先，缺省回退本帽；两者皆无=不设限。超帽=refusal 行落账且不派（20-§六.8）。
+   */
+  budgetTicketCapUsd?: number
+  /**
+   * 岗级预算帽缺省（USD；04-§四岗级预算）：仅价目表态（catalog 注入）生效——
+   * 估算两态见 src/budget-gate.ts 头注（态 B 估算=适配器自报，岗级比较基准无依据）。
+   */
+  budgetPersonCapUsd?: number
   /** 状态流表覆盖（公司目录 flows；缺省 DEFAULT_FLOW_TABLE，docs/18-§2.1） */
   flows?: FlowTable
 }
@@ -174,6 +190,12 @@ export interface EngineDeps {
   people: readonly PersonRef[]
   /** ULID 生成器（缺省 src/id.ts；测试可注入确定性序列） */
   makeId?: (ts: number) => string
+  /**
+   * 模型价目目录（可选注入；daemon.yaml models: 段装载，serve 侧接线）——
+   * 注入=态 A（estimateCost 校准+双帽）；缺省=态 B 降级（估算=适配器自报、
+   * 仅票级帽；两态说明见 src/budget-gate.ts 头注）。
+   */
+  catalog?: ModelCatalog
 }
 
 // ————————————————————————— TickReport（17-§2「tick 返回结构化 actions」） —————————————————————————
@@ -212,6 +234,14 @@ export interface TickPhaseHarvest {
   pending: number
 }
 
+/** 派发相位预算闸汇报（docs/16-§三 reserve→refusal；20-§六.8） */
+export interface TickPhaseDispatchBudget {
+  /** 新落预留次数（双行落账成功的派发；adopt 沿用不计数） */
+  budgetReserved: number
+  /** 超帽拒派次数（refusal 行已落账；含票级+岗级） */
+  budgetRefused: number
+}
+
 /** 一拍全量汇报（JSON 可序列化；actions=结构化动作原体，actionResults=执行面，events=本拍新账） */
 export interface TickReport {
   seq: number
@@ -219,7 +249,7 @@ export interface TickReport {
   phases: {
     collect: TickPhaseCollect
     stateDiff: { candidates: number; decisions: readonly TickDecisionEntry[] }
-    dispatch: { dispatched: number; approvals: number; results: readonly TickActionResult[] }
+    dispatch: { dispatched: number; approvals: number; results: readonly TickActionResult[] } & TickPhaseDispatchBudget
     harvest: TickPhaseHarvest
     merge: { merged: number }
     recycle: { recycled: number }
@@ -244,6 +274,8 @@ interface Inflight {
   briefPath: string
   attempt: number
   lane: string
+  /** 派工对象工号（收割 settle 的人档行 scope；reserve 链的 person 桥同源） */
+  personId: string
   /** 派发拍序：本拍派发的下一拍才可收割（同拍单至多一动作的收割侧落点） */
   dispatchedAtSeq: number
 }
@@ -289,6 +321,14 @@ const TICK_SEQ_KEY = 'tick.seq'
 export function createEngine(deps: EngineDeps): Engine {
   const { platform, ledger, registry, assembler, gateRunner, clock, config, people } = deps
   const makeId = deps.makeId ?? makeUlid
+
+  // 预算闸依赖（docs/16-§三 / 20-§六.8）：判定=core reserve/settle，落账=ledger.appendBudget，
+  // 行 id=makeId（ULID，id.ts）；catalog 缺省=态 B 降级（两态见 budget-gate.ts 头注）
+  const budgetDeps: BudgetGateDeps = {
+    ledger,
+    makeId,
+    ...(deps.catalog !== undefined ? { catalog: deps.catalog } : {}),
+  }
 
   // —— 进程内状态（持久化边界见文件头注「v0 占位」） ——
   let breaker: BreakerState = emptyBreakerState()
@@ -449,7 +489,8 @@ export function createEngine(deps: EngineDeps): Engine {
   // ————————————————— 相位执行体 —————————————————
 
   /**
-   * 派发：装配（AGENTS.md+任务书落盘）→ registry 选适配器 → launch → work_records 落在途
+   * 派发：装配（AGENTS.md+任务书落盘）→ **预算闸（reserve 双行落账→才 launch，
+   * 20-§六.8 不落即不派）** → registry 选适配器 → launch → work_records 落在途
    * → 平台迁已派发 → events 落 DISPATCH（note 携分层指纹与 intentKey——幂等索引依据）。
    */
   async function executeDispatch(
@@ -457,6 +498,7 @@ export function createEngine(deps: EngineDeps): Engine {
     intentKey: string,
     index: EventIndex,
     tickEvents: EventRecord[],
+    budget: TickPhaseDispatchBudget,
   ): Promise<TickActionResult> {
     const ticket = action.ticket
     // state-diff 排队时已占泳道（决策即占用）——任何失败路径都必须归还，不留死锁
@@ -506,6 +548,28 @@ export function createEngine(deps: EngineDeps): Engine {
       writeFileSync(agentsTarget, assembled.agentsMd.text, 'utf8')
       writeFileSync(briefPath, assembled.brief.text, 'utf8')
       const taskBrief = assembled.brief.taskBrief
+      // 预算闸（TaskBrief 构造后、launch 前——20-§六.8 机制点）：估算（两态）→ reserve
+      // 判定 → 过闸=双行落账（issue 先 person 后；落账与 launch 之间失败=不派，异常
+      // 上抛本 catch→DISPATCH_FAIL）；超帽=refusal 行落账+不派；duplicate=沿用未结预留
+      // （失败保留重派语义）。拟稿待批点清单见 src/budget-gate.ts 头注。
+      const gate = await gateDispatch(budgetDeps, {
+        ticket,
+        personId: person.id,
+        adapter,
+        taskBrief,
+        briefChars: assembled.brief.text.length,
+        ...(config.budgetTicketCapUsd !== undefined ? { fallbackTicketCapUsd: config.budgetTicketCapUsd } : {}),
+        ...(config.budgetPersonCapUsd !== undefined ? { personCapUsd: config.budgetPersonCapUsd } : {}),
+        now: at,
+      })
+      if (gate.kind === 'refused') {
+        budget.budgetRefused += 1
+        return fail(
+          `budget-refusal:${gate.reason}：估算 $${gate.estimated} + 在途 $${gate.inflight} 超帽 $${gate.cap}` +
+            `——refusal 行已落账（可查，F1-09），不派（20-§六.8 预留不落即不派的镜像面）`,
+        )
+      }
+      if (gate.kind === 'reserved') budget.budgetReserved += 1
       launched = await adapter.launch(taskBrief)
       acquireLane(action.lane, ticket, at)
       const transitioned = await platform.issues.transition(ticket, action.toState)
@@ -530,19 +594,22 @@ export function createEngine(deps: EngineDeps): Engine {
         briefPath,
         attempt,
         lane: action.lane,
+        personId: person.id,
         dispatchedAtSeq: seq,
       })
       syncMirror(transitioned)
       makeEvent('DISPATCH', transitioned, attempt, tickEvents, {
         size: Buffer.byteLength(assembled.agentsMd.text, 'utf8'),
         payload_hash: `sha256:${createHash('sha256').update(assembled.agentsMd.text, 'utf8').digest('hex')}`,
-        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version};agents=${agentsTarget};brief=${briefPath}`,
+        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}`,
       })
       return {
         ticket,
         actionType: action.type,
         ok: true,
-        detail: `attempt=${attempt} executor=${adapter.name} lane=${action.lane}`,
+        detail:
+          `attempt=${attempt} executor=${adapter.name} lane=${action.lane}` +
+          `;budget=${gate.kind === 'reserved' ? `reserve $${gate.estimated.toFixed(4)}` : `adopt（沿用未结预留）$${gate.estimated.toFixed(4)}`}`,
       }
     } catch (err) {
       // 派发失败如实分类上报（DISPOSITIONS: DISPATCH_FAIL/retry）；v0 不计断路连击（拟稿）
@@ -553,10 +620,12 @@ export function createEngine(deps: EngineDeps): Engine {
   }
 
   /**
-   * 收割一单：消费 stream（要件 1/2）→ gateRunner（要件 3/4）→ 四要件齐=迁证据就绪+GATE_PASS+
-   * work_records 收口+断路复位；不齐=回滚首批位+GATE_FAIL+断路连击（熔断瞬间 ESCALATE+建 bug 单）。
+   * 收割一单：消费 stream（要件 1/2）→ gateRunner（要件 3/4）→ 四要件齐=迁证据就绪+
+   * 预算 settle 双行冲销（16-§三：actual=每成功交付成本）+GATE_PASS+work_records 收口+
+   * 断路复位；不齐=回滚首批位+GATE_FAIL+断路连击（熔断瞬间 ESCALATE+建 bug 单）——
+   * 失败路径**不结算**：预留保留（断路器回首批位后重派沿用同一笔额度，budget-gate 头注拟稿）。
    */
-  async function harvestOne(entry: Inflight, tickEvents: EventRecord[]): Promise<'completed' | 'failed'> {
+  async function harvestOne(entry: Inflight, tickEvents: EventRecord[], errors: string[]): Promise<'completed' | 'failed'> {
     let adapter: ExecutorAdapter
     try {
       adapter = registry.resolve(entry.executor)
@@ -618,11 +687,27 @@ export function createEngine(deps: EngineDeps): Engine {
       breaker = onSuccess(breaker, ticket).newState
       inflight.delete(ticket)
       syncMirror(transitioned)
+      // 预算结算（收割成功路径）：settle(actual=stats.cost) 双行冲销在途预留——
+      // 异常不破坏收割四要件结论（errors 如实上报；预留滞留→同票后续派发走 adopt 可见）
+      let budgetNote = ''
+      try {
+        const settled = settleDispatch(budgetDeps, {
+          ticket,
+          personId: entry.personId,
+          actual: stats.cost,
+          now: now(),
+        })
+        budgetNote = `;budget=settle 冲销 $${settled.released.toFixed(4)} 实际 $${settled.actualUsd.toFixed(4)}`
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        errors.push(`预算结算异常 ${ticket}：${msg}`)
+        budgetNote = `;budget=settle 失败（${msg}）`
+      }
       makeEvent('GATE_PASS', transitioned, entry.attempt, tickEvents, {
         tokens: tokenBuckets(stats),
         cost_usd: stats.cost.usd,
         duration_ms: stats.duration,
-        note: `四要件齐（completed/非空/REPORT/exit0）；report=${gate.reportPath}${gate.summaryPath !== undefined ? `;summary=${gate.summaryPath}` : ''}`,
+        note: `四要件齐（completed/非空/REPORT/exit0）；report=${gate.reportPath}${gate.summaryPath !== undefined ? `;summary=${gate.summaryPath}` : ''}${budgetNote}`,
       })
       return 'completed'
     }
@@ -894,8 +979,9 @@ export function createEngine(deps: EngineDeps): Engine {
       }
     }
     let dispatched = 0
+    const budget: TickPhaseDispatchBudget = { budgetReserved: 0, budgetRefused: 0 }
     for (const { action, intentKey } of dispatchQ) {
-      const result = await executeDispatch(action, intentKey, index, tickEvents)
+      const result = await executeDispatch(action, intentKey, index, tickEvents, budget)
       actionResults.push(result)
       if (result.ok) {
         dispatched += 1
@@ -914,7 +1000,7 @@ export function createEngine(deps: EngineDeps): Engine {
       }
       harvest.checked += 1
       try {
-        const outcome = await harvestOne(entry, tickEvents)
+        const outcome = await harvestOne(entry, tickEvents, errors)
         if (outcome === 'completed') harvest.completed += 1
         else harvest.failed += 1
         mutations += 1
@@ -1027,6 +1113,8 @@ export function createEngine(deps: EngineDeps): Engine {
           dispatched,
           approvals,
           results: actionResults.filter((r) => r.actionType === 'dispatch' || r.actionType === 'submit_approval'),
+          budgetReserved: budget.budgetReserved,
+          budgetRefused: budget.budgetRefused,
         },
         harvest,
         merge: { merged },

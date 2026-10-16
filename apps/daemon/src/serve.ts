@@ -8,6 +8,10 @@
  *   rootDir: <工位根>           tickMs: <拍间隔>              maxActionsPerTick / maxInflight
  *   stallAfterMs / laneTtlMs / breakerThreshold / autoApprove …（缺省见 DEFAULT_SERVE_CONFIG）
  *   jobs: true|false（定时岗调度开关，v0.4）   jobPollMs: <调度轮询间隔>（缺省 15000）
+ *   models: <models.yaml 路径>（可选价目表，17-§4：装载→catalog 注入引擎——注入=估算
+ *     态 A「estimateCost 校准+双帽」；缺省=态 B 降级「估算=适配器自报、仅票级帽」，
+ *     两态详见 src/budget-gate.ts 头注。**缺省不拷贝 models.example.yaml**）
+ *   budgetTicketCapUsd / budgetPersonCapUsd（可选预算帽：票级恒生效；岗级仅态 A 生效）
  *
  * v0 边界（诚实标注——v0.5 真单前还差什么）：
  *   - platform: localfile 未接线（@studio-next/localplatform 在 platform 泳道，未挂 daemon
@@ -25,8 +29,9 @@
  *     work_records 留 running——重启接管归后续刀）→ 关台账。
  */
 import { createRegistry } from '@studio-next/adapters'
+import { createModelCatalog, fingerprint, parseModelsYaml } from '@studio-next/core'
 import { openLedger, type Ledger } from '@studio-next/store'
-import type { CompanySnapshot, FlowPlatform, PersonRef, ScheduledJob } from '@studio-next/contract'
+import type { CompanySnapshot, FlowPlatform, ModelCatalog, PersonRef, ScheduledJob } from '@studio-next/contract'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import {
@@ -72,6 +77,16 @@ export interface ServeConfig {
   jobPollMs: number
   /** 公司目录路径（可选：装载 CompanySnapshot；缺省用内置 demo 快照） */
   companyDir?: string
+  /**
+   * 价目表路径（可选，17-§4 models.yaml）：装载→catalog 注入引擎（估算态 A：
+   * estimateCost 校准+双帽）；缺省不装载=态 B 降级（估算=适配器自报、仅票级帽）——
+   * **缺省不拷贝 models.example.yaml**（示例价入账=伪依据，两态见 budget-gate.ts 头注）。
+   */
+  models?: string
+  /** 票级预算帽缺省（USD；docs/16-§三 reserve 票帽；TaskBrief.budgetCap 优先） */
+  budgetTicketCapUsd?: number
+  /** 岗级预算帽缺省（USD；04-§四；仅价目表态 A 生效） */
+  budgetPersonCapUsd?: number
 }
 
 export const DEFAULT_SERVE_CONFIG: ServeConfig = {
@@ -160,6 +175,15 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         break
       case 'companyDir':
         cfg.companyDir = str(value, key)
+        break
+      case 'models':
+        cfg.models = str(value, key)
+        break
+      case 'budgetTicketCapUsd':
+        cfg.budgetTicketCapUsd = num(value, key)
+        break
+      case 'budgetPersonCapUsd':
+        cfg.budgetPersonCapUsd = num(value, key)
         break
       case 'tickMs':
         cfg.tickMs = num(value, key)
@@ -330,6 +354,20 @@ export function buildServeRuntime(
   const registry = createRegistry()
   registry.register(createFakeAdapter(), { default: true })
 
+  // 价目表装载（可选，17-§4）：daemon.yaml models: 段 → parseModelsYaml → catalog 注入引擎
+  // （态 A）；缺省不装载=态 B 降级——**不拷贝 models.example.yaml**（示例价入账=伪依据）。
+  // fingerprint 启动日志呈现（「价目表改动走批示」的可观测锚；台账事件锚归后续 daemon 单，
+  // 事件名待批示）。装载失败（语法/形状/缺 main_worker）→ CONFIG_INVALID 拒绝启动，不静默降级。
+  let catalog: ModelCatalog | undefined
+  if (config.models !== undefined) {
+    const text = readFileSync(path.resolve(config.models), 'utf8')
+    const parsed = parseModelsYaml(text)
+    catalog = createModelCatalog(parsed)
+    log(`[serve] 价目表装载：${config.models}（fingerprint=${fingerprint(parsed)}；估算态 A：estimateCost 校准+双帽）`)
+  } else {
+    log('[serve] 无价目表：预算闸态 B 降级（估算=适配器自报、仅票级帽——见 src/budget-gate.ts 头注两态）')
+  }
+
   const engineConfig: EngineConfig = {
     ...ENGINE_CONFIG_DEFAULTS,
     company: config.company,
@@ -342,6 +380,8 @@ export function buildServeRuntime(
     laneTtlMs: config.laneTtlMs,
     breakerThreshold: config.breakerThreshold,
     autoApprove: config.autoApprove,
+    ...(config.budgetTicketCapUsd !== undefined ? { budgetTicketCapUsd: config.budgetTicketCapUsd } : {}),
+    ...(config.budgetPersonCapUsd !== undefined ? { budgetPersonCapUsd: config.budgetPersonCapUsd } : {}),
   }
   const engine = createEngine({
     platform: wirePlatform(config),
@@ -358,6 +398,7 @@ export function buildServeRuntime(
     clock,
     config: engineConfig,
     people: snapshot.people,
+    ...(catalog !== undefined ? { catalog } : {}),
   })
 
   let scheduler: Scheduler | null = null
@@ -395,6 +436,7 @@ function renderTick(report: TickReport): string {
   const p = report.phases
   return (
     `tick#${report.seq} actions=${report.actions.length} dispatched=${p.dispatch.dispatched} ` +
+    `budget=${p.dispatch.budgetReserved}reserved/${p.dispatch.budgetRefused}refused ` +
     `harvest=${p.harvest.completed}/${p.harvest.checked} merged=${p.merge.merged} recycled=${p.recycle.recycled} ` +
     `events=${p.account.eventsAppended} inflight=${report.inflightAfter} cursor=${p.collect.cursorAfter ?? '-'}${p.account.heartbeat ? ' [heartbeat]' : ''}`
   )
