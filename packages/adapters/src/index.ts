@@ -25,7 +25,7 @@
  *   [x] fake CLI harness（Node 脚本模拟各家 stdout/退出行为，test/fake-cli/）+ golden fixtures（test/fixtures/，四家流样本落库）
  *   [x] 流归一化器 streams.ts：parseStream 把四家原始流文本归一为 contract StreamEvent（对 fixture 全绿）
  *   [x] dsh 适配器首刀（对 fake harness 全绿；锁版本比对 + 通道 env 映射为拟稿，真 CLI 行为留探针单）
- *   [ ] claude 适配器（参考实现，含预算帽）
+ *   [x] claude 适配器（参考实现，含预算帽 --max-budget-usd、版本门槛 2.1.277 降级、原生 cost 账目）
  *   [ ] codex / kimi 适配器
  *   [ ] 探针 runner：适配器写完先过探针集才允许注册
  */
@@ -35,6 +35,9 @@ export * from "./streams.ts";
 
 /** dsh 适配器（默认主力）：四原语实现，已知坑沉淀见文件头注（docs/17-§6 / docs/18-§1.2） */
 export * from "./dsh.ts";
+
+/** claude 适配器（参考实现）：预算帽/续跑/版本门槛降级/原生 cost 账目，头注见 docs/17-§6 claude 行 */
+export * from "./claude.ts";
 
 /** 包名常量（占位导出） */
 export const PACKAGE_NAME = "@studio-next/adapters";
