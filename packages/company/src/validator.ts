@@ -7,6 +7,14 @@
  *
  * v0 范围：org-config.yaml 单文件；departments/** 与 people/** 正文文件、.studio-next.yaml
  * 交叉校验、relations 完整规则在 v0.1 后续单补齐（见 TODO）。
+ *
+ * v0.1-M3 扩键（16-§四 验收口径「init 出模板公司并通过自检」倒逼）：schema 收齐
+ * templates/company-2-level/org-config.yaml 的全部已登记段落——jobs（04-§三 D9 定时岗，
+ * 装载进 snapshot.jobs 留后续单）、accounts（04-§二 账号映射）、yt（03/N1 平台映射覆盖）、
+ * executors（06-§三 executor 偏好）、departments[].relations（C2-02 / docs/25 DeptRelation）、
+ * people[] 的 role/reports_to/skills/status/executor/file（01-C2 人事档案索引键）。
+ * 纪律：只收「结构形状」，不增内容规则（04-§九.0 结构合法≠内容同款）；必填集与既有
+ * 交叉规则零改动，契约 dir 域 3 case 口径不变。
  */
 import { LineCounter, parseDocument } from 'yaml'
 import { z } from 'zod'
@@ -33,6 +41,8 @@ const OrgConfigSchema = z.strictObject({
     parent: z.string().nullable(),
     lanes: z.array(z.string()),
     functions: z.array(z.string()),
+    // C2-02 / docs/25 DeptRelation：形状先行，引用完整性（to 悬空等）留 relations 完整规则单
+    relations: z.array(z.record(z.string(), z.unknown())).optional(),
   })).min(1),
   people: z.array(z.strictObject({
     id: z.string().min(1),
@@ -40,7 +50,22 @@ const OrgConfigSchema = z.strictObject({
     login: z.string().min(1),
     level: z.number().int(),
     dept: z.string().min(1),
+    // 01-C2 人事档案索引键（正文在 people/<工号>.md，此处只收形状不设内容枚举）
+    role: z.string().optional(),
+    reports_to: z.string().nullable().optional(),
+    skills: z.array(z.string()).optional(),
+    status: z.string().optional(),
+    executor: z.string().optional(),
+    file: z.string().optional(),
   })).min(1),
+  // 04-§三 D9 定时岗（挂部门节点，装载进 snapshot.jobs 留后续单）；先收形状，不写死岗位类型
+  jobs: z.array(z.record(z.string(), z.unknown())).optional(),
+  // 04-§二 账号映射（账号=等级锚点，与人档案解耦）
+  accounts: z.array(z.record(z.string(), z.unknown())).optional(),
+  // 03/N1：YouTrack 项目与字段/状态流映射覆盖（公司可整体替换的默认模板）
+  yt: z.record(z.string(), z.unknown()).optional(),
+  // 06-§三：executor 偏好覆盖（缺省继承框架级 agent.yaml）
+  executors: z.record(z.string(), z.unknown()).optional(),
 })
 
 type OrgConfig = z.infer<typeof OrgConfigSchema>
