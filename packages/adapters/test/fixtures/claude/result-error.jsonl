@@ -1,0 +1,6 @@
+# golden fixture · claude · result=error（is_error=true / 非 success 子类型）
+# 依据 docs/17-§6——成功判定只认 result 事件的 subtype/is_error；出错时归一化为 turn_end.completed=false
+# 本样本 result.text 为空串：归一化时空 result 不产生 log 事件（空输出是错误证据的一部分，不粉饰）
+{"type":"system","subtype":"init","session_id":"sess_2fa1","model":"claude-sonnet-4-5","cwd":"/ws/task-102"}
+{"type":"assistant","message":{"id":"msg_01","role":"assistant","content":[{"type":"text","text":"开始第一轮重试…"}]}}
+{"type":"result","subtype":"error_max_turns","is_error":true,"result":"","usage":{"input_tokens":9014,"output_tokens":8022},"total_cost_usd":0.0972,"duration_ms":61000,"num_turns":10,"session_id":"sess_2fa1"}

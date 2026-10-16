@@ -1,0 +1,7 @@
+# golden fixture · kimi · session wire.jsonl 伴生文件（usage 在这里，不在 stdout——17-§6 已知坑）
+# 依据 docs/17-§6——kimi usage 读 session wire.jsonl；本样本两条 usage 记录为逐轮值，streams.ts 求和后挂到 turn_end
+# 注：井号开头行为 fixture 元数据，streams.ts 解析时容忍并跳过
+{"type":"session.start","session_id":"k_sess_0007","ts":"2026-10-16T09:20:00.000Z"}
+{"type":"usage","turn":1,"input_tokens":1500,"output_tokens":220,"cached_tokens":0,"ts":"2026-10-16T09:20:11.000Z"}
+{"type":"usage","turn":2,"input_tokens":3300,"output_tokens":910,"cached_tokens":1200,"ts":"2026-10-16T09:20:25.000Z"}
+{"type":"session.end","session_id":"k_sess_0007","ts":"2026-10-16T09:20:26.000Z"}

@@ -1,0 +1,4 @@
+# golden fixture · codex · turn.failed（已知坑场景：失败路径无 usage，tokens 缺失）
+# 依据 docs/17-§6——codex 无成本字段；turn.failed 只带 error 不带 usage，归一化为 turn_end.completed=false 且无 usage
+{"type":"item.started","item":{"type":"agent_message","id":"msg_1"}}
+{"type":"turn.failed","error":{"message":"upstream model timeout"}}

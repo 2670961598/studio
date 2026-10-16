@@ -1,0 +1,9 @@
+# golden fixture · dsh · 完整跑完一轮（手工构造的最小完整形态）
+# 依据 docs/17-§6 四原语表——dsh 流 = NDJSON：step_end 带 usage，turn_end.completed 是成功判定依据
+# 注：井号开头的行为 fixture 元数据，streams.ts 解析时容忍并跳过（真实 dsh headless 流无注释）
+{"type":"step_start","step":"analyze","ts":"2026-10-16T09:00:00.120Z"}
+{"type":"step_end","step":"analyze","usage":{"input_tokens":1200,"output_tokens":300,"cached_tokens":0}}
+{"type":"log","text":"scan workspace: 3 files changed"}
+{"type":"step_start","step":"implement","ts":"2026-10-16T09:00:04.500Z"}
+{"type":"step_end","step":"implement","usage":{"input_tokens":2600,"output_tokens":1900,"cached_tokens":800}}
+{"type":"turn_end","completed":true,"usage":{"input_tokens":3800,"output_tokens":2200,"cached_tokens":800}}
