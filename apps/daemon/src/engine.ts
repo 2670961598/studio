@@ -32,6 +32,9 @@
  *     冻结的 revoke 是 ticket 级终局动作，会杀死重签新 key，per-key 吊销拟稿待批见该文件头注）；
  *     断路熔断（failHarvest 达阈值）与 CLOSE（recycle 相位）=终局吊销+删文件（17-§7
  *     「关单即吊销，杜绝归档后仍有效」）；GATE_PASS 后 key 存续到 CLOSE（frozen 口径）。
+ *   - docs/17-§7 末行 读面分级：dispatch 装配时按岗选档（main_worker=Full/verifier=Blind/
+ *     其余 Focused，拟稿可配）→ createView 构造视图 → 随装配入参进任务书与 L4——
+ *     接线件=src/read-tiers.ts（装配期选择非运行期闸、与写闸的结构区别见该文件头注）。
  *
  * v0 占位与诚实边界（真单前逐项补齐，详见 serve.ts 头注与汇报）：
  *   - gateRunner：默认实现=REPORT 存在性 + exit0 模拟（真验收命令执行归 v0.5 真单刀）；
@@ -116,6 +119,8 @@ import { gateDispatch, settleDispatch, type BudgetGateDeps } from './budget-gate
 import type { GateRunner } from './gate.ts'
 import { makeUlid } from './id.ts'
 import type { PromptAssembler } from './prompt-assembly.ts'
+import { blindArtifactPaths, createView, resolveReadTier, roleOfAssignee } from './read-tiers.ts'
+import type { ReadTier } from './read-tiers.ts'
 import { mintWorkerKey, removeWorkerKeyFile, workerKeyGuidance, writeWorkerKeyFile } from './worker-key.ts'
 import type { WorkerKeyDeps } from './worker-key.ts'
 
@@ -165,6 +170,17 @@ export interface EngineConfig {
   budgetPersonCapUsd?: number
   /** 状态流表覆盖（公司目录 flows；缺省 DEFAULT_FLOW_TABLE，docs/18-§2.1） */
   flows?: FlowTable
+  /**
+   * 读面分级（17-§7）：role→tier 覆盖表（有效表={...DEFAULT_ROLE_READ_TIERS, ...本表}；
+   * 缺省映射 main_worker=Full/verifier=Blind/其余 Focused 拟稿可配——见 src/read-tiers.ts 头注）。
+   */
+  readTierByRole?: Readonly<Record<string, ReadTier>>
+  /**
+   * Blind 档冻结验收命令来源（与装配器 acceptance **同源**注入——serve 持同一常量，
+   * 不双源）。遇 Blind 派发而未配/为空 → createView CONFIG_INVALID fail-closed（无验收
+   * 不派工，纪律 3），派发失败明报，不静默降档。
+   */
+  readBlindAcceptance?: readonly string[]
 }
 
 /** 缺省引擎配置（demo/测试可直接改写；serve 侧由 daemon.yaml 覆盖） */
@@ -586,6 +602,16 @@ export function createEngine(deps: EngineDeps): Engine {
       if (!detect.ok) {
         return fail(`executor ${adapter.name} detect 不达标：${detect.gaps.join('；')}`)
       }
+      // 读面分级（17-§7）：dispatch 装配时按岗选档（装配期选择非运行期闸——daemon 自身
+      // 读不拦，见 src/read-tiers.ts 头注与写闸的区别）。Blind 档在此补齐冻结验收命令
+      //（config 同源）+ 本工位证据面路径；缺验收 → CONFIG_INVALID fail-closed（无验收
+      // 不派工）——异常走本 catch=DISPATCH_FAIL 明报，不静默降档。
+      const readTier = resolveReadTier(roleOfAssignee(fresh.assignee, people), config.readTierByRole)
+      const readView = await createView(platform, readTier, ticket, {
+        ...(readTier === 'blind'
+          ? { blind: { acceptance: config.readBlindAcceptance ?? [], artifacts: blindArtifactPaths(workspace) } }
+          : {}),
+      })
       // 装配（L0-L5 → AGENTS.md + 任务书首版）与落盘（daemon 是 prompt 落盘者，17-§5）
       const assembled = assembler({
         issue: fresh,
@@ -598,6 +624,7 @@ export function createEngine(deps: EngineDeps): Engine {
         briefPath,
         agentsTarget,
         agentsChannel: { channel: adapter.capabilities.agents_md, target: agentsTarget },
+        readView,
       })
       mkdirSync(workspace, { recursive: true })
       writeFileSync(agentsTarget, assembled.agentsMd.text, 'utf8')
@@ -672,7 +699,7 @@ export function createEngine(deps: EngineDeps): Engine {
       makeEvent('DISPATCH', transitioned, attempt, tickEvents, {
         size: Buffer.byteLength(assembled.agentsMd.text, 'utf8'),
         payload_hash: `sha256:${createHash('sha256').update(assembled.agentsMd.text, 'utf8').digest('hex')}`,
-        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${mintedWkey !== undefined ? `;wkey=${mintedWkey}` : ''}`,
+        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${mintedWkey !== undefined ? `;wkey=${mintedWkey}` : ''}`,
       })
       return {
         ticket,

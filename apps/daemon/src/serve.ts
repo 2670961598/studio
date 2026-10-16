@@ -494,11 +494,18 @@ const MATRIX_MANIFEST: SourceManifest = {
 }
 
 /**
+ * demo 冻结验收命令（单一常量双消费：装配器 L4 acceptance + Blind 读面验收面——
+ * 17-§7 读面分级与 17-§6 收割口径同源，不双源漂移；真单刀接任务书粒度冻结时此处换装载）
+ */
+const ACCEPTANCE: string[] = ['echo demo-ok（v0 占位闸门不执行验收命令）']
+
+/**
  * 装配 serve 运行栈：唤起源统一走注册表（22-§一）——
  *   - jobs=true：快照播种 + scheduler 源注册（源开关=既有 jobs 键，缺省语义不动）；
  *   - matrix=true：注入工厂装配（开而未注入=CONFIG_INVALID 拒启动）；
  *   - fileWatch=true：watch-file 示例源注册（fileWatchPath 必配）。
  * 源的 emit 由 runServe 的 startAll 统一接进 engine.ingest——源零直驱，决策归主循环。
+
  */
 export function buildServeRuntime(
   config: ServeConfig,
@@ -544,6 +551,9 @@ export function buildServeRuntime(
     laneTtlMs: config.laneTtlMs,
     breakerThreshold: config.breakerThreshold,
     autoApprove: config.autoApprove,
+    // 读面分级（17-§7）：Blind 档冻结验收命令来源——与装配器 acceptance **同一常量**
+    //（单一事实源，不双源漂移）；遇 Blind 派发而缺失 → createView fail-closed 明报
+    readBlindAcceptance: ACCEPTANCE,
     ...(config.budgetTicketCapUsd !== undefined ? { budgetTicketCapUsd: config.budgetTicketCapUsd } : {}),
     ...(config.budgetPersonCapUsd !== undefined ? { budgetPersonCapUsd: config.budgetPersonCapUsd } : {}),
   }
@@ -559,7 +569,7 @@ export function buildServeRuntime(
       fwkVersion: 'v0.5-demo',
       frameworkPrompts: '你是 Studio Next demo worker：按任务书目标产出，落 REPORT 与 summary，验收口径即闸门。',
       snapshot,
-      acceptance: ['echo demo-ok（v0 占位闸门不执行验收命令）'],
+      acceptance: ACCEPTANCE,
       docRefs: ['docs/17-§2（主循环七相位）', 'docs/17-§6（收割四要件）'],
     }),
     gateRunner: createDefaultGateRunner(),
