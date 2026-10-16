@@ -78,6 +78,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@studio-next/contract": "workspace:*",
+        "yaml": "^2.6.0",
         "zod": "^4.0.0",
       },
     },
