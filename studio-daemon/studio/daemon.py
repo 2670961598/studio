@@ -13,8 +13,11 @@
 import os, sys, threading, time
 
 # pm 岗错峰分位（历史约定：POLY 0 分位、STUDIO 4、GAMES 7；新项目顺延错峰）
+# GAMES 提频 10→5min（制作人 2026-10-16 指令"更加快速推进"）：链内转换（派发/收割/复验/
+# 合并）每跳省至多 5min，×8 单链 ≈30-40min/款；tick 自身有 tick 锁幂等，门禁执行期
+# （4-5min）撞拍自动顺延不重入。
 _PM_MINUTES = {"POLY": "0,10,20,30,40,50", "STUDIO": "4,14,24,34,44,54",
-               "GAMES": "7,17,27,37,47,57"}
+               "GAMES": "2,7,12,17,22,27,32,37,42,47,52,57"}
 
 
 def _scoped_projects() -> list[str]:
