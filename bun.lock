@@ -32,6 +32,10 @@
         "simple-git": "^3.27.0",
         "zod": "^4.0.0",
       },
+      "devDependencies": {
+        "@modelcontextprotocol/server": "^2.3.1",
+        "@studio-next/studio-tools": "workspace:*",
+      },
     },
     "packages/adapters": {
       "name": "@studio-next/adapters",
