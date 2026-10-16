@@ -1,19 +1,27 @@
 /**
- * server —— :8787 监控面服务器层（v0.3 首刀）
+ * server —— :8787 监控面服务器层（v0.3 首刀 + 全量口径补齐）
  *
  * 依据：docs/16-§四 v0.3（验收「信息覆盖：jobs/runs/workers/事件流齐备」）、docs/17-§8
- * （:8787 端面：jobs/runs/workers 实时流 SSE/事件流，全部读 SQLite）、docs/16-§二
+ * （:8787 端面全量口径：jobs/runs/workers 实时流 SSE/事件流/断路器与漂移告警/成本趋势
+ * ——全部读 SQLite；断路器+成本两卡本刀补齐，漂移告警待判据冻结）、docs/16-§二
  * （Web 选型 Hono + streamSSE，已登记）。
  *
  * 端面（全部 GET、全部只读，无任何写路径）：
- *   GET /                    极简 HTML 单页（零前端依赖、内联 CSS；四区块卡片+SSE 事件流）
+ *   GET /                    极简 HTML 单页（零前端依赖、内联 CSS；六区块卡片+SSE 事件流）
  *   GET /api/health          {ok, schema_version}
  *   GET /api/jobs            listJobs 投影（含 due 标记，判据同 store.dueJobs）
  *   GET /api/runs?limit=     work_records 近况（在途优先，started_at 降序）
  *   GET /api/workers         v0 聚合口径（见 views.ts 头注：真 workers=daemon 内存态，v0.4 替换）
- *   GET /api/events?limit=&company=&issue=   queryEvents 包装（恒升序——store 冻结语义）
+ *   GET /api/events?limit=&company=&issue=&order=&event=
+ *                            queryEvents 包装（缺省升序——store 冻结语义；order=desc 透传
+ *                            store 读面取「最近 N 条」；event= 事件名维 panel 侧过滤——store
+ *                            读面无此维，过滤后截 limit，坏事件名 400）
  *   GET /api/events/stream   SSE：轮询台账新事件（按 lastEventId/ULID 游标过滤），断开干净停止
  *   GET /api/snapshot        buildDashboardSnapshot 一次收集（页面轮询单请求）
+ *   GET /api/breakers?days=  断路器告警卡（近 N 天可配缺省 7 上限 90）：CIRCUIT_BREAK 族
+ *                            事件按 (issue,错误签名) 聚合——见 views.aggregateBreakers 头注
+ *   GET /api/costs?days=     成本趋势卡（近 N 天可配缺省 7 上限 90）：LLM 岛(events)/收割
+ *                            (work_records)/预算三类(budgets) 三口径按 UTC 日分列——docs/26 C1
  *
  * 只读纪律：panel 对 SQLite **零写**。台账 WAL（单写多读）使 panel 与 daemon 写进程同库并存
  * 天然安全（store/driver.ts journal_mode=WAL）。注意 openLedger 对不存在的路径会建库迁移
@@ -33,11 +41,17 @@ import type { ReadableStream as NodeWebReadableStream } from 'node:stream/web'
 import path from 'node:path'
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
-import { configInvalid, type EventRecord } from '@studio-next/contract'
+import { configInvalid, isEventName, type EventRecord } from '@studio-next/contract'
 import { openLedger, type Ledger } from '@studio-next/store'
 import {
+  DEFAULT_BREAKER_DAYS,
+  DEFAULT_COSTS_DAYS,
   DEFAULT_PAGE_SIZE,
+  MAX_BREAKER_DAYS,
+  MAX_COSTS_DAYS,
   aggregateActiveWorkers,
+  buildBreakerSnapshot,
+  buildCostsSnapshot,
   buildDashboardSnapshot,
   jobViews,
   recentRunSlice,
@@ -65,6 +79,13 @@ function clampLimit(raw: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(raw ?? '', 10)
   if (!Number.isInteger(parsed) || parsed < 1) return fallback
   return Math.min(parsed, MAX_PAGE_SIZE)
+}
+
+/** 窗口天数夹取（/api/breakers、/api/costs 共用）：非正整数/非数 → 缺省；超上限夹到上限 */
+function clampDays(raw: string | undefined, fallback: number, max: number): number {
+  const parsed = Number.parseInt(raw ?? '', 10)
+  if (!Number.isInteger(parsed) || parsed < 1) return fallback
+  return Math.min(parsed, max)
 }
 
 function errText(err: unknown): string {
@@ -157,14 +178,44 @@ export function createPanelApp(opts: PanelAppOptions): PanelApp {
     const ledger = getLedger()
     const company = c.req.query('company')
     const issue = c.req.query('issue')
+    const event = c.req.query('event')
+    const order = c.req.query('order')
     const limit = c.req.query('limit')
+    // order 白名单（store 读面同枚举）：非 asc/desc 是客户端错——4xx 不劳 store 抛 500
+    if (order !== undefined && order !== 'asc' && order !== 'desc') {
+      return c.json({ ok: false, error: `order=${order} 须为 'asc' | 'desc'` }, 400)
+    }
+    // event 维走契约事件名闸（冻结枚举 ∪ GW_/REPORT_ 前缀族）；坏名=客户端错 4xx
+    if (event !== undefined && !isEventName(event)) {
+      return c.json({ ok: false, error: `event=${event} 不是台账事件名（冻结枚举 ∪ GW_*/REPORT_* 前缀族）` }, 400)
+    }
     const query: Parameters<Ledger['queryEvents']>[0] = {}
     if (company !== undefined) query.company = company
     if (issue !== undefined) query.issue = issue
-    if (limit !== undefined) query.limit = clampLimit(limit, pageSize)
-    const events = ledger.queryEvents(query)
+    if (order !== undefined) query.order = order
+    if (event === undefined && limit !== undefined) query.limit = clampLimit(limit, pageSize)
+    // event 过滤维 store 读面没有——panel 侧滤；limit 在过滤后截（「最近 N 条该类事件」
+    // 而非「最近 N 条事件里的该类」），v0 量级全量拉回可承受（同 snapshot 全扫口径）。
+    // 无 limit=全量（首刀语义不变）；无 event 时 limit 已由 store 面（asc/desc 同序）处理。
+    const fetched: EventRecord[] = ledger.queryEvents(query)
+    const events =
+      event === undefined
+        ? fetched
+        : limit === undefined
+          ? fetched.filter((ev) => ev.event === event)
+          : fetched.filter((ev) => ev.event === event).slice(0, clampLimit(limit, pageSize))
     return c.json({ count: events.length, events })
   })
+
+  // 断路器告警卡（17-§8）：CIRCUIT_BREAK 族事件 (issue,错误签名) 聚合——口径见 views.ts
+  app.get('/api/breakers', (c) =>
+    c.json(buildBreakerSnapshot(getLedger(), { days: clampDays(c.req.query('days'), DEFAULT_BREAKER_DAYS, MAX_BREAKER_DAYS) })),
+  )
+
+  // 成本趋势卡（17-§8 / docs/26 C1）：LLM 岛 / 收割 / 预算三类按 UTC 日分列不相加
+  app.get('/api/costs', (c) =>
+    c.json(buildCostsSnapshot(getLedger(), { days: clampDays(c.req.query('days'), DEFAULT_COSTS_DAYS, MAX_COSTS_DAYS) })),
+  )
 
   app.get('/api/snapshot', (c) => c.json(buildDashboardSnapshot(getLedger(), { recentRuns: pageSize })))
 
