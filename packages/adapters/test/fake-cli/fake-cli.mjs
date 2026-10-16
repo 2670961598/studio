@@ -16,10 +16,15 @@
  *                       detect 的版本门槛三态测试用）；未设置时 --version 与普通参数无异
  *   FAKE_ECHO_ARGS      =1：stdout 首行回显本进程收到的 argv（`fake-cli argv: ...`），
  *                       测适配器 launch 的参数注入（预算帽 / 续跑 / 通道旗标）
+ *   FAKE_WIRE_DIR       设置后：正常退出前把 wire 内容写到 <dir>/wire.jsonl（目录递归建）
+ *                       ——模拟 kimi「会话目录里落 session wire.jsonl」（docs/17-§6 已知坑：
+ *                       usage 在 wire 不在 stdout）；仅在正常退出路径写（见边界语义）
+ *   FAKE_WIRE_FIXTURE   wire 内容来源（golden fixture 全文）；未设时写空文件
  *
  * 注：除 FAKE_SIGTERM_EXIT 外不注册任何信号处理器——SIGTERM 走 Node 默认终止行为。
  */
-import { readFileSync, writeSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 const env = process.env
 
@@ -35,6 +40,8 @@ const sigtermExit =
   sigtermExitRaw === '' ? undefined : Number.isNaN(parsedSigtermExit) ? 0 : parsedSigtermExit
 const fakeVersion = env.FAKE_VERSION ?? ''
 const echoArgs = env.FAKE_ECHO_ARGS === '1'
+const wireDir = env.FAKE_WIRE_DIR ?? ''
+const wireFixture = env.FAKE_WIRE_FIXTURE ?? ''
 
 if (sigtermExit !== undefined) {
   // dsh 已知坑模拟（docs/17-§6）：吞掉 SIGTERM 的默认终止，改以指定退出码退出——
@@ -84,6 +91,15 @@ async function main() {
     // 空转定时器保活：不退出，等被杀（挂起场景没有任何退出码语义）
     setInterval(() => {}, 1 << 30)
     return
+  }
+  if (wireDir !== '') {
+    // kimi 场景：正常退出前落一份会话 wire.jsonl（usage 在这里，不在 stdout——docs/17-§6）。
+    // 仅正常退出路径写：挂起/被杀/EPIPE/FAKE_VERSION 短路均不写（会话未正常结束，wire 不落）
+    mkdirSync(wireDir, { recursive: true })
+    writeFileSync(
+      join(wireDir, 'wire.jsonl'),
+      wireFixture === '' ? '' : readFileSync(wireFixture, 'utf8'),
+    )
   }
   process.exit(exitCode)
 }
