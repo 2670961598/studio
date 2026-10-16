@@ -38,14 +38,14 @@ describe('runLedgerDrill（进程内全链）', () => {
     expect(report.corpus).toBe(26)
     expect(report.dumpedLines).toBe(report.corpus)
     expect(report.rebuiltEvents).toBe(report.corpus)
-    expect(report.versionBefore).toBe(3)
-    expect(report.versionAfter).toBe(3)
+    expect(report.versionBefore).toBe(4)
+    expect(report.versionAfter).toBe(4)
 
     // 演习产物留在库路径（重建后的库可开可读）
     expect(existsSync(dbPath)).toBe(true)
     const rebuilt = openLedger(dbPath)
     expect(rebuilt.queryEvents().length).toBe(report.corpus)
-    expect(rebuilt.version()).toBe(3)
+    expect(rebuilt.version()).toBe(4)
     rebuilt.close()
   })
 
@@ -95,7 +95,7 @@ describe('spawn 冒烟（拟冻结验收命令：studio-next ledger drill → ex
 
     const rebuildRun = run(['ledger', 'rebuild', jsonl, target])
     expect(rebuildRun.status).toBe(0)
-    expect(rebuildRun.stdout).toContain('已重建：events=26 / schema v3')
+    expect(rebuildRun.stdout).toContain('已重建：events=26 / schema v4')
 
     const rebuilt = openLedger(target)
     expect(rebuilt.queryEvents().length).toBe(26)
