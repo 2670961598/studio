@@ -91,10 +91,9 @@
       "name": "@studio-next/panel",
       "version": "0.1.0",
       "dependencies": {
-        "@studio-next/company": "workspace:*",
+        "@studio-next/contract": "workspace:*",
         "@studio-next/store": "workspace:*",
         "hono": "^4.6.0",
-        "zod": "^4.0.0",
       },
     },
     "packages/prompt": {

@@ -1,32 +1,63 @@
 /**
- * Studio Next · panel —— 面板（占位）
+ * Studio Next · panel —— 面板（:8787 监控面已落地；:8789 公司概览待 v0.7）
  *
  * 定位（docs/17-§8，需求 C1/C3）：两面分端口，口径分离、共用台账不共用报表（F3-07）。
  *
- *   :8787 框架监控（机器的温度计，内部）
- *     jobs / runs / workers（实时流 SSE）/ 事件流 / 断路器与漂移告警 / 成本趋势
- *     全部读 SQLite 台账；看板必含"证据可追溯率"与最差分位，禁单维均值
+ *   :8787 框架监控（机器的温度计，内部）—— v0.3 已落地（docs/16-§四）：
+ *     端面全 GET 全只读：/api/health、/api/jobs（due 标记）、/api/runs（在途优先）、
+ *     /api/workers（v0 台账聚合口径）、/api/events（queryEvents 包装）、
+ *     /api/events/stream（SSE 轮询新事件，Last-Event-ID 续传）、/api/snapshot、
+ *     /（HTML 单页：四区块卡片 + fetch 轮询 + SSE）。
+ *     数据全部读 SQLite 台账（WAL 单写多读，panel 零写）；断路器与漂移告警、成本趋势
+ *     卡片待 daemon 机制落地后接入（17-§8 全量口径）。
  *
- *   :8789 公司概览（老板的公司，制作人/内部）
- *     路由 `/<company-slug>/...`（slug = 公司目录名；未知名 404；根路径列公司清单）
- *     tab：概览 / 组织 / 人事 / 财务 / 项目 / 报表 / 编辑中心
- *     编辑中心 = 人事变动草稿 → 三档批示 → daemon 单点写回（永不直写文件）
- *     页面全部**等级无关渲染**（出现 `if level>4` 即违约）；三连问必须页面直答：
- *     "这个人在干什么 / 这个单是谁干的 / 这个月哪个部门钱花哪了"
+ *   :8789 公司概览（老板的公司，制作人/内部）—— 待 v0.7：
+ *     路由 `/<company-slug>/...`；tab=概览/组织/人事/财务/项目/报表/编辑中心；
+ *     编辑中心=人事变动草稿→三档批示（D2）→daemon 单点写回；
+ *     页面全部等级无关渲染；三连问页面直答（C1）。
  *
- * 实现：Hono + streamSSE（浏览器自动重连，不引 WebSocket）。
+ * 实现纪律：Hono + streamSSE（浏览器自动重连，不引 WebSocket）；纯函数层（views.ts）
+ * 与服务器层（server.ts）分离——app.fetch() 进程内可测，servePanel 是薄监听壳。
  *
- * TODO(骨架阶段)：
- *   [ ] Hono 应用骨架 + 两端口启动器（绑定地址来自配置，默认只绑本机）
- *   [ ] :8787 只读页：jobs / runs / workers / 事件流 SSE
- *   [ ] :8789 slug 路由 + 公司清单页
+ * TODO：
+ *   [x] v0.3 :8787 只读面：jobs / runs / workers(v0 口径) / 事件流 SSE / HTML 单页
+ *   [x] daemon bin 子命令 `studio-next panel --db <路径> [--port 8787]`
+ *   [ ] 断路器与漂移告警卡片、成本趋势（17-§8 全量口径，待 daemon 机制与 budgets 数据落量）
+ *   [ ] workers 真源切换（daemon 内存态，v0.4 接管后台账近似口径整体替换）
+ *   [ ] :8789 slug 路由 + 公司清单页（v0.7）
  *   [ ] 组织/人事/财务/项目/报表 tab（服务端聚合，不整树前端渲染）
  *   [ ] 编辑中心：草稿态 → 批示 → 写回链路（带前值快照可逐字 diff）
  *   [ ] 界面截图基线（进 CI，防 UI 回归）
  */
 
-/** 包名常量（占位导出） */
-export const PACKAGE_NAME = "@studio-next/panel";
+/** 包名常量 */
+export const PACKAGE_NAME = '@studio-next/panel'
 
-/** 骨架状态标记：实现落地后改为 "ready" 或直接删除 */
-export const PACKAGE_STATUS = "skeleton";
+/** 状态标记：:8787 监控面（v0.3）已落地；:8789 公司概览待 v0.7 */
+export const PACKAGE_STATUS = 'partial'
+
+// 纯函数层：快照 / 聚合 / 单页渲染（零 IO 零 Hono，views.ts）
+export {
+  DEFAULT_PAGE_SIZE,
+  WORKERS_V0_NOTE,
+  aggregateActiveWorkers,
+  buildDashboardSnapshot,
+  eventDistribution,
+  jobViews,
+  recentRunSlice,
+  renderDashboardPage,
+} from './views.ts'
+export type {
+  ActiveWorker,
+  DashboardSnapshot,
+  JobView,
+  SnapshotEvents,
+  SnapshotJobs,
+  SnapshotOptions,
+  SnapshotRuns,
+  SnapshotWorkers,
+} from './views.ts'
+
+// 服务器层：Hono app 工厂 + 真监听壳（server.ts）
+export { DEFAULT_STREAM_INTERVAL_MS, MAX_PAGE_SIZE, createPanelApp, servePanel } from './server.ts'
+export type { PanelApp, PanelAppOptions, PanelHandle, ServePanelOptions } from './server.ts'
