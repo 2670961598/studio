@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Studio Next 台账存储：node:sqlite + drizzle（WAL / migration / 快照 / 重建）",
+  "description": "Studio Next 台账存储：node:sqlite（WAL / 薄 migration / 快照 / 重建）",
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts"
@@ -14,7 +14,6 @@
   },
   "dependencies": {
     "@studio-next/contract": "workspace:*",
-    "drizzle-orm": "^0.44.0",
     "zod": "^4.0.0"
   }
 }

@@ -2,7 +2,7 @@
  * 模型端口 —— 三档+角色映射+价目表协议（docs/25-§3.3，依据 17-§4 models.yaml）
  * 换模型=改配置一行；价目表改动走批示。
  */
-import type { Money, TokenCounts } from './kernel.js'
+import type { Money, TokenCounts } from './kernel.ts'
 
 export interface PriceEntry {
   /** 每百万 token 美元 */

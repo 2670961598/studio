@@ -1,0 +1,330 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "C-meta-001",
+      "domain": "meta",
+      "docs": "25-§二",
+      "title": "runner 自证：echo 全链（对象/数组/原语匹配）",
+      "input": {
+        "echo": {
+          "a": 1,
+          "b": [
+            "x",
+            "y"
+          ]
+        }
+      },
+      "expected": {
+        "out": {
+          "a": 1,
+          "b": [
+            "x",
+            "y"
+          ]
+        }
+      }
+    },
+    {
+      "id": "C-meta-002",
+      "domain": "meta",
+      "docs": "25-§二",
+      "title": "runner 自证：__NULL__ 哨兵断言显式 null",
+      "input": {
+        "echo": {
+          "n": null
+        }
+      },
+      "expected": {
+        "out": {
+          "n": "__NULL__"
+        }
+      }
+    },
+    {
+      "id": "C-meta-003",
+      "domain": "meta",
+      "docs": "25-§二",
+      "title": "runner 自证：err 期望（category+subcause）",
+      "input": {
+        "boom": true
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID",
+          "subcause": "meta-boom"
+        }
+      }
+    },
+    {
+      "id": "C-dir-001",
+      "domain": "dir",
+      "docs": "04-§二",
+      "title": "合法最小 2 级公司目录通过校验并产快照",
+      "input": {
+        "files": {
+          "org-config.yaml": "schema: org-config/v1\ncompany:\n  name: 演示公司\n  slug: demo-corp\n  mission: 最小可用\n  charter_ref: charter.md\n  level: 2\n  level_distribution:\n    2: 1\ndepartments:\n  - name: 工程部\n    path: departments/工程部\n    leader: AGENT-1\n    level: 2\n    parent: null\n    lanes: [core]\n    functions: [交付]\npeople:\n  - id: AGENT-1\n    name: 演示工程师\n    login: agent-1\n    level: 2\n    dept: departments/工程部\n"
+        }
+      },
+      "expected": {
+        "out": {
+          "ok": true,
+          "snapshot": {
+            "slug": "demo-corp",
+            "level": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "C-dir-002",
+      "domain": "dir",
+      "docs": "04-§二",
+      "title": "缺必填字段（company.charter_ref）→ 结构不合法",
+      "input": {
+        "files": {
+          "org-config.yaml": "schema: org-config/v1\ncompany:\n  name: 演示公司\n  slug: demo-corp\n  mission: 最小可用\n  level: 2\n  level_distribution:\n    2: 1\ndepartments:\n  - name: 工程部\n    path: departments/工程部\n    leader: AGENT-1\n    level: 2\n    parent: null\n    lanes: [core]\n    functions: [交付]\npeople:\n  - id: AGENT-1\n    name: 演示工程师\n    login: agent-1\n    level: 2\n    dept: departments/工程部\n"
+        }
+      },
+      "expected": {
+        "out": {
+          "ok": false,
+          "issues": [
+            {
+              "file": "org-config.yaml",
+              "rule": "org-config/missing-field:company.charter_ref"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "C-dir-003",
+      "domain": "dir",
+      "docs": "04-§二",
+      "title": "等级分布与 people 实数不符 → 结构不合法",
+      "input": {
+        "files": {
+          "org-config.yaml": "schema: org-config/v1\ncompany:\n  name: 演示公司\n  slug: demo-corp\n  mission: 最小可用\n  charter_ref: charter.md\n  level: 2\n  level_distribution:\n    2: 2\ndepartments:\n  - name: 工程部\n    path: departments/工程部\n    leader: AGENT-1\n    level: 2\n    parent: null\n    lanes: [core]\n    functions: [交付]\npeople:\n  - id: AGENT-1\n    name: 演示工程师\n    login: agent-1\n    level: 2\n    dept: departments/工程部\n"
+        }
+      },
+      "expected": {
+        "out": {
+          "ok": false,
+          "issues": [
+            {
+              "file": "org-config.yaml",
+              "rule": "org-config/level-count-mismatch"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "C-evt-001",
+      "domain": "evt",
+      "docs": "17-§3",
+      "title": "合法事件记录（LLM 收割，计量可选字段全给）通过校验",
+      "input": {
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "ts": 1790000000000,
+        "company": "demo-corp",
+        "issue": "DEMO-42",
+        "event": "LLM",
+        "actor": "AGENT-1:agent-1",
+        "attempt": 1,
+        "level": 2,
+        "dept": "departments/工程部",
+        "correlation_id": "01BX5ZZKBKACTAV9WEVGEMMVRZ",
+        "causation_id": "01EM3ZWDK9GNV4RRFFQ69G5FAV",
+        "tokens": {
+          "input": 1200,
+          "output": 340,
+          "cache_read": 800
+        },
+        "cost_usd": 0.0123,
+        "duration_ms": 45000,
+        "size": 2048,
+        "payload_hash": "9f2ca1b0",
+        "note": "收割自 dsh"
+      },
+      "expected": {
+        "out": {
+          "ok": true
+        }
+      }
+    },
+    {
+      "id": "C-evt-002",
+      "domain": "evt",
+      "docs": "17-§3",
+      "title": "GW_ 前缀族事件名（枚举外、正则通道）放行——双通道的正例",
+      "input": {
+        "id": "01BX5ZZKBKACTAV9WEVGEMMVRZ",
+        "ts": 1790000060000,
+        "company": "demo-corp",
+        "issue": "DEMO-42",
+        "event": "GW_COMMENT",
+        "actor": "AGENT-1:agent-1",
+        "attempt": 2,
+        "level": 2,
+        "dept": "departments/工程部",
+        "tokens": {
+          "output": 0
+        }
+      },
+      "expected": {
+        "out": {
+          "ok": true
+        }
+      }
+    },
+    {
+      "id": "C-evt-003",
+      "domain": "evt",
+      "docs": "17-§3",
+      "title": "枚举外且无前缀族的事件名（DISPATCHED 拼错形）拒收",
+      "input": {
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "ts": 1790000000000,
+        "company": "demo-corp",
+        "issue": "DEMO-42",
+        "event": "DISPATCHED",
+        "actor": "AGENT-1:agent-1",
+        "attempt": 1,
+        "level": 2,
+        "dept": "departments/工程部",
+        "tokens": {
+          "input": 10
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID",
+          "subcause": "evt/invalid:event"
+        }
+      }
+    },
+    {
+      "id": "C-evt-004",
+      "domain": "evt",
+      "docs": "17-§3",
+      "title": "id 非 ULID（小写且缺位）拒收",
+      "input": {
+        "id": "01arz3ndektsv4rrffq69g5fa",
+        "ts": 1790000000000,
+        "company": "demo-corp",
+        "issue": "DEMO-42",
+        "event": "DISPATCH",
+        "actor": "AGENT-1:agent-1",
+        "attempt": 1,
+        "level": 2,
+        "dept": "departments/工程部",
+        "tokens": {
+          "input": 10
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID",
+          "subcause": "evt/invalid:id"
+        }
+      }
+    },
+    {
+      "id": "C-evt-005",
+      "domain": "evt",
+      "docs": "17-§3",
+      "title": "tokens 四桶全空（无任何计量桶）拒收",
+      "input": {
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "ts": 1790000000000,
+        "company": "demo-corp",
+        "issue": "DEMO-42",
+        "event": "HEARTBEAT",
+        "actor": "AGENT-1:agent-1",
+        "attempt": 1,
+        "level": 2,
+        "dept": "departments/工程部",
+        "tokens": {}
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID",
+          "subcause": "evt/invalid:tokens"
+        }
+      }
+    },
+    {
+      "id": "C-rpt-001",
+      "domain": "rpt",
+      "docs": "17-§3",
+      "title": "合法 REPORT 骨架（必填节齐）+ 合法 summary sidecar 通过校验",
+      "input": {
+        "report": "# 修复登录超时\n\n## 结论\n已修复会话过期导致的登录超时。\n\n## 改动\n- packages/auth/src/session.ts\n\n## 验证\n- 闸门 exit=0\n- 回归 12/12 通过\n\n## 风险\n灰度期间需盯会话重建指标。",
+        "summary": {
+          "schema": "summary/v1",
+          "conclusion": "已修复登录超时，回归通过",
+          "changed_files": [
+            "packages/auth/src/session.ts"
+          ]
+        }
+      },
+      "expected": {
+        "out": {
+          "ok": true,
+          "report": {
+            "ok": true
+          },
+          "summary": {
+            "ok": true
+          }
+        }
+      }
+    },
+    {
+      "id": "C-rpt-002",
+      "domain": "rpt",
+      "docs": "17-§3",
+      "title": "REPORT 缺必填节「验证」拒收（拟稿节集，待批后冻结）",
+      "input": {
+        "report": "# 修复登录超时\n\n## 结论\n已修复会话过期导致的登录超时。\n\n## 改动\n- packages/auth/src/session.ts",
+        "summary": {
+          "schema": "summary/v1",
+          "conclusion": "已修复登录超时，回归通过",
+          "changed_files": [
+            "packages/auth/src/session.ts"
+          ]
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID",
+          "subcause": "rpt/invalid:report"
+        }
+      }
+    },
+    {
+      "id": "C-rpt-003",
+      "domain": "rpt",
+      "docs": "17-§3",
+      "title": "summary sidecar 形状错（conclusion 空串）拒收",
+      "input": {
+        "report": "# 修复登录超时\n\n## 结论\n已修复会话过期导致的登录超时。\n\n## 改动\n- packages/auth/src/session.ts\n\n## 验证\n- 闸门 exit=0",
+        "summary": {
+          "schema": "summary/v1",
+          "conclusion": "",
+          "changed_files": [
+            "packages/auth/src/session.ts"
+          ]
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID",
+          "subcause": "rpt/invalid:summary"
+        }
+      }
+    }
+  ]
+}
