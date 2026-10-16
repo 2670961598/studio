@@ -9,7 +9,8 @@
  *   - 坏游标显式报错（CONFIG_INVALID / bad-cursor），禁静默当从头
  *
  * 取法（绝不用 after/start——会被静默忽略，docs/03 N10）：
- *   1. GET /api/activities?$top&$skip 倒序取头（服务端顺序=权威顺序，新→旧）
+ *   1. GET /api/activities?$top&$skip 倒序取头——**显式 reverse=true**（真实例冒烟 2026-10-17
+ *      实证：不带 reverse 时服务端默认旧→新，且 categories 过滤参数必带否则 400）
  *   2. 翻页直到**命中边界活动 id**或取尽；边界（含）之后的旧活动全部截断
  *   3. 截断结果反转成升序返回；超出 pageSize 取最旧 pageSize 条，
  *      nextCursor=本批最新一条 id——并集不重不漏（与 localplatform 同式切页）
@@ -32,6 +33,11 @@ export const DEFAULT_PAGE_SIZE = 100
 const MAX_FETCH_PAGES = 1000
 
 const ACTIVITY_FIELDS = 'id,timestamp,category(id),target(id,idReadable),author(login)'
+
+/** activities 端点必带的类别过滤（2026-10-17 真实例 400 实证；取已知归一类别全集，逗号分隔） */
+const ACTIVITY_CATEGORIES = [
+  'IssueCreatedCategory', 'IssueCommentedCategory', 'IssueResolvedCategory', 'IssueReopenedCategory',
+].join(',')
 
 const activityJsonSchema = z.looseObject({
   id: z.string(),
@@ -134,7 +140,7 @@ export async function activitySince(
     const batch = await http.request(z.array(activityJsonSchema), {
       method: 'GET',
       path: '/api/activities',
-      query: { fields: ACTIVITY_FIELDS, $top: String(pageSize), $skip: String(skip) },
+      query: { fields: ACTIVITY_FIELDS, $top: String(pageSize), $skip: String(skip), reverse: 'true', categories: ACTIVITY_CATEGORIES },
     })
     if (batch.length === 0) break // 取尽
     if (boundary === null) {

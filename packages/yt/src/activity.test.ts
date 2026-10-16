@@ -118,7 +118,7 @@ describe('游标语义：连续三轮 since()', () => {
 })
 
 describe('请求契约与公司作用域', () => {
-  it('activities 请求只用 fields/$top/$skip——绝无 after/start（NA1）', async () => {
+  it('activities 请求参数集=fields/$top/$skip/reverse/categories——绝无 after/start（NA1；reverse/categories 为 2026-10-17 真实例冒烟实证必带：默认排序旧→新、缺 categories 即 400）', async () => {
     const fake = new FakeYouTrack()
     const p = makePlatform(fake, { project: 'STUDIO', pageSize: 3 })
     let cursor: string | null = null
@@ -130,8 +130,9 @@ describe('请求契约与公司作用域', () => {
     const activityCalls = fake.calls.filter((c) => c.path === '/api/activities')
     expect(activityCalls.length).toBeGreaterThan(1)
     for (const call of activityCalls) {
-      // 契约：除 fields/$top/$skip 外不允许任何参数（after/start 会被静默忽略→漏增量）
-      expect(Object.keys(call.query).sort()).toEqual(['$skip', '$top', 'fields'])
+      // 契约：参数集恰为五项（after/start 会被静默忽略→漏增量；reverse/categories 为
+      // 2026-10-17 真实例冒烟实证必带：默认排序旧→新、缺 categories 即 400）
+      expect(Object.keys(call.query).sort()).toEqual(['$skip', '$top', 'categories', 'fields', 'reverse'])
       expect(call.query['$top']).toBe('3')
     }
     // 单轮全量取数确实推进过 $skip（倒序翻页发生）
