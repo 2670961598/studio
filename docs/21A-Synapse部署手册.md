@@ -91,7 +91,7 @@
     小写 localpart 的映射规则需网关统一**（@唤醒解析仍按大写工号词 `@AGENT-3`，`displayname` 设工号原文，
     见 §3.2 与 §5.9）。
   - 等级锚点即账号集合：`opengames`（制作人，最高级锚）+ `agent-1..9`（等级锚，04-§四）+ 各公司实际工号账号；
-    账号目录与公司目录 `people/<工号>.md` 一一对应，**Matrix 不新增组织语义**（组织事实源仍是公司 git 目录）。
+    账号目录与公司目录 `departments/<部门>/people/<工号>.md` 一一对应，**Matrix 不新增组织语义**（组织事实源仍是公司 git 目录）。（勘误 2026-10-17：实形为 departments/<部门>/people/<工号>.md——04-§二）
   - **网关 bot 一个管理账号**（如 `studio-gateway`，shared-secret 流注册时 `admin: true`），代发消息与署名
     按 21-§三。
 
