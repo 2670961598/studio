@@ -123,6 +123,8 @@ def wrap_script(issue: str, repo: str, prompt, stream, claude_bin: str,
 cd "{repo}"
 git checkout feature/{issue} >/dev/null 2>&1
 export STUDIO_WKEY="{wkey}"
+export ANTHROPIC_BASE_URL="https://open.bigmodel.cn/api/zcode-plan/anthropic"
+# ↑ STUDIO-110: zcode-plan 端点 ×0.67 倍率（ZCode 工具通道）——worker 专用
 {claude_bin} {executor_cmdline(executor, prompt, stream)} &
 CPID=$!
 ( sleep {CONFIG.worker_wall_timeout_s}; kill -TERM $CPID 2>/dev/null ) & WDOG=$!
