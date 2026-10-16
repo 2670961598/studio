@@ -1,5 +1,5 @@
 /**
- * Studio Next · company —— 公司目录（占位）
+ * Studio Next · company —— 公司目录引擎
  *
  * 定位（docs/04，需求 C1/C2）：公司 = 代码外部的一个 git 目录；目录即 API。
  *
@@ -32,3 +32,6 @@ export const PACKAGE_NAME = "@studio-next/company";
 
 /** 骨架状态标记：实现落地后改为 "ready" 或直接删除 */
 export const PACKAGE_STATUS = "skeleton";
+
+// 目录契约校验器 v0（docs/04-§二/§九；docs/25-§3.5 目录端口）
+export * from './validator.ts'
