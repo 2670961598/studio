@@ -1,14 +1,19 @@
 /**
- * v0.5 吸收·v4 测试（store v4 三债）：daemon_kv 接管（迁移幂等 / 与 daemon 现行 DDL 共存 /
+ * v0.5 吸收·v4 测试（store v4 三债）：daemon_kv 接管（迁移幂等 / daemon 切换后无自建 DDL /
  * v3→v4 升级路径含存量 daemon_kv 原地接管 / kv 往返覆盖）、work_records 收口面 endWorkRecord
- * （一次性 / 部分列 COALESCE / 重复收口拒 / 无此行 false）、queryEvents 倒序通道
- * （desc=asc 镜像反序 / 同过滤两序等价集 / desc+limit=最近 N / 过滤组合 / 坏 order 运行期拒）。
+ * （一次性 / 部分列 COALESCE / tokens 往返与坏形状 / 重复收口拒 / 无此行 false）、queryEvents
+ * 倒序通道（desc=asc 镜像反序 / 同过滤两序等价集 / desc+limit=最近 N / 过滤组合 / 坏 order 运行期拒）。
  *
  * 环境：os.tmpdir() 真文件库（沿 ledger.test.ts 风格，不用 :memory:）。kv / desc 两块用独立库
  * （语料隔离，不与迁移语料互相污染）。
- * 依据：docs/17-§2（游标/拍序持久化）、docs/17-§3、docs/02 F2-01（store 收编 daemon 旁路写面）；
- * daemon_kv 对照源=apps/daemon/src/engine.ts 的 KV_TABLE_SQL 与 kvGetStmt/kvSetStmt（跨包
- * import 违反包边界——字节级复制进本文件作对照断言；daemon 侧改动时须同步此处）。
+ * 依据：docs/17-§2（游标/拍序持久化）、docs/17-§3、docs/02 F2-01（store 收编 daemon 旁路写面）。
+ * daemon_kv 对照（本单已同步）：daemon 已切 store v4 面、引擎内自建语句已删（切换单
+ * feature/daemon-store-api-switch）——下方 DAEMON_* 常量为**切换前语句的历史形态存档**
+ * （跨包 import 违反包边界，字节级复制留存）。存档用途：①v3→v4 升级路径语料构造（v3 时代
+ * daemon 真会执行这些语句，存量库实况即此形态）；②建表字节级对齐的永久回归（v4 DDL 须永远
+ * 与切换前 daemon 自建 DDL 同形，存量库才能无损接管）。daemon 侧「不再执行任何 DDL」的直证
+ * 落 apps/daemon/test/e2e.test.ts（createEngine+整拍后 sqlite_master 快照不变的负断言）——
+ * 本包无法 import daemon 重放真引擎初始化，store 侧可测面=重放 v4 全部 kv 触点后 schema 不变。
  */
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -18,12 +23,13 @@ import type { EventRecord } from '@studio-next/contract'
 import { migrate, openLedger, openSqlite, type EndWorkRecord, type Ledger } from '../src/index.ts'
 import { makeUlid } from './ulid.ts'
 
-/** apps/daemon/src/engine.ts 的 KV_TABLE_SQL 原文（字节级复制；daemon 侧改动须同步本对照） */
+/** 切换前 apps/daemon/src/engine.ts 的 KV_TABLE_SQL 原文（历史形态存档——daemon 已删自建段切
+ *  store v4 面；用途见文件头注。**非现行语句，勿随 store schema 演进改写**——改动即失存量对照） */
 const DAEMON_KV_TABLE_SQL = 'CREATE TABLE IF NOT EXISTS daemon_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)'
-/** apps/daemon/src/engine.ts 的 kvSetStmt 原文（同上，字节级对照） */
+/** 切换前 apps/daemon/src/engine.ts 的 kvSetStmt 原文（同上，历史形态存档） */
 const DAEMON_KV_SET_SQL =
   'INSERT INTO daemon_kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
-/** apps/daemon/src/engine.ts 的 kvGetStmt 原文（同上，字节级对照） */
+/** 切换前 apps/daemon/src/engine.ts 的 kvGetStmt 原文（同上，历史形态存档） */
 const DAEMON_KV_GET_SQL = 'SELECT value FROM daemon_kv WHERE key = ?'
 
 let root = ''
@@ -105,28 +111,34 @@ describe('v4 迁移（daemon_kv 接管）', () => {
     again.close()
   })
 
-  it('与 daemon 现行 DDL 共存：对 v4 库重放 KV_TABLE_SQL 无操作（不双建/数据不动/版本不漂），daemon 语句与本面读写互通', () => {
-    const l = openLedger(path.join(root, 'coexist.db'))
+  it('daemon 已切本面（切换债清偿后）：对 v4 库重放 daemon 全部持久化触点（本面 kvGet/kvSet）无任何 schema 变化', () => {
+    const l = openLedger(path.join(root, 'switched.db'))
     l.kvSet('activity.cursor', 'cur-1')
     l.kvSet('tick.seq', '3')
-    // daemon 引擎现行做法原文重放：接管期 daemon 尚未删自建句，v4 库须无操作共存
-    l.db.exec(DAEMON_KV_TABLE_SQL)
-    const tableCount = Number(
-      (l.db.prepare("SELECT COUNT(*) AS c FROM sqlite_master WHERE type='table' AND name='daemon_kv'").get() as { c?: unknown }).c,
-    )
-    expect(tableCount).toBe(1)
+    const schemaOf = (): string =>
+      JSON.stringify(l.db.prepare('SELECT type, name, sql FROM sqlite_master ORDER BY type, name').all())
+    const before = schemaOf()
+    // daemon 切换后的初始化/每拍持久化触点=本面 kvGet/kvSet（引擎自建 DDL 与语句已删——切换单）。
+    // 注：本包无法 import apps/daemon 重放真引擎初始化（跨包违反包边界，见文件头注），store 侧
+    // 可测面=「v4 全部 kv 触点重放后 sqlite_master 快照不变、版本与迁移行数不漂」；daemon 侧
+    // 真路径无 DDL 的直证在 apps/daemon/test/e2e.test.ts（createEngine+整拍快照不变负断言）。
     expect(l.kvGet('activity.cursor')).toBe('cur-1')
     expect(l.kvGet('tick.seq')).toBe('3')
+    expect(l.kvGet('never.set')).toBeNull()
+    l.kvSet('tick.seq', '4')
+    l.kvSet('activity.cursor', '') // 空串=游标 null 持久形态（daemon 回读方还原 null 的那条路径）
+    expect(schemaOf()).toBe(before)
     expect(l.version()).toBe(4)
-    // 字节级兼容的读写互通：daemon 语句写入 → 本面可读；本面写入 → daemon 语句可读
-    l.db.prepare(DAEMON_KV_SET_SQL).run('tick.seq', '4')
-    expect(l.kvGet('tick.seq')).toBe('4')
-    l.kvSet('activity.cursor', 'cur-2')
-    expect((l.db.prepare(DAEMON_KV_GET_SQL).get('activity.cursor') as { value: string }).value).toBe('cur-2')
+    const versionRows = l.db.prepare('SELECT COUNT(*) AS c FROM schema_version').get() as { c?: unknown }
+    expect(Number(versionRows.c)).toBe(4)
+    // 存档语句与本面的读写互通仍成立（历史存量库数据的可读性）：存档 SET 写入 → 本面可读
+    l.db.prepare(DAEMON_KV_SET_SQL).run('legacy.key', 'legacy-value')
+    expect(l.kvGet('legacy.key')).toBe('legacy-value')
+    expect(schemaOf()).toBe(before)
     l.close()
   })
 
-  it('结构字节级对齐：daemon 自建表与迁移建表在 sqlite_master 的建表语句逐字节一致', () => {
+  it('历史形态存档对照：v4 建表语句与切换前 daemon 自建 DDL 在 sqlite_master 逐字节一致（存量库无缝接管的永久回归）', () => {
     const daemonBuilt = openSqlite(path.join(root, 'daemon-built.db'))
     daemonBuilt.exec(DAEMON_KV_TABLE_SQL)
     const migrated = openLedger(path.join(root, 'migrated.db'))
@@ -142,8 +154,9 @@ describe('v4 迁移（daemon_kv 接管）', () => {
     migrated.close()
   })
 
-  it('v3→v4 升级路径（daemon 已自建 daemon_kv 的存量库）：裸数据无损、kv 数据原地接管、收口面可用', () => {
-    // ① 构造 v3 库（migrate upTo=3）+ daemon 现行做法自建 daemon_kv 并落游标/拍序 + 裸数据
+  it('v3→v4 升级路径（v3 时代 daemon 已自建 daemon_kv 的存量库）：裸数据无损、kv 数据原地接管、收口面可用', () => {
+    // ① 构造 v3 库（migrate upTo=3）+ 切换前 daemon 做法（历史 SQL 存档，见文件头注）自建
+    //    daemon_kv 并落游标/拍序 + 裸数据
     const p = path.join(root, 'upgrade.db')
     const v3db = openSqlite(p)
     migrate(v3db, { upTo: 3 })
