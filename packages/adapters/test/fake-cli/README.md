@@ -23,6 +23,8 @@ FAKE_FIXTURE=../fixtures/dsh/turn-completed.ndjson node fake-cli.mjs
 | `FAKE_HANG` | `1` = 输出后挂起不退出，直到被 SIGTERM/SIGKILL | 不挂起 |
 | `FAKE_DELAY_MS` | 逐行输出间隔（毫秒），用于测增量流消费 | `0`（整块输出） |
 | `FAKE_SIGTERM_EXIT` | 设置后吞掉 SIGTERM 默认终止，改以该码退出（dsh 已知坑模拟）；配 `FAKE_HANG` 用 | 不启用（SIGTERM 默认终止） |
+| `FAKE_VERSION` | 设置后：命令行含 `--version` 即只打印该值并以 0 退出（executor detect 版本门槛三态测试）；不参与时 `--version` 与普通参数无异 | 不启用 |
+| `FAKE_ECHO_ARGS` | `1` = stdout 首行回显收到的 argv（`fake-cli argv: ...`），测适配器 launch 参数注入（预算帽 / 续跑 / 通道旗标） | 不回显 |
 
 ## 场景示例
 
@@ -45,6 +47,8 @@ FAKE_FIXTURE=../fixtures/dsh/killed-mid-step.ndjson FAKE_HANG=1 FAKE_SIGTERM_EXI
 
 ## 边界语义
 
+- `FAKE_VERSION` 短路优先于一切：设置且 argv 含 `--version` 时连 fixture 回放都跳过；未设置时收到
+  `--version` 走原路径（fixture/退出码旋钮照常生效），与旧版行为完全一致。
 - 未设 `FAKE_SIGTERM_EXIT` 时不注册信号处理器：SIGTERM 走 Node 默认终止（被杀即死，无退出码）。
 - 设置 `FAKE_SIGTERM_EXIT=<码>` 即注册处理器：吞掉 SIGTERM 默认终止，以该码 `process.exit`
   ——模拟 dsh「被 kill 后退出码=0 且 final 为空」的坑位（docs/17-§6）；SIGKILL 仍不可吞。

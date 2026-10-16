@@ -12,6 +12,10 @@
  *   FAKE_DELAY_MS       逐行输出间隔毫秒（缺省 0：一次性整块输出）——测增量流消费
  *   FAKE_SIGTERM_EXIT   设置后注册 SIGTERM 处理器：吞掉默认终止，改以该码退出
  *                       （=0 即 dsh 已知坑「被 kill 后退出码=0」；配 FAKE_HANG 使用）
+ *   FAKE_VERSION        设置后：命令行含 --version 即只打印该值并以 0 退出（executor
+ *                       detect 的版本门槛三态测试用）；未设置时 --version 与普通参数无异
+ *   FAKE_ECHO_ARGS      =1：stdout 首行回显本进程收到的 argv（`fake-cli argv: ...`），
+ *                       测适配器 launch 的参数注入（预算帽 / 续跑 / 通道旗标）
  *
  * 注：除 FAKE_SIGTERM_EXIT 外不注册任何信号处理器——SIGTERM 走 Node 默认终止行为。
  */
@@ -29,6 +33,8 @@ const sigtermExitRaw = env.FAKE_SIGTERM_EXIT ?? ''
 const parsedSigtermExit = Number.parseInt(sigtermExitRaw, 10)
 const sigtermExit =
   sigtermExitRaw === '' ? undefined : Number.isNaN(parsedSigtermExit) ? 0 : parsedSigtermExit
+const fakeVersion = env.FAKE_VERSION ?? ''
+const echoArgs = env.FAKE_ECHO_ARGS === '1'
 
 if (sigtermExit !== undefined) {
   // dsh 已知坑模拟（docs/17-§6）：吞掉 SIGTERM 的默认终止，改以指定退出码退出——
@@ -49,7 +55,18 @@ function writeOut(chunk) {
   }
 }
 
+if (fakeVersion !== '' && process.argv.includes('--version')) {
+  // detect 专用短路：FAKE_VERSION 设置且收到 --version → 只回放版本串并以 0 退出，
+  // 其余旋钮（fixture/exit/hang）一律不参与；未设 FAKE_VERSION 时走旧路径——既有行为不变
+  writeOut(fakeVersion.endsWith('\n') ? fakeVersion : `${fakeVersion}\n`)
+  process.exit(0)
+}
+
 async function main() {
+  if (echoArgs) {
+    // FAKE_ECHO_ARGS=1：首行回显收到的 argv（非 JSON 行，归一化后以 log 原文透传——断言用）
+    writeOut(`fake-cli argv: ${process.argv.slice(2).join(' ')}\n`)
+  }
   if (fixturePath !== '') {
     const text = readFileSync(fixturePath, 'utf8')
     if (delayMs === 0) {
