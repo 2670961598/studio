@@ -13,6 +13,9 @@
     "apps/daemon": {
       "name": "@studio-next/daemon",
       "version": "0.1.0",
+      "bin": {
+        "studio-next": "./src/bin.ts",
+      },
       "dependencies": {
         "@studio-next/adapters": "workspace:*",
         "@studio-next/api": "workspace:*",

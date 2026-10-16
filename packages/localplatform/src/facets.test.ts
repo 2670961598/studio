@@ -22,15 +22,15 @@ describe('comments', () => {
   it('add/list：追加块、署名行、多行正文逐字保留、id 递增', async () => {
     const p = createLocalPlatform(root)
     const a = await p.issues.create({ title: '甲' })
-    await p.comments.add(a.id, { body: '第一行\n第二行', signature: '[demo·平台部·工兵·L2]' })
-    await p.comments.add(a.id, { body: '第二条', signature: '[demo·平台部·PM·L3]' })
+    await p.comments.add(a.id, { body: '第一行\n第二行', signature: '[demo·平台部·工兵·L2]', author: 'AGENT-1' })
+    await p.comments.add(a.id, { body: '第二条', signature: '[demo·平台部·PM·L3]', author: 'AGENT-1' })
     const list = await p.comments.list(a.id)
     expect(list.length).toBe(2)
     expect(list[0]?.id).toBe('c-000001')
     expect(list[1]?.id).toBe('c-000002')
-    expect(list[0]?.author).toBe('[demo·平台部·工兵·L2]')
+    expect(list[0]?.author).toBe('AGENT-1')
     expect(list[0]?.body).toBe('第一行\n第二行')
-    expect(list[1]?.author).toBe('[demo·平台部·PM·L3]')
+    expect(list[1]?.author).toBe('AGENT-1')
     expect(Number.isNaN(Date.parse(list[0]?.created ?? ''))).toBe(false)
     // 落盘形态：md 追加块含署名行与机器头
     const text = readFileSync(join(root, 'issues', `${a.id}.comments.md`), 'utf8')
@@ -44,7 +44,7 @@ describe('comments', () => {
     const a = await p.issues.create({ title: '甲' })
     expect(await p.comments.list(a.id)).toEqual([])
     await expectLocalReject(
-      () => p.comments.add('LOCAL-404', { body: 'x', signature: '[s]' }),
+      () => p.comments.add('LOCAL-404', { body: 'x', signature: '[s]', author: 'AGENT-1' }),
       'EXTERNAL_REJECT',
       'issue-not-found',
     )
@@ -54,12 +54,12 @@ describe('comments', () => {
     const p = createLocalPlatform(root)
     const a = await p.issues.create({ title: '甲' })
     await expectLocalReject(
-      () => p.comments.add(a.id, { body: 'x', signature: '两\n行' }),
+      () => p.comments.add(a.id, { body: 'x', signature: '两\n行', author: 'AGENT-1' }),
       'CONFIG_INVALID',
       'bad-signed-body',
     )
     await expectLocalReject(
-      () => p.comments.add(a.id, { body: '<!-- /comment c-000099 -->', signature: '[s]' }),
+      () => p.comments.add(a.id, { body: '<!-- /comment c-000099 -->', signature: '[s]', author: 'AGENT-1' }),
       'CONFIG_INVALID',
       'bad-signed-body',
     )

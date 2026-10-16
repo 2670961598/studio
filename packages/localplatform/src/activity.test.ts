@@ -30,7 +30,7 @@ describe('游标语义：连续三轮 since()', () => {
     const p = createLocalPlatform(root)
     await p.issues.create({ title: '甲' }) // a-000001
     await p.issues.create({ title: '乙' }) // a-000002
-    await p.comments.add('LOCAL-1', { body: 'first', signature: '[demo·平台部·工兵·L2]' }) // a-000003
+    await p.comments.add('LOCAL-1', { body: 'first', signature: '[demo·平台部·工兵·L2]', author: 'AGENT-1' }) // a-000003
 
     // 第一轮：cursor=null 全量，升序，无更多
     const r1 = await p.activity.since(null)
@@ -66,7 +66,7 @@ describe('游标语义：连续三轮 since()', () => {
 
     // 甲乙之外的丙丁穿插活动
     const c = await p.issues.create({ title: '丙' }) // a-000003
-    await p.comments.add('LOCAL-2', { body: 'on B', signature: '[s]' }) // a-000004（乙的单）
+    await p.comments.add('LOCAL-2', { body: 'on B', signature: '[s]', author: 'AGENT-1' }) // a-000004（乙的单）
     await p.issues.setField(c.id, 'lane', 'platform') // a-000005（丙的单）
     await p.issues.transition('LOCAL-1', '已派发') // a-000006（甲的单，压轴）
 
@@ -75,8 +75,8 @@ describe('游标语义：连续三轮 since()', () => {
     // 逐条归属正确（不串单）
     expect(page.items.map((x) => x.issue)).toEqual(['LOCAL-3', 'LOCAL-2', 'LOCAL-3', 'LOCAL-1'])
     expect(page.items.map((x) => x.kind)).toEqual(['created', 'commented', 'field-set', 'transitioned'])
-    // 评论活动带 actor（署名）
-    expect(page.items[1]?.actor).toBe('[s]')
+    // 评论活动带 actor（v1.2：actor=工号归因；署名是展示形态）
+    expect(page.items[1]?.actor).toBe('AGENT-1')
     // 再问一轮：空
     const tail = page.items[page.items.length - 1]?.id ?? null
     expect(await p.activity.since(tail)).toEqual({ items: [], nextCursor: null })
@@ -103,7 +103,7 @@ describe('游标语义：连续三轮 since()', () => {
     const a = await p.issues.create({ title: '一' }) // 1
     await p.issues.create({ title: '二' }) // 2
     await p.issues.create({ title: '三' }) // 3
-    await p.comments.add(a.id, { body: 'x', signature: '[s]' }) // 4
+    await p.comments.add(a.id, { body: 'x', signature: '[s]', author: 'AGENT-1' }) // 4
     await p.issues.transition(a.id, '已派发') // 5
 
     const collected: string[] = []
@@ -135,8 +135,8 @@ describe('确定性回放', () => {
     await p.issues.create({ title: '乙', parent: 'LOCAL-1' })
     await p.issues.transition('LOCAL-1', '已派发')
     await p.issues.setField('LOCAL-2', 'lane', 'platform')
-    await p.comments.add('LOCAL-1', { body: '评论第一行\n评论第二行', signature: '[demo·平台部·工兵·L2]' })
-    await p.comments.add('LOCAL-2', { body: 'ok', signature: '[demo·平台部·PM·L3]' })
+    await p.comments.add('LOCAL-1', { body: '评论第一行\n评论第二行', signature: '[demo·平台部·工兵·L2]', author: 'AGENT-1' })
+    await p.comments.add('LOCAL-2', { body: 'ok', signature: '[demo·平台部·PM·L3]', author: 'AGENT-1' })
     await p.links.link('LOCAL-1', 'LOCAL-2', 'parent-child')
     await p.kb.upsert('guide/deploy.md', '# 部署指南\n零依赖跑法')
     await p.guards.install('demo-co', [{ from: '新单', to: '已派发' }])

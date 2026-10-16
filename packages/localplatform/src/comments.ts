@@ -7,8 +7,9 @@
  *   <署名行（=SignedBody.signature，单行）>
  *   <!-- /comment c-000001 -->
  *
- * 端口缺口注记（只记录不改 contract）：SignedBody 无独立 author 字段，Comment.author
- * 本实现取 signature 全文（署名即归因；上游 gateway 注入 [公司·部门·岗位·级别]）。
+ * v1.2 迁移（2026-10-17，宰相执行——docs/25-§3.2 裁决）：SignedBody.author 是归因
+ * 一等公民（工号），signature 只是展示形态；Comment.author 取 body.author，
+ * 署名行仍落 signature（人读）。上游 gateway 负责注入。
  * 注入防护：正文/署名伪造 `<!-- /comment` 行会被拒（CONFIG_INVALID），防解析串道。
  */
 import type { Comment, SignedBody, TicketId } from '@studio-next/contract'
@@ -80,14 +81,14 @@ export function listComments(root: string, id: TicketId): Comment[] {
 
 export function addComment(root: string, now: () => string, id: TicketId, body: SignedBody): void {
   getIssue(root, id) // 单不存在 → EXTERNAL_REJECT
-  if (typeof body.body !== 'string' || typeof body.signature !== 'string') {
-    throw new LocalPlatformError('CONFIG_INVALID', 'bad-signed-body', '评论 body/signature 必须是字符串')
+  if (typeof body.author !== 'string' || typeof body.body !== 'string' || typeof body.signature !== 'string') {
+    throw new LocalPlatformError('CONFIG_INVALID', 'bad-signed-body', '评论 author/body/signature 必须是字符串')
   }
-  if (body.signature.includes('\n')) {
-    throw new LocalPlatformError('CONFIG_INVALID', 'bad-signed-body', '署名必须是单行')
+  if (body.author.includes('\n') || body.signature.includes('\n')) {
+    throw new LocalPlatformError('CONFIG_INVALID', 'bad-signed-body', 'author 与署名必须是单行')
   }
-  const author = body.signature.trim() === '' ? 'unknown' : body.signature
-  for (const line of [...body.body.split('\n'), author]) {
+  const author = body.author.trim() === '' ? 'unknown' : body.author
+  for (const line of [...body.body.split('\n'), body.signature]) {
     if (line.startsWith(FOOTER_PREFIX)) {
       throw new LocalPlatformError('CONFIG_INVALID', 'bad-signed-body', '正文/署名不得伪造评论结束标记行')
     }
@@ -95,7 +96,7 @@ export function addComment(root: string, now: () => string, id: TicketId, body: 
   const nextNo = listComments(root, id).length + 1
   const cid = `${ID_PREFIX}${String(nextNo).padStart(ID_WIDTH, '0')}`
   const meta: CommentMeta = { id: cid, created: now(), author }
-  const block = [HEADER_PREFIX + JSON.stringify(meta) + ' -->', body.body, author, `${FOOTER_PREFIX}${cid} -->`].join('\n')
+  const block = [HEADER_PREFIX + JSON.stringify(meta) + ' -->', body.body, body.signature, `${FOOTER_PREFIX}${cid} -->`].join('\n')
   appendLine(commentsPath(root, id), block)
   appendActivity(root, now, { issue: id, kind: 'commented', actor: author })
 }

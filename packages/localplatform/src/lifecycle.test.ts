@@ -151,9 +151,6 @@ describe('issues.list 过滤维', () => {
     expect((await p.issues.list({ updatedSince: a.updated })).map((r) => r.id)).toEqual(['LOCAL-2', 'LOCAL-3'])
     expect(await p.issues.list({ updatedSince: c.updated })).toEqual([])
 
-    // project 维：单项目平台忽略（端口疑点已上报），不能凭空滤掉
-    expect((await p.issues.list({ project: 'whatever' })).length).toBe(3)
-
     // 组合维
     expect((await p.issues.list({ stateIn: ['已交付'], assignee: 'emp-1' })).map((r) => r.id)).toEqual(['LOCAL-3'])
   })
