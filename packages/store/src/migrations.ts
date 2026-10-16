@@ -187,6 +187,41 @@ const MIGRATIONS: readonly Migration[] = [
       '',
     ].join('\n'),
   },
+  {
+    version: 3,
+    name: 'v0.4 地基：jobs 调度表（17-§2 调度表列集 / 18-§三 调度设计）',
+    sql: [
+      // jobs：daemon 调度表（17-§2 列集照落；权威源=公司目录定时岗配置 D9，本表为其持久化投影，
+      //   热更时 upsert 单岗、不动他岗——18-§三）。列语义与拟稿点：
+      //   - cron：表达式文本原样存，解析归 core 后续单（18-§三 croner 只在 daemon 侧引，store 不依赖）；
+      //   - budget_cap 存 REAL（USD）——自选口径：对齐 contract Money{usd:number}（ports/company.ts
+      //     ScheduledJob.budget_cap）与库内既有 cost_usd/estimated_usd/actual_usd 全 REAL 的货币口径，
+      //     一库一种货币单位；INTEGER 微美分方案弃用（单位混用比 REAL 等值比较危害更大，且 jobs 表
+      //     不在 events JSONL 派生路径上，无 F2-11 字节确定性强约束）；
+      //   - payload：JSON 文本（写入前 JSON.stringify，读出 JSON.parse——坏列如实报 CONFIG_INVALID）；
+      //   - next_run_at/last_run_at：epoch ms；last_run_at 可空=从未跑过（18-§三 运行时状态）；
+      //   - status 可空：值域 v0 不锁（active/paused 等语义归 core 调度域后续单收口，store 不猜枚举）。
+      'CREATE TABLE jobs (',
+      '  job_id TEXT PRIMARY KEY,',
+      '  company TEXT NOT NULL,',
+      '  dept TEXT NOT NULL,',
+      '  cron TEXT NOT NULL,',
+      '  role TEXT NOT NULL,',
+      '  level INTEGER NOT NULL,',
+      '  model_tier TEXT NOT NULL,',
+      '  budget_cap REAL,',
+      '  payload TEXT,',
+      '  next_run_at INTEGER NOT NULL,',
+      '  last_run_at INTEGER,',
+      '  status TEXT',
+      ');',
+      // 补跑扫描索引：daemon 启动/每拍扫 next_run_at <= now 的槽位（18-§三 错过补跑 coalesce）
+      'CREATE INDEX idx_jobs_next_run_at ON jobs (next_run_at);',
+      // 公司维度索引：按 company 拉一司全部定时岗（挂载/热更/面板 v0.3 jobs 视图）
+      'CREATE INDEX idx_jobs_company ON jobs (company);',
+      '',
+    ].join('\n'),
+  },
 ]
 
 /** 内置迁移的最高版本（0 = 无迁移可用，仅占位防呆） */

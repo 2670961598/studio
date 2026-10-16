@@ -1,5 +1,5 @@
 /**
- * ledger —— 台账句柄：打开/迁移/事件入账/查询面/公司镜像同步（v0.2 首刀 + 第二刀）
+ * ledger —— 台账句柄：打开/迁移/事件入账/查询面/公司镜像同步（v0.2 首刀 + 第二刀 + v3 jobs）
  *
  * 依据：docs/16-§四 v0.2（三表建库 + 快照/重建）、docs/17-§3（数据模型）、
  * docs/02 F2-01（可重建投影，daemon 唯一写入者）、F2-11（JSONL 单向派生）。
@@ -25,6 +25,13 @@
  *     同 id 幂等规则对齐 appendEvent（F2-13）。
  *   - personnelTimeline：personnel_events × work_records × sessions 三表按 person_id 归并的
  *     生命周期时间线最小面（C1-04：一页回放「何时入职/干过哪些单/哪次升迁」）。
+ *
+ * v3 扩面（jobs 调度表，17-§2 / 18-§三）：
+ *   - upsertJob / getJob / listJobs / dueJobs / markRan / removeJob：定时岗持久化投影的读写面。
+ *   - 热更语义：upsert 按 job_id 覆盖配置列（next_run_at/status 随入参），**不动其他岗、
+ *     不清 last_run_at**（运行时状态归 markRan）；cron 只做形状闸，解析归 core 后续单。
+ *   - dueJobs：next_run_at <= now 升序（补跑扫描）；markRan：last_run_at/next_run_at 单语句
+ *     原子落库。
  */
 import { writeFileSync } from 'node:fs'
 import type { DatabaseSync } from 'node:sqlite'
@@ -41,6 +48,7 @@ import { currentVersion, migrate } from './migrations.ts'
 import {
   BudgetRecordSchema,
   DepartmentRecordSchema,
+  JobRecordSchema,
   PersonRecordSchema,
   PersonnelEventRecordSchema,
   SessionRecordSchema,
@@ -48,6 +56,7 @@ import {
   WorkRecordSchema,
   type BudgetRecord,
   type DepartmentRecord,
+  type JobRecord,
   type PersonRecord,
   type PersonnelEventRecord,
   type SessionRecord,
@@ -132,6 +141,18 @@ export interface Ledger {
   appendPersonnelEvent(record: unknown): AppendResult
   /** 生命周期时间线：personnel_events × work_records × sessions 三表按 person_id 归并（ts 升序） */
   personnelTimeline(personId: string): PersonnelTimelineEntry[]
+  // —— v3 jobs 调度表（17-§2 / 18-§三） ——
+  /** 定时岗 upsert（job_id 幂等覆盖配置列；热更单岗不动他岗、不清 last_run_at——见实现注） */
+  upsertJob(record: unknown): string
+  getJob(jobId: string): JobRecord | undefined
+  /** 全部定时岗（next_run_at 升序，同刻按 job_id 稳定序） */
+  listJobs(): JobRecord[]
+  /** 补跑扫描：next_run_at <= now 的槽位升序（18-§三 启动扫 due 槽位） */
+  dueJobs(now: number, limit?: number): JobRecord[]
+  /** 记一次实跑：last_run_at/next_run_at 两列同语句原子落库（可观测无中间态） */
+  markRan(jobId: string, now: number, nextRunAt: number): boolean
+  /** 定时岗下线（公司目录删岗）；返回是否真删了行 */
+  removeJob(jobId: string): boolean
 }
 
 /** tokens 四桶 canonical 序（F2-04 列名序）：同内容恒同字节串 */
@@ -251,6 +272,20 @@ function parseJsonArray(raw: string, subcause: string): string[] {
     configInvalid(subcause, `列不是 JSON 字符串数组：${raw}`)
   }
   return parsed as string[]
+}
+
+/** 任意 JSON 值列（jobs.payload）解析：坏列 → CONFIG_INVALID（库已坏，如实报） */
+function parseJsonValue(raw: string, subcause: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown
+  } catch (err) {
+    configInvalid(subcause, `payload 列不是合法 JSON：${raw}（${errorMessage(err)}）`)
+  }
+}
+
+/** 错误消息文本化（内联用；与 rebuild.ts 同风格） */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
 }
 
 /** zod schema 的结构面（免 import zod 类型；safeParse 结果形状即可） */
@@ -717,6 +752,109 @@ export function openLedger(path: string): Ledger {
     return entries
   }
 
+  // —— v3 jobs 调度表读写面（17-§2 / 18-§三） ——
+
+  const rowToJob = (row: SqlRow): JobRecord => {
+    const rec: JobRecord = {
+      job_id: str(row, 'job_id'),
+      company: str(row, 'company'),
+      dept: str(row, 'dept'),
+      cron: str(row, 'cron'),
+      role: str(row, 'role'),
+      level: Number(row['level']),
+      model_tier: str(row, 'model_tier') as JobRecord['model_tier'],
+      next_run_at: Number(row['next_run_at']),
+    }
+    const budgetCap = optNum(row, 'budget_cap')
+    if (budgetCap !== undefined) rec.budget_cap = budgetCap
+    const payloadJson = optStr(row, 'payload')
+    if (payloadJson !== undefined) rec.payload = parseJsonValue(payloadJson, 'store/jobs:payload-corrupt')
+    const lastRunAt = optNum(row, 'last_run_at')
+    if (lastRunAt !== undefined) rec.last_run_at = lastRunAt
+    const status = optStr(row, 'status')
+    if (status !== undefined) rec.status = status
+    return rec
+  }
+
+  /**
+   * 定时岗 upsert：job_id 幂等覆盖——同 job_id 重复 upsert 不报错不涨行，整行按本次所载覆盖。
+   * 热更语义（18-§三「重注册对应 job，不动其他岗」）落点：
+   *   - ON CONFLICT 更新列集 = 配置列 + next_run_at + status（公司目录所载与调度计算所得）；
+   *   - **last_run_at 不在更新列**——它是调度器运行时状态（markRan 落账），公司目录重挂载/热更
+   *     不应清零跑史（拟稿待批，见 index.ts 疑点清单）。
+   */
+  const upsertJob = (record: unknown): string => {
+    const r = assertRecord(JobRecordSchema, record, 'store/jobs:invalid')
+    let payloadJson: string | null = null
+    if (r.payload !== undefined) {
+      try {
+        const serialized = JSON.stringify(r.payload)
+        // undefined 返回值 = 函数/Symbol 等不可 JSON 化的值（stringify 不抛但静默丢）——拒收不静默
+        if (serialized === undefined) {
+          configInvalid('store/jobs:payload-unserializable', `job ${r.job_id} payload 含不可 JSON 序列化的值`)
+        }
+        payloadJson = serialized
+      } catch (err) {
+        configInvalid('store/jobs:payload-unserializable', `job ${r.job_id} payload 不是可序列化 JSON 值：${errorMessage(err)}`)
+      }
+    }
+    db.prepare(
+      `INSERT INTO jobs (
+         job_id, company, dept, cron, role, level, model_tier, budget_cap, payload, next_run_at, last_run_at, status
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(job_id) DO UPDATE SET
+         company = excluded.company, dept = excluded.dept, cron = excluded.cron, role = excluded.role,
+         level = excluded.level, model_tier = excluded.model_tier, budget_cap = excluded.budget_cap,
+         payload = excluded.payload, next_run_at = excluded.next_run_at, status = excluded.status`,
+    ).run(
+      r.job_id,
+      r.company,
+      r.dept,
+      r.cron,
+      r.role,
+      r.level,
+      r.model_tier,
+      r.budget_cap ?? null,
+      payloadJson,
+      r.next_run_at,
+      r.last_run_at ?? null,
+      r.status ?? null,
+    )
+    return r.job_id
+  }
+
+  const getJob = (jobId: string): JobRecord | undefined => {
+    const row = db.prepare('SELECT * FROM jobs WHERE job_id = ?').get(jobId) as SqlRow | undefined
+    return row === undefined ? undefined : rowToJob(row)
+  }
+
+  const listJobs = (): JobRecord[] =>
+    (db.prepare('SELECT * FROM jobs ORDER BY next_run_at ASC, job_id ASC').all() as SqlRow[]).map(rowToJob)
+
+  const dueJobs = (now: number, limit?: number): JobRecord[] => {
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 0)) {
+      configInvalid('store/jobs:bad-limit', `limit=${String(limit)} 须为非负整数`)
+    }
+    const sql =
+      'SELECT * FROM jobs WHERE next_run_at <= ? ORDER BY next_run_at ASC, job_id ASC' +
+      (limit === undefined ? '' : ' LIMIT ?')
+    const rows = limit === undefined
+      ? (db.prepare(sql).all(now) as SqlRow[])
+      : (db.prepare(sql).all(now, limit) as SqlRow[])
+    return rows.map(rowToJob)
+  }
+
+  /** 单条 UPDATE 即单事务：两列同语句移动，无中间态可观测（18-§三 补跑记账的原子基础） */
+  const markRan = (jobId: string, now: number, nextRunAt: number): boolean => {
+    const result = db.prepare('UPDATE jobs SET last_run_at = ?, next_run_at = ? WHERE job_id = ?').run(now, nextRunAt, jobId)
+    return Number(result.changes) > 0
+  }
+
+  const removeJob = (jobId: string): boolean => {
+    const result = db.prepare('DELETE FROM jobs WHERE job_id = ?').run(jobId)
+    return Number(result.changes) > 0
+  }
+
   return {
     db,
     close: () => db.close(),
@@ -750,6 +888,12 @@ export function openLedger(path: string): Ledger {
     queryBudgets,
     appendPersonnelEvent,
     personnelTimeline,
+    upsertJob,
+    getJob,
+    listJobs,
+    dueJobs,
+    markRan,
+    removeJob,
   }
 }
 
