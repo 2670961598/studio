@@ -18,9 +18,11 @@
  * 模板：`templates/company-2-level/`（2 级公司，最小可用公司目录）。
  *
  * TODO(骨架阶段)：
- *   [ ] zod schema：org-config / 部门 config / 人事档案 front-matter / .studio-next.yaml
- *   [ ] 校验器：错误定位到 文件:行 + 给出修法
- *   [ ] 挂载器：加载 → 校验 → 汇总为内存快照 → 供 prompt/store 消费
+ *   [x] zod schema：org-config / 部门 config / 人事档案 front-matter / .studio-next.yaml
+ *        （v0.1-M2.2 多文件面——src/multifile.ts，拟稿清单 M2.2-①..⑧ 见其头注）
+ *   [x] 校验器：错误定位到 文件:行 + 给出修法（org-config v0；全目录面 v0.1-M2.2）
+ *   [ ] 挂载器：加载 → 校验 → 汇总为内存快照 → 供 prompt/store 消费（serve 面挂载壳已用
+ *        loadCompanyDirectory 全目录校验；快照消费侧聚合归后续单）
  *   [x] 定时岗装载：org-config.yaml jobs 段 → snapshot.jobs（v0.1-M4，映射表冻结在
  *        validator.ts OrgJobSchema 头注；daemon seedJobs 消费快照播种 jobs 表——18-§三）
  *   [ ] 定时岗热更：目录改动重注册对应岗、不动其他岗（18-§三；daemon 侧收口）

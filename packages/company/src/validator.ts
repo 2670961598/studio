@@ -5,8 +5,11 @@
  * 零 IO：输入是内存文件映射（真实挂载壳在其上包装），可进契约、可单测（08 纯逻辑纪律）。
  * 行号定位：yaml@2 LineCounter + AST 节点 range（16-§二 选型登记），zod 路径回爬取最近祖先节点行。
  *
- * v0 范围：org-config.yaml 单文件；departments/** 与 people/** 正文文件、.studio-next.yaml
- * 交叉校验、relations 完整规则在 v0.1 后续单补齐（见 TODO）。
+ * v0.1-M2.2 多文件面（清偿 v0 头注挂账）：org-config.yaml 单文件校验全绿后，缺省继续
+ * **全目录交叉校验**（multifile.ts：departments/<部门>/config.yaml、人事档案 front-matter、
+ * charter_ref、.studio-next.yaml；拟稿清单 M2.2-①..⑧ 见该文件头注）。dir 域契约 subject
+ * 以宽容位 strictFiles:false 保持 v0 单文件语义（CASES.md dir 域 v1 语义增补说明，M2.2-⑨
+ * 拟稿待批）。relations 完整规则（to 悬空等）仍留后续单。
  *
  * v0.1-M3 扩键（16-§四 验收口径「init 出模板公司并通过自检」倒逼）：schema 收齐
  * templates/company-2-level/org-config.yaml 的全部已登记段落——jobs（04-§三 D9 定时岗）、
@@ -25,6 +28,7 @@
 import { LineCounter, parseDocument } from 'yaml'
 import { z } from 'zod'
 import type { CompanySnapshot, DeptNode, DirectoryIssue, MountResult, PersonRef, RoleName, ScheduledJob } from '@studio-next/contract'
+import { ORG_CONFIG_SCHEMA_VERSION, lineOfPath, multifileRules, zodIssuesToDirectoryIssues } from './multifile.ts'
 
 const ORG_CONFIG_FILE = 'org-config.yaml'
 
@@ -90,7 +94,7 @@ const OrgJobSchema = z.strictObject({
 })
 
 const OrgConfigSchema = z.strictObject({
-  schema: z.literal('org-config/v1'),
+  schema: z.literal(ORG_CONFIG_SCHEMA_VERSION),
   company: z.strictObject({
     name: z.string().min(1),
     slug: z.string().min(1),
@@ -135,36 +139,8 @@ const OrgConfigSchema = z.strictObject({
   executors: z.record(z.string(), z.unknown()).optional(),
 })
 
-type OrgConfig = z.infer<typeof OrgConfigSchema>
-
-interface YamlNodeLike { range?: readonly number[] | null }
-
-/** zod 路径 → 源行：从完整路径逐级上爬，取第一个有 range 的 AST 节点；兜底第 1 行 */
-function lineOfPath(doc: ReturnType<typeof parseDocument>, lc: LineCounter, path: (string | number)[]): number {
-  for (let cut = path.length; cut >= 0; cut--) {
-    const node = doc.getIn(path.slice(0, cut), true)
-    if (node !== null && typeof node === 'object') {
-      const range = (node as YamlNodeLike).range
-      if (range && range.length > 0 && range[0] !== undefined) {
-        const pos = lc.linePos(range[0])
-        return pos.line // linePos 返回 1 基行号（实测校准）
-      }
-    }
-  }
-  return 1
-}
-
-function zodIssuesToDirectoryIssues(doc: ReturnType<typeof parseDocument>, lc: LineCounter, issues: z.ZodIssue[]): DirectoryIssue[] {
-  return issues.map((zi) => {
-    const path = zi.path.filter((p): p is string | number => typeof p === 'string' || typeof p === 'number')
-    return {
-      file: ORG_CONFIG_FILE,
-      line: lineOfPath(doc, lc, path),
-      rule: `org-config/missing-field:${path.join('.') || '(root)'}`,
-      fix: zi.message,
-    }
-  })
-}
+/** org-config.yaml 解析后的强类型（multifile.ts 交叉规则的输入；type-only 反向引用零运行时环） */
+export type OrgConfig = z.infer<typeof OrgConfigSchema>
 
 /** 交叉规则（04-§二：结构合法性——模板默认值不参与校验，不写死） */
 function crossRules(doc: ReturnType<typeof parseDocument>, lc: LineCounter, org: OrgConfig): DirectoryIssue[] {
@@ -260,8 +236,25 @@ function toSnapshot(org: OrgConfig): CompanySnapshot {
   }
 }
 
-/** 目录校验入口（契约 dir 域的 subject） */
-export function loadCompanyDirectory(files: Record<string, string>): MountResult {
+/**
+ * 目录挂载入参（M2.2 新增宽容位）。
+ *
+ * strictFiles 方案【M2.2-⑨ 拟稿待批】：M2.2 起 loadCompanyDirectory 缺省做**全目录校验**
+ * （04-§二 契约全貌——multifile.ts）；但 dir 域契约 3 case 的 input 只有 org-config.yaml
+ * 单文件（v0 语料），按全检语义 C-dir-001 将因部门/档案/元信息文件缺失翻红——契约语料
+ * 单写者纪律（不为本单改 cases.json），故：
+ *   - strictFiles=true（缺省）：全目录校验（init 自检 / validate / serve 挂载走此面）
+ *   - strictFiles=false：只校验 org-config.yaml 单文件（v0 语义；dir 域契约 subject
+ *     dirSubject 固定传此值——CASES.md「dir 域 v1 语义增补说明」）
+ * 多文件面的契约化留给后续 dir2 域批次（开批时落 case，本方案头注即增补说明本体）。
+ */
+export interface MountOptions {
+  /** 缺省 true=全目录校验；false=只校验 org-config.yaml（v0 单文件语义） */
+  strictFiles?: boolean
+}
+
+/** 目录校验入口（org-config 单文件面 + 缺省全目录面；契约 dir 域的 subject 经 dirSubject 包装） */
+export function loadCompanyDirectory(files: Record<string, string>, opts?: MountOptions): MountResult {
   const src = files[ORG_CONFIG_FILE]
   if (src === undefined) {
     return { ok: false, issues: [{ file: ORG_CONFIG_FILE, line: 1, rule: 'org-config/missing-file', fix: '公司目录必须含 org-config.yaml（04-§二 目录契约）' }] }
@@ -284,20 +277,25 @@ export function loadCompanyDirectory(files: Record<string, string>): MountResult
 
   const parsed = OrgConfigSchema.safeParse(doc.toJS())
   if (!parsed.success) {
-    return { ok: false, issues: zodIssuesToDirectoryIssues(doc, lc, parsed.error.issues) }
+    return { ok: false, issues: zodIssuesToDirectoryIssues(doc, lc, parsed.error.issues, ORG_CONFIG_FILE, 'org-config/missing-field') }
   }
 
-  const cross = crossRules(doc, lc, parsed.data)
-  if (cross.length > 0) return { ok: false, issues: cross }
+  const issues = [
+    ...crossRules(doc, lc, parsed.data),
+    ...(opts?.strictFiles === false ? [] : multifileRules(files, parsed.data, doc, lc)),
+  ]
+  if (issues.length > 0) return { ok: false, issues }
 
   return { ok: true, snapshot: toSnapshot(parsed.data) }
 }
 
-/** dir 域契约 subject：case 输入形状 {files} → 校验器 API（CASES.md 域约定） */
+/** dir 域契约 subject：case 输入形状 {files} → 校验器 API（CASES.md 域约定）。
+ *  strictFiles:false 固定传参——dir 域 v1 语义冻结为 org-config 单文件校验（M2.2-⑨ 拟稿，
+ *  CASES.md「dir 域 v1 语义增补说明」）；多文件面归后续 dir2 契约批次。 */
 export function dirSubject(input: unknown): MountResult {
   const files = (input as { files?: Record<string, string> }).files
   if (files === undefined || typeof files !== 'object') {
     return { ok: false, issues: [{ file: '(input)', line: 1, rule: 'contract/bad-input', fix: 'dir 域 case 的 input 必须形如 {files: {路径: 内容}}' }] }
   }
-  return loadCompanyDirectory(files)
+  return loadCompanyDirectory(files, { strictFiles: false })
 }
