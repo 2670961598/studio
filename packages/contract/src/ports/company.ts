@@ -3,8 +3,8 @@
  * 目录本身是数据契约（org-config.yaml schema）；本端口是它的读视图。
  * 写路径永远归 daemon（唯一写入者）；校验错误模型=文件:行+修法。
  */
-import type { CompanySlug, Money, PersonId } from './kernel.js'
-import type { ModelTier, RoleName } from './models.js'
+import type { CompanySlug, Money, PersonId } from './kernel.ts'
+import type { ModelTier, RoleName } from './models.ts'
 
 export interface PlatformBinding {
   /** youtrack | localfile | …（23-§二：换平台=改一行配置） */

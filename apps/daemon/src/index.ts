@@ -8,7 +8,7 @@
  *   - 唯一写入者：公司目录与 SQLite 台账的写路径全部收口在本进程（docs/08-§二 第三不变律）
  *
  * TODO(骨架阶段)：以下能力尚未实现，按里程碑逐版本落地（docs/16-§四）
- *   [ ] v0.1  `studio-next init` 从 templates/company-2-level 生成公司目录 + 目录校验器
+ *   [x] v0.1  `studio-next init` 从 templates/company-2-level 生成公司目录 + 目录校验器（M3：src/bin.ts 出 studio-next bin）
  *   [ ] v0.1  契约包接线：cases.json 规格测试进 CI
  *   [ ] v0.2  store 接线：SQLite 台账建表、migration、快照/重建脚本
  *   [ ] v0.3  panel 接线：:8787 只读监控（jobs/runs/workers/事件流）

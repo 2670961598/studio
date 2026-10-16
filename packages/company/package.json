@@ -16,6 +16,7 @@
     "@studio-next/contract": "workspace:*",
     "@studio-next/store": "workspace:*",
     "simple-git": "^3.27.0",
-    "zod": "^4.0.0"
+    "zod": "^4.0.0",
+    "yaml": "^2.6.0"
   }
 }
