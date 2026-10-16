@@ -4,6 +4,9 @@
  */
 import type { Money, ResultStats, StreamEvent, TaskBrief } from './kernel.ts'
 
+/** executor 家族（17-§6 四原语表；CLI 泳道首刀反馈补入 docs/25-§3.1） */
+export type ExecutorFamily = 'dsh' | 'claude' | 'codex' | 'kimi'
+
 export interface ExecutorCapabilities {
   budget_cap: boolean
   cancel_turn: boolean

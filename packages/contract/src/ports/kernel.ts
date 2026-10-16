@@ -26,7 +26,7 @@ export interface ResultStats {
 export type StreamEvent =
   | { type: 'step_start'; step: string }
   | { type: 'step_end'; step: string; usage?: TokenCounts }
-  | { type: 'turn_end'; completed: boolean; usage?: TokenCounts }
+  | { type: 'turn_end'; completed: boolean; usage?: TokenCounts; error?: string }
   | { type: 'log'; text: string }
 
 // —— 任务书（装配管线输出，executor 输入）——
