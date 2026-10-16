@@ -16,7 +16,8 @@
  *     才 completed=true；result 文本与 assistant 文本归一为 log；system 归一为 log
  *   - codex（exec --json）：item.started/item.completed 归一为 step 对；
  *     agent_message 文本在 step_end 前以 log 透传；turn.completed.usage 挂 turn_end；
- *     turn.failed 无 usage（已知坑）——错误信息以 log 透传后给出 completed=false
+ *     turn.failed 无 usage（已知坑）——错误信息以 log 透传后给出 completed=false，
+ *     且 error.message 一并挂 turn_end.error（协议 v1.1 裁决落地，codex 适配器首刀携带）
  *   - kimi（已知坑：usage 在 session wire.jsonl，不在 stdout）：stdout 形态与 claude 同构
  *     但无 usage；第三个可选参数 wireJsonlText 提供伴生文件内容，其中全部 usage 记录
  *     逐轮求和后挂到 stdout 的 turn_end 上。缺 wire / wire 无 usage 记录——追加一条
@@ -186,8 +187,14 @@ function parseCodex(text: string): StreamEvent[] {
       const err = asRecord(v['error'])
       const errMsg = err === undefined ? undefined : asString(err['message'])
       if (errMsg !== undefined && errMsg !== '') out.push(logEvent(`turn failed: ${errMsg}`))
-      // 已知坑：turn.failed 不带 usage——completed=false 且无 usage（测试用 toStrictEqual 冻结）
-      out.push(turnEndEvent(false, undefined))
+      // 已知坑：turn.failed 不带 usage——completed:false 且无 usage（测试用 toStrictEqual 冻结）。
+      // v1.1 裁决落地（codex 适配器首刀携带）：error.message 一并挂 turn_end.error，
+      // 错误信息不只在 log 透传——契约 turn_end.error 字段已有（docs/25-§二），此处补映射
+      out.push({
+        type: 'turn_end',
+        completed: false,
+        ...(errMsg !== undefined && errMsg !== '' ? { error: errMsg } : {}),
+      })
       continue
     }
     out.push(logEvent(line))
