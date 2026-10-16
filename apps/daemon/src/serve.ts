@@ -23,8 +23,10 @@
  *   - executor 只注册 fake adapter（demo）；真 dsh 注册走 agent.yaml + agentconfig.wireRegistry。
  *   - 网关（17-§7 写入全收口）：**平台写路径已过闸**（src/gated-platform.ts——控制面 control key、
  *     署名注入、fail-closed；缺省开，daemon.yaml `gatewaySecret:` 配密钥、缺省开发值生产必换）。
- *     仍欠：worker 级按单 wkey（派发随 TaskBrief 签发/关单吊销）与 studio-tools MCP——独立包后续单；
- *     审批流（呈批事件名待批示）同前。
+ *     worker 级按单 wkey 已接（src/worker-key.ts：dispatch 签发+workspace 文件注入、
+ *     GATE_FAIL/断路/CLOSE 吊销+删文件）；仍欠：studio-tools stdio 入口（worker 进程内挂 MCP
+ *     server 的入口单——工厂已备，须复用 createStudioToolsServer）与吊销集跨进程可见性
+ *     （authority 落 store，gateway 包挂账）；审批流（呈批事件名待批示）同前。
  *   - 定时岗（v0.4，jobs: true）：scheduler（src/scheduler.ts）+ 引擎意图入口（engine.ingest）
  *     全链已通（demo 样例岗=DEMO_SNAPSHOT.health-patrol）；**公司目录 jobs 段装载不进
  *     snapshot**——packages/company 校验器只收形状、toSnapshot 恒置 jobs:[]（v0.1-M3 边界，
@@ -36,6 +38,7 @@
 import { createRegistry } from '@studio-next/adapters'
 import { createModelCatalog, fingerprint, parseModelsYaml } from '@studio-next/core'
 import { createGateway, CONTROL_TICKET } from '@studio-next/gateway'
+import type { SignatureContext } from '@studio-next/gateway'
 import { openLedger, type Ledger } from '@studio-next/store'
 import type { CompanySnapshot, FlowPlatform, ModelCatalog, PersonRef, ScheduledJob } from '@studio-next/contract'
 import { readFileSync } from 'node:fs'
@@ -52,6 +55,7 @@ import { createGatedPlatform } from './gated-platform.ts'
 import { createDefaultGateRunner } from './gate.ts'
 import { createDefaultAssembler } from './prompt-assembly.ts'
 import { createScheduler, nextRunAt, scheduleIntent, type Scheduler } from './scheduler.ts'
+import type { WorkerKeyDeps } from './worker-key.ts'
 
 // ————————————————————————— 配置 —————————————————————————
 
@@ -306,6 +310,27 @@ function wirePlatform(config: ServeConfig): FlowPlatform {
 }
 
 /**
+ * daemon 侧网关身份（控制面与 worker-key 签发共用的 secret/署名上下文/工号）。
+ * 签名上下文取快照首部门+公司级（控制面无人员档案，拟稿待批）。
+ */
+function daemonIdentity(config: ServeConfig, snapshot: CompanySnapshot): {
+  secret: Uint8Array
+  ctx: SignatureContext
+  author: string
+} {
+  return {
+    secret: new TextEncoder().encode(config.gatewaySecret ?? DEV_GATEWAY_SECRET),
+    ctx: {
+      company: snapshot.name,
+      dept: snapshot.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback,
+      role: 'daemon',
+      level: Math.max(1, snapshot.level),
+    },
+    author: ENGINE_CONFIG_DEFAULTS.actor,
+  }
+}
+
+/**
  * 网关写收口接线（17-§7：engine 直调 platform 是最后一条未收口写路径——本函数收口）。
  * 控制面实例（ticket=CONTROL_TICKET）+ daemon 侧身份署名；gateway: false 时裸 platform 直返
  * （对照/测试用——生产不得关）。签名上下文取快照首部门+公司级（控制面无人员档案，拟稿待批）。
@@ -315,26 +340,28 @@ function wireGatedPlatform(raw: FlowPlatform, config: ServeConfig, snapshot: Com
     log('[serve] 警告：gateway=false——平台写路径未过闸（仅测试/对照用；生产不得关，17-§7）')
     return raw
   }
-  // daemon 控制面署名身份（公司名+首部门+控制面角色+公司级；无人员档案——拟稿待批）
-  const ctx = {
-    company: snapshot.name,
-    dept: snapshot.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback,
-    role: 'daemon',
-    level: Math.max(1, snapshot.level),
-  }
+  const { secret, ctx, author } = daemonIdentity(config, snapshot)
   const usingDevSecret = config.gatewaySecret === undefined
-  const gateway = createGateway({
-    secret: new TextEncoder().encode(config.gatewaySecret ?? DEV_GATEWAY_SECRET),
-    clock,
-    ticket: CONTROL_TICKET,
-    ctx,
-    author: ENGINE_CONFIG_DEFAULTS.actor,
-  })
+  const gateway = createGateway({ secret, clock, ticket: CONTROL_TICKET, ctx, author })
   log(
     `[serve] 网关已接：平台写路径全收口（17-§7；控制面 control key，一调用一签发）` +
       `${usingDevSecret ? '——【警告】用开发缺省密钥（生产必配 daemon.yaml gatewaySecret:）' : '（密钥来自 daemon.yaml）'}`,
   )
-  return createGatedPlatform(raw, gateway, { ctx, author: ENGINE_CONFIG_DEFAULTS.actor })
+  return createGatedPlatform(raw, gateway, { ctx, author })
+}
+
+/**
+ * worker 级 wkey 接线（17-§7「按单签发→随派发注入→关单吊销」；src/worker-key.ts）。
+ * gateway: false 时不签发（与控制面同开关）；签发实例绑 CONTROL_TICKET——本实例只用
+ * issue/revoke 面，verify 面结构性失效（永远不能验 worker key，防误用；worker 侧验签
+ * 归 per-ticket studio-tools 接线，吊销跨进程可见性疑点见 worker-key.ts 头注）。
+ */
+function wireWorkerKeys(config: ServeConfig, snapshot: CompanySnapshot, clock: () => number, log: (line: string) => void): WorkerKeyDeps | undefined {
+  if (!config.gateway) return undefined
+  const { secret, ctx, author } = daemonIdentity(config, snapshot)
+  const gateway = createGateway({ secret, clock, ticket: CONTROL_TICKET, ctx, author })
+  log('[serve] worker wkey 已接：按单签发 → workspace `.studio-next/wkey`（0600）注入 → GATE_FAIL/断路/CLOSE 吊销+删文件（17-§7；scope=六动词全集）')
+  return { gateway }
 }
 
 // ————————————————————————— 定时岗：播种与运行栈 —————————————————————————
@@ -448,9 +475,12 @@ export function buildServeRuntime(
     ...(config.budgetTicketCapUsd !== undefined ? { budgetTicketCapUsd: config.budgetTicketCapUsd } : {}),
     ...(config.budgetPersonCapUsd !== undefined ? { budgetPersonCapUsd: config.budgetPersonCapUsd } : {}),
   }
+  // worker 级 wkey（17-§7）：按单签发→workspace 文件注入→关单吊销（src/worker-key.ts）
+  const workerKeys = wireWorkerKeys(config, snapshot, clock, log)
   const engine = createEngine({
     // 写路径网关收口（17-§7）：raw platform 包一层 gated 代理——engine 写调用签名不变（透明）
     platform: wireGatedPlatform(wirePlatform(config), config, snapshot, clock, log),
+    ...(workerKeys !== undefined ? { workerKeys } : {}),
     ledger,
     registry,
     assembler: createDefaultAssembler({
