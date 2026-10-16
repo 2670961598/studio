@@ -46,7 +46,7 @@
 |---|---|---|
 | `meta` | contract 自身（runner 自证） | 机制本身 |
 | `dir` | company 校验器 | 语义（规则命中）；行号定位由 company 单测负责 |
-| `evt` / `rpt` | 待 v0.1-M4 落 | 事件/REPORT 格式 |
+| `evt` / `rpt` | contract 自身（src/schemas/，M1.2 已落：evt 5 条 + rpt 3 条） | 事件记录/REPORT+summary 格式 |
 | `exe` / `plat` / `inv` / `mdl` / `gw` | 各泳道 | 端口冒烟 case |
 
 ## 运行方式
