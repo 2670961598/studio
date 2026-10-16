@@ -23,6 +23,7 @@ import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createRegistry } from '@studio-next/adapters'
 import { initCompany, loadCompanyDirectory, readDirectoryFiles } from '@studio-next/company'
+import { budgetView, foldBudgets } from '@studio-next/core'
 import type { CompanySnapshot, FlowPlatform, PersonRef } from '@studio-next/contract'
 import { openLedger, type Ledger } from '@studio-next/store'
 import { ENGINE_CONFIG_DEFAULTS, createEngine, type Engine, type TickReport } from '../src/engine.ts'
@@ -195,6 +196,19 @@ describe('demo 端到端：create → 派发 → 收割 → GATE_PASS → CLOSE 
     expect(dispatch?.payload_hash).toMatch(/^sha256:[0-9a-f]{64}$/)
     expect(dispatch?.size).toBeGreaterThan(0)
     expect(dispatch?.attempt).toBe(1)
+
+    // 预算闸（16-§三 / 20-§六.8）：DISPATCH 前已落 reserve 双行（issue+person/#p；态 B
+    // 降级：估算=适配器自报——fake=0.01 与实际成本同额）；预留先于派发（id 全序直证落账序）
+    const budget = report.phases.dispatch
+    expect(budget.budgetReserved).toBe(1)
+    expect(budget.budgetRefused).toBe(0)
+    const reserves = stack.ledger.queryBudgets({ scope_kind: 'issue', scope_id: created.id }).filter((r) => r.kind === 'reserve')
+    const personReserves = stack.ledger.queryBudgets({ scope_kind: 'person', scope_id: (snapshot.people[0] as PersonRef).id }).filter((r) => r.kind === 'reserve')
+    expect(reserves).toHaveLength(1)
+    expect(personReserves).toHaveLength(1)
+    expect(personReserves[0]?.id).toBe(`${reserves[0]?.id}#p`)
+    expect(reserves[0]?.estimated_usd).toBe(0.01)
+    expect(dispatch !== undefined && reserves[0]?.id < dispatch.id).toBe(true)
   })
 
   it('tick2：收割 → GATE_PASS（四要件齐 + work_records 收口 done + 断路复位）', async () => {
@@ -218,6 +232,22 @@ describe('demo 端到端：create → 派发 → 收割 → GATE_PASS → CLOSE 
     expect(gatePass?.tokens).toEqual({ input: 100, output: 50 })
     expect(gatePass?.cost_usd).toBe(0.01)
     expect(gatePass?.duration_ms).toBe(10)
+
+    // 预算结算全链对账（16-§三：成本按每成功交付记账）：settle 双行冲销预留——
+    // 折叠后 issue/person 两档均 reserved=0 / settled=0.01（行流重建=净视图）
+    const settles = stack.ledger.queryBudgets({ scope_kind: 'issue', scope_id: 'T-1' }).filter((r) => r.kind === 'settle')
+    expect(settles).toHaveLength(1)
+    expect(settles[0]?.actual_usd).toBe(0.01)
+    expect(settles[0]?.estimated_usd).toBe(0.01)
+    expect(gatePass?.note).toContain('budget=settle 冲销 $0.0100 实际 $0.0100')
+    const issueView = budgetView(foldBudgets(stack.ledger.queryBudgets({ scope_kind: 'issue', scope_id: 'T-1' })), 'issue', 'T-1')
+    expect(issueView).toEqual({ reserved: 0, settled: 0.01, refused: 0 })
+    const personView = budgetView(
+      foldBudgets(stack.ledger.queryBudgets({ scope_kind: 'person', scope_id: (snapshot.people[0] as PersonRef).id })),
+      'person',
+      (snapshot.people[0] as PersonRef).id,
+    )
+    expect(personView).toEqual({ reserved: 0, settled: 0.01, refused: 0 })
   })
 
   it('tick3：collect → QA_PASS（证据就绪→复验通过）', async () => {
