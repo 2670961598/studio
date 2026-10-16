@@ -9,8 +9,8 @@
  * 收割成本双口径分列、禁止相加当总额——本卡是其展示面）。
  *
  * 分层纪律：本文件零 IO、零 Hono 依赖——只吃 Ledger 读面（queryEvents/listJobs/
- * listWorkRecords/listSessions/listTicketMirrors/listPeople/listDepartments/
- * queryBudgets，见 packages/store/src/ledger.ts）吐纯数据快照与 HTML；
+ * listWorkRecords/listSessions/listBudgets，见 packages/store/src/ledger.ts）
+ * 吐纯数据快照与 HTML；
  * server.ts 只做路由与传输。数据源全部为 store 读面，不直接碰 SQL。
  *
  * 只读纪律：panel 对 SQLite 零写。WAL 模式下单写多读天然并发安全（store/driver.ts
@@ -383,21 +383,19 @@ export const DEFAULT_COSTS_DAYS = 7
 export const MAX_COSTS_DAYS = 90
 
 /**
- * budgets 全量读的限制与绕行（**拟稿待批点**）：store 读面只有按 scope 的 queryBudgets
- * （17-§3 表无「列全部 budgets」面）。本聚合用其余读面枚举 scope 全集——
- *   issue ← listTicketMirrors()；person ← listPeople()；company ← listDepartments()/listJobs() 的 company。
- * 已知缺口：无镜像行的 scope（如手插预算未镜像对应单据）不可见。建议 store 增
- * listBudgets() 全量读面后本枚举整体替换（响应 basis 字段机器可辨）。
+ * budgets 读面口径（store listBudgets 全量读面已落位，本卡为其消费接线）：本聚合直连
+ * ledger.listBudgets({since})——无 scope 维、不依赖镜像枚举；无镜像行的 scope
+ * （如手插预算未镜像对应单据）同样可见（旧「镜像枚举近似」时代的无镜像不可见缺口已消）。
  */
 export const COSTS_BUDGETS_BASIS_NOTE =
-  'budgets 按 scope 枚举读出（issue←ticket_mirror、person←people、company←departments/jobs）；' +
-  '无镜像行的 scope 预算不可见——待 store 提供 budgets 全量读面后替换'
+  'budgets 走 store listBudgets 全量读面（since 起 ts 闭区间，与日桶窗口同界）；' +
+  '无镜像行的 scope 预算同样可见'
 
 /**
  * 成本卡一次收集（双序列 + 收割分列列）：
  *   ① events：queryEvents({since: 首桶}) 拉回后滤 event='LLM'（事件名维 panel 侧滤）；
  *   ② work_records：listWorkRecords 全量，ended_at 落窗者按 ended 日归桶（在途不计）；
- *   ③ budgets：scope 枚举（见 COSTS_BUDGETS_BASIS_NOTE）→ queryBudgets 逐 scope → 扁平归桶。
+ *   ③ budgets：listBudgets({since}) 全量读面（见 COSTS_BUDGETS_BASIS_NOTE）按 ts 日归桶。
  * 桶集恰 days 个（now 所在 UTC 日收尾），空日零填充。
  */
 export function buildCostsSnapshot(ledger: Ledger, options?: { now?: number; days?: number }): CostsSnapshot {
@@ -439,28 +437,16 @@ export function buildCostsSnapshot(ledger: Ledger, options?: { now?: number; day
     point.harvest_runs += 1
   }
 
-  const scopes = new Map<'issue' | 'person' | 'company', Set<string>>()
-  const addScope = (kind: 'issue' | 'person' | 'company', id: string): void => {
-    const ids = scopes.get(kind) ?? new Set<string>()
-    ids.add(id)
-    scopes.set(kind, ids)
-  }
-  for (const t of ledger.listTicketMirrors()) addScope('issue', t.issue)
-  for (const p of ledger.listPeople()) addScope('person', p.person_id)
-  for (const d of ledger.listDepartments()) addScope('company', d.company)
-  for (const j of ledger.listJobs()) addScope('company', j.company)
-  for (const [scope_kind, ids] of scopes) {
-    for (const scope_id of ids) {
-      for (const b of ledger.queryBudgets({ scope_kind, scope_id })) {
-        if (b.ts < since) continue
-        const idx = bucketIndex(b.ts)
-        const point = points[idx]
-        if (point === undefined) continue
-        if (b.kind === 'reserve') point.reserve_usd += b.estimated_usd ?? 0
-        else if (b.kind === 'settle') point.settle_usd += b.actual_usd ?? 0
-        else point.refusal_usd += b.estimated_usd ?? 0
-      }
-    }
+  // ③ budgets 全量读面：since 下界由读面闭区间保证（ts >= since，与旧 scope 枚举的
+  // b.ts < since 滤除同界——首桶 UTC 日界起点，ts 毫秒直用）；上界不传 until，对齐
+  // ① events 口径（窗口外上界走 bucketIndex → undefined 防御性跳过，如时钟回拨语料）
+  for (const b of ledger.listBudgets({ since })) {
+    const idx = bucketIndex(b.ts)
+    const point = points[idx]
+    if (point === undefined) continue
+    if (b.kind === 'reserve') point.reserve_usd += b.estimated_usd ?? 0
+    else if (b.kind === 'settle') point.settle_usd += b.actual_usd ?? 0
+    else point.refusal_usd += b.estimated_usd ?? 0
   }
   for (const point of points) point.net_usd = point.reserve_usd - point.settle_usd
 

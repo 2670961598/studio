@@ -75,12 +75,12 @@ function run(patch: Record<string, unknown>): Record<string, unknown> {
   }
 }
 
-/** ticket 镜像工厂（budgets 的 issue scope 枚举源） */
+/** ticket 镜像工厂（常规语料：镜像行与预算行并存的常态形态） */
 function mirror(issue: string, ts: number): Record<string, unknown> {
   return { issue, company: 'demo', created: ts, updated: ts, state: 'Opened', type: 'task', dept: 'departments/工程部', level: 3, dispatcher: 'P1' }
 }
 
-/** 最小公司快照（people/departments 镜像——budgets 的 person/company scope 枚举源） */
+/** 最小公司快照（people/departments 镜像——与预算行并存的常规语料；budgets 读已切 listBudgets 全量面，镜像不再是可见性前提） */
 function snapshot(slug = 'demo'): CompanySnapshot {
   return {
     slug,
@@ -129,7 +129,8 @@ beforeAll(async () => {
   seedYdayKey = dayKeyOf(now - DAY_MS)
   seedEmptyKey = dayKeyOf(now - 2 * DAY_MS) // 该日零种子（空桶断言用）
 
-  // budgets scope 枚举源：issue←镜像 / person+company←公司快照
+  // 镜像语料（issue←镜像 / person+company←公司快照）：常规形态；budgets 读走
+  // listBudgets 全量面，镜像不再是读取前提（无镜像行可见性由下方 NO-MIRROR 断言锁定）
   ledger.syncCompany(snapshot())
   ledger.upsertTicketMirror(mirror('BRK-C', yday))
 
@@ -173,7 +174,7 @@ beforeAll(async () => {
   ledger.appendBudget({ id: 'bud-x1', scope_kind: 'issue', scope_id: 'BRK-C', kind: 'refusal', estimated_usd: 0.75, ts: yday + 3 * HOUR })
   ledger.appendBudget({ id: 'bud-r2', scope_kind: 'person', scope_id: 'AGENT-9', kind: 'reserve', estimated_usd: 0.5, ts: today + 3 * HOUR })
   ledger.appendBudget({ id: 'bud-r3', scope_kind: 'company', scope_id: 'demo', kind: 'reserve', estimated_usd: 4.0, ts: today + 4 * HOUR })
-  ledger.appendBudget({ id: 'bud-r4', scope_kind: 'issue', scope_id: 'NO-MIRROR-1', kind: 'reserve', estimated_usd: 8.0, ts: today + 5 * HOUR }) // 无镜像 scope：已知缺口（锁定见下）
+  ledger.appendBudget({ id: 'bud-r4', scope_kind: 'issue', scope_id: 'NO-MIRROR-1', kind: 'reserve', estimated_usd: 8.0, ts: today + 5 * HOUR }) // 无镜像 scope：listBudgets 全量读面下可见（锁定见下）
 })
 
 afterAll(async () => {
@@ -265,7 +266,7 @@ describe('GET /api/breakers', () => {
 // —— /api/costs（成本趋势卡：docs/26 C1 分列口径） ——
 
 describe('GET /api/costs', () => {
-  it('默认 7 天窗对账：今日桶 LLM 岛 0.75（3 条）/收割 2.5（1 单）/reserve 6.5/settle 1.25/净额 5.25；昨日桶 LLM 1.25/收割 1.5/refusal 0.75；空日零填充；totals 与手插数据一致', async () => {
+  it('默认 7 天窗对账：今日桶 LLM 岛 0.75（3 条）/收割 2.5（1 单）/reserve 14.5/settle 1.25/净额 13.25；昨日桶 LLM 1.25/收割 1.5/refusal 0.75；空日零填充；totals 与手插数据一致', async () => {
     const body = await costs()
     expect(body.days).toBe(7)
     expect(body.note).toContain('分列')
@@ -284,10 +285,10 @@ describe('GET /api/costs', () => {
       llm_events: 3,
       harvest_cost_usd: 2.5,
       harvest_runs: 1,
-      reserve_usd: 6.5, // 2.0(issue)+0.5(person)+4.0(company)
+      reserve_usd: 14.5, // 2.0(issue)+0.5(person)+4.0(company)+8.0(无镜像 issue——listBudgets 全量读面可见)
       settle_usd: 1.25, // 仅 actual；无 actual 的 settle 计 0
       refusal_usd: 0,
-      net_usd: 5.25,
+      net_usd: 13.25,
     })
     expect(yday).toMatchObject({ llm_cost_usd: 1.25, llm_events: 1, harvest_cost_usd: 1.5, harvest_runs: 1, refusal_usd: 0.75, net_usd: 0 })
     expect(empty).toMatchObject({
@@ -305,22 +306,22 @@ describe('GET /api/costs', () => {
       llm_events: 4,
       harvest_cost_usd: 4.0,
       harvest_runs: 2,
-      reserve_usd: 6.5,
+      reserve_usd: 14.5,
       settle_usd: 1.25,
       refusal_usd: 0.75,
-      net_usd: 5.25,
+      net_usd: 13.25,
     })
   })
 
-  it('口径排除项锁定：非 LLM 事件的 cost_usd 不入 LLM 岛口径；在途 run 不计收割；窗外老 run 不计；无镜像 scope 的预算不可见（COSTS_BUDGETS_BASIS_NOTE 已知缺口）', async () => {
+  it('口径排除项锁定：非 LLM 事件的 cost_usd 不入 LLM 岛口径；在途 run 不计收割；窗外老 run 不计；无镜像 scope 的预算经 listBudgets 全量读面可见（COSTS_BUDGETS_BASIS_NOTE）', async () => {
     const body = await costs()
     // REPORT_DAILY 带 cost_usd 0.75 但非 LLM——不计（若误计应为 2.75）
     expect(body.totals.llm_cost_usd).toBe(2.0)
     // 在途 9.75 与窗外 7.0 不计（若误计应为 20.75）
     expect(body.totals.harvest_cost_usd).toBe(4.0)
-    // NO-MIRROR-1 的 reserve 8.0 不可见（若可见应为 14.5）——镜像枚举 scope 的已知边界，
-    // 待 store 增 budgets 全量读面后替换（views.COSTS_BUDGETS_BASIS_NOTE）
-    expect(body.totals.reserve_usd).toBe(6.5)
+    // NO-MIRROR-1 无镜像仍有 reserve 8.0：全量读面（listBudgets）下 6.5+8.0=14.5
+    // ——镜像枚举近似时代「无镜像不可见」的缺口已消（views.COSTS_BUDGETS_BASIS_NOTE）
+    expect(body.totals.reserve_usd).toBe(14.5)
   })
 
   it('?days= 可配：days=2 恰两桶且末桶=今天（UTC）；days=99999 夹 90 桶；days=abc 落缺省 7', async () => {
@@ -522,7 +523,7 @@ describe('buildBreakerSnapshot / buildCostsSnapshot（固定 now 直测）', () 
     const DAY8 = DAY10 - 2 * DAY_MS
     const DAY7 = DAY10 - 3 * DAY_MS
 
-    // budgets 的 company scope 枚举源（快照 slug=nope ↔ 预算 scope_id=nope）
+    // 公司镜像语料（快照 slug=nope ↔ 预算 scope_id=nope；listBudgets 全量面下镜像与否不影响可见性）
     fixed.syncCompany(snapshot('nope'))
 
     // 断路：窗外（7 天前）、界上（恰 since，闭端应含）、窗内各一
