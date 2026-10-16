@@ -39,6 +39,7 @@
         "@studio-next/contract": "workspace:*",
         "execa": "^9.4.0",
         "simple-git": "^3.27.0",
+        "yaml": "^2.0.0",
         "zod": "^4.0.0",
       },
     },
