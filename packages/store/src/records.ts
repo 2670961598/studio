@@ -10,6 +10,8 @@
  *     departments=公司目录镜像｜ticket_mirror=YouTrack 镜像｜budgets=本库）。
  *   - v3 jobs 调度表（17-§2 调度表列集 / 18-§三）：公司目录定时岗配置（D9）的持久化投影；
  *     cron 只做形状闸（非空 + ≤6 空白分隔段），表达式解析归 core 后续单——**不引 croner**。
+ *   - v4 收口面 EndWorkRecord（work_records end 入参；daemon 现行 closeWorkRecord 直发
+ *     UPDATE 的正式化）：status 终态值域不锁；tokens 列不在本面（拟稿待批，见接口行注）。
  *
  * **拟稿待批（docs 未细化处逐条标明，contract 落地后替换为契约校验）**：
  *   - 「工号」列名 person_id；「started/ended」→ started_at/ended_at（epoch ms，ended 可空=在途）；
@@ -154,6 +156,23 @@ export interface JobRecord {
   status?: string
 }
 
+// —— v4 吸收面（work_records 收口；daemon 合龙件债，migrations v4 同批） ——
+
+/**
+ * endWorkRecord 收口入参：daemon 现行 closeWorkRecord 直发 UPDATE 的正式化。
+ * 拟稿待批：tokens 列不在本面——daemon 现行直发 UPDATE 会回填 tokens（ResultStats），
+ * 切 store API 时需扩 tokens 入参或收割面另行落账（见 index.ts 疑点清单）。
+ */
+export interface EndWorkRecord {
+  /** 收口时刻（epoch ms；与 started_at 同口径非负整数） */
+  ended_at: number
+  /** 终态；值域 v0 不锁（done/failed 等枚举归收割域/contract 后续收口） */
+  status: string
+  cost_usd?: number
+  report_ref?: string
+  summary_ref?: string
+}
+
 /** store 层临时校验（拟稿待批，见文件头注） */
 export const WorkRecordSchema = z.strictObject({
   id: z.string().min(1),
@@ -281,4 +300,15 @@ export const JobRecordSchema = z.strictObject({
   next_run_at: z.number().int().min(0),
   last_run_at: z.number().int().min(0).optional(),
   status: z.string().min(1).optional(),
+})
+
+// —— v4 收口面临时闸（EndWorkRecord 形状见上；strict：未知列拒收——拟稿待批，见接口行注） ——
+
+/** store 层临时校验（拟稿待批，见文件头注；status 终态值域不锁——归收割域后续收口） */
+export const EndWorkRecordSchema = z.strictObject({
+  ended_at: z.number().int().min(0),
+  status: z.string().min(1),
+  cost_usd: z.number().min(0).optional(),
+  report_ref: z.string().min(1).optional(),
+  summary_ref: z.string().min(1).optional(),
 })

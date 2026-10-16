@@ -222,6 +222,23 @@ const MIGRATIONS: readonly Migration[] = [
       '',
     ].join('\n'),
   },
+  {
+    version: 4,
+    name: 'v0.5 吸收：daemon_kv 表接管（daemon 游标/tick.seq 持久化的正式家）',
+    sql: [
+      // daemon_kv：daemon 进程级键值持久化（活动流游标 activity.cursor / 拍序 tick.seq——17-§2）。
+      // **接管关系**：本表此前由 daemon 在台账库自建（apps/daemon/src/engine.ts 的 KV_TABLE_SQL，
+      // 引擎头注拟稿已预告「store 升 kv 表后迁移」）。本 DDL 与 daemon 现行 SQL **字节级一致**
+      // （同为 CREATE TABLE IF NOT EXISTS、列体同为 `key TEXT PRIMARY KEY, value TEXT NOT NULL`）：
+      //   - 存量库（daemon 已自建表并落游标/拍序）升 v4：本 DDL 无操作，表与数据原样接管；
+      //   - v4 新库再遇 daemon 现行自建句：同为 IF NOT EXISTS，天然幂等共存，无双建无报错。
+      // 切换路径：daemon 后续单改用 Ledger.kvGet/kvSet（ledger.ts v4 读写面），删除引擎内
+      // 自建 DDL 与 prepared 语句即可；本表不删不迁，数据原地续用。
+      // value 允空串：daemon 以 '' 为「游标 null」的持久形态（kv 列 NOT NULL，回读须还原 null）。
+      'CREATE TABLE IF NOT EXISTS daemon_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);',
+      '',
+    ].join('\n'),
+  },
 ]
 
 /** 内置迁移的最高版本（0 = 无迁移可用，仅占位防呆） */
