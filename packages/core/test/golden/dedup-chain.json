@@ -1,0 +1,86 @@
+{
+  "name": "dedup-chain",
+  "description": "幂等去重链（L0 · T-303，docs/22-§三.2）：同键意图重复 → noop DEDUP_NOOP（100 个重复只唤起一次）；mention 无单意图走 dedupKey；无 ticket 且无 dedupKey → hold INTENT_MALFORMED；意图单号与本单不符 → hold INTENT_MISMATCH。三闸全程绿色（去重语义与闸语义正交）。",
+  "inputs": [
+    {
+      "issue": { "id": "T-303", "title": "知识库条目补全", "state": "新单", "type": "task", "dept": "eng", "level": 0, "assignee": "P-5", "lane": "main", "updated": "2026-10-16T00:00:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "ticket", "company": "acme", "ticket": "T-303", "source": "poll", "priority": 1 },
+      "seenIntentKeys": [],
+      "breaker": { "strikes": 0, "threshold": 3 },
+      "now": 1792108860000,
+      "stallAfterMs": 3600000
+    },
+    {
+      "issue": { "id": "T-303", "title": "知识库条目补全", "state": "新单", "type": "task", "dept": "eng", "level": 0, "assignee": "P-5", "lane": "main", "updated": "2026-10-16T00:00:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "ticket", "company": "acme", "ticket": "T-303", "source": "poll", "priority": 1 },
+      "seenIntentKeys": ["poll|ticket|acme|T-303"],
+      "breaker": { "strikes": 0, "threshold": 3 },
+      "now": 1792108860000,
+      "stallAfterMs": 3600000
+    },
+    {
+      "issue": { "id": "T-303", "title": "知识库条目补全", "state": "新单", "type": "task", "dept": "eng", "level": 0, "assignee": "P-5", "lane": "main", "updated": "2026-10-16T00:01:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "mention", "company": "acme", "source": "matrix", "dedupKey": "m-1" },
+      "seenIntentKeys": ["poll|ticket|acme|T-303"],
+      "breaker": { "strikes": 0, "threshold": 3 },
+      "now": 1792108860000,
+      "stallAfterMs": 3600000
+    },
+    {
+      "issue": { "id": "T-303", "title": "知识库条目补全", "state": "新单", "type": "task", "dept": "eng", "level": 0, "assignee": "P-5", "lane": "main", "updated": "2026-10-16T00:01:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "mention", "company": "acme", "source": "matrix", "dedupKey": "m-1" },
+      "seenIntentKeys": ["poll|ticket|acme|T-303", "matrix|mention|acme|m-1"],
+      "breaker": { "strikes": 0, "threshold": 3 },
+      "now": 1792108860000,
+      "stallAfterMs": 3600000
+    },
+    {
+      "issue": { "id": "T-303", "title": "知识库条目补全", "state": "新单", "type": "task", "dept": "eng", "level": 0, "assignee": "P-5", "lane": "main", "updated": "2026-10-16T00:02:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "webhook", "company": "acme", "source": "hook" },
+      "seenIntentKeys": [],
+      "breaker": { "strikes": 0, "threshold": 3 },
+      "now": 1792108860000,
+      "stallAfterMs": 3600000
+    },
+    {
+      "issue": { "id": "T-303", "title": "知识库条目补全", "state": "新单", "type": "task", "dept": "eng", "level": 0, "assignee": "P-5", "lane": "main", "updated": "2026-10-16T00:03:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "ticket", "company": "acme", "ticket": "T-999", "source": "poll", "priority": 1 },
+      "seenIntentKeys": [],
+      "breaker": { "strikes": 0, "threshold": 3 },
+      "now": 1792108860000,
+      "stallAfterMs": 3600000
+    }
+  ],
+  "expected": [
+    { "type": "dispatch", "code": "DISPATCH" },
+    { "type": "noop", "code": "DEDUP_NOOP" },
+    { "type": "dispatch", "code": "DISPATCH" },
+    { "type": "noop", "code": "DEDUP_NOOP" },
+    { "type": "hold", "code": "HOLD_INTENT_MALFORMED" },
+    { "type": "hold", "code": "HOLD_INTENT_MISMATCH" }
+  ]
+}
