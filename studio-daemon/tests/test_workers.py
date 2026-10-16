@@ -14,7 +14,7 @@ def test_wrap_三件套齐全(tmp_config):
     s = wrap_script("T-1", "/tmp/repo", "/tmp/p.md", "/tmp/s.jsonl", "/usr/bin/claude")
     assert '--model "glm-5.3"' in s                  # 固定主力模型（宪章 §6）
     assert "--max-budget-usd 15.0" in s or "--max-budget-usd 15" in s   # 单次预算帽
-    assert "sleep 2700" in s and "kill -TERM $CPID" in s                # 45min 看门狗
+    assert "sleep 3600" in s and "kill -TERM $CPID" in s                # 60min 看门狗
     assert "WORKER-EXIT=$RC" in s                    # 退出码照旧入 stream
 
 
@@ -38,7 +38,7 @@ def test_未登记执行器报错不静默(tmp_config):
 def test_claude执行器三件套不变(tmp_config):
     from studio.workers import wrap_script
     s = wrap_script("T-10", "/r", "/p", "/s", "/c", executor="claude")
-    assert '--model "glm-5.3"' in s and "--max-budget-usd" in s and "sleep 2700" in s
+    assert '--model "glm-5.3"' in s and "--max-budget-usd" in s and "sleep 3600" in s
 
 
 # ---------------------------------------------------------------- 人事四要素注入（STUDIO-82）
