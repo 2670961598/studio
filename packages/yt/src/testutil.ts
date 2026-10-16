@@ -41,6 +41,13 @@ interface CommentFixture {
   created: number
   author: { login: string }
 }
+/** articles.json 的 API 形状（parentArticle 嵌套）→ 内部 FakeArticle 扁平化 */
+interface ArticleFixture {
+  id: string
+  summary: string
+  content: string
+  parentArticle: { id: string } | null
+}
 
 function loadFixture<T>(name: string): T {
   return JSON.parse(readFileSync(join(FIXTURES_DIR, name), 'utf8')) as T
@@ -129,7 +136,12 @@ export class FakeYouTrack {
       ...(a.target?.idReadable === undefined ? {} : { issueIdReadable: a.target.idReadable }),
       ...(a.author?.login === undefined ? {} : { login: a.author.login }),
     }))
-    this.articles = loadFixture<FakeArticle[]>('articles.json').map((a) => ({ ...a }))
+    this.articles = loadFixture<ArticleFixture[]>('articles.json').map((a) => ({
+      id: a.id,
+      summary: a.summary,
+      content: a.content,
+      parentId: a.parentArticle?.id ?? null,
+    }))
     for (const issue of this.issues) {
       const m = /^([A-Za-z]+)-(\d+)$/.exec(issue.idReadable)
       if (m !== null && m[1] !== undefined && m[2] !== undefined) {

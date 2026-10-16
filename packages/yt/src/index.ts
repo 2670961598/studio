@@ -18,6 +18,11 @@
  *      create() 在 YouTrack 侧必须有项目（N1 公司=项目），本实现以可选 opts.project
  *      落地，缺它时 create 显式报 missing-project-binding。建议端口文档补一笔。
  *   2. opts.clock 预留未用（服务器时间戳权威）；若上游坚持注入时钟需先定语义。
+ *   3. 活动游标双形态兼容：规范形=base64url({v,last})（nextCursor 产出），
+ *      裸活动 id 形（^\d+-\d+$）也认——对齐 localplatform 基线的调用惯例
+ *      （轮询方拿 items 末条 id 续问）。建议契约层冻结「调用方该用哪种」。
+ *      另：nextCursor=null 且 items 非空时，调用方只能凭末条 id 续问——
+ *      端口若想完全自洽，可考虑「items 非空必给 nextCursor」语义（localplatform 同款问题）。
  *
  * 协议/文档疑点（只记录不改 contract）：
  *   1. PlatformActivity.kind 词表未冻结：本实现已知类别归一为 created/commented/

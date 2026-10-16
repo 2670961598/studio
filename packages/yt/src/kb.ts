@@ -142,18 +142,17 @@ export async function kbUpsert(http: YtHttpClient, path: string, md: string): Pr
   const nodes = await listArticles(http, ARTICLE_LIST_FIELDS)
   const index = buildIndex(nodes)
   const { deepestId, resolved } = walkPath(index, segments)
+  if (resolved === segments.length) {
+    // 整条路径已存在：deepestId 即叶子——覆盖 content，不新建
+    await updateArticleContent(http, deepestId as string, md)
+    return
+  }
+  // 有缺段：补缺的中间层与叶子（resolved 段已存在，其后逐级创建）
   let parentId = deepestId
-  // 补缺的中间层与叶子：resolved 段已存在，其后逐级创建
   for (let i = resolved; i < segments.length - 1; i++) {
     const seg = segments[i]
     if (seg === undefined) break
     parentId = await createArticle(http, seg, '', parentId)
-  }
-  const leafKey = `${parentId ?? ''}|${title}`
-  const existing = index.byParentAndSummary.get(leafKey)
-  if (existing !== undefined) {
-    await updateArticleContent(http, existing, md)
-    return
   }
   await createArticle(http, title, md, parentId)
 }

@@ -74,20 +74,27 @@ function httpPath(id: TicketId): string {
   return `/api/issues/${encodeURIComponent(id)}`
 }
 
-/** 单条 GET（404 统一收口为 issue-not-found） */
-export async function fetchIssueJson(http: YtHttpClient, id: TicketId): Promise<IssueJson> {
+/** 单据面 404 统一收口为 issue-not-found（读/写路径同口径） */
+async function rewrapNotFound<T>(id: TicketId, fn: () => Promise<T>): Promise<T> {
   try {
-    return await http.request(issueJsonSchema, {
-      method: 'GET',
-      path: httpPath(id),
-      query: { fields: ISSUE_FIELDS },
-    })
+    return await fn()
   } catch (err) {
     if (err instanceof YouTrackPlatformError && err.subcause === 'not-found') {
       throw new YouTrackPlatformError('EXTERNAL_REJECT', 'issue-not-found', `单据不存在：${id}`)
     }
     throw err
   }
+}
+
+/** 单条 GET（404 统一收口为 issue-not-found） */
+export async function fetchIssueJson(http: YtHttpClient, id: TicketId): Promise<IssueJson> {
+  return rewrapNotFound(id, () =>
+    http.request(issueJsonSchema, {
+      method: 'GET',
+      path: httpPath(id),
+      query: { fields: ISSUE_FIELDS },
+    }),
+  )
 }
 
 /** state 必填：无映射值=实例数据缺状态字段（配置/数据问题，明报） */
@@ -284,12 +291,14 @@ export async function transitionIssue(
   if (typeof toState !== 'string' || toState.trim() === '') {
     throw new YouTrackPlatformError('CONFIG_INVALID', 'bad-state', '目标状态必须非空')
   }
-  const updated = await http.request(issueJsonSchema, {
-    method: 'POST',
-    path: httpPath(id),
-    query: { fields: ISSUE_FIELDS },
-    body: { customFields: [{ name: tr.toPlatform('state'), value: { name: toState } }] },
-  })
+  const updated = await rewrapNotFound(id, () =>
+    http.request(issueJsonSchema, {
+      method: 'POST',
+      path: httpPath(id),
+      query: { fields: ISSUE_FIELDS },
+      body: { customFields: [{ name: tr.toPlatform('state'), value: { name: toState } }] },
+    }),
+  )
   return toIssueRecord(updated, tr)
 }
 
@@ -313,12 +322,14 @@ export async function setIssueField(deps: IssueDeps, id: TicketId, field: string
   }
   if (field === 'title' || field === 'description') {
     const encoded = tr.encodeValue(field, value)
-    await http.request(issueJsonSchema, {
-      method: 'POST',
-      path: httpPath(id),
-      query: { fields: ISSUE_FIELDS },
-      body: { [field === 'title' ? 'summary' : 'description']: encoded },
-    })
+    await rewrapNotFound(id, () =>
+      http.request(issueJsonSchema, {
+        method: 'POST',
+        path: httpPath(id),
+        query: { fields: ISSUE_FIELDS },
+        body: { [field === 'title' ? 'summary' : 'description']: encoded },
+      }),
+    )
     return
   }
   if (field === 'parent') {
@@ -329,10 +340,12 @@ export async function setIssueField(deps: IssueDeps, id: TicketId, field: string
     return
   }
   const platform = tr.toPlatform(field) // 未知/未映射 → unmapped-field 显式报错
-  await http.request(issueJsonSchema, {
-    method: 'POST',
-    path: httpPath(id),
-    query: { fields: ISSUE_FIELDS },
-    body: { customFields: [{ name: platform, value: tr.encodeValue(field, value) }] },
-  })
+  await rewrapNotFound(id, () =>
+    http.request(issueJsonSchema, {
+      method: 'POST',
+      path: httpPath(id),
+      query: { fields: ISSUE_FIELDS },
+      body: { customFields: [{ name: platform, value: tr.encodeValue(field, value) }] },
+    }),
+  )
 }

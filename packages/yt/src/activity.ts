@@ -71,8 +71,15 @@ export function encodeCursor(lastActivityId: string): string {
   return toBase64Url(JSON.stringify(payload))
 }
 
-/** 坏游标如实报错（不静默当从头） */
+/**
+ * 坏游标如实报错（不静默当从头）。
+ * 兼容两种输入（都是不透明字符串，形态归本适配器）：
+ *   1. 规范形：base64url(JSON({v:1,last})) —— nextCursor 的产出形态
+ *   2. 裸活动 id 形（^\\d+-\\d+$）——对齐 localplatform 基线的调用惯例
+ *      （轮询方直接拿 items 末条 id 当游标续问，见 activity.test 基线）
+ */
 export function decodeCursor(cursor: string): string {
+  if (/^\d+-\d+$/.test(cursor)) return cursor
   let payload: unknown
   try {
     payload = JSON.parse(fromBase64Url(cursor)) as unknown
