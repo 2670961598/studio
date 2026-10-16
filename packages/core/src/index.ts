@@ -26,10 +26,16 @@
  *       （tiers/resolve/estimateCost）+ 价目表内容指纹 fingerprint——models.ts
  *       （预算/价目表链地基：estimateCost 供 budgets reserve/settle 折算，17-§3 末）
  *
+ * v0.7 增量（feature/core-budget，预算链纯逻辑；16-§三 预算行 / 20-§六.8 / F1-09）：
+ *   [x] BudgetRow（对齐 store budgets 列，拟升 contract）+ 纯折叠 foldBudgets
+ *       （行流→每票/每人净预留视图 + ticket→person 桥重建）——budget.ts
+ *   [x] reserve 判定面（重复预留拒 / 票级帽+岗级帽超帽落 refusal 行；预留不落即不派）
+ *   [x] settle（冲销该票全部未结预留，成本按每成功交付记账；无预留可结=CONFIG_INVALID）
+ *
  * TODO（后续刀）：
  *   [ ] 主循环相位机骨架（每相位幂等、tick 聚合结构化 actions 落账）
  *   [ ] 泳道租约状态机本体（TTL+续租+死主回收的纯逻辑核）
- *   [ ] 预算预留-结算与 refusal 落点（消费 models.estimateCost）
+ *   [ ] 预算链 store 对接（appendBudget/queryBudgets 喂 foldBudgets；扇出不超父单预留 F1-09）
  *   [ ] 收割四要件判定纯函数（17-§6）
  *   [ ] golden trace 格式升 contract 包（F3-01 进化管线）
  */
@@ -52,8 +58,11 @@ export * from './golden.ts'
 // 模型档装载与目录（docs/25-§3.3 端口 / 17-§4 models.yaml；预算链地基）
 export * from './models.ts'
 
+// 预算链纯逻辑（16-§三 预算行 / 20-§六.8 / F1-09：reserve→settle→refusal）
+export * from './budget.ts'
+
 /** 包名常量 */
 export const PACKAGE_NAME = '@studio-next/core'
 
-/** 包状态标记：状态机/决策/断路/处置/golden/模型档已落地（partial）；主循环与预算待后续刀 */
+/** 包状态标记：状态机/决策/断路/处置/golden/模型档/预算链已落地（partial）；主循环待后续刀 */
 export const PACKAGE_STATUS = 'partial'
