@@ -60,7 +60,10 @@ class Config:
         # worker 约束三件套（宪章 §4.6/§6；审计 P0-3——曾只修在已废弃的 bash 脚本上）
         self.worker_model = os.environ.get("WORKER_MODEL", "glm-5.3")
         self.worker_max_budget_usd = float(os.environ.get("WORKER_MAX_BUDGET", "15"))
-        self.worker_wall_timeout_s = int(os.environ.get("WORKER_WALL_TIMEOUT", "2700"))
+        # 墙钟 45→60min（2026-10-17 PM 调整）：45min 假杀六起（QA/VIS 类单交付峰 40-55min——
+        # 预算转收尾条款为一线纪律，墙钟是二线兜底；假杀成本=kill+salvage+重派 ~30min/起）。
+        # 真挂死仍由 60min 兜底+心跳超时双防线覆盖。
+        self.worker_wall_timeout_s = int(os.environ.get("WORKER_WALL_TIMEOUT", "3600"))
         self.web_port = int(os.environ.get("STUDIO_PORT", "8787"))
         self.web_host = os.environ.get("STUDIO_WEB_HOST", "127.0.0.1")  # 分布式：可指向集中网关
         self.workers_dir.mkdir(parents=True, exist_ok=True)
