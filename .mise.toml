@@ -1,0 +1,5 @@
+# Studio Next 工具链锁定（docs/16-§二：Node 24 LTS + bun）
+# 本文件随仓走：主仓与所有 worktree 泳道自动继承同一版本
+[tools]
+node = "24.21.0"
+bun = "1.4.3"
