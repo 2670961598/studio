@@ -30,6 +30,8 @@ import {
   type AssembleResult,
   type BriefRenderResult,
 } from '@studio-next/prompt'
+import { renderReadViewSection } from './read-tiers.ts'
+import type { TicketReadView } from './read-tiers.ts'
 
 /** 装配入参（engine 派发相位组装；一切内容参数注入） */
 export interface AssembleDispatchInput {
@@ -46,6 +48,12 @@ export interface AssembleDispatchInput {
   agentsTarget: string
   /** AGENTS.md 通道说明（随任务书注入；channel 与 target 同 TaskBrief.AGENTS_MD） */
   agentsChannel: { channel: 'native' | 'user_level' | 'append_system_prompt'; target: string }
+  /**
+   * 单据读面视图（17-§7 读面分级：engine 按岗选档 createView 构造后注入——装配期
+   * 选择非运行期闸）。消费面：任务书追加「单据读面」节（三档同源）+ Blind 档边界
+   * 声明入 L4 scope（持久通道抗 compact）。
+   */
+  readView: TicketReadView
 }
 
 /** 装配产物：AGENTS.md 组装结果（含分层指纹/字节清单）+ 任务书渲染结果（含 TaskBrief） */
@@ -95,6 +103,16 @@ function signatureOf(snapshot: CompanySnapshot, person: PersonRef): string {
 export function createDefaultAssembler(ctx: AssemblerContext): PromptAssembler {
   return (input: AssembleDispatchInput): AssembleDispatchOutput => {
     const person = input.person
+    // 读面分级消费面之一（17-§7）：Blind 档的防污染边界声明 + 产出物路径入 L4 scope——
+    // L4 是 AGENTS.md 持久层（抗 auto-compact），任务书可能被压缩而边界必须长存；
+    // 生成者正文/评论结构性不入（Blind 视图无此数据——结构保证，read-tiers.ts 头注）
+    const blindScope =
+      input.readView.tier === 'blind'
+        ? [
+            '读面=Blind（17-§7 验证岗防生成者上下文污染）：单据正文与评论对本任务一概不可见——verify 的是证据不是叙事，完成判定只依据冻结验收命令与产出物路径',
+            ...(input.readView.artifacts ?? []).map((p) => `产出物路径：\`${p}\``),
+          ]
+        : undefined
     const layers = buildLayers([
       {
         kind: 'L0-framework',
@@ -120,6 +138,7 @@ export function createDefaultAssembler(ctx: AssemblerContext): PromptAssembler {
         acceptance: ctx.acceptance,
         docRefs: ctx.docRefs,
         lessons: ctx.lessons ?? [],
+        ...(blindScope !== undefined ? { scope: blindScope } : {}),
       },
       {
         kind: 'L5-tool',
@@ -139,6 +158,13 @@ export function createDefaultAssembler(ctx: AssemblerContext): PromptAssembler {
       docRefs: ctx.docRefs,
       objective: input.issue.title,
     })
-    return { agentsMd, brief }
+    // 读面分级消费面之二（17-§7）：任务书追加「单据读面」节——任务书是 per-attempt
+    // 操作面（wkey 指引行同款落点裁决，AGENTS.md 是六层组装产物追加破层纯净度，
+    // read-tiers.ts 头注）；三档各自的全量/摘要/最小面在此呈现
+    const withView: BriefRenderResult = {
+      ...brief,
+      text: `${brief.text}${renderReadViewSection(input.readView)}`,
+    }
+    return { agentsMd, brief: withView }
   }
 }
