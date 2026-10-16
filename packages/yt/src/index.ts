@@ -23,6 +23,10 @@
  *      （轮询方拿 items 末条 id 续问）。建议契约层冻结「调用方该用哪种」。
  *      另：nextCursor=null 且 items 非空时，调用方只能凭末条 id 续问——
  *      端口若想完全自洽，可考虑「items 非空必给 nextCursor」语义（localplatform 同款问题）。
+ *   4. since(null)=全量对账模式，返回**最旧 pageSize 条**（非最新一批）——2026-10-17
+ *      宰相探针曾误读为「最新批」。建议 docs/25-§3.2 游标语义补一句：
+ *      「cursor=null 返回自最旧起的对账全量（靠 nextCursor 翻到最新）；增量语义
+ *      只对 since(边界) 成立」。行为与返回结构不动，纯措辞强化（activity.ts 头注同步）。
  *
  * 协议/文档疑点（只记录不改 contract）：
  *   1. PlatformActivity.kind 词表未冻结：本实现已知类别归一为 created/commented/

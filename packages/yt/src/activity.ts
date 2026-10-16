@@ -28,6 +28,10 @@
  *   - **取尽未命中边界**（活动被清理/类别集外）→ 同上视为全量（现行行为，显式化）
  *   - 翻页上限内既未命中也未取尽 → 防御性显式报错 boundary-not-found（实例异常）
  *
+ * since(null) 语义警示（防再误读——2026-10-17 探针教训）：null=**全量对账模式**，
+ * 返回的是**最旧 pageSize 条**（升序起头，靠 nextCursor 翻到最新），**不是最新一批**；
+ * 「只要最新」的调用方应持最新已知活动 id 走增量（since(边界)），别拿 null 换页。
+ *
  * kind 词表：已知类别归一成与 localplatform 对齐的动词（created/commented/
  * transitioned/field-set），未知类别原样透传类别 id（契约疑点：kind 词表未冻结，
  * 见 index 头注）。
