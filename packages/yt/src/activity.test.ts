@@ -2,10 +2,12 @@
  * 活动流测试（重点，口径对齐 localplatform 基线）：
  *  - 游标语义：连续三轮 since()——首轮全量、次轮只增量、无新增空+游标不动；
  *    穿插其他单活动不串；分页不重不漏；坏游标如实报错
+ *  - 边界可达性（裁决(a)，2026-10-17 宰相真实例探针坐实）：作用域外边界=全量重放
+ *    非空转；本作用域最新/次新边界回归；跨页命中；取尽未命中=全量；过滤顺序（raw 找边界）
  *  - 请求契约：activities 只用 fields/$top/$skip（绝无 after/start——NA1）
  *  - 公司作用域：项目前缀过滤；非单据活动（kb 类）保留
  *  - 写后即见：transition/评论自动产生活动，下轮轮询拾取
- * 依据：docs/25-§3.2 游标语义 + docs/03 N10
+ * 依据：docs/25-§3.2 游标语义 + docs/03 N10 + docs/22-§三.2 意图幂等（重放去重哲学）
  */
 import { describe, expect, it } from 'vitest'
 import { FakeYouTrack, makePlatform, expectYtReject } from './testutil.ts'
@@ -114,6 +116,128 @@ describe('游标语义：连续三轮 since()', () => {
     }
     expect(again.length).toBe(8)
     expect(new Set(again).size).toBe(8)
+  })
+})
+
+describe('边界可达性（裁决(a)：作用域外边界=全量重放——2026-10-17 宰相真实例探针坐实）', () => {
+  // 真实例实录：STUDIO 作用域 + pageSize:3 + 四类别集，裸取最新两条=[POLY 前缀 3-411.0-0, STUDIO 前缀 0-0.14-11955]，
+  // since(POLY 边界) 曾静默 items:0/nextCursor:null——daemon 采集游标永不推进=存量增量永久丢失。
+  // fixture 同构：raw 序（新→旧）=168-8(POLY-1) 168-7(STUDIO-2) … 168-1(STUDIO-1)。
+
+  it('边界属他项目（探针 1 形态：POLY 边界=raw 最新）→ 全量重放非空转；改绑场景端到端', async () => {
+    // 场景=公司改绑项目：POLY 时代的游标（168-8）拿到 STUDIO 作用域实例上续问
+    const poly = makePlatform(new FakeYouTrack(), { project: 'POLY' })
+    const polyPage = await poly.activity.since(null)
+    const reboundCursor = polyPage.items[polyPage.items.length - 1]?.id // '168-8'
+    expect(reboundCursor).toBe('168-8')
+
+    const studio = makePlatform(new FakeYouTrack(), { project: 'STUDIO' })
+    const page = await studio.activity.since(reboundCursor ?? null)
+    // 修复前：items:0 + nextCursor:null（静默空转）；修复后：全部 STUDIO 活动升序（上游重放去重）
+    expect(ids(page.items)).toEqual(['168-1', '168-2', '168-3', '168-4', '168-5', '168-6', '168-7'])
+    expect(page.nextCursor).toBeNull()
+    // 游标恢复推进：拿全量末条续问 → 空（采集相位重新健康）
+    const recovered = page.items[page.items.length - 1]?.id ?? null
+    expect(await studio.activity.since(recovered)).toEqual({ items: [], nextCursor: null })
+  })
+
+  it('边界属他项目且居 feed 中部（有新于它的本作用域活动）→ 全量返回不截断（静默丢存量坐实点）', async () => {
+    const fake = new FakeYouTrack()
+    // 注入 POLY 活动插在 168-4 与 168-3 之间（ts=…602500）
+    const boundary = fake.pushActivity({ timestamp: 1767225602500, category: 'IssueUpdatedCategory', issueIdReadable: 'POLY-1', login: 'agent-2' })
+    const p = makePlatform(fake, { project: 'STUDIO', pageSize: 3 })
+    expect(boundary).toBe('170-1')
+    const collected: string[] = []
+    let cursor: string | null = boundary
+    for (let round = 0; round < 10; round++) {
+      const page = await p.activity.since(cursor)
+      collected.push(...ids(page.items))
+      if (page.nextCursor === null) break
+      cursor = page.nextCursor
+    }
+    // 修复前：raw 截断于边界 → 只回 [168-4,168-5,168-6]（丢 168-1/2/3）；修复后：全量 7 条
+    expect(collected).toEqual(['168-1', '168-2', '168-3', '168-4', '168-5', '168-6', '168-7'])
+  })
+
+  it('边界属他项目 + 超 pageSize → 全量按切页协议翻完，不重不漏', async () => {
+    const p = makePlatform(new FakeYouTrack(), { project: 'STUDIO', pageSize: 2 })
+    const collected: string[] = []
+    let cursor: string | null = '168-8' // POLY 边界
+    for (let round = 0; round < 10; round++) {
+      const page = await p.activity.since(cursor)
+      collected.push(...ids(page.items))
+      if (page.nextCursor === null) break
+      cursor = page.nextCursor
+    }
+    expect(collected).toEqual(['168-1', '168-2', '168-3', '168-4', '168-5', '168-6', '168-7'])
+    expect(new Set(collected).size).toBe(7)
+  })
+
+  it('边界=本作用域最新（探针 2 形态，复核无误项回归）→ 0 条且游标不动', async () => {
+    const p = makePlatform(new FakeYouTrack(), { project: 'STUDIO', pageSize: 3 })
+    // 168-7=STUDIO 作用域内最新；其上仅他项目 168-8（raw 序）——对齐真实例 0-0.14-11955 形态
+    expect(await p.activity.since('168-7')).toEqual({ items: [], nextCursor: null })
+  })
+
+  it('边界=本作用域次新 → 恰 1 条（其上他项目活动被滤不误判全量）', async () => {
+    const p = makePlatform(new FakeYouTrack(), { project: 'STUDIO', pageSize: 3 })
+    // 168-6=STUDIO 次新；raw 序其上=[168-8(POLY),168-7(STUDIO)] → 滤后恰 [168-7]
+    const page = await p.activity.since('168-6')
+    expect(ids(page.items)).toEqual(['168-7'])
+    expect(page.nextCursor).toBeNull()
+  })
+
+  it('跨页边界命中（pageSize=2，边界在第三页）→ 只回严格新于边界者，翻页取数确实跨页', async () => {
+    const fake = new FakeYouTrack()
+    const p = makePlatform(fake, { project: 'STUDIO', pageSize: 2 })
+    const collected: string[] = []
+    let cursor: string | null = '168-3'
+    for (let round = 0; round < 10; round++) {
+      const page = await p.activity.since(cursor)
+      collected.push(...ids(page.items))
+      if (page.nextCursor === null) break
+      cursor = page.nextCursor
+    }
+    expect(collected).toEqual(['168-4', '168-5', '168-6', '168-7'])
+    // 边界在第三页命中：首轮 $skip 0→2→4 跨页推进；续页轮从边界页重新收窄（0→2）
+    const skips = fake.calls.filter((c) => c.path === '/api/activities').map((c) => c.query['$skip'])
+    expect(skips).toEqual(['0', '2', '4', '0', '2'])
+  })
+
+  it('取尽未命中边界（id 不在 feed）→ 全量重放（升序切页，现行行为显式化）', async () => {
+    const fake = new FakeYouTrack()
+    const p = makePlatform(fake, { project: 'STUDIO', pageSize: 3 })
+    const page = await p.activity.since('999-9') // 合法裸 id 形但 feed 中不存在
+    expect(ids(page.items)).toEqual(['168-1', '168-2', '168-3']) // 最旧一页 + 游标续翻
+    expect(page.nextCursor).not.toBeNull()
+    // 续翻取尽：并集=全量 7 条
+    const collected: string[] = [...ids(page.items)]
+    let cursor = page.nextCursor
+    for (let round = 0; round < 10 && cursor !== null; round++) {
+      const next = await p.activity.since(cursor)
+      collected.push(...ids(next.items))
+      cursor = next.nextCursor
+    }
+    expect(collected).toEqual(['168-1', '168-2', '168-3', '168-4', '168-5', '168-6', '168-7'])
+    // 首轮翻到 feed 尾（0→3→6，短页取尽）；后续轮从边界前收窄
+    expect(fake.calls.filter((c) => c.path === '/api/activities').map((c) => c.query['$skip'])).toEqual(['0', '3', '6', '0', '3', '0'])
+  })
+
+  it('过滤顺序（现行实现：边界在 raw feed 找=过滤前；raw 序=全局时间序）：作用域内边界之上被他项目包夹仍精确截断', async () => {
+    const fake = new FakeYouTrack()
+    // 再插两条 POLY 活动包夹 168-6：raw 序=[168-8(POLY),170-2(POLY),168-7,170-1(POLY),168-6,…]
+    fake.pushActivity({ timestamp: 1767225606800, category: 'IssueUpdatedCategory', issueIdReadable: 'POLY-1', login: 'agent-2' })
+    fake.pushActivity({ timestamp: 1767225605500, category: 'IssueCommentedCategory', issueIdReadable: 'POLY-1', login: 'agent-2' })
+    const p = makePlatform(fake, { project: 'STUDIO', pageSize: 3 })
+    // 作用域内边界 168-6：新于它的 raw=[168-8,170-2,168-7,170-1] → 滤后恰 [168-7]（非全量、非漏）
+    const page = await p.activity.since('168-6')
+    expect(ids(page.items)).toEqual(['168-7'])
+    expect(page.nextCursor).toBeNull()
+  })
+
+  it('无项目绑定（scope=undefined）→ 边界永不出作用域：raw 最新=全 feed 最新 → 正常 0 条', async () => {
+    const p = makePlatform(new FakeYouTrack(), { pageSize: 3 })
+    expect(await p.activity.since('168-8')).toEqual({ items: [], nextCursor: null })
   })
 })
 
