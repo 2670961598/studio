@@ -30,10 +30,15 @@
  *   - 采集增量：activity 游标增量 + issues.list 全量对账（17-§12 分页/增量优化后续）。
  *
  * 拟稿待批点（本文件口径，汇报后走批示流）：
- *   - 游标持久化：store 无 kv 表，jobs 表是调度投影不宜复用——daemon 在台账库自建 daemon_kv
- *     （key TEXT PK, value TEXT；daemon 是台账唯一写入者，写面合法）；store 升级 kv 表后迁移。
- *   - work_records 收口：store 只有 insert 无 update——收口（ended_at/status/cost/report_ref
- *     回填）经 ledger.db 标准面直发 UPDATE（拟稿；store 补 updateWorkRecord 后迁移）。
+ *   - 游标持久化【已清偿——切 store v4 正式面】：daemon_kv 自建段（DDL+prepared 语句）已删，
+ *     改用 ledger.kvGet/kvSet（v4 正式读写面，语句与原自建逐字一致——字节级兼容）；键名
+ *     'activity.cursor'/'tick.seq'、值形态（空串=游标 null 持久形态）、幂等语义全保持，
+ *     存量数据原地续用（接管关系见 migrations v4 头注）。
+ *   - work_records 收口【已清偿——切 store v4 正式面】：closeWorkRecord 直发 UPDATE 已删，
+ *     改用 ledger.endWorkRecord（ended_at/status/cost_usd/tokens/report_ref/summary_ref
+ *     全列入参；未给值 COALESCE 不动，语句列位与原直发逐列同形）。收口路径结构性单次
+ *     （closeWorkRecord 调用点均在 inflight 注销前、每 entry 恰一次），v4 面「已收口再收=
+ *     CONFIG_INVALID」的防重闸在正常流不触发——是对原语句的收口语义收紧，非行为变更。
  *   - seenIntentKeys 语义：DISPATCH 落账即「意图已消费」；该单出现 GATE_PASS/GATE_FAIL 后键
  *     释放（成功→证据就绪走收割链；失败→回首批位可再派）。100 重复活动→1 次派发即此语义。
  *   - attempt 口径：= 该单 DISPATCH 事件计数 + 1（events 派生，可重放）。
@@ -251,7 +256,6 @@ export interface Engine {
   readonly config: EngineConfig
 }
 
-const KV_TABLE_SQL = 'CREATE TABLE IF NOT EXISTS daemon_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)'
 const CURSOR_KEY = 'activity.cursor'
 const TICK_SEQ_KEY = 'tick.seq'
 
@@ -265,20 +269,9 @@ export function createEngine(deps: EngineDeps): Engine {
   const inflight = new Map<TicketId, Inflight>()
   let seq = 0
 
-  // daemon_kv（拟稿：store 升 kv 表后迁移，见文件头注）
-  ledger.db.exec(KV_TABLE_SQL)
-  const kvGetStmt = ledger.db.prepare('SELECT value FROM daemon_kv WHERE key = ?')
-  const kvSetStmt = ledger.db.prepare(
-    'INSERT INTO daemon_kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
-  )
-  const kvGet = (key: string): string | null => {
-    const row = kvGetStmt.get(key) as { value: string } | undefined
-    return row === undefined ? null : row.value
-  }
-  const kvSet = (key: string, value: string): void => {
-    kvSetStmt.run(key, value)
-  }
-  const seqSeed = Number.parseInt(kvGet(TICK_SEQ_KEY) ?? '0', 10)
+  // daemon_kv：store v4 正式面（活动流游标/拍序的家——ledger.kvGet/kvSet；本引擎自建 DDL
+  // 与 prepared 语句已删，存量数据原地续用，见文件头注「已清偿」两条与 migrations v4 头注）
+  const seqSeed = Number.parseInt(ledger.kvGet(TICK_SEQ_KEY) ?? '0', 10)
   if (Number.isInteger(seqSeed) && seqSeed > 0) seq = seqSeed
 
   // ————————————————— 小构件 —————————————————
@@ -579,13 +572,13 @@ export function createEngine(deps: EngineDeps): Engine {
     if (fourOk) {
       const anchors = flowAnchors(flow)
       const transitioned = await platform.issues.transition(ticket, anchors.evidenceReady)
-      closeWorkRecord(entry.workRecordId, {
+      ledger.endWorkRecord(entry.workRecordId, {
+        ended_at: now(),
         status: 'done',
-        endedAt: now(),
-        costUsd: stats.cost.usd,
+        cost_usd: stats.cost.usd,
         tokens: stats.tokens,
-        reportRef: gate.reportExists ? gate.reportPath : undefined,
-        summaryRef: gate.summaryPath,
+        ...(gate.reportExists ? { report_ref: gate.reportPath } : {}),
+        ...(gate.summaryPath !== undefined ? { summary_ref: gate.summaryPath } : {}),
       })
       breaker = onSuccess(breaker, ticket).newState
       inflight.delete(ticket)
@@ -620,7 +613,7 @@ export function createEngine(deps: EngineDeps): Engine {
     const flow = flowOf(fresh)
     // 断路签名：四要件失败形态（同形态连击才熔断——breaker streak 语义）
     const signature = `harvest:${verdict.completed ? 'c' : '-'}${verdict.nonEmptyOutput ? 'o' : '-'}${verdict.reportExists ? 'r' : '-'}${verdict.exit0 ? 'g' : '-'}`
-    closeWorkRecord(entry.workRecordId, { status: 'failed', endedAt: now() })
+    ledger.endWorkRecord(entry.workRecordId, { status: 'failed', ended_at: now() })
     inflight.delete(ticket)
     releaseLane(entry.lane, ticket)
     if (flow !== undefined) {
@@ -653,38 +646,11 @@ export function createEngine(deps: EngineDeps): Engine {
     return 'failed'
   }
 
-  /** work_records 收口（store 无 update 面——ledger.db 标准面直发 UPDATE，拟稿见头注） */
-  function closeWorkRecord(
-    id: string,
-    closed: {
-      status: string
-      endedAt: number
-      costUsd?: number | undefined
-      tokens?: ResultStats['tokens'] | undefined
-      reportRef?: string | undefined
-      summaryRef?: string | undefined
-    },
-  ): void {
-    ledger.db
-      .prepare(
-        'UPDATE work_records SET ended_at = ?, status = ?, cost_usd = COALESCE(?, cost_usd), tokens = COALESCE(?, tokens), report_ref = COALESCE(?, report_ref), summary_ref = COALESCE(?, summary_ref) WHERE id = ?',
-      )
-      .run(
-        closed.endedAt,
-        closed.status,
-        closed.costUsd ?? null,
-        closed.tokens !== undefined ? JSON.stringify(closed.tokens) : null,
-        closed.reportRef ?? null,
-        closed.summaryRef ?? null,
-        id,
-      )
-  }
-
   // ————————————————— tick：七相位 —————————————————
 
   async function tick(): Promise<TickReport> {
     seq += 1
-    kvSet(TICK_SEQ_KEY, String(seq))
+    ledger.kvSet(TICK_SEQ_KEY, String(seq))
     const startedAt = now()
     const tickEvents: EventRecord[] = []
     const decisions: TickDecisionEntry[] = []
@@ -694,7 +660,7 @@ export function createEngine(deps: EngineDeps): Engine {
     let mutations = 0
 
     // —— 相位 1 采集：activity 增量（游标）+ issues 全量对账（镜像 upsert） ——
-    const cursorRaw = kvGet(CURSOR_KEY)
+    const cursorRaw = ledger.kvGet(CURSOR_KEY)
     // 空串=「游标为 null（尚未消费任何活动）」的持久形态（kv 列 NOT NULL——回读须还原 null）
     const cursorBefore = cursorRaw === '' || cursorRaw === null ? null : cursorRaw
     let cursor: string | null = cursorBefore
@@ -722,7 +688,7 @@ export function createEngine(deps: EngineDeps): Engine {
         }
         if (page.nextCursor === null) break
       }
-      kvSet(CURSOR_KEY, cursor ?? '')
+      ledger.kvSet(CURSOR_KEY, cursor ?? '')
     } catch (err) {
       errors.push(`采集相位失败：${err instanceof Error ? err.message : String(err)}`)
     }
