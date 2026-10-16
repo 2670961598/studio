@@ -12,6 +12,8 @@
  *     态 A「estimateCost 校准+双帽」；缺省=态 B 降级「估算=适配器自报、仅票级帽」，
  *     两态详见 src/budget-gate.ts 头注。**缺省不拷贝 models.example.yaml**）
  *   budgetTicketCapUsd / budgetPersonCapUsd（可选预算帽：票级恒生效；岗级仅态 A 生效）
+ *   gateway: true|false（网关写收口开关，缺省开——17-§7；生产不得关）
+ *   gatewaySecret: <网关 HMAC 密钥>（>=32B；缺省开发值——**生产必配**，见 DEV_GATEWAY_SECRET 警告）
  *
  * v0 边界（诚实标注——v0.5 真单前还差什么）：
  *   - platform: localfile 未接线（@studio-next/localplatform 在 platform 泳道，未挂 daemon
@@ -19,7 +21,10 @@
  *   - 配置解析为零依赖手写扁平 YAML 子集（注释/#、key: value、引号剥壳、数字/布尔推断）——
  *     真 YAML（yaml@2 带行号 AST）装载归 daemon 依赖登记后的后续刀（16-§二 选型纪律）。
  *   - executor 只注册 fake adapter（demo）；真 dsh 注册走 agent.yaml + agentconfig.wireRegistry。
- *   - 无网关（wkey/署名/动作词校验）、无审批流。
+ *   - 网关（17-§7 写入全收口）：**平台写路径已过闸**（src/gated-platform.ts——控制面 control key、
+ *     署名注入、fail-closed；缺省开，daemon.yaml `gatewaySecret:` 配密钥、缺省开发值生产必换）。
+ *     仍欠：worker 级按单 wkey（派发随 TaskBrief 签发/关单吊销）与 studio-tools MCP——独立包后续单；
+ *     审批流（呈批事件名待批示）同前。
  *   - 定时岗（v0.4，jobs: true）：scheduler（src/scheduler.ts）+ 引擎意图入口（engine.ingest）
  *     全链已通（demo 样例岗=DEMO_SNAPSHOT.health-patrol）；**公司目录 jobs 段装载不进
  *     snapshot**——packages/company 校验器只收形状、toSnapshot 恒置 jobs:[]（v0.1-M3 边界，
@@ -30,6 +35,7 @@
  */
 import { createRegistry } from '@studio-next/adapters'
 import { createModelCatalog, fingerprint, parseModelsYaml } from '@studio-next/core'
+import { createGateway, CONTROL_TICKET } from '@studio-next/gateway'
 import { openLedger, type Ledger } from '@studio-next/store'
 import type { CompanySnapshot, FlowPlatform, ModelCatalog, PersonRef, ScheduledJob } from '@studio-next/contract'
 import { readFileSync } from 'node:fs'
@@ -42,6 +48,7 @@ import {
   type TickReport,
 } from './engine.ts'
 import { createFakeAdapter, createFakePlatform } from './fakes.ts'
+import { createGatedPlatform } from './gated-platform.ts'
 import { createDefaultGateRunner } from './gate.ts'
 import { createDefaultAssembler } from './prompt-assembly.ts'
 import { createScheduler, nextRunAt, scheduleIntent, type Scheduler } from './scheduler.ts'
@@ -87,6 +94,18 @@ export interface ServeConfig {
   budgetTicketCapUsd?: number
   /** 岗级预算帽缺省（USD；04-§四；仅价目表态 A 生效） */
   budgetPersonCapUsd?: number
+  /**
+   * 网关写收口开关（17-§7「一切平台写入经 wkey 网关」；src/gated-platform.ts）：
+   * 缺省开——demo fake 平台也过真闸（同 secret 同验签链路）证明收口面；false=裸 platform
+   * （仅测试/对照用，生产不得关——头注警告）。
+   */
+  gateway: boolean
+  /**
+   * 网关 HMAC 密钥（daemon.yaml `gatewaySecret:`；>=32 字节，不足构造期抛 CONFIG_INVALID 拒启动）。
+   * 【警告】缺省=开发占位值（下方 DEV_GATEWAY_SECRET）——**生产必配强随机密钥**；
+   * 密钥只进 HMAC，永不入日志/错误消息/台账（gateway 纪律）。
+   */
+  gatewaySecret?: string
 }
 
 export const DEFAULT_SERVE_CONFIG: ServeConfig = {
@@ -103,7 +122,15 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   autoApprove: false,
   jobs: false,
   jobPollMs: 15_000,
+  gateway: true,
 }
+
+/**
+ * 开发缺省网关密钥（demo/测试占位——46 ASCII 字节，过 32B 门限）。
+ * 【警告】生产必配 daemon.yaml `gatewaySecret:`（强随机 >=32B）：缺省值公开在仓库里，
+ * 等于闸上无锁；secret 只进 HMAC 不落任何日志/台账（gateway 包纪律）。
+ */
+export const DEV_GATEWAY_SECRET = 'studio-next-dev-gateway-secret-do-not-use-in-prod'
 
 function parseScalar(raw: string): string | number | boolean {
   const v = raw.trim()
@@ -212,6 +239,12 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'jobPollMs':
         cfg.jobPollMs = num(value, key)
         break
+      case 'gateway':
+        cfg.gateway = bool(value, key)
+        break
+      case 'gatewaySecret':
+        cfg.gatewaySecret = str(value, key)
+        break
       default:
         throw new Error(`daemon.yaml：未知配置键 ${key}（v0 最小面，见 serve.ts 头注）`)
     }
@@ -270,6 +303,38 @@ function wirePlatform(config: ServeConfig): FlowPlatform {
     )
   }
   return createFakePlatform()
+}
+
+/**
+ * 网关写收口接线（17-§7：engine 直调 platform 是最后一条未收口写路径——本函数收口）。
+ * 控制面实例（ticket=CONTROL_TICKET）+ daemon 侧身份署名；gateway: false 时裸 platform 直返
+ * （对照/测试用——生产不得关）。签名上下文取快照首部门+公司级（控制面无人员档案，拟稿待批）。
+ */
+function wireGatedPlatform(raw: FlowPlatform, config: ServeConfig, snapshot: CompanySnapshot, clock: () => number, log: (line: string) => void): FlowPlatform {
+  if (!config.gateway) {
+    log('[serve] 警告：gateway=false——平台写路径未过闸（仅测试/对照用；生产不得关，17-§7）')
+    return raw
+  }
+  // daemon 控制面署名身份（公司名+首部门+控制面角色+公司级；无人员档案——拟稿待批）
+  const ctx = {
+    company: snapshot.name,
+    dept: snapshot.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback,
+    role: 'daemon',
+    level: Math.max(1, snapshot.level),
+  }
+  const usingDevSecret = config.gatewaySecret === undefined
+  const gateway = createGateway({
+    secret: new TextEncoder().encode(config.gatewaySecret ?? DEV_GATEWAY_SECRET),
+    clock,
+    ticket: CONTROL_TICKET,
+    ctx,
+    author: ENGINE_CONFIG_DEFAULTS.actor,
+  })
+  log(
+    `[serve] 网关已接：平台写路径全收口（17-§7；控制面 control key，一调用一签发）` +
+      `${usingDevSecret ? '——【警告】用开发缺省密钥（生产必配 daemon.yaml gatewaySecret:）' : '（密钥来自 daemon.yaml）'}`,
+  )
+  return createGatedPlatform(raw, gateway, { ctx, author: ENGINE_CONFIG_DEFAULTS.actor })
 }
 
 // ————————————————————————— 定时岗：播种与运行栈 —————————————————————————
@@ -384,7 +449,8 @@ export function buildServeRuntime(
     ...(config.budgetPersonCapUsd !== undefined ? { budgetPersonCapUsd: config.budgetPersonCapUsd } : {}),
   }
   const engine = createEngine({
-    platform: wirePlatform(config),
+    // 写路径网关收口（17-§7）：raw platform 包一层 gated 代理——engine 写调用签名不变（透明）
+    platform: wireGatedPlatform(wirePlatform(config), config, snapshot, clock, log),
     ledger,
     registry,
     assembler: createDefaultAssembler({
