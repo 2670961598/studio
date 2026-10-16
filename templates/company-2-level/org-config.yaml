@@ -50,6 +50,15 @@ people:
 # 定时岗清单（D9 通用模型）：一切唤起都是定时任务，挂在部门节点下
 # 报表岗 / 财务审查 / 人事审查 / 项目审查 / 升级审查……都只是这个模型的实例，公司可自行增删
 jobs:
+  - id: health-patrol-工程部 # v0.4 首个定时岗样例（16-§四「健康巡检」）：5 分钟巡逻
+    dept: departments/工程部
+    cron: "*/5 * * * *" # 每 5 分钟（本地时区）
+    role: 工程负责人 # 岗位
+    level: 2 # 该岗等级
+    type: patrol # 巡逻岗：巡检台账/在途/心跳，产出巡逻纪要
+    model_tier: low
+    budget_cap: 1 # USD/次
+    output: reports/工程部/
   - id: daily-report-工程部
     dept: departments/工程部 # 所属部门节点
     cron: "0 18 * * *" # 本地时区（cron 一律按制作人机器本地时区解析）
