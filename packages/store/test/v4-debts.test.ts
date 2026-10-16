@@ -236,6 +236,39 @@ describe('endWorkRecord（收口面：一次性 + COALESCE）', () => {
     })
   })
 
+  it('tokens 收口往返：kernel.TokenCounts 落列 JSON 文本原序（同 insertWorkRecord 口径）+ 回读同形；未给值列不动', () => {
+    ledger.insertWorkRecord(makeRunning({ id: 'wr-tok', started_at: T0 + 400 }))
+    expect(
+      ledger.endWorkRecord('wr-tok', { ended_at: T0 + 800, status: 'done', cost_usd: 0.5, tokens: { input: 120, output: 30, cached: 7 } }),
+    ).toBe(true)
+    expect(ledger.getWorkRecord('wr-tok')?.tokens).toEqual({ input: 120, output: 30, cached: 7 })
+    // 列形态：JSON 文本，键序=input/output/cached（kernel.TokenCounts 口径）——非 events 四桶
+    // canonical 序（cache_read/cache_creation 不出现在本列），与 insertWorkRecord 写入路径同字节口径
+    const raw = ledger.db.prepare('SELECT tokens FROM work_records WHERE id = ?').get('wr-tok') as { tokens?: unknown }
+    expect(String(raw.tokens)).toBe('{"input":120,"output":30,"cached":7}')
+    // 反向：不带 cached 的两字段形态（daemon fake 收割 stats 即此形）
+    ledger.insertWorkRecord(makeRunning({ id: 'wr-tok3', started_at: T0 + 410 }))
+    expect(ledger.endWorkRecord('wr-tok3', { ended_at: T0 + 810, status: 'done', tokens: { input: 100, output: 50 } })).toBe(true)
+    expect(ledger.getWorkRecord('wr-tok3')?.tokens).toEqual({ input: 100, output: 50 })
+    // 未给 tokens：列仍缺（COALESCE 不动）
+    ledger.insertWorkRecord(makeRunning({ id: 'wr-tok2', started_at: T0 + 450 }))
+    expect(ledger.endWorkRecord('wr-tok2', { ended_at: T0 + 850, status: 'done' })).toBe(true)
+    expect(ledger.getWorkRecord('wr-tok2')?.tokens).toBeUndefined()
+  })
+
+  it('tokens 坏形状拒：负值 / 非整数 / 未知桶（strict，events 四桶名不吃）；闸先于行存在性', () => {
+    const bad = (tokens: unknown): void => {
+      expectConfigInvalid(
+        () => ledger.endWorkRecord('wr-404', { ended_at: T0, status: 'done', tokens: tokens as EndWorkRecord['tokens'] }),
+        'store/work-record:end-invalid:tokens',
+      )
+    }
+    bad({ input: -1, output: 0 })
+    bad({ input: 1.5, output: 0 })
+    bad({ input: 1, output: 2, cache_read: 3 }) // events 侧桶名在本列为未知键——拒
+    bad({ input: 1 }) // 缺 output
+  })
+
   it('部分列收口：未给值的列不动（COALESCE）——插入时已有的 cost_usd 保留，未给的 report/summary 仍缺', () => {
     ledger.insertWorkRecord(makeRunning({ id: 'wr-partial', started_at: T0 + 200, cost_usd: 1.25 }))
     expect(ledger.endWorkRecord('wr-partial', { ended_at: T0 + 600, status: 'failed' })).toBe(true)

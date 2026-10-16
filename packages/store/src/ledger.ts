@@ -39,9 +39,11 @@
  *     （daemon 后续单删自建语句切本面，数据原地续用）；value 允空串（daemon「游标 null」的
  *     持久形态，回读方负责还原 null）。
  *   - endWorkRecord：work_records 收口面（daemon 现行直发 UPDATE 的正式化）——只允许一次
- *     （已 ended 再收=CONFIG_INVALID）；cost_usd/report_ref/summary_ref 未给值的列不动
- *     （COALESCE 语义，对齐 daemon 现行语句）；无此行=false（markRan 同风格，如实上报）。
- *     tokens 列不在本面（拟稿待批，见 index.ts 疑点清单）。
+ *     （已 ended 再收=CONFIG_INVALID）；cost_usd/tokens/report_ref/summary_ref 未给值的列
+ *     不动（COALESCE 语义，对齐 daemon 现行语句）。tokens 形状取 kernel.TokenCounts，
+ *     序列化=JSON.stringify 原序（与 insertWorkRecord 同口径；work_records.tokens 非
+ *     events 四桶 canonical 序——两列不同源，F2-04 只冻结 events 侧）。无此行=false
+ *     （markRan 同风格，如实上报）。
  *   - queryEvents 增 order:'asc'|'desc'：desc+limit=「最近 N 条」（panel 倒序通道的库侧
  *     落点；panel 消费接线归后续单）。
  */
@@ -184,7 +186,7 @@ export interface Ledger {
   kvSet(key: string, value: string): void
   /**
    * work_records 收口面（在途→终态，一次性）：已 ended 再收=CONFIG_INVALID；
-   * cost_usd/report_ref/summary_ref 未给值的列不动（COALESCE 语义）；无此行=false。
+   * cost_usd/tokens/report_ref/summary_ref 未给值的列不动（COALESCE 语义）；无此行=false。
    */
   endWorkRecord(id: string, end: EndWorkRecord): boolean
 }
@@ -926,7 +928,9 @@ export function openLedger(path: string): Ledger {
   /**
    * work_records 收口面（一次性）：先读后写防重——已 ended（ended_at 非空）再收=CONFIG_INVALID
    * （收口=终态迁移，重复收口意味着调用方状态机错乱，如实拒）；可选列未给值走 COALESCE 不动
-   * 既有值（对齐 daemon 现行 closeWorkRecord 语句——tokens 列除外，不在本面，拟稿待批）。
+   * 既有值（对齐 daemon 切换前 closeWorkRecord 语句——tokens 列位亦同，居 cost_usd 与
+   * report_ref 之间）。tokens 序列化=JSON.stringify 原序（与 insertWorkRecord 同口径——
+   * work_records.tokens 非 events 四桶 canonical 序，两列不同源，F2-04 只冻结 events 侧）。
    * 单条 UPDATE 即单事务，无中间态可观测。无此行=false（markRan 同风格）。
    */
   const endWorkRecord = (id: string, end: EndWorkRecord): boolean => {
@@ -938,9 +942,17 @@ export function openLedger(path: string): Ledger {
     }
     db.prepare(
       `UPDATE work_records SET ended_at = ?, status = ?,
-         cost_usd = COALESCE(?, cost_usd), report_ref = COALESCE(?, report_ref), summary_ref = COALESCE(?, summary_ref)
+         cost_usd = COALESCE(?, cost_usd), tokens = COALESCE(?, tokens), report_ref = COALESCE(?, report_ref), summary_ref = COALESCE(?, summary_ref)
        WHERE id = ?`,
-    ).run(r.ended_at, r.status, r.cost_usd ?? null, r.report_ref ?? null, r.summary_ref ?? null, id)
+    ).run(
+      r.ended_at,
+      r.status,
+      r.cost_usd ?? null,
+      r.tokens === undefined ? null : JSON.stringify(r.tokens),
+      r.report_ref ?? null,
+      r.summary_ref ?? null,
+      id,
+    )
     return true
   }
 

@@ -10,8 +10,9 @@
  *     departments=公司目录镜像｜ticket_mirror=YouTrack 镜像｜budgets=本库）。
  *   - v3 jobs 调度表（17-§2 调度表列集 / 18-§三）：公司目录定时岗配置（D9）的持久化投影；
  *     cron 只做形状闸（非空 + ≤6 空白分隔段），表达式解析归 core 后续单——**不引 croner**。
- *   - v4 收口面 EndWorkRecord（work_records end 入参；daemon 现行 closeWorkRecord 直发
- *     UPDATE 的正式化）：status 终态值域不锁；tokens 列不在本面（拟稿待批，见接口行注）。
+ *   - v4 收口面 EndWorkRecord（work_records end 入参；daemon 切换前 closeWorkRecord 直发
+ *     UPDATE 的正式化）：status 终态值域不锁；tokens 已扩入参（kernel.TokenCounts，与建列/
+ *     insertWorkRecord 同源——切换单清偿，见接口行注）。
  *
  * **拟稿待批（docs 未细化处逐条标明，contract 落地后替换为契约校验）**：
  *   - 「工号」列名 person_id；「started/ended」→ started_at/ended_at（epoch ms，ended 可空=在途）；
@@ -159,9 +160,10 @@ export interface JobRecord {
 // —— v4 吸收面（work_records 收口；daemon 合龙件债，migrations v4 同批） ——
 
 /**
- * endWorkRecord 收口入参：daemon 现行 closeWorkRecord 直发 UPDATE 的正式化。
- * 拟稿待批：tokens 列不在本面——daemon 现行直发 UPDATE 会回填 tokens（ResultStats），
- * 切 store API 时需扩 tokens 入参或收割面另行落账（见 index.ts 疑点清单）。
+ * endWorkRecord 收口入参：daemon 切换前 closeWorkRecord 直发 UPDATE 的正式化。
+ * tokens 已扩入参（清偿原「不在本面」拟稿）：形状取 kernel.TokenCounts——与 work_records
+ * 建列口径（migrations v1 注）及 insertWorkRecord 同源；序列化=JSON.stringify 原序
+ * （**非** events 四桶 canonical 序——两列不同源，F2-04 只冻结 events 侧），未给值 COALESCE 不动。
  */
 export interface EndWorkRecord {
   /** 收口时刻（epoch ms；与 started_at 同口径非负整数） */
@@ -169,6 +171,8 @@ export interface EndWorkRecord {
   /** 终态；值域 v0 不锁（done/failed 等枚举归收割域/contract 后续收口） */
   status: string
   cost_usd?: number
+  /** tokens（收割 ResultStats；形状与闸同 WorkRecord.tokens） */
+  tokens?: TokenCounts
   report_ref?: string
   summary_ref?: string
 }
@@ -304,11 +308,15 @@ export const JobRecordSchema = z.strictObject({
 
 // —— v4 收口面临时闸（EndWorkRecord 形状见上；strict：未知列拒收——拟稿待批，见接口行注） ——
 
-/** store 层临时校验（拟稿待批，见文件头注；status 终态值域不锁——归收割域后续收口） */
+/** store 层临时校验（拟稿待批，见文件头注；status 终态值域不锁——归收割域后续收口；
+ *  tokens 闸同 WorkRecordSchema.tokens：kernel.TokenCounts 三字段，非负整数，未知桶拒） */
 export const EndWorkRecordSchema = z.strictObject({
   ended_at: z.number().int().min(0),
   status: z.string().min(1),
   cost_usd: z.number().min(0).optional(),
+  tokens: z
+    .strictObject({ input: z.number().int().min(0), output: z.number().int().min(0), cached: z.number().int().min(0).optional() })
+    .optional(),
   report_ref: z.string().min(1).optional(),
   summary_ref: z.string().min(1).optional(),
 })

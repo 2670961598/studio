@@ -43,8 +43,10 @@
  *   - kv 键闸=非空串（空键=调用方 bug 拒收）；value 不闸（空串=daemon「游标 null」持久形态，
  *     回读方还原 null）。键命名空间（前缀/点分约定）不锁——daemon 现行 'activity.cursor'/
  *     'tick.seq' 直用——待批
- *   - endWorkRecord 无 tokens 列写面：daemon 现行 closeWorkRecord 直发 UPDATE 会回填 tokens
- *     （ResultStats）；切 store API 时需扩 tokens 入参或收割面另行落账——待批
+ *   - endWorkRecord tokens 写面已扩（切换单清偿）：入参 tokens 取 kernel.TokenCounts（与
+ *     work_records 建列/insertWorkRecord 同源），序列化=JSON.stringify 原序（**非** events
+ *     四桶 canonical 序——两列不同源，F2-04 只冻结 events 侧）；未给值 COALESCE 不动。
+ *     daemon 已切本面（自建 kv/直发 UPDATE 删除），语句列位与切换前逐列同形
  *   - endWorkRecord status 终态值域不锁（done/failed 枚举归收割域/contract 后续收口）；
  *     无此行返回 false（markRan 同风格）而非 CONFIG_INVALID——口径待批
  *   - queryEvents order 白名单闸（运行期防注入，CONFIG_INVALID）；desc 索引兼容性：company
