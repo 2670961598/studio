@@ -52,7 +52,7 @@
 | N6 | workflow 护栏按公司安装（复用 ytguard.GuardAdmin 三步法），guard 由 **ticket-types.yaml 同源生成**（经 statemachine 渲染；分权不进平台 guard，归 org 引擎，见 N8） | 该端点在 openapi.json 之外，需锁版本+回归 |
 | N7 | 板自动化：`POST /api/agiles`，列=State 序，泳道=部门；**禁用工号当泳道**（9 级退化成数千行） | 2 级与 9 级同模板 |
 | N8 | 权限两层：公司级隔离=项目团队（有 API）；等级分权不进平台角色（无 API），交 guard+org 引擎；6 内置角色映射 9 账号=一次性 UI setup 文档 | 产出"平台层能否拒绝 X"可执行断言清单 |
-| N9 | 账号恒为等级锚点，永不新增第 11 个活跃账号 | 任一单据 actor 可还原（公司,工号,账号,署名）四元组 |
+| N9 | 账号恒为等级锚点，不随公司新增账号。**实测活跃 11 个**（opengames+agent-1..9+agent-pm），agent-pm 去留待拍板 D13 | 任一单据 actor 可还原（公司,工号,账号,署名）四元组 |
 | N10 | **`studio onboard` 从零实现**（现状零代码！）：config.yaml → 项目+bundle+字段+workflow+板+团队+KB 根+泳道注册+id 回写 | 空实例 5 分钟得到可用公司；`--dry-run`+幂等+`--rollback` |
 | N11 | id 绝不落盘：只按名字解析内部 id（现状硬编码 0-1/0-2/0-3 不可移植） | 同一 config 在干净实例 onboard 成功且零新增常量 |
 | N12 | 对外只暴露框架 API，YouTrack 是内部实现 | 外部零 YouTrack 凭据；9 账号零外部发放 |

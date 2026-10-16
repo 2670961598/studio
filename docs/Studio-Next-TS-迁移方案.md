@@ -79,7 +79,7 @@ gates/metrics→core、web→panel、yt/ytgw→yt、org/approval/signoff→core/
 | 面板 | **Hono（streamSSE，Node 上跑）** | SSE 单向推 worker 流，浏览器自动重连；不用 WebSocket |
 | 子进程 | **execa**（`killDescendants:true` + `forceKillAfterDelay`） | 唯一内建进程组杀法；禁裸 exec |
 | 打包分发 | 需要时 **bun build --compile**（产物跑 Bun，仅分发场景） | 四方案中最成熟，支持交叉编译 |
-| MCP | 锁 **v2**（spec 2026-07-28 已 stable；v1.x 转 legacy 维护线） | 2026-10-16 复查更正 |
+| MCP | 锁 **v2 线**：新包 `@modelcontextprotocol/server|client`@2.x（spec 2026-07-28 stable）；旧包 `sdk`@1.32.x = legacy v1 线（实测 npm 官方源 2026-10-16） | 复查更正后定稿 |
 
 **协议蓝本（重要）**：抄 **Codex App Server** 的 JSON-RPC 模型——thread=YouTrack 单、
 turn=一次派工、item 带 started/delta/completed 生命周期、**审批=服务端发起的请求**。
@@ -87,7 +87,7 @@ turn=一次派工、item 带 started/delta/completed 生命周期、**审批=服
 面板/worker/网关都是协议客户端。Cordis 只借思想（service+inject+可逆 effect），
 不引其库（API 未稳定）。
 
-## 4. 迁移策略：契约先行 + 切片绞杀 + 影子对等
+## 4. 迁移策略：契约先行 + 切片绞杀 + 一次性切权
 
 > v1.0 修订（2026-10-16）：本节按"V3 零兼容"重读——契约包保留但定位改为**新系统的规格测试**
 > （不再以 V3 行为为标尺）；310 pytest 不做对等翻译，只做可复用资产盘点；**影子对等双跑取消**；
@@ -101,7 +101,7 @@ Python 栈与 TS 栈是同一契约的两个客户端。SQLite 还没在 Python 
 
 **310 例 pytest 的处置（不逐条翻译）**：
 - 纯算法/纯函数 → 抽成**语言无关语料**（cases.json：稳定 id + 恰好一个 in + out/err，
-  `__NULL__` 哨兵消歧），**一份语料 + pytest/vitest 两个 30 行 runner** 双栈共跑
+  `__NULL__` 哨兵消歧），**一份语料 + vitest runner** 为主；pytest runner 仅用于 V3 可复用资产盘点（非对等证明）
 - 依赖 CLI/YouTrack/LLM 的 → 转**黑盒契约测试**（输入=票面/事件，输出=外部可观测动作：
   YouTrack 写入、worker 命令、面板响应），golden trace 录音回放
 - parity 指**行为等价**，不是测试用例 1:1 映射（JPMorgan Codex 移植论文同此结论）
@@ -117,12 +117,12 @@ Python 栈与 TS 栈是同一契约的两个客户端。SQLite 还没在 Python 
 6. LLM 岛 + 网关 ytgw
 7. 全量切权，V3 退役进归档
 
-**影子对等（复用我们已有的影子模式机制）**：新栈与 V3 并行跑，**只读不落库**，
-逐拍 diff 派单决策，**零分歧 3 天**才允许进入下一切片。绝不双写（重复改单/重复扣费）。
+**切片切权（v1.0 零兼容版）**：新栈不走影子对等；每切片以契约测试+沙箱验证+崩溃注入为准入；
+全量切权=一次性停机切换 + V3 冻结态作回滚预案（V3 不动，随时可拉回）。
 
 ## 5. 验收口径（go/no-go）
 
-1. contract 套件在 Python 与 TS 双栈全绿
+1. contract 套件在 TS 新栈全绿（pytest 侧仅作 V3 资产盘点参考）
 2. shadow 对照零分歧连续 3 天（每切片）
 3. 崩溃注入回归集全绿（5 个 kill 点，蓝图 §4.7）
 4. 端到端：一票真实单据在新栈走完 新单→派发→证据→合并→关单
@@ -137,7 +137,7 @@ Python 栈与 TS 栈是同一契约的两个客户端。SQLite 还没在 Python 
 | node:sqlite 仅 RC 非 stable | 中 | 封装隔离；备选 better-sqlite3 一行切换 |
 | TS 工具链换代窗口（TS 7/bundler 未定） | 中 | Node 原生 type-stripping 起步，bundler 后定 |
 | 冻结期 V3 修复积压 | 中 | 冻结只修 P0；切片快节奏；STUDIO-114 类在途单先收官 |
-| 双栈期双份依赖/补丁/观测 | 中 | contract 阶段强制执行，不许长期并存 |
+| 迁移并行期双份依赖/补丁/观测 | 中 | 切片快速推进，不许长期并存 |
 | Bun 生态风险（Anthropic 单一持有+Rust 重写） | 低 | 核心不碰 Bun 专有 API，Bun 只当工具 |
 | claude -p 计费口径变更（2026-06 Agent SDK credit 分离） | 待核实 | 另开单核实，与本方案独立 |
 
