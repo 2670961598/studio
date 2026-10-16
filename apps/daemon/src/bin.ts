@@ -17,11 +17,16 @@
  *   panel --db <库路径> [--port 8787]
  *       :8787 只读监控面（v0.3）：jobs/runs/workers/事件流（SSE），全部读 SQLite 零写；
  *       库不存在即拒启（panel 不代建库）；SIGINT/SIGTERM 优雅关闭
- *   serve
- *       常驻进程：未实现（v0.5 主循环，docs/16-§四），exit 2 占位防误用
+ *   serve --config <daemon.yaml>
+ *       常驻主循环（v0.5）：七相位引擎 + 心跳日志；SIGINT/SIGTERM 优雅停（等当前拍收口→
+ *       在途 drain→关台账）。配置最小面 {db, platform: localfile|fake, company, rootDir,
+ *       tickMs, …}（扁平 YAML 子集，见 src/serve.ts 头注）；demo 模式=fake 全家桶零外部依赖
+ *   （v0 诚实边界：真 dsh / 真 YouTrack / 网关 wkey / 审批流 / localfile 平台均未接线——
+ *     逐项清单见 src/serve.ts 与 src/engine.ts 头注）
  *
  * argv 解析零依赖手写（单命令薄壳不值得引库；16-§二 选型纪律：引新依赖须登记选型表）。
- * 退出码：0 成功｜1 用法错误 / 校验不通过 / init 失败 / 演习 FAIL / panel 失败｜2 serve 未实现。
+ * 退出码：0 成功｜1 用法错误 / 校验不通过 / init 失败 / 演习 FAIL / panel 失败 / serve 配置错｜
+ * 2 serve 运行中出错（tick 异常）。
  * 用 process.exitCode 而非 process.exit 收尾：让管道下的 stdout/stderr 先冲刷再自然退出。
  */
 import path from 'node:path'
@@ -29,6 +34,7 @@ import { initCompany, loadCompanyDirectory, readDirectoryFiles } from '@studio-n
 import type { InitOptions } from '@studio-next/company'
 import { servePanel } from '@studio-next/panel'
 import { openLedger, rebuild, renderDrillReport, runLedgerDrill } from '@studio-next/store'
+import { runServe } from './serve.ts'
 
 const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
 
@@ -47,8 +53,11 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
   studio-next panel --db <库路径> [--port 8787]
       :8787 只读监控面（v0.3，docs/16-§四）：jobs/runs/workers/事件流（SSE），
       全部读 SQLite 零写；库不存在即拒启；Ctrl-C 优雅关闭
-  studio-next serve
-      常驻进程（未实现，v0.5 主循环，docs/16-§四）：占位 exit 2 防误用
+  studio-next serve --config <daemon.yaml>
+      常驻主循环（v0.5，docs/16-§四）：七相位引擎 + 心跳日志 + SIGINT/SIGTERM 优雅停。
+      配置最小面（扁平 YAML 子集）：db / platform(fake|localfile) / company / rootDir / tickMs /
+      maxActionsPerTick / maxInflight / stallAfterMs / laneTtlMs / breakerThreshold / autoApprove /
+      companyDir；demo 模式=fake 全家桶零外部依赖（真 dsh/YouTrack/网关未接线，见 src/serve.ts 头注）
 
 默认值：--dir 缺省 ./<slug>；--name 缺省 <slug>；--port 缺省 8787（panel）
 文档：docs/04-公司目录与等级体系.md §二/§九；docs/16-技术实现与里程碑.md §四；docs/02-需求-框架面.md F2-11/F2-12；docs/17-整体技术设计.md §8`
@@ -263,6 +272,40 @@ async function cmdPanel(argv: string[]): Promise<number> {
   return 0
 }
 
+/** serve 子命令：薄壳转 runServe（配置装载/循环/优雅停语义全在 src/serve.ts） */
+async function cmdServe(argv: string[]): Promise<number> {
+  const parsed = parseArgv(argv, new Set(['config']))
+  if ('error' in parsed) {
+    console.error(`serve：${parsed.error}`)
+    console.error(USAGE)
+    return 1
+  }
+  if (parsed.positionals.length > 0) {
+    console.error(`serve：多余的位置参数：${parsed.positionals.join(' ')}`)
+    console.error(USAGE)
+    return 1
+  }
+  const configPath = parsed.flags.config
+  if (configPath === undefined) {
+    console.error('serve：缺少 --config <daemon.yaml>')
+    console.error(USAGE)
+    return 1
+  }
+  try {
+    const result = await runServe(configPath)
+    if (result.stopReason === 'error') {
+      console.error(`serve：运行中断（tick 异常）：${result.lastError ?? '未知'}`)
+      return 2
+    }
+    console.log(`serve：已停机（共 ${result.ticks} 拍）`)
+    return 0
+  } catch (err) {
+    // 配置/平台接线/公司目录装载失败：CONFIG_INVALID 形状，如实分类上报
+    console.error(`serve 启动失败：${errText(err)}`)
+    return 1
+  }
+}
+
 async function main(): Promise<number> {
   const [command, ...rest] = process.argv.slice(2)
   switch (command) {
@@ -275,8 +318,7 @@ async function main(): Promise<number> {
     case 'panel':
       return cmdPanel(rest)
     case 'serve':
-      console.error('studio-next serve：未实现（v0.5 主循环，docs/16-§四）。当前可用子命令：init / validate / ledger / panel')
-      return 2
+      return cmdServe(rest)
     case undefined:
     case '-h':
     case '--help':
