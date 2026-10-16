@@ -1,0 +1,31 @@
+# models.example.yaml —— 模型档示例配置（docs/17-§4；docs/25-§3.3 端口语料）
+#
+# 形状（冻结，改动走批示）：
+#   tiers：恰 high/mid/low 三档，每档 provider/model 非空 + price{inputPerM, outputPerM}
+#          （每百万 token 美元，非负有限数；cached 桶暂不计价，扩键走批示）
+#   roles：岗位→档映射，至少 main_worker；值为三档之一；岗位名可按公司扩展
+#
+# 用法：复制到框架 config home（~/.config/studio-next/models.yaml）改值即用——
+#   换模型=改一行；价目表改动走批示（daemon 启动记 fingerprint 到台账，见 core/src/models.ts）。
+# 注意：以下 provider/model/价为示例数值（GLM 三档样例），以供应商实际账单为准，非承诺价。
+tiers:
+  high:
+    provider: zhipu
+    model: glm-4.7
+    price: { inputPerM: 0.60, outputPerM: 2.20 }
+  mid:
+    provider: zhipu
+    model: glm-4.7-air
+    price: { inputPerM: 0.20, outputPerM: 0.80 }
+  low:
+    provider: zhipu
+    model: glm-4.7-flash
+    price: { inputPerM: 0.05, outputPerM: 0.25 }
+
+# 岗位→档：main_worker 必登记（17-§4 最小集）；其余为 v0 已知岗示例
+roles:
+  main_worker: high    # 主力交付
+  verifier: mid        # 验证岗（读面 Blind，防上下文污染——17-§7）
+  summarizer: low      # 摘要/续跑前情
+  precheck: low        # 派发预查
+  patrol: low          # 巡逻岗（PATROL 事件源）

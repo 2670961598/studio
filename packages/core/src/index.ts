@@ -21,10 +21,15 @@
  *   [x] 错误处置语义表（11 类 × 四处置，全表拟稿待批）——dispositions.ts
  *   [x] golden trace 格式与回放器（格式即契约雏形）——golden.ts
  *
+ * v0.6 增量（feature/core-models，模型档端口）：
+ *   [x] models.yaml 装载（zod strict 闸 + yaml 行号定位）与 ModelCatalog 目录实现
+ *       （tiers/resolve/estimateCost）+ 价目表内容指纹 fingerprint——models.ts
+ *       （预算/价目表链地基：estimateCost 供 budgets reserve/settle 折算，17-§3 末）
+ *
  * TODO（后续刀）：
  *   [ ] 主循环相位机骨架（每相位幂等、tick 聚合结构化 actions 落账）
  *   [ ] 泳道租约状态机本体（TTL+续租+死主回收的纯逻辑核）
- *   [ ] 预算预留-结算与 refusal 落点
+ *   [ ] 预算预留-结算与 refusal 落点（消费 models.estimateCost）
  *   [ ] 收割四要件判定纯函数（17-§6）
  *   [ ] golden trace 格式升 contract 包（F3-01 进化管线）
  */
@@ -44,8 +49,11 @@ export * from './dispositions.ts'
 // golden trace 格式与回放器（F1-03 / F2-14；格式即契约雏形）
 export * from './golden.ts'
 
+// 模型档装载与目录（docs/25-§3.3 端口 / 17-§4 models.yaml；预算链地基）
+export * from './models.ts'
+
 /** 包名常量 */
 export const PACKAGE_NAME = '@studio-next/core'
 
-/** 包状态标记：状态机/决策/断路/处置/golden 已落地（partial）；主循环与预算待后续刀 */
+/** 包状态标记：状态机/决策/断路/处置/golden/模型档已落地（partial）；主循环与预算待后续刀 */
 export const PACKAGE_STATUS = 'partial'
