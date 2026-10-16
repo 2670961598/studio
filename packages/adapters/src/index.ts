@@ -22,12 +22,16 @@
  *
  * TODO(骨架阶段)：
  *   [ ] ExecutorAdapter 抽象基类 + ExecutorCapabilities 能力声明 schema（先定 schema 再谈实现，B7）
- *   [ ] fake CLI harness（shell 脚本模拟各家 stdout/退出行为）+ golden fixtures
+ *   [x] fake CLI harness（Node 脚本模拟各家 stdout/退出行为，test/fake-cli/）+ golden fixtures（test/fixtures/，四家流样本落库）
+ *   [x] 流归一化器 streams.ts：parseStream 把四家原始流文本归一为 contract StreamEvent（对 fixture 全绿）
  *   [ ] dsh 适配器（默认主力，锁版本 + 探针回归专线）
  *   [ ] claude 适配器（参考实现，含预算帽）
  *   [ ] codex / kimi 适配器
  *   [ ] 探针 runner：适配器写完先过探针集才允许注册
  */
+
+/** 流归一化器：四家 CLI 原始流 → contract StreamEvent（docs/17-§6 / docs/18-§1.3） */
+export * from "./streams.ts";
 
 /** 包名常量（占位导出） */
 export const PACKAGE_NAME = "@studio-next/adapters";
