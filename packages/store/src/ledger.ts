@@ -20,7 +20,9 @@
  *     预校验全部行后整体落库，任一行非法/重复整批拒。personnel_events 不在此写面
  *     （镜像同步≠人事变动：变动必挂单走 appendPersonnelEvent，F2-06）。
  *   - upsertTicketMirror：YouTrack 镜像，last-write-wins（权威源在 YouTrack，本表随时可重建）。
- *   - appendBudget / queryBudgets：预算三节点（reserve/settle/refusal）落账与 scope 查询。
+ *   - appendBudget / queryBudgets：预算三节点（reserve/settle/refusal）落账与 scope 查询；
+ *     listBudgets 全量读面（无 scope 维，since/until 闭区间 + kinds 子集过滤——panel 成本卡
+ *     「scope 枚举近似」缺口的库侧清偿，panel 消费接线归后续微单）。
  *   - appendPersonnelEvent：append-only 写口（v2 迁移挂 UPDATE/DELETE 触发器，机制兜底），
  *     同 id 幂等规则对齐 appendEvent（F2-13）。
  *   - personnelTimeline：personnel_events × work_records × sessions 三表按 person_id 归并的
@@ -125,6 +127,19 @@ export interface BudgetScope {
 }
 
 /**
+ * budgets 全量读面参数（无 scope 维；panel 成本卡「列全部 budgets」缺口的库侧落点）：
+ * 全部可选；since/until 对 ts 双端闭区间（对齐 queryEvents 语义）；kinds 为
+ * 'reserve'|'settle'|'refusal' 子集过滤（省略或空数组=不过滤；枚举外值 → CONFIG_INVALID）。
+ */
+export interface BudgetListQuery {
+  /** ts >= since（闭端，epoch ms） */
+  since?: number
+  /** ts <= until（闭端，epoch ms） */
+  until?: number
+  kinds?: BudgetRecord['kind'][]
+}
+
+/**
  * 生命周期时间线条目（C1-04 最小面）：personnel_events 变动 × work_records 工时 × sessions
  * 会话三源按 ts 归并；ts 取各自的自然时间（personnel_events.ts / started_at）。
  */
@@ -163,6 +178,14 @@ export interface Ledger {
   /** 预算三节点落账（append-only，同 id 幂等规则对齐 appendEvent） */
   appendBudget(record: unknown): AppendResult
   queryBudgets(scope: BudgetScope): BudgetRecord[]
+  /**
+   * budgets 全量读面（无 scope 维）：全部行 (ts, id) 升序；since/until 双端闭区间；
+   * kinds 子集过滤（枚举外值 CONFIG_INVALID）。索引说明：现索引 idx_budgets_scope
+   * (scope_kind, scope_id) 只服务 scope 定位，本面全表扫描后排序——量级口径：预算行量=
+   * 派发量级（每单 reserve/settle/refusal 各至多数行），可接受；涨量后再评估 ts 索引
+   * （拟稿，见 index.ts 疑点清单）。
+   */
+  listBudgets(query?: BudgetListQuery): BudgetRecord[]
   /** 人事变动事件写口（append-only：触发器机制兜底 + 同 id 幂等规则；必挂单） */
   appendPersonnelEvent(record: unknown): AppendResult
   /** 生命周期时间线：personnel_events × work_records × sessions 三表按 person_id 归并（ts 升序） */
@@ -766,6 +789,39 @@ export function openLedger(path: string): Ledger {
         .all(scope.scope_kind, scope.scope_id) as SqlRow[]
     ).map(rowToBudget)
 
+  /** kinds 白名单（运行期闸：TS 字面量类型挡编译期，JS 调用方/配置驱动仍须如实拒——对齐 queryEvents order 闸） */
+  const isBudgetKind = (v: unknown): v is BudgetRecord['kind'] =>
+    v === 'reserve' || v === 'settle' || v === 'refusal'
+
+  const listBudgets = (query: BudgetListQuery = {}): BudgetRecord[] => {
+    if (query.kinds !== undefined) {
+      const bad = query.kinds.find((k) => !isBudgetKind(k))
+      if (bad !== undefined) {
+        configInvalid('store/budget:bad-kind', `kinds 含枚举外值：${String(bad)}（须为 'reserve'|'settle'|'refusal' 子集）`)
+      }
+    }
+    const where: string[] = []
+    const params: Array<string | number> = []
+    if (query.since !== undefined) {
+      where.push('ts >= ?')
+      params.push(query.since)
+    }
+    if (query.until !== undefined) {
+      where.push('ts <= ?')
+      params.push(query.until)
+    }
+    if (query.kinds !== undefined && query.kinds.length > 0) {
+      // kinds 占位符逐个参数化绑定（无内插面）；空数组=不过滤（见 BudgetListQuery 行注）
+      where.push(`kind IN (${query.kinds.map(() => '?').join(', ')})`)
+      params.push(...query.kinds)
+    }
+    let sql = 'SELECT * FROM budgets'
+    if (where.length > 0) sql += ` WHERE ${where.join(' AND ')}`
+    sql += ' ORDER BY ts ASC, id ASC'
+    const rows = db.prepare(sql).all(...params) as SqlRow[]
+    return rows.map(rowToBudget)
+  }
+
   const appendPersonnelEvent = (record: unknown): AppendResult => {
     const r = assertRecord(PersonnelEventRecordSchema, record, 'store/personnel-event:invalid')
     // 幂等规则对齐 appendEvent：同 id 全列一致跳过，不一致抛错（append-only + F2-13 回填幂等；
@@ -987,6 +1043,7 @@ export function openLedger(path: string): Ledger {
     listTicketMirrors,
     appendBudget,
     queryBudgets,
+    listBudgets,
     appendPersonnelEvent,
     personnelTimeline,
     upsertJob,

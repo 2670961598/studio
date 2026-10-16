@@ -81,6 +81,9 @@
  *     UPDATE/DELETE 触发器机制兜底——events 是否于 v3 补触发器，待批
  *   - personnelTimeline 按 person_id 查三表，v0 全表扫（量级小）；work_records/sessions
  *     的 person_id 索引是否补，待量级证
+ *   - listBudgets 全量读面走全表扫描后 (ts,id) 排序（idx_budgets_scope 只服务 scope 定位）：
+ *     量级口径=预算行量与派发量级同阶（每单三节点各至多数行），可接受；涨量后再评估
+ *     budgets ts 索引——待批。kinds 空数组=不过滤（「空子集」语义不取，免 IN () 空集陷阱）——待批
  */
 
 /** 包名常量（占位导出） */
@@ -98,7 +101,7 @@ export type { Migration } from './migrations.ts'
 
 // 台账句柄与读写面
 export { openLedger } from './ledger.ts'
-export type { AppendResult, BudgetScope, CompanySyncResult, DumpResult, EventQuery, Ledger, PersonnelTimelineEntry } from './ledger.ts'
+export type { AppendResult, BudgetListQuery, BudgetScope, CompanySyncResult, DumpResult, EventQuery, Ledger, PersonnelTimelineEntry } from './ledger.ts'
 
 // work_records / sessions + v2 五表 + v3 jobs + v4 收口面 记录形状（store 层临时闸，contract schema 落地后替换）
 export {

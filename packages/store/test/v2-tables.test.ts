@@ -1,6 +1,7 @@
 /**
  * v0.2 第二刀·五表测试：v2 迁移幂等（含 v1 库升级路径）/ syncCompany 镜像往返 /
- * personnel_events append-only（触发器机制）/ 三表归并时间线 / budgets 查询面 / ticket_mirror。
+ * personnel_events append-only（触发器机制）/ 三表归并时间线 / budgets 查询面 + 全量读面
+ * （listBudgets：无 scope 维，since/until 闭区间 + kinds 子集——独立库语料）/ ticket_mirror。
  *
  * 环境：os.tmpdir() 真文件库（沿 ledger.test.ts 风格，不用 :memory:）。
  * 依据：docs/17-§3 数据模型、docs/02 F2-06（people+personnel_events 必挂单）、F1-09（预算三节点）、
@@ -11,7 +12,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { CompanySnapshot } from '@studio-next/contract'
-import { migrate, openLedger, openSqlite, type Ledger } from '../src/index.ts'
+import { migrate, openLedger, openSqlite, type BudgetRecord, type Ledger } from '../src/index.ts'
 
 let root = ''
 let ledger: Ledger
@@ -355,6 +356,105 @@ describe('budgets（预算三节点落账与查询面）', () => {
     expectConfigInvalid(() => ledger.appendBudget({ ...base, scope_kind: 'dept' }), 'store/budget:invalid:scope_kind')
     expectConfigInvalid(() => ledger.appendBudget({ ...base, kind: 'refund' }), 'store/budget:invalid:kind')
     expectConfigInvalid(() => ledger.appendBudget({ id: '', scope_kind: 'issue', scope_id: 'X-1', kind: 'reserve', ts: 1 }), 'store/budget:invalid:id')
+  })
+})
+
+describe('listBudgets（budgets 全量读面：无 scope 维）——独立库', () => {
+  let lb: Ledger
+  /** 全量升序 id 语料（8 行：lb-1..lb-5 离散 ts + lb-tie-a/lb-tie-b 同刻平局对 + lb-old 窗外无镜像行） */
+  let allAscIds: string[]
+
+  beforeAll(() => {
+    lb = openLedger(path.join(root, 'list-budgets.db'))
+    const rows = [
+      { id: 'lb-1', scope_kind: 'issue' as const, scope_id: 'STUDIO-300', kind: 'reserve' as const, estimated_usd: 2.0, ts: TS0 + 1000 },
+      { id: 'lb-2', scope_kind: 'issue' as const, scope_id: 'STUDIO-300', kind: 'settle' as const, estimated_usd: 2.0, actual_usd: 1.25, ts: TS0 + 2000 },
+      { id: 'lb-3', scope_kind: 'person' as const, scope_id: 'AGENT-7', kind: 'reserve' as const, estimated_usd: 0.5, ts: TS0 + 3000 },
+      { id: 'lb-4', scope_kind: 'person' as const, scope_id: 'AGENT-7', kind: 'refusal' as const, estimated_usd: 9.9, ts: TS0 + 4000 },
+      { id: 'lb-5', scope_kind: 'company' as const, scope_id: 'demo', kind: 'reserve' as const, estimated_usd: 4.0, ts: TS0 + 5000 },
+      { id: 'lb-tie-a', scope_kind: 'company' as const, scope_id: 'demo', kind: 'settle' as const, actual_usd: 3.0, ts: TS0 + 6000 },
+      { id: 'lb-tie-b', scope_kind: 'company' as const, scope_id: 'demo', kind: 'settle' as const, actual_usd: 1.0, ts: TS0 + 6000 },
+      { id: 'lb-old', scope_kind: 'issue' as const, scope_id: 'NO-MIRROR-9', kind: 'reserve' as const, estimated_usd: 8.0, ts: TS0 - 5000 },
+    ]
+    for (const r of rows) expect(lb.appendBudget(r).appended).toBe(true)
+    allAscIds = lb.listBudgets().map((b) => b.id)
+    expect(allAscIds).toEqual(['lb-old', 'lb-1', 'lb-2', 'lb-3', 'lb-4', 'lb-5', 'lb-tie-a', 'lb-tie-b'])
+  })
+
+  afterAll(() => {
+    lb.close()
+  })
+
+  it('全量升序：无 scope 维跨三种 scope_kind 全行带回，(ts, id) 稳定序（同刻平局按 id）；记录级 deep-equal 往返', () => {
+    const all = lb.listBudgets()
+    expect(all.map((b) => b.id)).toEqual(allAscIds)
+    expect(all.map((b) => `${b.scope_kind}/${b.scope_id}`)).toEqual([
+      'issue/NO-MIRROR-9', 'issue/STUDIO-300', 'issue/STUDIO-300', 'person/AGENT-7', 'person/AGENT-7', 'company/demo', 'company/demo', 'company/demo',
+    ])
+    // 记录级往返（含可选列缺失行 lb-tie-a 无 estimated_usd、lb-1 无 actual_usd）
+    expect(all[6]).toEqual({ id: 'lb-tie-a', scope_kind: 'company', scope_id: 'demo', kind: 'settle', actual_usd: 3.0, ts: TS0 + 6000 })
+    expect(all[1]).toEqual({ id: 'lb-1', scope_kind: 'issue', scope_id: 'STUDIO-300', kind: 'reserve', estimated_usd: 2.0, ts: TS0 + 1000 })
+    // 同刻平局对 (ts,id) 双列稳定序直证
+    expect(lb.listBudgets({ since: TS0 + 6000, until: TS0 + 6000 }).map((b) => b.id)).toEqual(['lb-tie-a', 'lb-tie-b'])
+  })
+
+  it('时间窗双端闭区间（对齐 queryEvents 语义）：since/until 各自含端、组合窗恰含界行、单端各半', () => {
+    expect(lb.listBudgets({ since: TS0 + 2000, until: TS0 + 5000 }).map((b) => b.id)).toEqual(['lb-2', 'lb-3', 'lb-4', 'lb-5'])
+    expect(lb.listBudgets({ since: TS0 + 1000 }).map((b) => b.id)).toEqual(allAscIds.slice(1)) // since 含 lb-1、剔 lb-old
+    expect(lb.listBudgets({ until: TS0 + 2000 }).map((b) => b.id)).toEqual(['lb-old', 'lb-1', 'lb-2']) // until 含 lb-2
+    expect(lb.listBudgets({ since: TS0 + 2001, until: TS0 + 4999 }).map((b) => b.id)).toEqual(['lb-3', 'lb-4']) // 界外恰剔两端
+    expect(lb.listBudgets({ since: TS0 + 6000, until: TS0 + 1000 })).toEqual([]) // 空窗（since>until）
+  })
+
+  it('kinds 子集过滤：单 kind / 多 kind / 空数组=不过滤', () => {
+    expect(lb.listBudgets({ kinds: ['refusal'] }).map((b) => b.id)).toEqual(['lb-4'])
+    expect(lb.listBudgets({ kinds: ['reserve', 'refusal'] }).map((b) => b.id)).toEqual(['lb-old', 'lb-1', 'lb-3', 'lb-4', 'lb-5'])
+    expect(lb.listBudgets({ kinds: [] }).map((b) => b.id)).toEqual(allAscIds) // 空数组=无过滤（见 BudgetListQuery 行注）
+  })
+
+  it('坏值拒收：kinds 枚举外值 → CONFIG_INVALID；拒后库无损', () => {
+    expectConfigInvalid(
+      () => lb.listBudgets({ kinds: ['reserve', 'refund' as unknown as BudgetRecord['kind']] }),
+      'store/budget:bad-kind',
+      'refund',
+    )
+    expectConfigInvalid(() => lb.listBudgets({ kinds: [1 as unknown as BudgetRecord['kind']] }), 'store/budget:bad-kind')
+    // 拒后库无损（只读面无副作用）
+    expect(lb.listBudgets().map((b) => b.id)).toEqual(allAscIds)
+  })
+
+  it('窗 + kinds 组合：时间窗内按 kind 再滤，两维正交', () => {
+    expect(lb.listBudgets({ since: TS0, until: TS0 + 4000, kinds: ['reserve'] }).map((b) => b.id)).toEqual(['lb-1', 'lb-3'])
+    expect(lb.listBudgets({ since: TS0 + 1500, kinds: ['settle'] }).map((b) => b.id)).toEqual(['lb-2', 'lb-tie-a', 'lb-tie-b'])
+  })
+
+  it('与 queryBudgets(scope) 并集一致性：同数据两读面等价（枚举全部 scope 拼并集，排序后 deep-equal）', () => {
+    const scopes: Array<{ scope_kind: 'issue' | 'person' | 'company'; scope_id: string }> = [
+      { scope_kind: 'issue', scope_id: 'STUDIO-300' },
+      { scope_kind: 'person', scope_id: 'AGENT-7' },
+      { scope_kind: 'company', scope_id: 'demo' },
+      { scope_kind: 'issue', scope_id: 'NO-MIRROR-9' },
+      { scope_kind: 'issue', scope_id: 'NOPE' }, // 空 scope：queryBudgets 恰空、不入并集
+    ]
+    const union = scopes.flatMap((s) => lb.queryBudgets(s)).sort((a, b) => a.ts - b.ts || a.id.localeCompare(b.id))
+    expect(lb.queryBudgets({ scope_kind: 'issue', scope_id: 'NOPE' })).toEqual([])
+    expect(union).toEqual(lb.listBudgets())
+    // 每行恰属一个 scope（并集无重无漏：行数两读面相等已证）
+    expect(union.length).toBe(allAscIds.length)
+  })
+
+  it('无镜像 scope 可见性（缺口清偿直证）：无 ticket_mirror/people/departments 行的 scope 预算全量读可见', () => {
+    const ids = lb.listBudgets().map((b) => b.scope_id)
+    expect(ids).toContain('NO-MIRROR-9') // 镜像枚举近似漏掉的行，全量读面直达
+    expect(ids).toContain('AGENT-7')
+  })
+
+  it('空表：fresh 库无预算行 → []（含过滤参数组合）', () => {
+    const fresh = openLedger(path.join(root, 'list-budgets-empty.db'))
+    expect(fresh.listBudgets()).toEqual([])
+    expect(fresh.listBudgets({ since: 1, until: 2, kinds: ['reserve'] })).toEqual([])
+    expect(fresh.listBudgets({ kinds: [] })).toEqual([])
+    fresh.close()
   })
 })
 
