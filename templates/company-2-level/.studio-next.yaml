@@ -1,0 +1,11 @@
+# Studio Next 挂载元信息（.studio-next.yaml）
+#
+# 由框架维护：挂载时间与最近校验结果由 daemon 写入（挂单 commit 留痕），人工不要手改。
+# 契约依据：docs/04-§二 / §九（公司目录 schema 版本迁移由 daemon 执行，可 git revert）
+
+schema: org-config/v1 # 公司目录 schema 版本（须与 org-config.yaml 的 schema 一致）
+template: company-2-level # 生成本目录所用的模板名
+created_at: null # 由 init 写入（ISO 8601 带时区偏移）
+last_validated_at: null # 最近一次校验时间（ISO 8601）
+last_validation: null # 最近一次校验结果：pass | fail（fail 时附错误清单）
+framework_version: null # 写入时框架版本（供 migrate 判断是否需要迁移）

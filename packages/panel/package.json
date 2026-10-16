@@ -1,0 +1,21 @@
+{
+  "name": "@studio-next/panel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Studio Next 面板：:8787 框架监控 / :8789 公司概览（Hono + SSE）",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@studio-next/company": "workspace:*",
+    "@studio-next/store": "workspace:*",
+    "hono": "^4.6.0",
+    "zod": "^4.0.0"
+  }
+}

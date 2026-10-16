@@ -1,0 +1,20 @@
+{
+  "name": "@studio-next/prompt",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Studio Next 提示词组装器：L0-L5 → AGENTS.md + 任务书 + 分层指纹",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@studio-next/company": "workspace:*",
+    "@studio-next/contract": "workspace:*",
+    "zod": "^4.0.0"
+  }
+}

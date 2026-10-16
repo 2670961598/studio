@@ -1,0 +1,5 @@
+{
+  // 仓根类型门禁：`tsc --noEmit` 一次覆盖全部 workspace 包与 daemon
+  "extends": "./tsconfig.base.json",
+  "include": ["apps/*/src/**/*.ts", "packages/*/src/**/*.ts"]
+}

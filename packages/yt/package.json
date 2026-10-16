@@ -1,0 +1,19 @@
+{
+  "name": "@studio-next/yt",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Studio Next YouTrack 客户端：活动流游标 / 字段映射 / 网关凭据与护栏",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@studio-next/contract": "workspace:*",
+    "zod": "^4.0.0"
+  }
+}

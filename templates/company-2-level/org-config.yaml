@@ -1,0 +1,77 @@
+# Studio Next · 公司组织配置（org-config.yaml）
+#
+# 契约依据：docs/04-公司目录与等级体系.md §二；字段依据：docs/01-需求-公司面.md C2-01
+#
+# 本文件是**公司与编制的唯一事实源**：部门正文在 departments/<部门名>/config.yaml，
+# 人事正文在 departments/**/people/<工号>.md，本文件只保留派工索引（引用，不内联正文）。
+#
+# 校验规则（packages/company 的 zod schema）：
+#   - 必填缺失 → 启动即报错，不静默降级
+#   - level_distribution 与 people[].level 实数必须相等；越级/偏离九级人数只告警不阻断派工
+#   - 结构与内容分开校验：结构不合法给「文件:行 + 修法」，模板建议值不参与校验（模板与建议，不写死）
+
+schema: org-config/v1 # 本文件的 schema 版本（须与 .studio-next.yaml 的 schema 一致）
+
+company:
+  name: 示例公司 # 公司名（公司层提示词 L1 的内容源之一）
+  slug: example-corp # 目录 slug：概览路由 http://<host>:8789/<slug>/...
+  mission: 用一条可验证的交付链，把需求变成有证据的产出 # 使命（L1）
+  charter_ref: charter.md # 公司章程路径（相对公司目录根）
+  level: 2 # 公司等级 2-9；2 级=班组（1 级=1 人不成公司）
+  level_distribution: # 等级分布（人数必须与 people[].level 实数相等）
+    2: 1 # 示例模板只放 1 名成员；填满一家 2 级公司时按 5-8 agent 补档
+
+# 部门索引：部门领导 = 该部门 config.yaml 的 leader；部门成员 = people/ 内档案
+# 部门嵌套深度 = 该部门层级；9 级是最长链，不是每个部门都要到 9
+departments:
+  - name: 工程部
+    path: departments/工程部 # 相对本目录根；即该部门的目录
+    leader: AGENT-1 # 主管工号（指向 people 索引与人事档案）
+    level: 2 # 部门层级（2 级公司只有一层）
+    parent: null # 上级部门 path；根部门为 null
+    lanes: [core] # 泳道 = 资源标签 + 并行开发单元（锁粒度）
+    functions: [交付] # 部门职能
+    relations: [] # 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}（C2-02）
+
+# 人员索引（只留派工索引；职责正文以人事档案为准，悬空引用/孤儿档案双检）
+people:
+  - id: AGENT-1 # 工号 = 文件名 = 永不变主键
+    name: 示例工程师
+    login: agent-1 # YouTrack 账号锚点（账号=等级锚点，工号=人）
+    level: 2
+    dept: departments/工程部
+    role: 工程负责人 # 岗位（岗位 → 模型档映射见框架级 models.yaml）
+    reports_to: null # 汇报线（上级工号）
+    skills: [typescript] # 技能本体（内部工种映射表，不用自由文本）
+    status: active # active | paused | retired（只改状态不删号，历史不悬空）
+    executor: dsh # executor 偏好；缺省继承框架默认（docs/06-§三）
+    file: departments/工程部/people/AGENT-1.md # 人事档案路径（正文在此）
+
+# 定时岗清单（D9 通用模型）：一切唤起都是定时任务，挂在部门节点下
+# 报表岗 / 财务审查 / 人事审查 / 项目审查 / 升级审查……都只是这个模型的实例，公司可自行增删
+jobs:
+  - id: daily-report-工程部
+    dept: departments/工程部 # 所属部门节点
+    cron: "0 18 * * *" # 本地时区（cron 一律按制作人机器本地时区解析）
+    role: 工程负责人 # 岗位
+    level: 2 # 该岗等级
+    type: report # 任务类型（report | audit | ...，自由扩展，框架不写死）
+    model_tier: low # 模型档：high | mid | low
+    budget_cap: 2 # 预算帽（USD/次；预留-结算，超额在调用前拒绝）
+    output: reports/工程部/ # 产出落点（报表按 <date>-<type>-<节点>-<总结>.md 命名）
+
+# YouTrack 账号锚点映射（账号=等级锚点，不随新增公司而新增账号）
+accounts:
+  - login: agent-1
+    level: 2 # 账号锚定的等级（与人档案的工号解耦）
+    note: 示例：等级锚点账号
+
+# YouTrack 字段/状态流映射覆盖（全部是默认模板，公司可整体替换；此处只列覆盖项）
+yt:
+  project: EXAMPLE # 一公司一项目（N1：短名=公司代号）
+  starting_number: 1 # 单号起始
+  fields: {} # 例：{ state: State, dept: 部门, level: 等级, dispatcher: 派单人 }
+  flows: {} # 状态流覆盖；为空则走框架默认的 flow_by_level 模板（docs/18-§二）
+
+# executor 偏好覆盖（按部门/等级覆盖框架级 agent.yaml 的默认值；此处按岗位在 people[].executor 上）
+executors: {}

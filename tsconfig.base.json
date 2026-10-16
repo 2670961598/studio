@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    // 目标与模块：Node 24 LTS 原生 type-stripping 跑 .ts，模块系统与解析都按 Node 语义（见 docs/16-§二）
+    "target": "ES2024",
+    "lib": ["ES2024"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+
+    // 类型严格性：所有包继承，不许逐包放松
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    // 只保留可擦除语法（禁 enum / namespace / 参数属性 / 装饰器）——保证源码可被 Node 直接剥类型执行
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+
+    // 源码里直接 import "./x.ts"（Node 原生执行要求显式扩展名），由 TS 放行
+    "allowImportingTsExtensions": true,
+
+    // 本骨架只做类型门禁，不出产物；打包分发另走 bun build --compile
+    "noEmit": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true
+  }
+}

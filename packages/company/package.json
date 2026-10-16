@@ -1,0 +1,21 @@
+{
+  "name": "@studio-next/company",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Studio Next 公司目录：schema 校验 / 挂载 / 报表聚合 / 定时岗调度源",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@studio-next/contract": "workspace:*",
+    "@studio-next/store": "workspace:*",
+    "simple-git": "^3.27.0",
+    "zod": "^4.0.0"
+  }
+}

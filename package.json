@@ -1,0 +1,27 @@
+{
+  "name": "studio-next",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Studio Next —— AI 公司框架：调度、适配器、网关、面板与公司目录契约",
+  "license": "MIT",
+  "author": "Ye QingXin",
+  "type": "module",
+  "packageManager": "bun@1",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "daemon": "node apps/daemon/src/index.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.0.0"
+  }
+}

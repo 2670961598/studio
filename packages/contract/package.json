@@ -1,0 +1,18 @@
+{
+  "name": "@studio-next/contract",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Studio Next 契约包：cases.json + JSON Schema + runner（规格测试的唯一标尺）",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  }
+}

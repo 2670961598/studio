@@ -1,0 +1,30 @@
+{
+  "name": "@studio-next/daemon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Studio Next daemon：框架唯一常驻进程（主循环/调度/看护）",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "node src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@studio-next/adapters": "workspace:*",
+    "@studio-next/api": "workspace:*",
+    "@studio-next/company": "workspace:*",
+    "@studio-next/contract": "workspace:*",
+    "@studio-next/core": "workspace:*",
+    "@studio-next/panel": "workspace:*",
+    "@studio-next/prompt": "workspace:*",
+    "@studio-next/store": "workspace:*",
+    "@studio-next/yt": "workspace:*",
+    "croner": "^9.0.0",
+    "execa": "^9.4.0",
+    "simple-git": "^3.27.0",
+    "zod": "^4.0.0"
+  }
+}
