@@ -26,6 +26,17 @@
  *       （--command；超时进程组杀）→ updateVerification 落证据（sandboxPass=判定）→
  *       proposed 则迁移 sandboxed——一条命令进沙箱。判定红非命令错误（exit 0，档案面）；
  *       无 --command 即 fail 如实（无验收命令=不可验证=不过）。
+ *   cutover --db <库路径> --candidate <id> --file <新文件> --company <公司slug>
+ *           [--no-restart] [--root <资产根目录>] [--actor <actor>] [--dept <部门path>]
+ *           [--level <1-9>]
+ *       进化链切权执行器（20-§九管线「→灰度→切权」的切权环节，进化链四刀之三，
+ *       src/cutover.ts）：approved/promoted 候选**受控上产**——双闸（状态前置 + 判负闸
+ *       authorize 写前复跑，evolve-guard 观察模式的受控对偶）→ 备份现存目标为
+ *       <目标>.bak-<候选id>（回滚锚点，保留）→ 同目录 tmp+rename 原子写 → 读回复核
+ *       hash → approved 则迁移 promoted（core 判边+乐观锁）→ SCHEMA_EVOLVE 事件落账
+ *       （note=候选+资产+旧新 hash）。任一失败面先回滚再如实报（不留半改态）。
+ *       --no-restart 抑制重启提示；v0 恒不实际重启（supervisor 看护归运维刀——诚实边界）。
+ *       库必须已存在（写面不代建库）。
  *   postmortem --db <库路径> --company <slug> --issue <复盘单号> --input <复盘.json>
  *             [--casebook <案例库目录>] [--slug <条目slug>] [--date <YYYY-MM-DD>]
  *             [--dept <部门path>] [--level <1-9>] [--actor <actor>]
@@ -65,7 +76,7 @@
  *     逐项清单见 src/serve.ts 与 src/engine.ts 头注）
  *
  * argv 解析零依赖手写（单命令薄壳不值得引库；16-§二 选型纪律：引新依赖须登记选型表）。
- * 退出码：0 成功（sandbox 判定 PASS/FAIL 均 0——红是档案面非命令错误）｜1 用法错误 / 校验不通过 / init 失败 / 演习 FAIL / panel 失败 / overview 失败 / external 失败 / candidates 失败 / sandbox 链面失败（库/候选/状态/写入窗）/ serve 配置错｜
+ * 退出码：0 成功（sandbox 判定 PASS/FAIL 均 0——红是档案面非命令错误）｜1 用法错误 / 校验不通过 / init 失败 / 演习 FAIL / panel 失败 / overview 失败 / external 失败 / candidates 失败 / sandbox 链面失败（库/候选/状态/写入窗）/ cutover 链面失败（双闸/备份/写/复核/迁移/落账——失败已回滚）/ postmortem 失败 / serve 配置错｜
  * 2 serve 运行中出错（tick 异常）。
  * 用 process.exitCode 而非 process.exit 收尾：让管道下的 stdout/stderr 先冲刷再自然退出。
  */
@@ -88,6 +99,7 @@ import { createGatedPlatform } from './gated-platform.ts'
 import { ENGINE_CONFIG_DEFAULTS } from './engine.ts'
 import { runServe } from './serve.ts'
 import { renderSandboxLines, runCandidateSandbox } from './sandbox.ts'
+import { renderCutoverLines, runCutover } from './cutover.ts'
 import { parsePostmortemInput, renderPostmortemLines, runPostmortemChain } from './postmortem.ts'
 
 const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
@@ -115,6 +127,15 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
       updateVerification 落证据 → proposed 迁移 sandboxed。生产零触碰（结构性保证）；
       判定 PASS/FAIL 均非命令错误（exit 0——红是档案面）；--command 缺省=fail 如实落账；
       --timeout 缺省 60000；--root 缺省当前目录；库不存在即拒（候选必须在库，不代建库）
+  studio-next cutover --db <库路径> --candidate <id> --file <新文件> --company <公司slug>
+                      [--no-restart] [--root <资产根目录>] [--actor <actor>]
+                      [--dept <部门path>] [--level <1-9>]
+      进化链切权执行器（20-§九切权环节，进化链四刀之三，src/cutover.ts）：approved/promoted
+      候选受控上产——双闸（状态∈{approved,promoted} + 判负闸 authorize 写前复跑）→ 备份
+      <目标>.bak-<候选id>（回滚锚点保留）→ tmp+rename 原子写 → 读回复核 → approved 迁移
+      promoted → SCHEMA_EVOLVE 事件落账（note=候选+资产+旧新 hash）；失败面先回滚再报
+      （不留半改态）。--no-restart 抑制重启提示（v0 恒不实际重启——supervisor 看护归运维刀）；
+      --root 缺省当前目录；库必须已存在（写面不代建库）
   studio-next postmortem --db <库路径> --company <slug> --issue <复盘单号> --input <复盘.json>
                          [--casebook <案例库目录>] [--slug <条目slug>] [--date <YYYY-MM-DD>]
                          [--dept <部门path>] [--level <1-9>] [--actor <actor>]
@@ -459,6 +480,89 @@ async function cmdSandbox(argv: string[]): Promise<number> {
   } catch (err) {
     // 链面失败如实分类上报（CONFIG_INVALID/EVOLVE_REJECT——sandbox.ts 头注分类面）
     console.error(`sandbox 失败：${errText(err)}`)
+    return 1
+  }
+}
+
+/**
+ * cutover 子命令：进化链切权薄壳（语义全在 src/cutover.ts——受控上产执行器）。
+ * --file 必给（新内容全文——判负闸消费其 sha256）；--company 必给（events.company 台账
+ * 路由键，postmortem 同款不猜）。库必须已存在：事件要落账+状态要迁移，写面不代建库
+ * （sandbox 同款 existsSync 闸）。--no-restart 抑制重启提示（v0 恒不实际重启——诚实边界）。
+ */
+async function cmdCutover(argv: string[]): Promise<number> {
+  const parsed = parseArgv(argv, new Set(['db', 'candidate', 'file', 'company', 'root', 'actor', 'dept', 'level']), undefined, new Set(['no-restart']))
+  if ('error' in parsed) {
+    console.error(`cutover：${parsed.error}`)
+    console.error(USAGE)
+    return 1
+  }
+  if (parsed.positionals.length > 0) {
+    console.error(`cutover：多余的位置参数：${parsed.positionals.join(' ')}`)
+    console.error(USAGE)
+    return 1
+  }
+  const dbPath = parsed.flags.db
+  if (dbPath === undefined) {
+    console.error('cutover：缺少 --db <库路径>')
+    console.error(USAGE)
+    return 1
+  }
+  const candidateId = parsed.flags.candidate
+  if (candidateId === undefined) {
+    console.error('cutover：缺少 --candidate <候选 id>')
+    console.error(USAGE)
+    return 1
+  }
+  const filePath = parsed.flags.file
+  if (filePath === undefined) {
+    console.error('cutover：缺少 --file <新文件>（新内容全文——判负闸消费其 sha256，缺即用法错误）')
+    console.error(USAGE)
+    return 1
+  }
+  const company = parsed.flags.company
+  if (company === undefined) {
+    console.error('cutover：缺少 --company <公司 slug>（events.company 台账路由键，不猜）')
+    console.error(USAGE)
+    return 1
+  }
+  let level: number | undefined
+  if (parsed.flags.level !== undefined) {
+    level = Number.parseInt(parsed.flags.level, 10)
+    if (!Number.isInteger(level) || level < 1 || level > 9) {
+      console.error(`cutover：--level 取值非法：${parsed.flags.level}（须为 1-9 整数——04-§四等级口径）`)
+      return 1
+    }
+  }
+  const resolvedDb = path.resolve(dbPath)
+  if (!existsSync(resolvedDb)) {
+    console.error(`cutover：库不存在：${resolvedDb}（切权要落账+迁移——写面不代建库，先由 daemon/提案面建库）`)
+    return 1
+  }
+  try {
+    const ledger = openLedger(resolvedDb)
+    try {
+      const result = runCutover(ledger, candidateId, {
+        newFilePath: filePath,
+        assetRoot: parsed.flags.root ?? '.',
+        company,
+        restart: !parsed.booleans.has('no-restart'),
+        ...(parsed.flags.actor !== undefined ? { actor: parsed.flags.actor } : {}),
+        ...(parsed.flags.dept !== undefined ? { dept: parsed.flags.dept } : {}),
+        ...(level !== undefined ? { level } : {}),
+      })
+      const row = ledger.getCandidate(candidateId)
+      if (row !== undefined) {
+        for (const line of renderCutoverLines(result, row)) console.log(line)
+      }
+      console.log(`候选 ${candidateId} 切权完成：${result.targetPath}（hash → ${result.newHash}，状态 ${row?.status ?? '?'}）`)
+      return 0
+    } finally {
+      ledger.close()
+    }
+  } catch (err) {
+    // 链面失败如实分类上报（CONFIG_INVALID——cutover.ts 头注失败面枚举；失败已回滚不留半改态）
+    console.error(`cutover 失败：${errText(err)}`)
     return 1
   }
 }
@@ -897,6 +1001,8 @@ async function main(): Promise<number> {
       return cmdCandidates(rest)
     case 'sandbox':
       return cmdSandbox(rest)
+    case 'cutover':
+      return cmdCutover(rest)
     case 'postmortem':
       return cmdPostmortem(rest)
     case 'panel':
