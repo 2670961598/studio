@@ -38,6 +38,13 @@ export interface TaskBrief {
   AGENTS_MD: { channel: 'native' | 'user_level' | 'append_system_prompt'; target: string }
   budgetCap?: Money
   resume?: { sessionId: string; summaryPath: string }
+  /**
+   * 短命按单凭据（v1.4；docs/25-§二 + 2026-10-18 制作人定调）。冻结语义：
+   *   - 由 daemon 在 launch 前注入；适配器**无条件透传**进子进程 env（不校验不拆解）。
+   *   - 适配器不得记录/打印其值（红名单）——不得进任何日志/事件/账面文本。
+   *   - prompt / 任务书正文 / 档案**永不含**（凭据永不入提示词/档案/任务书）。
+   */
+  credentials?: Record<string, string>
 }
 
 // —— 两级错误分类（docs/17-§9 冻结枚举；处置语义归 core）——
