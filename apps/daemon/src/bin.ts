@@ -18,6 +18,14 @@
  *       进化管线现状只读列表（v0.10，docs/16-§四/17-§3/20-§九）：candidates 全量按
  *       (created_at,id) 升序——汇总行（总数+状态分布）+ 逐行 id/状态/资产类型/blast_radius/
  *       version/谱系父/资产路径/diff 哈希；库不存在即拒（只读面不代建库，panel 同款闸）
+ *   sandbox --db <库路径> --candidate <id> [--command <冻结验收命令>] [--file <变更文件>]
+ *           [--timeout <ms>] [--root <资产根目录>]
+ *       进化链沙箱执行器（20-§九「候选制品→沙箱→三态闸门」的沙箱环节；临时目录法——
+ *       生产零触碰，结构性保证见 src/sandbox.ts 头注）：取候选 → tmp 拷贝最小集（资产+
+ *       同目录测试文件）→ 应用变更（--file=资产整文件替换，v0）→ 跑冻结验收命令
+ *       （--command；超时进程组杀）→ updateVerification 落证据（sandboxPass=判定）→
+ *       proposed 则迁移 sandboxed——一条命令进沙箱。判定红非命令错误（exit 0，档案面）；
+ *       无 --command 即 fail 如实（无验收命令=不可验证=不过）。
  *   panel --db <库路径> [--port 8787]
  *       :8787 只读监控面（v0.3）：jobs/runs/workers/事件流（SSE），全部读 SQLite 零写；
  *       库不存在即拒启（panel 不代建库）；SIGINT/SIGTERM 优雅关闭
@@ -48,7 +56,7 @@
  *     逐项清单见 src/serve.ts 与 src/engine.ts 头注）
  *
  * argv 解析零依赖手写（单命令薄壳不值得引库；16-§二 选型纪律：引新依赖须登记选型表）。
- * 退出码：0 成功｜1 用法错误 / 校验不通过 / init 失败 / 演习 FAIL / panel 失败 / overview 失败 / external 失败 / candidates 失败 / serve 配置错｜
+ * 退出码：0 成功（sandbox 判定 PASS/FAIL 均 0——红是档案面非命令错误）｜1 用法错误 / 校验不通过 / init 失败 / 演习 FAIL / panel 失败 / overview 失败 / external 失败 / candidates 失败 / sandbox 链面失败（库/候选/状态/写入窗）/ serve 配置错｜
  * 2 serve 运行中出错（tick 异常）。
  * 用 process.exitCode 而非 process.exit 收尾：让管道下的 stdout/stderr 先冲刷再自然退出。
  */
@@ -70,6 +78,7 @@ import { createFakePlatform } from './fakes.ts'
 import { createGatedPlatform } from './gated-platform.ts'
 import { ENGINE_CONFIG_DEFAULTS } from './engine.ts'
 import { runServe } from './serve.ts'
+import { renderSandboxLines, runCandidateSandbox } from './sandbox.ts'
 
 const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
 
@@ -89,6 +98,13 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
       进化管线现状只读列表（v0.10，docs/16-§四）：汇总行（总数+状态分布）+ 候选逐行
       id/状态/资产类型/blast_radius/version/谱系父/资产路径/diff 哈希（(created_at,id) 升序）；
       库不存在即拒（只读面不代建库）
+  studio-next sandbox --db <库路径> --candidate <id> [--command <冻结验收命令>]
+                      [--file <变更文件>] [--timeout <ms>] [--root <资产根目录>]
+      进化链沙箱执行器（20-§九沙箱环节，src/sandbox.ts）：临时目录拷贝资产最小集 → 应用
+      变更（--file=候选资产整文件替换）→ 跑 --command 冻结验收命令（超时杀进程组）→
+      updateVerification 落证据 → proposed 迁移 sandboxed。生产零触碰（结构性保证）；
+      判定 PASS/FAIL 均非命令错误（exit 0——红是档案面）；--command 缺省=fail 如实落账；
+      --timeout 缺省 60000；--root 缺省当前目录；库不存在即拒（候选必须在库，不代建库）
   studio-next panel --db <库路径> [--port 8787]
       :8787 只读监控面（v0.3，docs/16-§四）：jobs/runs/workers/事件流（SSE），
       全部读 SQLite 零写；库不存在即拒启；Ctrl-C 优雅关闭
@@ -353,6 +369,77 @@ async function cmdCandidates(argv: string[]): Promise<number> {
   } catch (err) {
     // 坏库/坏行（CONFIG_INVALID 形状）如实分类上报
     console.error(`candidates list 失败：${errText(err)}`)
+    return 1
+  }
+}
+
+/**
+ * sandbox 子命令：进化链沙箱执行薄壳（语义全在 src/sandbox.ts——runner+CLI 链）。
+ * 退出码语义（拟稿，sandbox.ts 头注）：链走完（证据落账+迁移完成）即 0——判定红是档案面
+ * 非命令错误；用法/库/候选/状态面错误 1。库必须已存在：候选必须在库，写面不代建库
+ * （candidates list 同款 existsSync 闸）。
+ */
+async function cmdSandbox(argv: string[]): Promise<number> {
+  const parsed = parseArgv(argv, new Set(['db', 'candidate', 'command', 'file', 'timeout', 'root']))
+  if ('error' in parsed) {
+    console.error(`sandbox：${parsed.error}`)
+    console.error(USAGE)
+    return 1
+  }
+  if (parsed.positionals.length > 0) {
+    console.error(`sandbox：多余的位置参数：${parsed.positionals.join(' ')}`)
+    console.error(USAGE)
+    return 1
+  }
+  const dbPath = parsed.flags.db
+  if (dbPath === undefined) {
+    console.error('sandbox：缺少 --db <库路径>')
+    console.error(USAGE)
+    return 1
+  }
+  const candidateId = parsed.flags.candidate
+  if (candidateId === undefined) {
+    console.error('sandbox：缺少 --candidate <候选 id>')
+    console.error(USAGE)
+    return 1
+  }
+  let timeoutMs: number | undefined
+  if (parsed.flags.timeout !== undefined) {
+    timeoutMs = Number.parseInt(parsed.flags.timeout, 10)
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+      console.error(`sandbox：--timeout 取值非法：${parsed.flags.timeout}（须为正整数毫秒）`)
+      return 1
+    }
+  }
+  const resolvedDb = path.resolve(dbPath)
+  if (!existsSync(resolvedDb)) {
+    console.error(`sandbox：库不存在：${resolvedDb}（候选必须在库——写面不代建库，先由 daemon/提案面建库）`)
+    return 1
+  }
+  try {
+    const ledger = openLedger(resolvedDb)
+    try {
+      const row = ledger.getCandidate(candidateId)
+      if (row === undefined) {
+        console.error(`sandbox：候选 ${candidateId} 不在库（--candidate 回查失败）`)
+        return 1
+      }
+      const result = await runCandidateSandbox(ledger, {
+        candidateId,
+        ...(parsed.flags.command !== undefined ? { testCommand: parsed.flags.command } : {}),
+        ...(parsed.flags.file !== undefined ? { changeFile: parsed.flags.file } : {}),
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+        assetRoot: parsed.flags.root ?? '.',
+      })
+      for (const line of renderSandboxLines(result, row)) console.log(line)
+      console.log(`候选 ${candidateId} 沙箱完成：${result.report.pass ? 'PASS' : 'FAIL'}（证据已落台账，状态 ${ledger.getCandidate(candidateId)?.status ?? '?'}）`)
+      return 0
+    } finally {
+      ledger.close()
+    }
+  } catch (err) {
+    // 链面失败如实分类上报（CONFIG_INVALID/EVOLVE_REJECT——sandbox.ts 头注分类面）
+    console.error(`sandbox 失败：${errText(err)}`)
     return 1
   }
 }
@@ -691,6 +778,8 @@ async function main(): Promise<number> {
       return cmdLedger(rest)
     case 'candidates':
       return cmdCandidates(rest)
+    case 'sandbox':
+      return cmdSandbox(rest)
     case 'panel':
       return cmdPanel(rest)
     case 'overview':
