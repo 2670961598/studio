@@ -22,10 +22,14 @@
  *   - 沙箱真执行器（sandboxRun 的真跑面）、灰度（shadow 并行记账+决策字段级 diff，F3-04）、
  *     切权（supervisor 重启加载，17-§2）、复盘（POSTMORTEM）——归后续刀；本套以证据快照
  *     注入模拟沙箱产物（假想，非真跑）。
- *   - verification 快照写面：store 现只有 insert 时写入，无行中更新面（updateVerification 归
- *     后续刀）——本套在沙箱完成点以**裸 SQL 模拟该写点**（与 insertCandidate 同 JSON 序列化
- *     口径），且写入后立即经 store 读面回查再进闸门：闸门证据确实流经台账，不是内存直通。
+ *   - verification 快照写面【已清偿——切 store 正式面】：沙箱完成点落列改走
+ *     ledger.updateVerification（v5 增补写面：sandboxed 窗口闸 + serializeVerification
+ *     与 insert 同源——packages/store/src/ledger.ts），写后立即经 store 读面回查再进闸门：
+ *     闸门证据确实流经台账，不是内存直通。本套早前版本以裸 SQL 模拟该写点的历史已终结。
  *   - 判负面挂主循环/网关写径（生产改动的拦截点接线）——归后续刀；本套在测试内调判定核。
+ *     serve 启动自检（观察模式：框架资产清单跑 authorize，unauthorized 落 ESCALATE 不阻断
+ *     启动）已另单接线（src/evolve-guard.ts + test/evolve-guard.test.ts）；阻断模式+
+ *     资产面扩展归真单刀。
  *   - 观测产物（metrics 快照）为假想语料：证明链路形状，不证明观测器本身（观测器归后续刀）。
  *
  * 环境与纪律：os.tmpdir() 真文件库（沿 store 测试风格，不用 :memory:）；四场景各一独立库
@@ -153,14 +157,13 @@ function daemonTransition(ledger: Ledger, id: string, to: CandidateStatus): void
 }
 
 /**
- * 沙箱完成写点（**模拟面**，头注冻结）：verification 快照落列。store 的行中更新面
- * （updateVerification）归后续刀——此处裸 SQL 与 insertCandidate 同 JSON 序列化口径写入，
- * 写后立即经 store 读面回查，闸门证据确实流经台账。
+ * 沙箱完成写点（**store 正式面**）：verification 快照落列 = ledger.updateVerification
+ * （v5 增补写面：sandboxed 窗口闸——他态 CONFIG_INVALID；序列化 serializeVerification 与
+ * insertCandidate 同源单一 helper）。写后立即经 store 读面回查，闸门证据确实流经台账。
  */
 function writeVerification(ledger: Ledger, id: string, evidence: GateEvidence): void {
-  ledger.db
-    .prepare('UPDATE candidates SET verification = ? WHERE id = ?')
-    .run(JSON.stringify(evidence), id)
+  const ok = ledger.updateVerification(id, evidence)
+  if (!ok) throw new Error(`updateVerification 落库失败：候选 ${id} 不在库（无此行=false——语料装配错序）`)
   const back = ledger.getCandidate(id)?.verification
   expect(back).toEqual(evidence)
 }
