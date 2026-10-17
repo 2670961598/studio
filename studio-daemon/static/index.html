@@ -607,7 +607,7 @@ const BarChart={
 const app=createApp({
   setup(){
     const now=ref('')
-    const ptabs=[{k:'pov',n:'概览'},{k:'pSTUDIO',n:'STUDIO'},{k:'pGAMES',n:'GAMES'},{k:'pPOLY',n:'POLY'}]
+    const ptabs=[{k:'pov',n:'概览'},{k:'pSTUDIO',n:'STUDIO'},{k:'pGAMES',n:'GAMES'},{k:'pPOLY',n:'POLY'},{k:'pSNEXT',n:'SNEXT'}]
     const otabs=[{k:'ov',n:'总览'},{k:'jobs',n:'定时任务'},{k:'runs',n:'运行历史'},{k:'wk',n:'工人'},{k:'sc',n:'单子知识库'},{k:'se',n:'自评'}]
     const _VALID=['pov','pSTUDIO','pGAMES','pPOLY','ov','jobs','runs','wk','sc','se']
     const tab=ref(_VALID.includes(location.hash.slice(1))?location.hash.slice(1):'pov')  // hash 直达/书签
@@ -624,7 +624,7 @@ const app=createApp({
       {k:'dispatch',n:'派发',c:'#4493f8',m:'circle',lc:''},
       {k:'close',n:'交付',c:'#2ea043',m:'square',lc:'sq'},
       {k:'gate_fail',n:'闸门失败',c:'#f85149',m:'tri',lc:'tri',dash:'4 3'}]
-    const curPid=computed(()=>/^p(STUDIO|GAMES|POLY)$/.test(tab.value)?tab.value.slice(1):null)
+    const curPid=computed(()=>/^p(STUDIO|GAMES|POLY|SNEXT)$/.test(tab.value)?tab.value.slice(1):null)
     const d=computed(()=>curPid.value?dash[curPid.value]:null)
     const kindName=k=>({daily:'日报',weekly:'周报',monthly:'月报',pm:'巡检日报',games:'GAMES 专岗',poly:'三消专岗'}[k]||k)
     async function fetchPov(){try{const r=await(await fetch('/api/dashboard')).json()

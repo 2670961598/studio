@@ -331,7 +331,7 @@ def _transcript(issue: str) -> dict:
 DASH_DAYS = 14                                    # 项目页趋势/成本窗口（日）
 REPORT_KINDS = {                                  # pid → 本地 reports/ 归属该项目的报告前缀
     "STUDIO": ("daily", "weekly", "monthly", "pm"),
-    "GAMES": ("games",), "POLY": ("poly",),
+    "GAMES": ("games",), "POLY": ("poly",), "SNEXT": ("snext",),
 }
 
 
