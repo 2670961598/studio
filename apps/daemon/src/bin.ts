@@ -14,6 +14,10 @@
  *       events 全量导出 JSONL（F2-11 库→JSONL 单向派生）
  *   ledger rebuild <源.jsonl> <目标库>
  *       JSONL → 新库重放（单事务原子，坏行中止指明行号；F2-12）
+ *   candidates list --db <库路径>
+ *       进化管线现状只读列表（v0.10，docs/16-§四/17-§3/20-§九）：candidates 全量按
+ *       (created_at,id) 升序——汇总行（总数+状态分布）+ 逐行 id/状态/资产类型/blast_radius/
+ *       version/谱系父/资产路径/diff 哈希；库不存在即拒（只读面不代建库，panel 同款闸）
  *   panel --db <库路径> [--port 8787]
  *       :8787 只读监控面（v0.3）：jobs/runs/workers/事件流（SSE），全部读 SQLite 零写；
  *       库不存在即拒启（panel 不代建库）；SIGINT/SIGTERM 优雅关闭
@@ -44,10 +48,11 @@
  *     逐项清单见 src/serve.ts 与 src/engine.ts 头注）
  *
  * argv 解析零依赖手写（单命令薄壳不值得引库；16-§二 选型纪律：引新依赖须登记选型表）。
- * 退出码：0 成功｜1 用法错误 / 校验不通过 / init 失败 / 演习 FAIL / panel 失败 / overview 失败 / external 失败 / serve 配置错｜
+ * 退出码：0 成功｜1 用法错误 / 校验不通过 / init 失败 / 演习 FAIL / panel 失败 / overview 失败 / external 失败 / candidates 失败 / serve 配置错｜
  * 2 serve 运行中出错（tick 异常）。
  * 用 process.exitCode 而非 process.exit 收尾：让管道下的 stdout/stderr 先冲刷再自然退出。
  */
+import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { initCompany, loadCompanyDirectory, readDirectoryFiles } from '@studio-next/company'
 import type { InitOptions } from '@studio-next/company'
@@ -56,7 +61,7 @@ import { serveOverview } from '@studio-next/panel/overview'
 import type { OverviewCompanySource } from '@studio-next/panel/overview'
 import { serveExternal } from '@studio-next/panel/external'
 import type { ExternalCompanySource } from '@studio-next/panel/external'
-import { openLedger, rebuild, renderDrillReport, runLedgerDrill } from '@studio-next/store'
+import { CANDIDATE_STATUS_VALUES, openLedger, rebuild, renderDrillReport, runLedgerDrill } from '@studio-next/store'
 import type { CompanySnapshot } from '@studio-next/contract'
 import { CONTROL_TICKET, createGateway } from '@studio-next/gateway'
 import type { SignatureContext } from '@studio-next/gateway'
@@ -80,6 +85,10 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
       events 全量导出 JSONL（F2-11 单向派生）
   studio-next ledger rebuild <源.jsonl> <目标库>
       JSONL → 新库重放（单事务原子；F2-12）
+  studio-next candidates list --db <库路径>
+      进化管线现状只读列表（v0.10，docs/16-§四）：汇总行（总数+状态分布）+ 候选逐行
+      id/状态/资产类型/blast_radius/version/谱系父/资产路径/diff 哈希（(created_at,id) 升序）；
+      库不存在即拒（只读面不代建库）
   studio-next panel --db <库路径> [--port 8787]
       :8787 只读监控面（v0.3，docs/16-§四）：jobs/runs/workers/事件流（SSE），
       全部读 SQLite 零写；库不存在即拒启；Ctrl-C 优雅关闭
@@ -284,6 +293,67 @@ async function cmdLedger(argv: string[]): Promise<number> {
       console.error(`未知 ledger 子命令：${sub}`)
       console.error(USAGE)
       return 1
+  }
+}
+
+/**
+ * candidates 子命令组：进化管线现状只读面（薄壳——语义全在 @studio-next/store 读面，
+ * candidatesByStatus 全状态集=全量；只列不改）。库不存在即拒：只读面不代建库（panel 同款
+ * existsSync 闸——openLedger 会建库迁移，代建即副作用，违「只读」语义）。
+ */
+async function cmdCandidates(argv: string[]): Promise<number> {
+  const [sub, ...rest] = argv
+  if (sub !== 'list') {
+    if (sub !== undefined && sub !== '-h' && sub !== '--help' && sub !== 'help') {
+      console.error(`未知 candidates 子命令：${sub}`)
+    }
+    console.error(USAGE)
+    return sub === undefined || sub === '-h' || sub === '--help' || sub === 'help' ? 0 : 1
+  }
+  const parsed = parseArgv(rest, new Set(['db']))
+  if ('error' in parsed) {
+    console.error(`candidates list：${parsed.error}`)
+    console.error(USAGE)
+    return 1
+  }
+  if (parsed.positionals.length > 0) {
+    console.error(`candidates list：多余的位置参数：${parsed.positionals.join(' ')}`)
+    console.error(USAGE)
+    return 1
+  }
+  const dbPath = parsed.flags.db
+  if (dbPath === undefined) {
+    console.error('candidates list：缺少 --db <库路径>')
+    console.error(USAGE)
+    return 1
+  }
+  const resolved = path.resolve(dbPath)
+  if (!existsSync(resolved)) {
+    console.error(`candidates list：库不存在：${resolved}（只读面不代建库——先由 daemon/回填侧建库）`)
+    return 1
+  }
+  try {
+    const ledger = openLedger(resolved)
+    try {
+      const rows = ledger.candidatesByStatus([...CANDIDATE_STATUS_VALUES])
+      const byStatus = new Map<string, number>()
+      for (const r of rows) byStatus.set(r.status, (byStatus.get(r.status) ?? 0) + 1)
+      const dist = [...byStatus.entries()].map(([s, n]) => `${s}=${n}`).join(' ')
+      console.log(`候选 ${rows.length} 条${dist === '' ? '（库空）' : `（${dist}）`}——库 ${resolved}（schema v${ledger.version()}，只读）`)
+      for (const r of rows) {
+        const hash = r.diff_hash.length > 17 ? `${r.diff_hash.slice(0, 17)}…` : r.diff_hash
+        console.log(
+          `${r.id}  ${r.status.padEnd(9)}  ${r.asset_type.padEnd(10)}  ${r.blast_radius.padEnd(10)}  ${r.version.padEnd(12)}  parent=${r.parent_id ?? '—（初代）'}  ${r.asset_path}  ${hash}`,
+        )
+      }
+      return 0
+    } finally {
+      ledger.close()
+    }
+  } catch (err) {
+    // 坏库/坏行（CONFIG_INVALID 形状）如实分类上报
+    console.error(`candidates list 失败：${errText(err)}`)
+    return 1
   }
 }
 
@@ -619,6 +689,8 @@ async function main(): Promise<number> {
       return cmdValidate(rest)
     case 'ledger':
       return cmdLedger(rest)
+    case 'candidates':
+      return cmdCandidates(rest)
     case 'panel':
       return cmdPanel(rest)
     case 'overview':
