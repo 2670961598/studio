@@ -1,17 +1,18 @@
 /**
- * worker-key 单测 —— 签发形状/文件通道（0600）/轮换/吊销/时效（17-§7 daemon 侧闭环的件级断言）
+ * worker-key 单测 —— 签发形状/env 通道 credentials/轮换/吊销/时效（17-§7 daemon 侧闭环的件级断言）
  *
  * 覆盖面（实现单验收口径）：
  *   - 签发：scope=GATEWAY_ACTIONS 六动词全集、ticket 绑定、nonce 注入唯一、TTL 缺省/自定义
  *     （exp 差）、过期边界（now===exp 即拒）
- *   - 文件通道：路径 `<workspace>/.studio-next/wkey`、内容 `STUDIO_TOOLS_WKEY=<token>` 一行、
- *     权限 0600（目录 0700）、readWorkerKeyFile 剥前缀/裸 token 兼容/缺文件 fail-closed
+ *   - env 通道（2026-10-18 制作人定调，TaskBrief.credentials v1.4）：workerKeyCredentials
+ *     构造 `{ STUDIO_TOOLS_WKEY: token }`（键名与 studio-tools 宿主直注同一张表）；
+ *     任务书指引行指到环境变量与 MCP _meta（一句话——「怎么调」归 MCP schema，不含凭据值）
  *   - 吊销：revoke 后 verify → 'revoked'（先于过期/重放判定）；ticket 吊销是终局（吊销后
- *     再签的同 ticket key 出生即死——冻结面行为锚定）；重派轮换=非终局撤离（删文件不吊销），
- *     两 attempt token 不同（nonce 链干净）
+ *     再签的同 ticket key 出生即死——冻结面行为锚定）；重派轮换=非终局不吊销
+ *     （env 通道：凭据随子进程终结离场），两 attempt token 不同（nonce 链干净）
  *   - nonce 单次有效现行语义锚定（同 token 二次 verify → 'replay'——gateway/wkey.ts 头注疑点）
  */
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -19,14 +20,9 @@ import { CONTROL_TICKET, createGateway } from '@studio-next/gateway'
 import { GATEWAY_ACTIONS } from '@studio-next/contract'
 import {
   mintWorkerKey,
-  readWorkerKeyFile,
-  removeWorkerKeyFile,
-  workerKeyFilePath,
+  workerKeyCredentials,
   workerKeyGuidance,
-  writeWorkerKeyFile,
-  WORKER_WKEY_DIR,
   WORKER_WKEY_ENV_KEY,
-  WORKER_WKEY_FILENAME,
   WORKER_WKEY_TTL_DEFAULT,
 } from '../src/worker-key.ts'
 
@@ -103,49 +99,23 @@ describe('签发形状（mintWorkerKey）', () => {
   })
 })
 
-describe('文件通道（writeWorkerKeyFile / readWorkerKeyFile / removeWorkerKeyFile）', () => {
-  it('launch 前写：路径 <workspace>/.studio-next/wkey，内容一行 STUDIO_TOOLS_WKEY=<token>，权限 0600（目录 0700）', () => {
-    const workspace = path.join(root, 'ws-a')
+describe('env 通道（workerKeyCredentials / workerKeyGuidance——TaskBrief.credentials v1.4）', () => {
+  it('workerKeyCredentials：构造 { STUDIO_TOOLS_WKEY: token }（键名与 studio-tools 宿主直注同表）', () => {
     const minted = mintWorkerKey(gateway, { ticket: 'T-10', makeNonce: nextNonce })
-    const filePath = writeWorkerKeyFile(workspace, minted.token)
-    expect(filePath).toBe(path.join(workspace, WORKER_WKEY_DIR, WORKER_WKEY_FILENAME))
-    expect(existsSync(filePath)).toBe(true)
-    // 权限精确断言（chmodSync 强制——不受进程 umask 影响）
-    expect(statSync(filePath).mode & 0o777).toBe(0o600)
-    expect(statSync(path.join(workspace, WORKER_WKEY_DIR)).mode & 0o777).toBe(0o700)
-    // 内容：env 赋值形态一行（studio-tools 宿主直注键名对齐）
-    expect(readWorkerKeyFile(workspace)).toBe(minted.token)
+    const credentials = workerKeyCredentials(minted.token)
+    expect(credentials).toStrictEqual({ [WORKER_WKEY_ENV_KEY]: minted.token })
+    expect(WORKER_WKEY_ENV_KEY).toBe('STUDIO_TOOLS_WKEY')
   })
 
-  it('readWorkerKeyFile：裸 token 行兼容；缺文件/空文件 → undefined（fail-closed 不猜）', () => {
-    const bare = path.join(root, 'ws-bare')
-    const minted = mintWorkerKey(gateway, { ticket: 'T-11', makeNonce: nextNonce })
-    const filePath = writeWorkerKeyFile(bare, minted.token)
-    writeFileSync(filePath, `${minted.token}\n`, 'utf8') // 覆写为裸 token 形态
-    expect(readWorkerKeyFile(bare)).toBe(minted.token)
-    expect(readWorkerKeyFile(path.join(root, 'ws-missing'))).toBeUndefined()
-    const empty = path.join(root, 'ws-empty')
-    writeWorkerKeyFile(empty, minted.token)
-    writeFileSync(workerKeyFilePath(empty), '\n  \n', 'utf8')
-    expect(readWorkerKeyFile(empty)).toBeUndefined()
-  })
-
-  it('removeWorkerKeyFile：删后文件消失；再删幂等不抛', () => {
-    const workspace = path.join(root, 'ws-rm')
-    const filePath = writeWorkerKeyFile(workspace, mintWorkerKey(gateway, { ticket: 'T-12', makeNonce: nextNonce }).token)
-    expect(existsSync(filePath)).toBe(true)
-    removeWorkerKeyFile(filePath)
-    expect(existsSync(filePath)).toBe(false)
-    expect(() => removeWorkerKeyFile(filePath)).not.toThrow()
-  })
-
-  it('任务书指引行：指到文件路径与 env 键名（一句话——「怎么调」归 MCP schema）', () => {
-    const workspace = path.join(root, 'ws-guide')
-    const line = workerKeyGuidance(workspace)
-    expect(line).toContain(workerKeyFilePath(workspace))
+  it('任务书指引行：指到环境变量与 MCP _meta 键（一句话——「怎么调」归 MCP schema）', () => {
+    const line = workerKeyGuidance()
     expect(line).toContain(WORKER_WKEY_ENV_KEY)
     expect(line).toContain('studio-wkey')
+    expect(line).toContain('关单即吊销')
     expect(line).not.toContain('\n')
+    // 指引行不含任何凭据值（红名单）：无 token 赋值形态
+    const minted = mintWorkerKey(gateway, { ticket: 'T-11', makeNonce: nextNonce })
+    expect(line).not.toContain(minted.token)
   })
 })
 
@@ -161,9 +131,8 @@ describe('吊销与轮换（17-§7「关单即吊销」「一 attempt 一 key」
     expect(verifyToken(a.token, 'T-20')).toEqual({ ok: false, reason: 'revoked' })
   })
 
-  it('重派轮换（非终局撤离）：旧 attempt 凭据文件删除、不吊销 ticket——新 key（新 nonce 新 token）照常可用，nonce 链干净', () => {
+  it('重派轮换（非终局不吊销——env 通道：凭据随子进程终结离场）：新 key（新 nonce 新 token）照常可用，nonce 链干净', () => {
     const attempt1 = mintWorkerKey(gateway, { ticket: 'T-21', makeNonce: nextNonce })
-    removeWorkerKeyFile(path.join(root, 'rot-att1', '.studio-next', 'wkey')) // 撤离面=文件删除（幂等，此处验证不抛）
     const attempt2 = mintWorkerKey(gateway, { ticket: 'T-21', makeNonce: nextNonce })
     expect(attempt2.token).not.toBe(attempt1.token)
     expect(attempt2.nonce).not.toBe(attempt1.nonce)

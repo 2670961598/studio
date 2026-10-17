@@ -1,20 +1,24 @@
 /**
  * worker-key 生命周期 e2e —— daemon 侧 wkey 闭环的引擎级断言（17-§7「按单签发→随派发注入→关单吊销」）
  *
- * 覆盖面（实现单验收口径）：
- *   1. dispatch：预算过闸后 launch 前签发——workspace `.studio-next/wkey`（0600）随派发出现、
- *      token 经签发实例 authority 可验（scope 六动词全集）、brief.md 追加指引行、DISPATCH note 携 wkey 路径
- *   2. 预算拒派不签发（超帽 refusal 无凭据落盘——不给不派的工签钥匙）
- *   3. GATE_FAIL：旧 attempt 凭据文件删（非终局不吊销 ticket——吊销粒度裁决，见 worker-key.ts
- *      头注）；重派重签（att2 新 token ≠ att1 旧 token，nonce 链干净）
+ * 覆盖面（实现单验收口径；env 通道形态——2026-10-18 制作人定调，TaskBrief.credentials v1.4）：
+ *   1. dispatch：预算过闸后 launch 前签发——credentials 随 TaskBrief 注入（fake adapter
+ *      onLaunch 回显验证注入；键名 STUDIO_TOOLS_WKEY）、token 经签发实例 authority 可验
+ *      （scope 六动词全集）、brief.md 追加指引行（指到环境变量）、DISPATCH note 携 wkey
+ *      审计锚=nonce；凭据值红名单负断言（note/brief/台账全文不含 token）；workspace 无
+ *      `.studio-next` 落盘（文件通道已废）
+ *   2. 预算拒派不签发（超帽 refusal 无 launch 无凭据——不给不派的工签钥匙）
+ *   3. GATE_FAIL：非终局不吊销 ticket（吊销粒度裁决，见 worker-key.ts 头注）；重派重签
+ *      （att2 新 credentials 新 token ≠ att1，nonce 链干净）
  *   4. 断路熔断：3 连击 ESCALATE（终局）吊销该时刻 key；HOLD_BREAKER_OPEN 停重派不再签新 key
- *   5. GATE_PASS 后 key 存续（关单才吊销——frozen 口径）；CLOSE：吊销+文件随关单消失+CLOSE note 记账
- *   6. workerKeys 未注入（缺省）：零行为变更（无 .studio-next 目录）
- *   7. studio-tools 打通：fake worker 读 wkey 文件 → MCP initialize _meta['studio-wkey'] 注入 →
- *      comment 工具成功（真协议链路 InMemoryTransport）→ 关单吊销后再调 → gw-verify-revoked
- *      （17-§7「关单即吊销，杜绝归档后仍有效」的可执行证明）
+ *   5. GATE_PASS 后 key 存续（关单才吊销——frozen 口径）；CLOSE：吊销+CLOSE note 记账
+ *   6. workerKeys 未注入（缺省）：零行为变更（无 credentials、无指引行、无 .studio-next）
+ *   7. studio-tools 打通：fake worker 从注入的 credentials 取 wkey（env 通道回显）→
+ *      MCP initialize _meta['studio-wkey'] 注入 → comment 工具成功（真协议链路
+ *      InMemoryTransport）→ 关单吊销后再调 → gw-verify-revoked（17-§7「关单即吊销，
+ *      杜绝归档后仍有效」的可执行证明）
  */
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -25,13 +29,13 @@ import { CONTROL_TICKET, createGateway } from '@studio-next/gateway'
 import type { Gateway } from '@studio-next/gateway'
 import { createStudioToolsServer } from '@studio-next/studio-tools'
 import type { StudioToolsServer } from '@studio-next/studio-tools'
-import type { CompanySnapshot, FlowPlatform, GatewayAction, PersonRef } from '@studio-next/contract'
+import type { CompanySnapshot, FlowPlatform, GatewayAction, PersonRef, TaskBrief } from '@studio-next/contract'
 import { openLedger, type Ledger } from '@studio-next/store'
 import { ENGINE_CONFIG_DEFAULTS, createEngine, type Engine, type TickReport } from '../src/engine.ts'
 import { createFakeAdapter, createFakePlatform } from '../src/fakes.ts'
 import { createDefaultGateRunner, type GateOutcome, type GateRunner } from '../src/gate.ts'
 import { createDefaultAssembler } from '../src/prompt-assembly.ts'
-import { readWorkerKeyFile, workerKeyFilePath } from '../src/worker-key.ts'
+import { WORKER_WKEY_ENV_KEY } from '../src/worker-key.ts'
 
 const T0 = Date.parse('2026-10-16T00:00:00.000Z')
 const SECRET = new Uint8Array(32).fill(5)
@@ -73,6 +77,8 @@ interface Stack {
   gateway: Gateway
   clock: { now(): number; advance(ms: number): void }
   rootDir: string
+  /** fake adapter 的 launch 回显（按派发顺序——env 通道注入断言的取件面） */
+  launches: TaskBrief[]
 }
 
 interface StackOptions {
@@ -89,7 +95,10 @@ function buildStack(id: string, opts?: StackOptions): Stack {
   const clock = { now: (): number => t, advance: (ms: number): void => { t += ms } }
   const platform = createFakePlatform({ now: () => new Date(t).toISOString() })
   const registry = createRegistry()
-  registry.register(createFakeAdapter(), { default: true })
+  // env 通道回显替身：真实 executor 在 launch 把 credentials 透传进子进程 env——
+  // fake adapter 以 onLaunch 捕获 TaskBrief 原体供断言（凭据不进流/日志，红名单不破）
+  const launches: TaskBrief[] = []
+  registry.register(createFakeAdapter({ onLaunch: (task) => { launches.push(task) } }), { default: true })
   const person = SNAPSHOT.people[0] as PersonRef
   const engine = createEngine({
     platform,
@@ -117,7 +126,7 @@ function buildStack(id: string, opts?: StackOptions): Stack {
     makeId: deterministicIds(),
     ...(opts?.workerGateway !== undefined ? { workerKeys: { gateway: opts.workerGateway } } : {}),
   })
-  return { platform, ledger, engine, gateway: opts?.workerGateway ?? createGateway({ secret: SECRET, clock: clock.now, ticket: CONTROL_TICKET, ctx: { company: SNAPSHOT.name, dept: 'departments/工程部', role: 'daemon', level: 2 }, author: 'daemon' }), clock, rootDir }
+  return { platform, ledger, engine, gateway: opts?.workerGateway ?? createGateway({ secret: SECRET, clock: clock.now, ticket: CONTROL_TICKET, ctx: { company: SNAPSHOT.name, dept: 'departments/工程部', role: 'daemon', level: 2 }, author: 'daemon' }), clock, rootDir, launches }
 }
 
 let root = ''
@@ -135,15 +144,28 @@ function ws(stack: Stack, ticket: string, attempt: number): string {
   return path.join(stack.rootDir, 'workspaces', ticket, `att${attempt}`)
 }
 
+/** 第 N 次派发注入的凭据（launch 回显取件；attempt 与派发顺序一一对应） */
+function credentialsOf(stack: Stack, attempt: number): Record<string, string> {
+  const brief = stack.launches[attempt - 1]
+  return brief?.credentials ?? {}
+}
+
 function verify(stack: Stack, token: string, ticket: string, action: GatewayAction = 'comment') {
   return stack.gateway.authority.verify(token, { now: stack.clock.now(), ticket, action })
+}
+
+/** 红名单扫描：台账全部事件 note 不含凭据值（凭据不进任何账面文本——v1.4 冻结语义） */
+function expectLedgerNotesClean(ledger: Ledger, token: string): void {
+  for (const e of ledger.queryEvents()) {
+    expect(e.note ?? '').not.toContain(token)
+  }
 }
 
 // ---------------------------------------------------------------------------
 // 1-2：dispatch 签发面与预算拒派面
 // ---------------------------------------------------------------------------
 
-describe('dispatch 相位：签发与注入（launch 前）', () => {
+describe('dispatch 相位：签发与注入（launch 前，env 通道）', () => {
   let stack: Stack
 
   beforeAll(() => {
@@ -154,36 +176,42 @@ describe('dispatch 相位：签发与注入（launch 前）', () => {
     stack.ledger.close()
   })
 
-  it('随派发出现：`.studio-next/wkey`（0600）落 workspace，token 可验、scope 六动词全集，brief 携指引行，DISPATCH note 记 wkey 路径', async () => {
+  it('随派发注入：TaskBrief.credentials 携 STUDIO_TOOLS_WKEY，token 可验、scope 六动词全集，brief 携指引行，DISPATCH note 记 nonce 审计锚；凭据值红名单（note/brief/台账不含 token），workspace 无文件残留', async () => {
     await stack.platform.issues.create({ title: 'wkey 签发面', type: 'task', level: 0, assignee: 'AGENT-1' })
     stack.clock.advance(1000)
     const report: TickReport = await stack.engine.tick()
     expect(report.errors).toEqual([])
     expect(report.phases.dispatch.dispatched).toBe(1)
 
-    const filePath = workerKeyFilePath(ws(stack, 'T-1', 1))
-    expect(existsSync(filePath)).toBe(true)
-    expect(statSync(filePath).mode & 0o777).toBe(0o600)
-    expect(readFileSync(filePath, 'utf8')).toMatch(/^STUDIO_TOOLS_WKEY=[A-Za-z0-9_.-]+\.[A-Za-z0-9_-]+\n$/)
-
-    const token = readWorkerKeyFile(ws(stack, 'T-1', 1))
+    // env 通道注入：launch 收到的 TaskBrief.credentials（fake adapter 回显替身）
+    const credentials = credentialsOf(stack, 1)
+    const token = credentials[WORKER_WKEY_ENV_KEY]
     expect(token).toBeDefined()
+    expect(Object.keys(credentials)).toStrictEqual([WORKER_WKEY_ENV_KEY])
+
     const v = verify(stack, token as string, 'T-1')
     expect(v.ok).toBe(true)
     if (v.ok) expect(v.claims.scope).toHaveLength(6)
 
-    // 任务书追加指引行（worker 从文件读凭据的一句话指引）
-    expect(readFileSync(path.join(ws(stack, 'T-1', 1), 'brief.md'), 'utf8')).toContain('.studio-next/wkey')
-    expect(readFileSync(path.join(ws(stack, 'T-1', 1), 'brief.md'), 'utf8')).toContain('studio-wkey')
+    // 任务书追加指引行（一句话指到环境变量——不含凭据值）
+    const briefText = readFileSync(path.join(ws(stack, 'T-1', 1), 'brief.md'), 'utf8')
+    expect(briefText).toContain(WORKER_WKEY_ENV_KEY)
+    expect(briefText).toContain('studio-wkey')
+    expect(briefText).not.toContain(token as string)
 
-    // DISPATCH note 携 wkey 文件路径（审计锚）
+    // 文件通道已废：workspace 无 `.studio-next` 落盘（凭据不过文件系统）
+    expect(existsSync(path.join(ws(stack, 'T-1', 1), '.studio-next'))).toBe(false)
+
+    // DISPATCH note 携 wkey 审计锚（env 键名+nonce），不含 token（红名单）
     const dispatch = stack.ledger.queryEvents({ issue: 'T-1' }).find((e) => e.event === 'DISPATCH')
-    expect(dispatch?.note).toContain(`;wkey=${filePath}`)
+    expect(dispatch?.note).toContain(`;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=`)
+    expect(dispatch?.note).not.toContain(token as string)
+    expectLedgerNotesClean(stack.ledger, token as string)
   })
 })
 
-describe('预算拒派不签发（超帽 refusal 无凭据落盘）', () => {
-  it('估算 $0.01 超帽 $0.001 → refusal 行落账不派，workspace 无 `.studio-next`（不给不派的工签钥匙）', async () => {
+describe('预算拒派不签发（超帽 refusal 无 launch 无凭据）', () => {
+  it('估算 $0.01 超帽 $0.001 → refusal 行落账不派，无 launch 回显（不给不派的工签钥匙）', async () => {
     const stack = buildStack('budget-refuse', {
       workerGateway: createGateway({ secret: SECRET, clock: (): number => T0, ticket: CONTROL_TICKET, ctx: { company: SNAPSHOT.name, dept: 'departments/工程部', role: 'daemon', level: 2 }, author: 'daemon' }),
       budgetTicketCapUsd: 0.001,
@@ -193,6 +221,7 @@ describe('预算拒派不签发（超帽 refusal 无凭据落盘）', () => {
     const report = await stack.engine.tick()
     expect(report.phases.dispatch.dispatched).toBe(0)
     expect(report.phases.dispatch.budgetRefused).toBe(1)
+    expect(stack.launches).toHaveLength(0) // 无 launch=无 credentials 注入
     expect(existsSync(path.join(ws(stack, 'T-1', 1), '.studio-next'))).toBe(false)
     stack.ledger.close()
   })
@@ -202,7 +231,7 @@ describe('预算拒派不签发（超帽 refusal 无凭据落盘）', () => {
 // 3-4：GATE_FAIL 轮换与断路吊销
 // ---------------------------------------------------------------------------
 
-describe('GATE_FAIL：凭据撤离+重派重签（一 attempt 一 key，nonce 链干净）', () => {
+describe('GATE_FAIL：凭据离场+重派重签（一 attempt 一 key，nonce 链干净）', () => {
   let stack: Stack
 
   beforeAll(() => {
@@ -216,25 +245,25 @@ describe('GATE_FAIL：凭据撤离+重派重签（一 attempt 一 key，nonce �
     stack.ledger.close()
   })
 
-  it('att1 派发取 token → 收割失败 → 旧 attempt 文件删（不吊销 ticket——吊销粒度裁决）+ GATE_FAIL note 记撤离；重派 att2 → 新 token 有效且 ≠ 旧 token', async () => {
+  it('att1 派发注入 credentials → 收割失败 → 非终局不吊销 ticket（env-离场记账）+ 重派 att2 新 credentials 新 token（≠ 旧 token）', async () => {
     await stack.platform.issues.create({ title: '会重派的单', type: 'task', level: 0 })
 
-    // att1：派发（key 落盘）→ 收割失败（凭据撤离+文件删；非终局不吊销——重签 key 须活）
+    // att1：派发（credentials 注入）→ 收割失败（凭据随子进程 env 离场；非终局不吊销——重签 key 须活）
     stack.clock.advance(1000)
     await stack.engine.tick()
-    const token1 = readWorkerKeyFile(ws(stack, 'T-1', 1))
+    const token1 = credentialsOf(stack, 1)[WORKER_WKEY_ENV_KEY]
     expect(token1).toBeDefined()
     stack.clock.advance(1000)
     const failTick = await stack.engine.tick()
     expect(failTick.phases.harvest.failed).toBe(1)
-    expect(existsSync(workerKeyFilePath(ws(stack, 'T-1', 1)))).toBe(false)
     const gateFail = stack.ledger.queryEvents({ issue: 'T-1' }).find((e) => e.event === 'GATE_FAIL')
-    expect(gateFail?.note).toContain(';wkey=file-removed')
+    expect(gateFail?.note).toContain(';wkey=env-离场')
+    expect(gateFail?.note).not.toContain(token1 as string)
 
-    // att2：重派重签（新 attempt 新 workspace 新 key，可用——旧 key 若被吊销则新 key 同死）
+    // att2：重派重签（新 attempt 新 credentials 新 key，可用——旧 key 若被吊销则新 key 同死）
     stack.clock.advance(1000)
     await stack.engine.tick()
-    const token2 = readWorkerKeyFile(ws(stack, 'T-1', 2))
+    const token2 = credentialsOf(stack, 2)[WORKER_WKEY_ENV_KEY]
     expect(token2).toBeDefined()
     expect(token2).not.toBe(token1)
     const v2 = verify(stack, token2 as string, 'T-1')
@@ -243,7 +272,7 @@ describe('GATE_FAIL：凭据撤离+重派重签（一 attempt 一 key，nonce �
 })
 
 describe('断路熔断：3 连击 ESCALATE 后终局吊销、停重派不再签新 key', () => {
-  it('前两轮 key 撤离不吊销；第三轮熔断（终局）吊销该时刻 key；HOLD_BREAKER_OPEN 无 att4 签发', async () => {
+  it('前两轮不吊销；第三轮熔断（终局）吊销该时刻 key；HOLD_BREAKER_OPEN 无 att4 签发', async () => {
     const stack = buildStack('breaker', {
       gateRunner: RED_GATE,
       workerGateway: createGateway({ secret: SECRET, clock: (): number => T0, ticket: CONTROL_TICKET, ctx: { company: SNAPSHOT.name, dept: 'departments/工程部', role: 'daemon', level: 2 }, author: 'daemon' }),
@@ -255,7 +284,7 @@ describe('断路熔断：3 连击 ESCALATE 后终局吊销、停重派不再签�
       stack.clock.advance(1000)
       const dispatchTick = await stack.engine.tick()
       expect(dispatchTick.phases.dispatch.dispatched).toBe(1)
-      const token = readWorkerKeyFile(ws(stack, 'T-1', round))
+      const token = credentialsOf(stack, round)[WORKER_WKEY_ENV_KEY]
       expect(token).toBeDefined()
       tokens.push(token as string)
 
@@ -270,11 +299,12 @@ describe('断路熔断：3 连击 ESCALATE 后终局吊销、停重派不再签�
     expect(escalate?.note).toContain('wkey=revoked（终局吊销）')
     expect(verify(stack, tokens[2] as string, 'T-1')).toEqual({ ok: false, reason: 'revoked' })
 
-    // 停重派：无第 4 次签发（无 att4 workspace）
+    // 停重派：无第 4 次签发（无 att4 workspace、无第 4 次 launch）
     stack.clock.advance(1000)
     const held = await stack.engine.tick()
     expect(held.phases.stateDiff.decisions.find((d) => d.ticket === 'T-1')?.code).toBe('HOLD_BREAKER_OPEN')
     expect(existsSync(ws(stack, 'T-1', 4))).toBe(false)
+    expect(stack.launches).toHaveLength(3)
     stack.ledger.close()
   })
 })
@@ -297,11 +327,11 @@ describe('GATE_PASS 存续与 CLOSE 收口（关单即吊销）', () => {
     stack.ledger.close()
   })
 
-  it('tick1 派发：key 落盘', async () => {
+  it('tick1 派发：credentials 注入', async () => {
     await stack.platform.issues.create({ title: '全链单', type: 'task', level: 0 })
     stack.clock.advance(1000)
     await stack.engine.tick()
-    token = readWorkerKeyFile(ws(stack, 'T-1', 1))
+    token = credentialsOf(stack, 1)[WORKER_WKEY_ENV_KEY]
     expect(token).toBeDefined()
   })
 
@@ -312,38 +342,43 @@ describe('GATE_PASS 存续与 CLOSE 收口（关单即吊销）', () => {
     expect(verify(stack, token as string, 'T-1').ok).toBe(true)
   })
 
-  it('tick3-4 QA_PASS/MERGE：文件仍在（未到关单）', async () => {
+  it('tick3-4 QA_PASS/MERGE：key 未到收口点仍活（nonce 单次现行语义：tick2 已烧，此处以拒绝码非 revoked 判定）', async () => {
     stack.clock.advance(1000)
     await stack.engine.tick()
     stack.clock.advance(1000)
     await stack.engine.tick()
-    expect(existsSync(workerKeyFilePath(ws(stack, 'T-1', 1)))).toBe(true)
+    // 关单未到=无吊销：同 token 再验的拒绝码是 replay（nonce 已烧——gateway/wkey.ts 现行
+    // 语义锚定），不是 revoked；「仍活」的证明=拒绝原因不在吊销面
+    expect(verify(stack, token as string, 'T-1')).toEqual({ ok: false, reason: 'replay' })
+    expect(stack.ledger.queryEvents({ issue: 'T-1' }).map((e) => e.event)).not.toContain('CLOSE')
   })
 
-  it('tick5 CLOSE：吊销+文件随关单消失+CLOSE note 记账（17-§7「杜绝归档后仍有效」）', async () => {
+  it('tick5 CLOSE：吊销+CLOSE note 记账（17-§7「杜绝归档后仍有效」）', async () => {
     stack.clock.advance(1000)
     const report = await stack.engine.tick()
     expect(report.phases.recycle.recycled).toBe(1)
-    expect(existsSync(workerKeyFilePath(ws(stack, 'T-1', 1)))).toBe(false)
     // revoked 先于 replay 判定：nonce 已烧（tick2 verify 过）仍得 revoked——吊销是权威面
     expect(verify(stack, token as string, 'T-1')).toEqual({ ok: false, reason: 'revoked' })
     const close = stack.ledger.queryEvents({ issue: 'T-1' }).find((e) => e.event === 'CLOSE')
     expect(close?.note).toContain('wkey=关单吊销')
+    expect(close?.note).not.toContain(token as string)
   })
 })
 
 describe('workerKeys 未注入（缺省关闭面）：零行为变更', () => {
-  it('dispatch 后无 `.studio-next` 目录、DISPATCH note 无 wkey 字段（回归锚）', async () => {
+  it('dispatch 后无 credentials 注入、无指引行、无 `.studio-next`、DISPATCH note 无 wkey 字段（回归锚）', async () => {
     const stack = buildStack('default-off')
     await stack.platform.issues.create({ title: '缺省面单', type: 'task', level: 0 })
     stack.clock.advance(1000)
     const report = await stack.engine.tick()
     expect(report.errors).toEqual([])
     expect(report.phases.dispatch.dispatched).toBe(1)
+    expect(stack.launches).toHaveLength(1)
+    expect(stack.launches[0]?.credentials).toBeUndefined() // 无凭据注入
     expect(existsSync(path.join(ws(stack, 'T-1', 1), '.studio-next'))).toBe(false)
     const dispatch = stack.ledger.queryEvents({ issue: 'T-1' }).find((e) => e.event === 'DISPATCH')
     expect(dispatch?.note).not.toContain(';wkey=')
-    expect(readFileSync(path.join(ws(stack, 'T-1', 1), 'brief.md'), 'utf8')).not.toContain('.studio-next/wkey')
+    expect(readFileSync(path.join(ws(stack, 'T-1', 1), 'brief.md'), 'utf8')).not.toContain(WORKER_WKEY_ENV_KEY)
     stack.ledger.close()
   })
 })
@@ -395,8 +430,8 @@ async function connectWorkerClient(server: StudioToolsServer, wkey: string): Pro
   }
 }
 
-describe('studio-tools 打通：wkey 文件 → MCP _meta 注入 → comment 成功 → 关单吊销后拒调', () => {
-  it('全链：派发签发 → fake worker 读文件过 initialize → comment 过真网关 → CLOSE 吊销 → 再调 gw-verify-revoked', async () => {
+describe('studio-tools 打通：注入的 credentials（env 通道）→ MCP _meta 注入 → comment 成功 → 关单吊销后拒调', () => {
+  it('全链：派发签发 → fake worker 从注入的 credentials 取 wkey 过 initialize → comment 过真网关 → CLOSE 吊销 → 再调 gw-verify-revoked', async () => {
     // 单先建（ticket id 已知）→ per-ticket 网关（签发/吊销/验签三面同一实例——worker 侧 studio-tools
     // server 与 daemon 签发共享，关单吊销对 worker 进程内即时可见）
     const ledger = openLedger(path.join(root, 'mcp.sqlite'))
@@ -413,7 +448,9 @@ describe('studio-tools 打通：wkey 文件 → MCP _meta 注入 → comment 成
       author: person.id,
     })
     const registry = createRegistry()
-    registry.register(createFakeAdapter(), { default: true })
+    // env 通道回显替身：worker 侧「读 env STUDIO_TOOLS_WKEY」的取件面（onLaunch 捕获）
+    const launches: TaskBrief[] = []
+    registry.register(createFakeAdapter({ onLaunch: (task) => { launches.push(task) } }), { default: true })
     const engine = createEngine({
       platform,
       ledger,
@@ -442,11 +479,11 @@ describe('studio-tools 打通：wkey 文件 → MCP _meta 注入 → comment 成
       },
     })
 
-    // tick1 派发：wkey 文件出现（fake worker 的「读凭据」动作）
+    // tick1 派发：credentials 注入（fake worker 的「读环境变量」动作=从回显取件）
     t += 1000
     const dispatchTick = await engine.tick()
     expect(dispatchTick.errors).toEqual([])
-    const wkey = readWorkerKeyFile(path.join(root, 'mcp', 'workspaces', 'T-1', 'att1'))
+    const wkey = launches[0]?.credentials?.[WORKER_WKEY_ENV_KEY]
     expect(wkey).toBeDefined()
 
     // fake worker：initialize _meta 注入 → comment 成功（真协议链路 + 真网关验签署名）
