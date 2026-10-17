@@ -116,6 +116,7 @@ import {
 import type { ExecutorRegistry } from '@studio-next/adapters'
 import type { Ledger } from '@studio-next/store'
 import { gateDispatch, settleDispatch, type BudgetGateDeps } from './budget-gate.ts'
+import { crashHook } from './crash-points.ts'
 import type { GateRunner } from './gate.ts'
 import { makeUlid } from './id.ts'
 import type { PromptAssembler } from './prompt-assembly.ts'
@@ -656,6 +657,7 @@ export function createEngine(deps: EngineDeps): Engine {
         )
       }
       if (gate.kind === 'reserved') budget.budgetReserved += 1
+      crashHook('dispatch-reserved') // 崩溃注入①（F3-11）：reserve 双行已落账、launch 前——受控测试缝，默认零行为（src/crash-points.ts）
       // worker wkey 签发+注入（17-§7：预算过闸后、launch 前——超帽拒派不签发凭据）：
       // mint（scope=六动词全集、一 attempt 一 key）→ 写 workspace 文件（0600，文件通道）
       if (workerKeys !== undefined) {
@@ -668,6 +670,7 @@ export function createEngine(deps: EngineDeps): Engine {
         )
       }
       launched = await adapter.launch(taskBrief)
+      crashHook('dispatch-launched') // 崩溃注入②（F3-11）：launch 已返回、work_records 在途落账前——受控测试缝，默认零行为
       acquireLane(action.lane, ticket, at)
       const transitioned = await platform.issues.transition(ticket, action.toState)
       const workRecordId = makeId(at)
@@ -775,6 +778,7 @@ export function createEngine(deps: EngineDeps): Engine {
 
     const verdict = { completed, nonEmptyOutput, reportExists: gate.reportExists, exit0: gate.exitCode === 0 }
     const fourOk = verdict.completed && verdict.nonEmptyOutput && verdict.reportExists && verdict.exit0
+    crashHook('harvest-verdict') // 崩溃注入③（F3-11）：收割四要件判定后、GATE_PASS 落账前——受控测试缝，默认零行为
     if (flow === undefined) {
       return failHarvest(entry, tickEvents, 'CONFIG_INVALID：等级未登记状态流（收割去向不可定）', verdict)
     }
@@ -1201,6 +1205,7 @@ export function createEngine(deps: EngineDeps): Engine {
     // —— 相位 7 落账/心跳：零动作拍落 HEARTBEAT（游标/拍序已持久化） ——
     let heartbeat = false
     if (mutations === 0) {
+      crashHook('heartbeat-write') // 崩溃注入④（F3-11）：零动作拍心跳事件写入前（落账/心跳相位缝）——受控测试缝，默认零行为
       const sentinel: IssueRecord = {
         id: config.heartbeatIssue,
         title: '心跳哨兵',
@@ -1255,6 +1260,7 @@ export function createEngine(deps: EngineDeps): Engine {
         // kill 失败如实吞记（v0：dispose 不抛——停机路径保序）；work_records 留 running（接管归后续刀）
       }
     }
+    crashHook('shutdown-drain') // 崩溃注入⑤（F3-11）：SIGINT 停机 drain 中途（kill 已跑、在途注销前）——受控测试缝，默认零行为
     inflight.clear()
   }
 
