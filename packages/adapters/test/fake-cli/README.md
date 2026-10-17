@@ -28,6 +28,8 @@ FAKE_FIXTURE=../fixtures/dsh/turn-completed.ndjson node fake-cli.mjs
 | `FAKE_ECHO_ENV` | 逗号分隔 env 变量名：每名一行回显该变量值（`fake-cli env: NAME=值`，未设置时 `<unset>`），测适配器 launch env 注入（TaskBrief.credentials v1.4 透传断言）；只回显点名变量，不倾倒整份 env | 不回显 |
 | `FAKE_WIRE_DIR` | 设置后：**正常退出前**把 wire 内容写到 `<dir>/wire.jsonl`（目录递归建）——模拟 kimi「会话目录里落 session wire.jsonl」（docs/17-§6 已知坑：usage 在 wire 不在 stdout） | 不写 wire |
 | `FAKE_WIRE_FIXTURE` | wire 内容来源（golden fixture 全文，如 `../fixtures/kimi/stdout-basic.wire.jsonl`） | 空文件 |
+| `FAKE_GRANDCHILD_PID_FILE` | 设置后：spawn 一个长眠孙进程（`node -e` 普通派生，继承本进程进程组）；孙先把自己的 pid 写入该文件（就绪信号）再长眠——测 execa 10 `killDescendants` 整树杀（docs/27-§4.3 案 A） | 不派生 |
+| `FAKE_GRANDCHILD_IGNORE_TERM` | `1` = 孙进程注册吞 SIGTERM 的空处理器（软杀无效只可硬杀）——测「宽限后 SIGKILL 整树扫尾」升级链；须配 `FAKE_GRANDCHILD_PID_FILE` | 孙默认可被 SIGTERM 杀 |
 
 ## 场景示例
 
@@ -66,3 +68,6 @@ node fake-cli.mjs
 - `FAKE_WIRE_DIR` **仅在正常退出路径写**（`process.exit(exitCode)` 前，退出码 0/非 0 皆写）：
   挂起（`FAKE_HANG`）、被信号杀死、EPIPE、`FAKE_VERSION` 探测短路均不写——会话未正常结束，
   wire 不落（与「被杀会话 wire 缺失 → 适配器明示 + 不折算」的测试面配套）。
+- 孙进程不受父进程退出影响（父不等待不收割）：父正常退出或被单独杀掉后孙成为孤儿继续
+  长眠，直到被整组信号波及或测试用例自行 SIGKILL 收口——对照组用例（无 killDescendants
+  的直杀）正是利用这一点证明「孙存活可被断言检出」。

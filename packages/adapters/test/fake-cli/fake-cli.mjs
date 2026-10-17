@@ -23,9 +23,16 @@
  *                       ——模拟 kimi「会话目录里落 session wire.jsonl」（docs/17-§6 已知坑：
  *                       usage 在 wire 不在 stdout）；仅在正常退出路径写（见边界语义）
  *   FAKE_WIRE_FIXTURE   wire 内容来源（golden fixture 全文）；未设时写空文件
+ *   FAKE_GRANDCHILD_PID_FILE 设置后：spawn 一个长眠孙进程（node -e，普通 spawn 不建新组
+ *                       ——继承本进程进程组），孙先把自己的 pid 写入该文件（就绪信号），
+ *                       再长眠不退——测 execa 10 killDescendants 的整树杀（docs/27-§4.3 案 A）
+ *   FAKE_GRANDCHILD_IGNORE_TERM =1：孙进程注册吞 SIGTERM 的空处理器（软杀无效，只可硬杀）
+ *                       ——测「宽限后 SIGKILL 整树扫尾」的升级链
  *
- * 注：除 FAKE_SIGTERM_EXIT 外不注册任何信号处理器——SIGTERM 走 Node 默认终止行为。
+ * 注：除 FAKE_SIGTERM_EXIT（本进程）与 FAKE_GRANDCHILD_IGNORE_TERM（孙进程）外不注册任何
+ * 信号处理器——SIGTERM 走 Node 默认终止行为。
  */
+import { spawn } from 'node:child_process'
 import { mkdirSync, readFileSync, writeSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -49,6 +56,8 @@ const echoEnvNames = (env.FAKE_ECHO_ENV ?? '')
   .filter((s) => s !== '')
 const wireDir = env.FAKE_WIRE_DIR ?? ''
 const wireFixture = env.FAKE_WIRE_FIXTURE ?? ''
+const grandchildPidFile = env.FAKE_GRANDCHILD_PID_FILE ?? ''
+const grandchildIgnoreTerm = env.FAKE_GRANDCHILD_IGNORE_TERM === '1'
 
 if (sigtermExit !== undefined) {
   // dsh 已知坑模拟（docs/17-§6）：吞掉 SIGTERM 的默认终止，改以指定退出码退出——
@@ -77,6 +86,31 @@ if (fakeVersion !== '' && process.argv.includes('--version')) {
 }
 
 async function main() {
+  if (grandchildPidFile !== '') {
+    // 孙进程旋钮（execa 10 killDescendants 测试面，docs/27-§4.3 案 A）：普通 spawn 不建新
+    // 组——孙继承本进程的进程组，整组杀（killDescendants Unix 落法）必须覆盖到它。
+    // 孙先把自己的 pid 落盘（就绪信号），再长眠不退；父进程不等待不收割（unref）。
+    // FAKE_GRANDCHILD_IGNORE_TERM=1 时孙注册吞 SIGTERM 空处理器——软杀无效，只可硬杀，
+    // 专测「宽限后 SIGKILL 整树扫尾」。
+    const grandchild = spawn(
+      process.execPath,
+      [
+        '-e',
+        `${grandchildIgnoreTerm ? 'process.on("SIGTERM", () => {}); ' : ''}` +
+          'require("node:fs").writeFileSync(process.env.FAKE_GRANDCHILD_PID_FILE, String(process.pid)); ' +
+          'setInterval(() => {}, 1 << 30)',
+      ],
+      {
+        stdio: 'ignore',
+        env: {
+          ...env,
+          FAKE_GRANDCHILD_PID_FILE: grandchildPidFile,
+          FAKE_GRANDCHILD_IGNORE_TERM: grandchildIgnoreTerm ? '1' : '',
+        },
+      },
+    )
+    grandchild.unref()
+  }
   if (echoArgs) {
     // FAKE_ECHO_ARGS=1：首行回显收到的 argv（非 JSON 行，归一化后以 log 原文透传——断言用）
     writeOut(`fake-cli argv: ${process.argv.slice(2).join(' ')}\n`)
