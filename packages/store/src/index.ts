@@ -28,14 +28,42 @@
  *       现行字节级一致，存量数据原地接管；kvGet/kvSet 读写面）+ work_records 收口面
  *       endWorkRecord（一次性收口，可选列 COALESCE 不动）+ queryEvents 倒序通道
  *       （order='desc'，desc+limit=最近 N 条；panel 消费接线归后续单）
+ *   [x] v5 进化管线 candidates 表（migration v5，17-§3 / core evolution 首刀 / 02-F3）：
+ *       CandidateRow（逐列对齐 core CandidateRecord 可序列化形态，值域复制+一致性测试钉死）
+ *       + insertCandidate（(asset_path,diff_hash)×非终态 幂等，谱系闸）/ getCandidate /
+ *       lineageOf（全祖先链，应用层循环，断链/成环 fail-closed）/ candidatesByStatus
+ *       （判负查 active 集）/ transitionCandidate（乐观锁，边合法性归 core）；daemon 接线
+ *       （assertChangeAuthorized 消费 active 集）归后续刀
  *   [x] 演习与维护 CLI 面（F2-12 可操作化）：runLedgerDrill 删库重建演习（daemon bin 出
  *       `ledger drill/dump/rebuild` 子命令组，薄壳转调本包）
  *   [ ] cron 表达式解析（croner，daemon/core 侧）+ 补跑 coalesce / 同岗不重叠（18-§三，core 后续单）
- *   [ ] 17-§3 其余表（后续 migration 逐版本补）：ledgers / candidates / reports / probes_runs
+ *   [ ] 17-§3 其余表（后续 migration 逐版本补）：ledgers / reports / probes_runs
  *   [ ] 回填工具（F2-13：done.json/REPORT/stream/events → 对账 → 幂等回填；旁路关单标注规则）
  *   [ ] rebuild --from yt,org 两源通道（F2-12 全量再生；现仅 jsonl 源）
  *   [ ] 季度删库演习挂 cron 岗留证（`ledger drill` 已可操作化，v0.4 定时岗落地后挂）
  *   [ ] 数据保留与归档（>90 天事件按月导出，热表留索引，见 docs/19-§四）
+ *
+ * v5 拟稿待批 / 疑点（只记录，不改文档）：
+ *   - 列名取舍：asset_type（core 字段名，任务草案曾写 asset_kind——行↔记录零改名）；version
+ *     TEXT（core CandidateRecord.version 为 string，草案曾写 INTEGER——「v0.3」类版本号可往返，
+ *     core 形状闸校验非空串 INTEGER 容不下）；asset_path 补列（17-§3 未列，core 首刀裁定：
+ *     判负面 (asset_path,diff_hash) 匹配机制需要）；created_at INTEGER（库侧列，超出 core
+ *     形状——core 零 Date.now，时钟由 daemon 供）——差异全表见实现单汇报
+ *   - 值域复制而非 import：store src 零 core 运行时依赖（core 值域冻结于 evolution.ts），
+ *     漂移由 test/v5-candidates.test.ts 一致性用例钉死（core 字面量数组 vs store 数组/zod
+ *     枚举 deep-equal，沿 STUDIO_TOOLS↔GATEWAY_ACTIONS 先例）；@studio-next/core 仅测试
+ *     devDependency（panel↔company 同先例）
+ *   - 幂等口径：同 (asset_path, diff_hash) 且**非终态**命中返回既有 id（core 拟稿裁定）；
+ *     终态放行新建=换代重提。同 id 全列一致跳过 / 不一致 CONFIG_INVALID（appendEvent 口径）
+ *   - transitionCandidate 不校验边合法性（状态机单一事实源=core 机器边表，库层复制判定面
+ *     =第二状态机漂移面）；乐观锁 WHERE status=期望当前值，0 行=false。签名 (id, from, to)：
+ *     from 是乐观锁的期望当前值，调用方（daemon）先经 core 纯函数判定再持 from 落库
+ *   - lineageOf 选型=应用层循环非递归 CTE：断链/成环 fail-closed 分类错与 core lineage 逐字
+ *     同语义，CTE 难给精确分类；跳数=谱系深度个位数量级，N 条主键 SELECT 可接受——待批
+ *   - candidatesByStatus 空数组 CONFIG_INVALID（fail-closed，空集=调用方 bug）——与
+ *     listBudgets kinds「空数组=不过滤」不同口径：本面状态集即查询本体，语义不同——待批
+ *   - candidates 无 FK（parent_id 软引用）：存在性/成环闸在 insertCandidate 应用层——容忍
+ *     按序重建的插入顺序；是否补 FK 约束，待批
  *
  * v4 拟稿待批 / 疑点（只记录，不改文档）：
  *   - kv 接管：DDL/读写语句与 daemon 现行 engine.ts 字节级一致（IF NOT EXISTS 双向幂等共存）；
@@ -101,28 +129,38 @@ export type { Migration } from './migrations.ts'
 
 // 台账句柄与读写面
 export { openLedger } from './ledger.ts'
-export type { AppendResult, BudgetListQuery, BudgetScope, CompanySyncResult, DumpResult, EventQuery, Ledger, PersonnelTimelineEntry } from './ledger.ts'
+export type { AppendResult, BudgetListQuery, BudgetScope, CompanySyncResult, DumpResult, EventQuery, InsertCandidateResult, Ledger, PersonnelTimelineEntry } from './ledger.ts'
 
-// work_records / sessions + v2 五表 + v3 jobs + v4 收口面 记录形状（store 层临时闸，contract schema 落地后替换）
+// work_records / sessions + v2 五表 + v3 jobs + v4 收口面 + v5 candidates 记录形状（store 层临时闸，contract schema 落地后替换）
 export {
   BudgetRecordSchema,
+  CANDIDATE_ASSET_KINDS,
+  CANDIDATE_BLAST_RADII,
+  CANDIDATE_STATUS_VALUES,
+  CandidateRowSchema,
   DepartmentRecordSchema,
   EndWorkRecordSchema,
   JobRecordSchema,
   PersonRecordSchema,
   PersonnelEventRecordSchema,
   SessionRecordSchema,
+  TERMINAL_CANDIDATE_STATUS_VALUES,
   TicketMirrorRecordSchema,
   WorkRecordSchema,
 } from './records.ts'
 export type {
   BudgetRecord,
+  CandidateAssetKind,
+  CandidateBlastRadius,
+  CandidateRow,
+  CandidateStatus,
   DepartmentRecord,
   EndWorkRecord,
   JobRecord,
   PersonRecord,
   PersonnelEventRecord,
   SessionRecord,
+  TerminalCandidateStatus,
   TicketMirrorRecord,
   WorkRecord,
 } from './records.ts'

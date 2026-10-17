@@ -13,6 +13,10 @@
  *   - v4 收口面 EndWorkRecord（work_records end 入参；daemon 切换前 closeWorkRecord 直发
  *     UPDATE 的正式化）：status 终态值域不锁；tokens 已扩入参（kernel.TokenCounts，与建列/
  *     insertWorkRecord 同源——切换单清偿，见接口行注）。
+ *   - v5 进化管线 candidates 表（17-§3 / core evolution 首刀）：CandidateRow 逐列对齐 core
+ *     CandidateRecord 可序列化形态（值域**复制**自 core 冻结枚举——store src 零 core 运行时
+ *     依赖，漂移由一致性测试钉死，沿 STUDIO_TOOLS 先例）+ created_at 库侧列；形状差异取舍
+ *     （asset_type 列名 / version TEXT / asset_path 补列）见 migrations v5 头注与接口行注。
  *
  * **拟稿待批（docs 未细化处逐条标明，contract 落地后替换为契约校验）**：
  *   - 「工号」列名 person_id；「started/ended」→ started_at/ended_at（epoch ms，ended 可空=在途）；
@@ -319,4 +323,75 @@ export const EndWorkRecordSchema = z.strictObject({
     .optional(),
   report_ref: z.string().min(1).optional(),
   summary_ref: z.string().min(1).optional(),
+})
+
+// —— v5 进化管线 candidates 表（17-§3 / core evolution 首刀 / 02-F3；migration v5 同批） ——
+
+/**
+ * 候选制品三个值域（**复制**自 core evolution.ts 冻结值域，非 import——store src 零 core
+ * 运行时依赖；core↔store 漂移由 test/v5-candidates.test.ts 一致性用例钉死：core 字面量数组
+ * vs 本处数组 deep-equal，漂移即红，沿 STUDIO_TOOLS↔GATEWAY_ACTIONS 先例）。
+ * 冻结依据与语义见 core evolution.ts 头注（AssetKind/BlastRadius/CandidateStatus 拟稿已裁）。
+ */
+
+/** 可进化资产类型（17-§3「资产类型」列；core ASSET_KINDS） */
+export const CANDIDATE_ASSET_KINDS = ['prompt', 'org_config', 'report_spec', 'flow', 'criterion'] as const
+export type CandidateAssetKind = (typeof CANDIDATE_ASSET_KINDS)[number]
+
+/** blast_radius 分级（序=风险递增；core BLAST_RADII） */
+export const CANDIDATE_BLAST_RADII = ['isolated', 'company', 'framework'] as const
+export type CandidateBlastRadius = (typeof CANDIDATE_BLAST_RADII)[number]
+
+/** 候选状态机全值域（core CANDIDATE_STATUSES，冻结链+拟稿边见 core 头注） */
+export const CANDIDATE_STATUS_VALUES = [
+  'draft', 'proposed', 'sandboxed', 'gated', 'approved', 'rejected', 'escalated', 'promoted', 'retired',
+] as const
+export type CandidateStatus = (typeof CANDIDATE_STATUS_VALUES)[number]
+
+/** 终态集合（无出边，复活=fork 新子代；core TERMINAL_STATUSES）——幂等键「非终态命中」判据 */
+export const TERMINAL_CANDIDATE_STATUS_VALUES = ['rejected', 'retired'] as const
+export type TerminalCandidateStatus = (typeof TERMINAL_CANDIDATE_STATUS_VALUES)[number]
+
+/**
+ * candidates 行记录（migrations v5 建列逐列对齐）：
+ * core CandidateRecord 的可序列化形态（id/asset_type/asset_path/version/diff_hash/blast_radius/
+ * verification/parent_id/status 字段名与类型逐一相同）+ created_at（库侧列，超出 core 形状——
+ * core 零 Date.now，时钟由 daemon 供）。字段级对齐由一致性测试钉死（type 级断言：core 加字段
+ * 不跟即 typecheck 红）。
+ * 形状取舍（与 17-§3 列集/任务草案的差异，逐项见 migrations v5 头注）：
+ *   - asset_type 列名取 core 字段名（草案曾写 asset_kind）——行↔记录零改名；
+ *   - version 为 string（core 冻结类型；草案曾写 INTEGER）；
+ *   - asset_path：17-§3 未列、core 首刀裁定加入（判负面匹配键）；
+ *   - verification：core 的 GateEvidence JSON 快照（同 jobs.payload 口径，读写面 JSON 往返，
+ *     语义校验归 core 闸门）——null=draft 期未跑沙箱；unknown 形态=快照不猜结构。
+ */
+export interface CandidateRow {
+  id: string
+  asset_type: CandidateAssetKind
+  /** 资产定位键（公司目录相对路径 / 框架资产键）——判负面匹配键之一 */
+  asset_path: string
+  version: string
+  diff_hash: string
+  blast_radius: CandidateBlastRadius
+  /** 闸门证据快照（GateEvidence 的 JSON 往返值；null=未跑沙箱） */
+  verification: unknown
+  /** 谱系父 id（null=初代显式标记；不可变，fork-only） */
+  parent_id: string | null
+  status: CandidateStatus
+  /** 登记时刻（epoch ms；库侧列，core 形状所无） */
+  created_at: number
+}
+
+/** store 层临时校验（strict：未知列拒收；值域与 core 冻结一致——复制+一致性测试钉死，见上） */
+export const CandidateRowSchema = z.strictObject({
+  id: z.string().min(1),
+  asset_type: z.enum(CANDIDATE_ASSET_KINDS),
+  asset_path: z.string().min(1),
+  version: z.string().min(1),
+  diff_hash: z.string().min(1),
+  blast_radius: z.enum(CANDIDATE_BLAST_RADII),
+  verification: z.unknown().optional(),
+  parent_id: z.string().min(1).nullable(),
+  status: z.enum(CANDIDATE_STATUS_VALUES),
+  created_at: z.number().int().min(0),
 })
