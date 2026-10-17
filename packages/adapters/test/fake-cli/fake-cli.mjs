@@ -16,6 +16,9 @@
  *                       detect 的版本门槛三态测试用）；未设置时 --version 与普通参数无异
  *   FAKE_ECHO_ARGS      =1：stdout 首行回显本进程收到的 argv（`fake-cli argv: ...`），
  *                       测适配器 launch 的参数注入（预算帽 / 续跑 / 通道旗标）
+ *   FAKE_ECHO_ENV       逗号分隔 env 变量名：每名一行回显该变量值（`fake-cli env: NAME=值`，
+ *                       未设置时 `<unset>`)——测适配器 launch 的 env 注入（TaskBrief.credentials
+ *                       v1.4 透传断言；只回显点名变量，不倾倒整份 env）
  *   FAKE_WIRE_DIR       设置后：正常退出前把 wire 内容写到 <dir>/wire.jsonl（目录递归建）
  *                       ——模拟 kimi「会话目录里落 session wire.jsonl」（docs/17-§6 已知坑：
  *                       usage 在 wire 不在 stdout）；仅在正常退出路径写（见边界语义）
@@ -40,6 +43,10 @@ const sigtermExit =
   sigtermExitRaw === '' ? undefined : Number.isNaN(parsedSigtermExit) ? 0 : parsedSigtermExit
 const fakeVersion = env.FAKE_VERSION ?? ''
 const echoArgs = env.FAKE_ECHO_ARGS === '1'
+const echoEnvNames = (env.FAKE_ECHO_ENV ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter((s) => s !== '')
 const wireDir = env.FAKE_WIRE_DIR ?? ''
 const wireFixture = env.FAKE_WIRE_FIXTURE ?? ''
 
@@ -73,6 +80,13 @@ async function main() {
   if (echoArgs) {
     // FAKE_ECHO_ARGS=1：首行回显收到的 argv（非 JSON 行，归一化后以 log 原文透传——断言用）
     writeOut(`fake-cli argv: ${process.argv.slice(2).join(' ')}\n`)
+  }
+  if (echoEnvNames.length > 0) {
+    // FAKE_ECHO_ENV：逐名回显点名变量（缺='<unset>'；非 JSON 行归一为 log——credentials
+    // 透传断言用。只回显点名变量，不倾倒整份 env）
+    for (const name of echoEnvNames) {
+      writeOut(`fake-cli env: ${name}=${env[name] ?? '<unset>'}\n`)
+    }
   }
   if (fixturePath !== '') {
     const text = readFileSync(fixturePath, 'utf8')

@@ -7,6 +7,8 @@
  *     SIGTERM 可杀；成功判定=turn_end.completed+输出非空，非退出码
  *   - docs/18-§一：ExecutorAdapter 六原语；detect 不达标明报，绝不静默降级
  *   - docs/16-§二：子进程用 execa；executor=dsh 默认锁 0.2.0-rc.2（锁版本升级走回归）
+ *   - docs/25-§二（v1.4）：TaskBrief.credentials 短命按单凭据——launch env 无条件透传进
+ *     子进程；其值不记录不打印（红名单），流/日志/账面文本永不含凭据
  *
  * 拟稿（首刀自拟口径，待真 dsh 探针单核实——只记录，不擅自定案）：
  *   - AGENTS.md 通道 env 映射最小集（agentsMdEnv）：native 不注入；user_level 注入
@@ -169,14 +171,15 @@ export class DshAdapter implements ExecutorAdapter {
 
   /**
    * 拉起 dsh（execa）：cwd=task.workspace；env=进程环境 + AGENTS.md 通道变量最小集
-   * （agentsMdEnv 拟稿）；句柄与逐行流缓冲存入伴生状态（模块私有 Map）。
+   * （agentsMdEnv 拟稿）+ TaskBrief.credentials（v1.4 短命按单凭据——无条件透传进
+   * 子进程 env，值不打印不记录）；句柄与逐行流缓冲存入伴生状态（模块私有 Map）。
    * reject:false——退出码不构成异常（成功判定只认流内终态，17-§6 已知坑）。
    */
   async launch(task: TaskBrief): Promise<Handle> {
     const [binary = DSH_DEFAULT_CMD[0] ?? 'dsh', ...args] = this.cmd
     const subprocess = execa(binary, args, {
       cwd: task.workspace,
-      env: { ...process.env, ...agentsMdEnv(task.AGENTS_MD) },
+      env: { ...process.env, ...agentsMdEnv(task.AGENTS_MD), ...(task.credentials ?? {}) },
       stdin: 'ignore',
       stdout: 'pipe',
       stderr: 'pipe',

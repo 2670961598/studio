@@ -9,6 +9,8 @@
  *     绝不静默降级
  *   - docs/17-§5：AGENTS.md 用户级通道优先；claude<2.1.277 回退 append-system-prompt-file
  *   - docs/25-§3.1 ExecutorAdapter 端口；ResultStats 口径 cost=Money{usd}、duration=DurationMs
+ *   - docs/25-§二（v1.4）：TaskBrief.credentials 短命按单凭据——launch env 无条件透传进
+ *     子进程；其值不记录不打印（红名单），流/日志/账面文本永不含凭据
  *
  * 拟稿（首刀自拟口径，待真 claude 探针单核实——只记录，不擅自定案）：
  *   - user_level 通道 env 映射：CLAUDE_CONFIG_DIR=<target>（变量名未见框架文档定义，按
@@ -208,7 +210,8 @@ export class ClaudeAdapter implements ExecutorAdapter {
    * + AGENTS_MD 通道（经版本门槛门控后）：
    *     native=不注入；user_level=CLAUDE_CONFIG_DIR=<target>（拟稿）；append_system_prompt=
    *     `--append-system-prompt-file <target>`（官方文档依据，17-§6/复查 A3）
-   * cwd=task.workspace；reject:false——退出码不构成异常（成功判定只认流内终态）。
+   * cwd=task.workspace；TaskBrief.credentials（v1.4）无条件透传进子进程 env（值不打印
+   * 不记录）；reject:false——退出码不构成异常（成功判定只认流内终态）。
    */
   async launch(task: TaskBrief): Promise<Handle> {
     const [binary = CLAUDE_DEFAULT_CMD[0] ?? 'claude', ...base] = this.cmd
@@ -228,6 +231,7 @@ export class ClaudeAdapter implements ExecutorAdapter {
       env: {
         ...process.env,
         ...(channel === 'user_level' ? { CLAUDE_CONFIG_DIR: task.AGENTS_MD.target } : {}),
+        ...(task.credentials ?? {}),
       },
       stdin: 'ignore',
       stdout: 'pipe',

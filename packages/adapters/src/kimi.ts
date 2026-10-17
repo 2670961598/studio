@@ -13,6 +13,8 @@
  *     ——capabilities.agents_md='native' 有据；docs/04-§97（B5 修订）：用户级通道
  *     $KIMI_CODE_HOME 有文档实锤
  *   - docs/18-§一：ExecutorAdapter 六原语；detect 不达标明报，绝不静默降级
+ *   - docs/25-§二（v1.4）：TaskBrief.credentials 短命按单凭据——launch env 无条件透传进
+ *     子进程；其值不记录不打印（红名单），流/日志/账面文本永不含凭据
  *
  * 拟稿（首刀自拟口径，待真 kimi 探针单核实——只记录，不擅自定案）：
  *   - **wire 路径约定未知**：真 kimi 把 session wire.jsonl 落哪里无文档口径。构造器可注入
@@ -200,7 +202,8 @@ export class KimiAdapter implements ExecutorAdapter {
 
   /**
    * 拉起 kimi（execa）：`kimi -p --output-format stream-json` + 续跑 `-S <sessionId>`
-   * （拟稿旗标形，见文件头注）+ AGENTS_MD 通道 env（agentsMdEnv：native=不注入）。
+   * （拟稿旗标形，见文件头注）+ AGENTS_MD 通道 env（agentsMdEnv：native=不注入）
+   * + TaskBrief.credentials（v1.4 短命按单凭据——无条件透传进子进程 env，值不打印不记录）。
    * cwd=task.workspace；budgetCap 无处落地（budget_cap=false 照实——能力声明即契约）。
    * reject:false——退出码不构成异常（成功判定只认流内终态）。
    * `-p` 与 yolo/auto/plan 互斥（17-§6）：适配器只构造 `-p` 基座、永不下发模式旗标。
@@ -213,7 +216,7 @@ export class KimiAdapter implements ExecutorAdapter {
     }
     const subprocess = execa(binary, args, {
       cwd: task.workspace,
-      env: { ...process.env, ...agentsMdEnv(task.AGENTS_MD) },
+      env: { ...process.env, ...agentsMdEnv(task.AGENTS_MD), ...(task.credentials ?? {}) },
       stdin: 'ignore',
       stdout: 'pipe',
       stderr: 'pipe',

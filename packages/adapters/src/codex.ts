@@ -8,6 +8,8 @@
  *   - docs/18-§一：ExecutorAdapter 六原语；detect 不达标明报，绝不静默降级
  *   - docs/25-§3.1 ExecutorAdapter 端口；协议 v1.1 turn_end.error 字段
  *     （turn.failed→error 映射已在 streams.ts 落地，codex 首刀携带）
+ *   - docs/25-§二（v1.4）：TaskBrief.credentials 短命按单凭据——launch env 无条件透传进
+ *     子进程；其值不记录不打印（红名单），流/日志/账面文本永不含凭据
  *
  * 拟稿（首刀自拟口径，待真 codex 探针单核实——只记录，不擅自定案）：
  *   - 续跑旗标 `codex exec --resume <sessionId>`：取旗标形态（镜像 claude --resume 语义）；
@@ -169,7 +171,8 @@ export class CodexAdapter implements ExecutorAdapter {
 
   /**
    * 拉起 codex（execa）：`codex exec --json` + 续跑 `--resume <sessionId>`（拟稿旗标形）
-   * + AGENTS_MD 通道 env（agentsMdEnv 拟稿：native=不注入）。
+   * + AGENTS_MD 通道 env（agentsMdEnv 拟稿：native=不注入）+ TaskBrief.credentials
+   * （v1.4 短命按单凭据——无条件透传进子进程 env，值不打印不记录）。
    * cwd=task.workspace；budgetCap 无处落地（budget_cap=false，与 dsh 同做法——能力声明即契约）。
    * reject:false——退出码不构成异常（成功判定只认流内终态）。
    */
@@ -181,7 +184,7 @@ export class CodexAdapter implements ExecutorAdapter {
     }
     const subprocess = execa(binary, args, {
       cwd: task.workspace,
-      env: { ...process.env, ...agentsMdEnv(task.AGENTS_MD) },
+      env: { ...process.env, ...agentsMdEnv(task.AGENTS_MD), ...(task.credentials ?? {}) },
       stdin: 'ignore',
       stdout: 'pipe',
       stderr: 'pipe',

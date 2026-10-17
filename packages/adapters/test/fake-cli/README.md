@@ -25,6 +25,7 @@ FAKE_FIXTURE=../fixtures/dsh/turn-completed.ndjson node fake-cli.mjs
 | `FAKE_SIGTERM_EXIT` | 设置后吞掉 SIGTERM 默认终止，改以该码退出（dsh 已知坑模拟）；配 `FAKE_HANG` 用 | 不启用（SIGTERM 默认终止） |
 | `FAKE_VERSION` | 设置后：命令行含 `--version` 即只打印该值并以 0 退出（executor detect 版本门槛三态测试）；不参与时 `--version` 与普通参数无异 | 不启用 |
 | `FAKE_ECHO_ARGS` | `1` = stdout 首行回显收到的 argv（`fake-cli argv: ...`），测适配器 launch 参数注入（预算帽 / 续跑 / 通道旗标） | 不回显 |
+| `FAKE_ECHO_ENV` | 逗号分隔 env 变量名：每名一行回显该变量值（`fake-cli env: NAME=值`，未设置时 `<unset>`），测适配器 launch env 注入（TaskBrief.credentials v1.4 透传断言）；只回显点名变量，不倾倒整份 env | 不回显 |
 | `FAKE_WIRE_DIR` | 设置后：**正常退出前**把 wire 内容写到 `<dir>/wire.jsonl`（目录递归建）——模拟 kimi「会话目录里落 session wire.jsonl」（docs/17-§6 已知坑：usage 在 wire 不在 stdout） | 不写 wire |
 | `FAKE_WIRE_FIXTURE` | wire 内容来源（golden fixture 全文，如 `../fixtures/kimi/stdout-basic.wire.jsonl`） | 空文件 |
 

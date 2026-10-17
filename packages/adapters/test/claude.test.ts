@@ -50,6 +50,7 @@ interface BriefOverrides {
   briefPath?: string
   budgetCap?: TaskBrief['budgetCap']
   resume?: TaskBrief['resume']
+  credentials?: TaskBrief['credentials']
 }
 
 function makeBrief(o: BriefOverrides = {}): TaskBrief {
@@ -61,6 +62,7 @@ function makeBrief(o: BriefOverrides = {}): TaskBrief {
     AGENTS_MD: o.AGENTS_MD ?? { channel: 'native', target: join(workdir, 'AGENTS.md') },
     ...(o.budgetCap !== undefined ? { budgetCap: o.budgetCap } : {}),
     ...(o.resume !== undefined ? { resume: o.resume } : {}),
+    ...(o.credentials !== undefined ? { credentials: o.credentials } : {}),
   }
 }
 
@@ -449,6 +451,31 @@ describe('AGENTS.md 通道（映射 + 版本门槛自动降级；user_level 变�
     },
     15_000,
   )
+})
+
+describe('TaskBrief.credentials 透传（v1.4 短命按单凭据——launch env 无条件注入，值不打印不记录）', () => {
+  const ECHO_LINE = 'fake-cli env: STUDIO_TOOLS_WKEY='
+
+  it('携带 credentials → 键值出现在子进程 env（FAKE_ECHO_ENV 回显 → log 事件）', async () => {
+    await withFakeEnv({ FAKE_ECHO_ENV: 'STUDIO_TOOLS_WKEY' }, async () => {
+      const adapter = fakeAdapter()
+      const h = await adapter.launch(makeBrief({ credentials: { STUDIO_TOOLS_WKEY: 'wkey-fake-token-att1' } }))
+      const collected: StreamEvent[] = []
+      for await (const ev of adapter.stream(h)) collected.push(ev)
+      // 回显行（非 JSON）归一为 log：凭据确已透传进子进程 env（docs/25-§二 v1.4）
+      expect(collected).toStrictEqual([{ type: 'log', text: `${ECHO_LINE}wkey-fake-token-att1` }])
+    })
+  })
+
+  it('未携带 credentials → 该变量未设置（<unset>——可选字段零行为变更）', async () => {
+    await withFakeEnv({ FAKE_ECHO_ENV: 'STUDIO_TOOLS_WKEY' }, async () => {
+      const adapter = fakeAdapter()
+      const h = await adapter.launch(makeBrief())
+      const collected: StreamEvent[] = []
+      for await (const ev of adapter.stream(h)) collected.push(ev)
+      expect(collected).toStrictEqual([{ type: 'log', text: `${ECHO_LINE}<unset>` }])
+    })
+  })
 })
 
 describe('estimate（拟稿：与 dsh 相同的 v0 模型——v0.6 前细化）', () => {
