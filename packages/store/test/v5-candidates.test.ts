@@ -1,7 +1,10 @@
 /**
  * v0.10 进化管线·v5 测试（store candidates 表）：迁移（建库即 v5 / 三索引 / v4→v5 升级路径）、
  * insertCandidate 幂等登记（同键非终态命中 / 终态放行新建=换代重提 / 形状闸 / 谱系闸（自引用·
- * 父未知·既有环）/ id 冲突分类 / verification JSON 快照往返与不可序列化拒）、lineageOf 谱系链
+ * 父未知·既有环）/ id 冲突分类 / verification JSON 快照往返与不可序列化拒）、
+ * updateVerification 行中写面（sandboxed 写入往返+重复写后值胜 / 窗口语义 sandboxed 外全拒 /
+ * 无此行=false 如实 / 序列化与 insert 同源（同证据两写面落列字节一致）/ 不可序列化拒且原值不动 /
+ * null 归一清回 / 落证据后 sandboxed→gated 接力）、lineageOf 谱系链
  * （三代取回新→旧 / 断链与环 fail-closed 不死循环 / 无此行 undefined / insert 环检断链容忍）、
  * candidatesByStatus 状态集查询（排序 / 空数组与枚举外拒）、transitionCandidate 乐观锁（合法
  * 迁移落库 / 同连接两次同参恰一次成功 / 双连接竞态恰一次成功 / 过期 from 与无此行如实 false）、
@@ -468,6 +471,113 @@ describe('core↔store 一致性（防漂移——沿 STUDIO_TOOLS↔GATEWAY_ACT
     expect(cons.transitionCandidate('core-2', child.record.status, advanced.status)).toBe(true)
     expect(cons.getCandidate('core-2')?.status).toBe('proposed')
     cons.close()
+  })
+})
+
+describe('updateVerification（verification 快照行中写面——沙箱完成点落列）', () => {
+  let ledger: Ledger
+
+  beforeAll(() => {
+    ledger = openLedger(path.join(root, 'update-verification.db'))
+  })
+
+  afterAll(() => {
+    ledger.close()
+  })
+
+  let uvSeq = 0
+  const evidence = { sandboxPass: true, blastRadiusOk: true, judges: [{ judge: 'glm-5.3', pass: true }] }
+
+  /** 语料工厂：建 draft 候选并沿机器边推进到目标态（store 乐观锁逐跳；进 gated 前经本写面落证据——F3-02 时序） */
+  function seedAt(target: CandidateStatus): string {
+    uvSeq += 1
+    const id = `uv-${String(uvSeq).padStart(2, '0')}`
+    expect(ledger.insertCandidate(makeCandidate({ id, asset_path: `prompts/uv/${id}.md`, diff_hash: `uv-hash-${id}` })).inserted).toBe(true)
+    const step = (from: CandidateStatus, to: CandidateStatus): void => {
+      expect(ledger.transitionCandidate(id, from, to)).toBe(true)
+    }
+    if (target !== 'draft') step('draft', 'proposed')
+    if (target !== 'draft' && target !== 'proposed') {
+      step('proposed', 'sandboxed')
+      if (target !== 'sandboxed') {
+        // 进 gated 前落证据（本写面即沙箱完成写点；F3-02「缺一不进闸门」的时序前提）
+        expect(ledger.updateVerification(id, { sandboxPass: true, blastRadiusOk: true })).toBe(true)
+        step('sandboxed', 'gated')
+        if (target === 'approved' || target === 'promoted' || target === 'retired') step('gated', 'approved')
+        if (target === 'rejected') step('gated', 'rejected')
+        if (target === 'escalated') step('gated', 'escalated')
+        if (target === 'promoted') step('approved', 'promoted')
+        if (target === 'retired') step('approved', 'retired')
+      }
+    }
+    expect(ledger.getCandidate(id)?.status).toBe(target)
+    return id
+  }
+
+  it('sandboxed 态写入：true + 读面 deep-equal 往返；重复写后值胜（单写者覆盖语义）', () => {
+    const id = seedAt('sandboxed')
+    expect(ledger.getCandidate(id)?.verification).toBeNull() // 沙箱未完成=draft 起即 null
+    expect(ledger.updateVerification(id, evidence)).toBe(true)
+    expect(ledger.getCandidate(id)?.verification).toEqual(evidence)
+    const second = { sandboxPass: false, blastRadiusOk: true }
+    expect(ledger.updateVerification(id, second)).toBe(true)
+    expect(ledger.getCandidate(id)?.verification).toEqual(second)
+    // 落证据后 sandboxed→gated 接力成功（core verification 守卫的库侧前提——写面与时序闸衔接）
+    expect(ledger.transitionCandidate(id, 'sandboxed', 'gated')).toBe(true)
+    expect(ledger.getCandidate(id)?.status).toBe('gated')
+  })
+
+  it('窗口语义：sandboxed 外全拒（CONFIG_INVALID/store/candidates:verification-window）且行值不动——证据只进沙箱阶段', () => {
+    const outside: readonly CandidateStatus[] = ['draft', 'proposed', 'gated', 'approved', 'rejected', 'escalated', 'promoted', 'retired']
+    for (const status of outside) {
+      const id = seedAt(status)
+      const before = ledger.getCandidate(id)?.verification ?? null
+      expectConfigInvalid(
+        () => ledger.updateVerification(id, evidence),
+        'store/candidates:verification-window',
+        '不在 verification 写入窗口',
+      )
+      expect(ledger.getCandidate(id)?.verification).toEqual(before) // 拒写=原值不动（不静默改列）
+      expect(ledger.getCandidate(id)?.status).toBe(status) // 窗口拒不影响状态
+    }
+  })
+
+  it('无此行=false（markRan 同风格如实上报，不抛不猜）', () => {
+    expect(ledger.updateVerification('no-such-candidate', evidence)).toBe(false)
+    expect(countAll(ledger)).toBeGreaterThanOrEqual(1) // 库有行但不匹配——false 非「库空」语义
+  })
+
+  it('序列化口径与 insert 同源：同证据经两写面落列字节一致（serializeVerification 单一口径源）', () => {
+    // A：insert 时即带 verification；B：insert 后经 updateVerification 写同一证据
+    const a = makeCandidate({ id: 'uv-ser-a', asset_path: 'prompts/uv/ser-a.md', diff_hash: 'uv-ser-a', verification: evidence })
+    expect(ledger.insertCandidate(a).inserted).toBe(true)
+    const b = seedAt('sandboxed') // b 已带种子证据（{sandboxPass:true,...}），覆盖为同一 evidence
+    expect(ledger.updateVerification(b, evidence)).toBe(true)
+    const rawA = String((ledger.db.prepare('SELECT verification FROM candidates WHERE id = ?').get(a.id) as { verification: unknown }).verification)
+    const rawB = String((ledger.db.prepare('SELECT verification FROM candidates WHERE id = ?').get(b) as { verification: unknown }).verification)
+    expect(rawA).toBe(rawB)
+    expect(rawA).toBe(JSON.stringify(evidence)) // 且为原序 JSON.stringify（jobs.payload 同款非 canonical 序）
+  })
+
+  it('不可序列化拒（verification-unserializable）：函数（stringify 静默 undefined）与 BigInt（stringify 抛错）双路径，原值不动', () => {
+    const id = seedAt('sandboxed')
+    expect(ledger.updateVerification(id, evidence)).toBe(true)
+    expectConfigInvalid(() => ledger.updateVerification(id, () => 'fn'), 'store/candidates:verification-unserializable')
+    expectConfigInvalid(() => ledger.updateVerification(id, 10n), 'store/candidates:verification-unserializable')
+    expect(ledger.getCandidate(id)?.verification).toEqual(evidence) // 拒收=原证据不动
+    expect(ledger.getCandidate(id)?.status).toBe('sandboxed')
+  })
+
+  it('null/undefined 归一清回 null（与 insert 口径同源：undefined≡null）', () => {
+    const id = seedAt('sandboxed')
+    expect(ledger.updateVerification(id, evidence)).toBe(true)
+    expect(ledger.updateVerification(id, null)).toBe(true)
+    expect(ledger.getCandidate(id)?.verification).toBeNull()
+    expect(ledger.updateVerification(id, undefined)).toBe(true)
+    expect(ledger.getCandidate(id)?.verification).toBeNull()
+    const before = countAll(ledger)
+    expect(ledger.updateVerification('also-missing', undefined)).toBe(false) // null 写也过无此行=false 面
+    expect(countAll(ledger)).toBe(before)
   })
 })
 

@@ -60,6 +60,14 @@
  *     0 行=false——并发同迁恰一次成功；**边合法性归 core 状态机**，库层不复制判定面）。
  *   - daemon 接线（assertChangeAuthorized 消费 active 集、判负面挂主循环/网关写径、闸门
  *     verification 快照落盘一致性校验）归后续刀——本刀只到库面。
+ *
+ * v5 增补面（进化管线 daemon 侧接线单——e2e 裸 SQL 模拟的正式化）：
+ *   - updateVerification：verification 快照行中写面（沙箱完成点落列）。窗口闸 fail-closed
+ *     分类：只允许 sandboxed 态写入——证据只进沙箱阶段（F3-02 四元组时序：draft/proposed
+ *     未跑沙箱，gated 之后闸门已消费快照，再写=改口供），其他态 → CONFIG_INVALID
+ *     （store/candidates:verification-window）；无此行=false（markRan 同风格如实上报）。
+ *     序列化与 insertCandidate 同源（serializeVerification 单一口径源，两写面字节一致）；
+ *     乐观锁不需要（daemon 单写者），语句级 WHERE status='sandboxed' 防越阶段。
  */
 import { writeFileSync } from 'node:fs'
 import type { DatabaseSync } from 'node:sqlite'
@@ -266,6 +274,14 @@ export interface Ledger {
    * 不在库层复制判定面（复制=第二状态机，漂移面）。枚举外 from/to → CONFIG_INVALID。
    */
   transitionCandidate(id: string, from: CandidateStatus, to: CandidateStatus): boolean
+  /**
+   * verification 快照行中写面（沙箱完成点落列——e2e 裸 SQL 模拟的正式化）：
+   * 只允许 sandboxed 态——其他态 → CONFIG_INVALID（store/candidates:verification-window，
+   * 证据只进沙箱阶段，F3-02 四元组时序）；序列化与 insertCandidate 同源
+   * （serializeVerification 单一口径源）；无此行=false（markRan 同风格如实上报）。
+   * 乐观锁不需要（单写者）；语句级 WHERE status='sandboxed' 防越阶段。
+   */
+  updateVerification(id: string, verification: unknown): boolean
 }
 
 /** tokens 四桶 canonical 序（F2-04 列名序）：同内容恒同字节串 */
@@ -407,6 +423,26 @@ function parseJsonValue(raw: string, subcause: string): unknown {
     return JSON.parse(raw) as unknown
   } catch (err) {
     configInvalid(subcause, `payload 列不是合法 JSON：${raw}（${errorMessage(err)}）`)
+  }
+}
+
+/**
+ * verification 列序列化（**单一口径源**：insertCandidate 与 updateVerification 共用——
+ * 两写面落列字节同源，读面 deep-equal 往返的机制保证）。归一：undefined≡null
+ * （core 形状是 GateEvidence|null；zod unknown 收 JS 缺键形态）；不可 JSON 化的值
+ * 拒收不静默（同 jobs.payload 口径：stringify 抛错或返 undefined 均拒）。
+ * 返回列值（null=未跑沙箱）。
+ */
+function serializeVerification(verification: unknown, candidateId: string): string | null {
+  if (verification === undefined || verification === null) return null
+  try {
+    const serialized = JSON.stringify(verification)
+    if (serialized === undefined) {
+      configInvalid('store/candidates:verification-unserializable', `候选 ${candidateId} verification 含不可 JSON 序列化的值`)
+    }
+    return serialized
+  } catch (err) {
+    configInvalid('store/candidates:verification-unserializable', `候选 ${candidateId} verification 不是可序列化 JSON 值：${errorMessage(err)}`)
   }
 }
 
@@ -1122,20 +1158,8 @@ export function openLedger(path: string): Ledger {
 
   const insertCandidate = (record: unknown): InsertCandidateResult => {
     const r = assertRecord(CandidateRowSchema, record, 'store/candidates:invalid')
-    // verification 归一与序列化闸：undefined≡null（core 形状是 GateEvidence|null；zod unknown
-    // 收 JS 缺键形态）；不可 JSON 化的值拒收不静默（同 jobs.payload 口径）
-    let verificationJson: string | null = null
-    if (r.verification !== undefined && r.verification !== null) {
-      try {
-        const serialized = JSON.stringify(r.verification)
-        if (serialized === undefined) {
-          configInvalid('store/candidates:verification-unserializable', `候选 ${r.id} verification 含不可 JSON 序列化的值`)
-        }
-        verificationJson = serialized
-      } catch (err) {
-        configInvalid('store/candidates:verification-unserializable', `候选 ${r.id} verification 不是可序列化 JSON 值：${errorMessage(err)}`)
-      }
-    }
+    // verification 序列化闸：serializeVerification 单一口径源（与 updateVerification 同源）
+    const verificationJson = serializeVerification(r.verification, r.id)
     // 幂等闸（core proposeCandidate 语义）：同 (asset_path, diff_hash) 且非终态 → 既有 id 不新建；
     // 终态命中放行新建=换代重提（rejected/retired 后同键再提案是新谱系代）。同键多行时取
     // (created_at, id) 首行——不变量下同键至多一行非终态（insert 前置闸保证），多行为防御面
@@ -1232,6 +1256,32 @@ export function openLedger(path: string): Ledger {
     return Number(result.changes) > 0
   }
 
+  /**
+   * verification 快照行中写面（沙箱完成点落列；接口行注为语义依据）：
+   *   - 序列化闸先行（serializeVerification 与 insertCandidate 同源——输入面校验先于状态窗，
+   *     对齐 insert「形状闸→幂等闸→写」的顺序）；
+   *   - 窗口闸 fail-closed 分类：无此行=false（markRan 同风格，不猜不抛）；非 sandboxed 态
+   *     → CONFIG_INVALID（store/candidates:verification-window——证据只进沙箱阶段，F3-02
+   *     四元组时序：gated 之后闸门已消费快照，再写=改口供）；
+   *   - 语句级 WHERE status='sandboxed' 防越阶段：乐观锁不需要（daemon 单写者），此处是
+   *     「读到 status」与「写入」两步间的兜底（正常流不触发，触发即并发违规面如实 false）。
+   */
+  const updateVerification = (id: string, verification: unknown): boolean => {
+    const verificationJson = serializeVerification(verification, id)
+    const row = db.prepare('SELECT status FROM candidates WHERE id = ?').get(id) as { status: unknown } | undefined
+    if (row === undefined) return false
+    if (row.status !== 'sandboxed') {
+      configInvalid(
+        'store/candidates:verification-window',
+        `候选 ${id} 状态 ${String(row.status)} 不在 verification 写入窗口（仅 sandboxed——证据只进沙箱阶段，F3-02 四元组时序）`,
+      )
+    }
+    const result = db
+      .prepare("UPDATE candidates SET verification = ? WHERE id = ? AND status = 'sandboxed'")
+      .run(verificationJson, id)
+    return Number(result.changes) > 0
+  }
+
   return {
     db,
     close: () => db.close(),
@@ -1280,6 +1330,7 @@ export function openLedger(path: string): Ledger {
     lineageOf,
     candidatesByStatus,
     transitionCandidate,
+    updateVerification,
   }
 }
 
