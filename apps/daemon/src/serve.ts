@@ -42,6 +42,10 @@
  *     drain（v0=对内存 handle 优雅杀，work_records 留 running——重启接管归后续刀）→ 关台账。
  *     队列中未消费意图停机即弃（at-most-once，与调度器 markRan 已提交而 ingest 未消费的
  *     既有边界同语义——engine.ts 头注）。
+ *   - 进化管线判负闸（v0 观察模式，src/evolve-guard.ts）：serve 启动对框架资产清单（v0
+ *     极小样例集）跑 authorize（core assertChangeAuthorized ∘ 台账候选全集），unauthorized
+ *     如实报告（日志+ESCALATE 事件）**不阻断启动**；空库首启跳过（零检查如实）。真单刀接
+ *     阻断模式+资产面扩展+真生产改动路径拦截（头注冻结边界）。
  */
 import { createRegistry } from '@studio-next/adapters'
 import { createModelCatalog, fingerprint, parseModelsYaml } from '@studio-next/core'
@@ -66,9 +70,11 @@ import {
   type EngineConfig,
   type TickReport,
 } from './engine.ts'
+import { runEvolveStartupSelfCheck, type EvolveSelfCheckReport, type FrozenAsset } from './evolve-guard.ts'
 import { createFakeAdapter, createFakePlatform } from './fakes.ts'
 import { createGatedPlatform } from './gated-platform.ts'
 import { createDefaultGateRunner } from './gate.ts'
+import { makeUlid } from './id.ts'
 import { createDefaultAssembler } from './prompt-assembly.ts'
 import { nextRunAt, type Scheduler } from './scheduler.ts'
 import type { WorkerKeyDeps } from './worker-key.ts'
@@ -479,6 +485,11 @@ export interface ServeRuntime {
   /** 唤起源注册表（22-§一）：startAll 的 emit 统一进 engine.ingest（runServe 接线） */
   sources: SourceRegistry
   /**
+   * 启动期进化判负自检汇报（src/evolve-guard.ts，v0 观察模式）：ESCALATE 事件已在装配期
+   * 落账（unauthorized 时）；本字段为汇报面（测试/面板观测锚）。
+   */
+  evolveSelfCheck: EvolveSelfCheckReport
+  /**
    * 优雅停：先 stopAll 唤起源（不再进新意图）→ 在途 drain → 关台账
    * （SIGINT/SIGTERM 同一收口；可重入）。队列中未消费意图停机即弃（at-most-once，
    * 与调度器 markRan 已提交而 ingest 未消费的既有边界同语义——engine.ts 头注）。
@@ -517,6 +528,15 @@ export function buildServeRuntime(
     quarantineMs?: number
     /** matrix 源工厂（matrix: true 时调用；不注入=CONFIG_INVALID——daemon 不强依赖 matrix 包） */
     matrixSource?: () => InvokeSource
+    /**
+     * 进化判负自检注入面（测试确定性；缺省=仓样例集 FROZEN_FRAMEWORK_ASSETS + cwd 真文件
+     * 哈希——src/evolve-guard.ts 头注锚定口径）：manifest/hashFile/fileExists 逐项覆盖。
+     */
+    evolveSelfCheck?: {
+      manifest?: readonly FrozenAsset[]
+      hashFile?: (assetPath: string) => string
+      fileExists?: (assetPath: string) => boolean
+    }
   },
 ): ServeRuntime {
   const log = opts?.log ?? ((line: string): void => console.log(line))
@@ -626,10 +646,25 @@ export function buildServeRuntime(
 
   log(`[serve] 唤起源注册表：${sources.list().map((e) => e.source.name).join('、') || '（空）'}——emit 统一进 engine.ingest（22-§一 源零直驱）`)
 
+  // —— 进化管线判负闸·启动自检（v0 观察模式，src/evolve-guard.ts；20-§九 无 candidate id
+  //    的生产改动判负）：对框架资产清单逐项 authorize，unauthorized 落 ESCALATE 如实报告、
+  //    不阻断启动（阻断模式+资产面扩展归真单刀——头注冻结边界） ——
+  const evolveSelfCheck = runEvolveStartupSelfCheck({
+    ledger,
+    clock,
+    makeId: makeUlid,
+    company: config.company,
+    actor: ENGINE_CONFIG_DEFAULTS.actor,
+    dept: snapshot.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback,
+    log,
+    ...(opts?.evolveSelfCheck ?? {}),
+  })
+
   return {
     engine,
     scheduler,
     sources,
+    evolveSelfCheck,
     async stop(): Promise<void> {
       // 先停源（不再进新意图）→ 再停引擎（在途 drain）→ 关台账（SIGINT 停机顺序，22-§三.3）
       sources.stopAll()
