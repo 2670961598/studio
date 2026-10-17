@@ -268,14 +268,20 @@ describe('kill 无终态面（codex：turn.completed 未到 = 无终态；对齐
       const adapter = new CodexAdapter([
         process.execPath,
         '-e',
-        'process.on("SIGTERM", () => {}); setInterval(() => {}, 1e9)',
+        'process.on("SIGTERM", () => {}); process.stdout.write("READY\\n"); setInterval(() => {}, 1e9)',
         '--',
       ])
       const h = await adapter.launch(makeBrief())
+      const events: unknown[] = []
       const consuming = (async () => {
-        for await (const ev of adapter.stream(h)) void ev
+        for await (const ev of adapter.stream(h)) events.push(ev)
       })()
-      await new Promise((r) => setTimeout(r, 100))
+      // 竞态修复（2026-10-18 宰相，补 dsh/kimi 修复时遗漏的 codex 孪生）：等 READY 首事件再杀——
+      // SIGTERM 早于子进程装好处理器时子进程秒死，宽限断言必翻
+      await new Promise<void>((resolve) => {
+        const tick = setInterval(() => { if (events.length > 0) { clearInterval(tick); resolve() } }, 5)
+        setTimeout(() => { clearInterval(tick); resolve() }, 5_000)
+      })
       const t0 = Date.now()
       await adapter.kill(h, 300)
       expect(Date.now() - t0).toBeGreaterThanOrEqual(250) // 确实等满宽限才升级
