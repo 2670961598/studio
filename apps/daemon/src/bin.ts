@@ -26,6 +26,15 @@
  *       （--command；超时进程组杀）→ updateVerification 落证据（sandboxPass=判定）→
  *       proposed 则迁移 sandboxed——一条命令进沙箱。判定红非命令错误（exit 0，档案面）；
  *       无 --command 即 fail 如实（无验收命令=不可验证=不过）。
+ *   postmortem --db <库路径> --company <slug> --issue <复盘单号> --input <复盘.json>
+ *             [--casebook <案例库目录>] [--slug <条目slug>] [--date <YYYY-MM-DD>]
+ *             [--dept <部门path>] [--level <1-9>] [--actor <actor>]
+ *       复盘归档链（20-§十一「发现→止血→复盘（挂复盘单）→案例库」的复盘→案例库两环；
+ *       进化链四刀之二，src/postmortem.ts）：断路器关联（该单 CIRCUIT_BREAK/ESCALATE
+ *       台账历史自动进时间线）→ 渲染复盘模板（七节，无「责任人」字段——不追责的机制化）
+ *       → 写案例库条目文件（<casebook>/<date>-<slug>.md：条目+完整复盘自包含）→ 落
+ *       POSTMORTEM 事件（note=条目路径、size、payload_hash）。--input 必给（复盘正文
+ *       不可虚构——缺即拒，fail-closed）；库必须已存在（写面不代建库）。
  *   panel --db <库路径> [--port 8787]
  *       :8787 只读监控面（v0.3）：jobs/runs/workers/事件流（SSE），全部读 SQLite 零写；
  *       库不存在即拒启（panel 不代建库）；SIGINT/SIGTERM 优雅关闭
@@ -60,7 +69,7 @@
  * 2 serve 运行中出错（tick 异常）。
  * 用 process.exitCode 而非 process.exit 收尾：让管道下的 stdout/stderr 先冲刷再自然退出。
  */
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { initCompany, loadCompanyDirectory, readDirectoryFiles } from '@studio-next/company'
 import type { InitOptions } from '@studio-next/company'
@@ -79,6 +88,7 @@ import { createGatedPlatform } from './gated-platform.ts'
 import { ENGINE_CONFIG_DEFAULTS } from './engine.ts'
 import { runServe } from './serve.ts'
 import { renderSandboxLines, runCandidateSandbox } from './sandbox.ts'
+import { parsePostmortemInput, renderPostmortemLines, runPostmortemChain } from './postmortem.ts'
 
 const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
 
@@ -105,6 +115,15 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
       updateVerification 落证据 → proposed 迁移 sandboxed。生产零触碰（结构性保证）；
       判定 PASS/FAIL 均非命令错误（exit 0——红是档案面）；--command 缺省=fail 如实落账；
       --timeout 缺省 60000；--root 缺省当前目录；库不存在即拒（候选必须在库，不代建库）
+  studio-next postmortem --db <库路径> --company <slug> --issue <复盘单号> --input <复盘.json>
+                         [--casebook <案例库目录>] [--slug <条目slug>] [--date <YYYY-MM-DD>]
+                         [--dept <部门path>] [--level <1-9>] [--actor <actor>]
+      复盘归档链（20-§十一复盘→案例库，src/postmortem.ts）：断路器关联（该单 CIRCUIT_BREAK/
+      ESCALATE 台账历史自动进时间线）→ 渲染复盘模板（七节；无「责任人」字段——复盘不追责
+      的机制化）→ 写案例库条目（<casebook>/<date>-<slug>.md，缺省案例库=当前目录 docs/casebook；
+      条目=现象/根因/解法/预防 + 完整复盘附录）→ 落 POSTMORTEM 事件（note=条目约定路径、
+      size、payload_hash）。--input JSON 七件套见 src/postmortem.ts PostmortemInput；
+      --input 必给（复盘正文不可虚构）；库必须已存在（写面不代建库）
   studio-next panel --db <库路径> [--port 8787]
       :8787 只读监控面（v0.3，docs/16-§四）：jobs/runs/workers/事件流（SSE），
       全部读 SQLite 零写；库不存在即拒启；Ctrl-C 优雅关闭
@@ -440,6 +459,104 @@ async function cmdSandbox(argv: string[]): Promise<number> {
   } catch (err) {
     // 链面失败如实分类上报（CONFIG_INVALID/EVOLVE_REJECT——sandbox.ts 头注分类面）
     console.error(`sandbox 失败：${errText(err)}`)
+    return 1
+  }
+}
+
+/**
+ * postmortem 子命令：复盘归档薄壳（语义全在 src/postmortem.ts——渲染器+CLI 链）。
+ * --input 必给（拟稿，postmortem.ts 头注：复盘正文不可虚构——缺即用法错误，不给空模板
+ * 充数的旁路）；--issue 与 JSON 内 issue 双给时须一致（双源分歧如实拒）。库必须已存在：
+ * 事件要落账，写面不代建库（sandbox 同款 existsSync 闸）。
+ */
+async function cmdPostmortem(argv: string[]): Promise<number> {
+  const parsed = parseArgv(argv, new Set(['db', 'company', 'issue', 'input', 'casebook', 'slug', 'date', 'dept', 'level', 'actor']))
+  if ('error' in parsed) {
+    console.error(`postmortem：${parsed.error}`)
+    console.error(USAGE)
+    return 1
+  }
+  if (parsed.positionals.length > 0) {
+    console.error(`postmortem：多余的位置参数：${parsed.positionals.join(' ')}`)
+    console.error(USAGE)
+    return 1
+  }
+  const dbPath = parsed.flags.db
+  if (dbPath === undefined) {
+    console.error('postmortem：缺少 --db <库路径>')
+    console.error(USAGE)
+    return 1
+  }
+  const company = parsed.flags.company
+  if (company === undefined) {
+    console.error('postmortem：缺少 --company <公司 slug>（events.company 台账路由键，不猜）')
+    console.error(USAGE)
+    return 1
+  }
+  const inputPath = parsed.flags.input
+  if (inputPath === undefined) {
+    console.error('postmortem：缺少 --input <复盘.json>（复盘正文不可虚构——七件套形状见 src/postmortem.ts PostmortemInput；fail-closed 拒空模板旁路）')
+    console.error(USAGE)
+    return 1
+  }
+  let raw: string
+  try {
+    raw = readFileSync(path.resolve(inputPath), 'utf8')
+  } catch (err) {
+    console.error(`postmortem：--input 文件不可读 ${inputPath}：${errText(err)}`)
+    return 1
+  }
+  let parsedInput: ReturnType<typeof parsePostmortemInput>
+  try {
+    parsedInput = parsePostmortemInput(JSON.parse(raw) as unknown)
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      console.error(`postmortem：--input 不是合法 JSON：${inputPath}（${err.message}）`)
+    } else {
+      console.error(`postmortem：复盘输入形状不合法（fail-fast，逐字段修法）：${errText(err)}`)
+    }
+    return 1
+  }
+  const issue = parsed.flags.issue ?? parsedInput.issue
+  if (parsed.flags.issue !== undefined && parsed.flags.issue !== parsedInput.issue) {
+    console.error(`postmortem：--issue ${parsed.flags.issue} 与 JSON 内 issue ${parsedInput.issue} 不一致（双源分歧如实拒）`)
+    return 1
+  }
+  let level: number | undefined
+  if (parsed.flags.level !== undefined) {
+    level = Number.parseInt(parsed.flags.level, 10)
+    if (!Number.isInteger(level) || level < 1 || level > 9) {
+      console.error(`postmortem：--level 取值非法：${parsed.flags.level}（须为 1-9 整数——04-§四等级口径）`)
+      return 1
+    }
+  }
+  const resolvedDb = path.resolve(dbPath)
+  if (!existsSync(resolvedDb)) {
+    console.error(`postmortem：库不存在：${resolvedDb}（POSTMORTEM 事件要落账——写面不代建库，先由 daemon/回填侧建库）`)
+    return 1
+  }
+  try {
+    const ledger = openLedger(resolvedDb)
+    try {
+      const result = runPostmortemChain(ledger, {
+        input: parsedInput,
+        casebookRoot: parsed.flags.casebook ?? path.join(process.cwd(), 'docs/casebook'),
+        ...(parsed.flags.slug !== undefined ? { slug: parsed.flags.slug } : {}),
+        ...(parsed.flags.date !== undefined ? { date: parsed.flags.date } : {}),
+        company,
+        ...(parsed.flags.dept !== undefined ? { dept: parsed.flags.dept } : {}),
+        ...(level !== undefined ? { level } : {}),
+        ...(parsed.flags.actor !== undefined ? { actor: parsed.flags.actor } : {}),
+      })
+      for (const line of renderPostmortemLines(result)) console.log(line)
+      console.log(`复盘单 ${issue} 归档完成：事件 ${result.event.id} → 案例条目 ${result.relPath}`)
+      return 0
+    } finally {
+      ledger.close()
+    }
+  } catch (err) {
+    // 链面失败如实分类上报（CONFIG_INVALID——postmortem.ts 头注分类面）
+    console.error(`postmortem 失败：${errText(err)}`)
     return 1
   }
 }
@@ -780,6 +897,8 @@ async function main(): Promise<number> {
       return cmdCandidates(rest)
     case 'sandbox':
       return cmdSandbox(rest)
+    case 'postmortem':
+      return cmdPostmortem(rest)
     case 'panel':
       return cmdPanel(rest)
     case 'overview':
