@@ -24,8 +24,9 @@
  *     价；传完整前缀使注入的假 CLI 能按 FAKE_VERSION 旋钮回放版本输出（测试可控性取舍）
  *   - estimate()：与 dsh 相同的预算估算模型 v0 拟稿（任务书字符量粗估 + 低 confidence）；
  *     claude 有原生 cost，真账以 resultStats 为准
- *   - kill 未做 killpg（17-§6 表行）：execa 9.6.1 无进程组杀原语（与 dsh 头注同因），
- *     升级链同构 SIGTERM→grace→SIGKILL 直杀子进程；是否引入进程组杀走批示
+ *   - kill=killpg TERM→KILL 已兑现：execa 10 killDescendants:true（docs/27-§4.3 案 A，
+ *     16-§二「唯一内建进程组杀法」）；升级链同构自持 SIGTERM→grace→SIGKILL，信号直达
+ *     整组（子+孙）——与 dsh 头注同款，细节见彼处
  *
  * 已知坑与取舍（沉淀于此，docs/18-§1.2）：
  *   - 版本门槛：≥2.1.277 原生读 AGENTS.md；低于门槛 ok:true 不拦截启动，gaps 明报
@@ -42,8 +43,9 @@
  *   - session_id 从 result 事件回填伴生状态（nativeSessionId(h) 读）：续跑 --resume 用的是
  *     claude 原生 session id（与 Handle.sessionId 框架 UUID 是两回事）；TaskBrief.resume.sessionId
  *     由装配管线回填，适配器只透传
- *   - execa 的 kill() 不接收 per-call 宽限参数：spawn 时关闭默认 5s 兜底
- *     （forceKillAfterDelay:false），SIGKILL 升级链由 kill() 自持（16-§二）
+ *   - execa 10 实测（10.1.1）：kill() 仍无 per-call 宽限（第二参是 Error 实例），
+ *     forceKillAfterDelay 仍只支持 spawn 级——graceMs 是 kill() 的 per-call 契约参数，
+ *     故弃 spawn 级兜底（forceKillAfterDelay:false），SIGKILL 升级链由 kill() 自持（16-§二）
  *   - spawn 统一 reject:false——退出码只记录不参与判定（claude 无 dsh「吞信号退出 0」坑，
  *     但成功判定同样只认流内终态）
  *   - 伴生状态 sessions 为模块级私有 Map：随 daemon 进程存续，v0 不做回收（台账落盘后可重建）
@@ -100,6 +102,10 @@ interface SessionState {
   readonly rawLines: string[]
   streamConsumed: boolean
   killed: boolean
+  /** 子进程 promise 已落定（退出或 spawn 失败）——由 launch 的派生观察器置位（dsh 头注 10.x 项） */
+  settled: boolean
+  /** promise 落定时留档的退出码（null=被信号杀死；未落定/spawn 失败时 undefined） */
+  settledExitCode?: number | null
   /** spawn 层失败（如 ENOENT）——stdout 不可用时 stream() 如实抛出 */
   spawnError?: Error
   /** 流收尾时刻（kill 或自然退出后）；未收尾时 undefined */
@@ -237,8 +243,11 @@ export class ClaudeAdapter implements ExecutorAdapter {
       stdout: 'pipe',
       stderr: 'pipe',
       reject: false,
-      forceKillAfterDelay: false, // execa kill() 无 per-call 宽限：关闭默认 5s 兜底，kill() 自持升级链
-    })
+      killDescendants: true, // 16-§二 兑现（execa 10）：独立进程组，kill() 信号直达整组（子+孙）
+      forceKillAfterDelay: false, // graceMs 是 kill() per-call 参数；10.x kill() 仍无 per-call 宽限，升级链自持
+      // 类型注：execa 10 具体选项实例化与泛型 Subprocess 在 exactOptionalPropertyTypes 下
+      // 失协变（upstream 类型层缺口，运行时同物）——as Subprocess 单点收敛断言，四家同注
+    }) as Subprocess
     const sessionId = randomUUID()
     const state: SessionState = {
       subprocess,
@@ -247,13 +256,22 @@ export class ClaudeAdapter implements ExecutorAdapter {
       rawLines: [],
       streamConsumed: false,
       killed: false,
+      settled: false,
     }
     sessions.set(sessionId, state)
-    // spawn 层失败（ENOENT 等）在 reject:false 下仍会 reject：记入伴生状态，stream() 如实抛出；
-    // 此处 catch 同时防止无人消费时的未处理拒绝
-    subprocess.catch((e: unknown) => {
-      state.spawnError = asError(e)
-    })
+    // execa 10：Subprocess 非 EventEmitter（无 .once/.exitCode 属性）——落定态由本派生观察器
+    // 维护（与 dsh 同构，详见 dsh 头注）：退出→settled+退出码留档；spawn 失败→spawnError+settled；
+    // reject 分支在此吞掉（防无人消费时的未处理拒绝）
+    subprocess.then(
+      (result) => {
+        state.settledExitCode = result.exitCode ?? null
+        state.settled = true
+      },
+      (e: unknown) => {
+        state.spawnError = asError(e)
+        state.settled = true
+      },
+    )
     const pid = subprocess.pid
     if (pid === undefined) {
       sessions.delete(sessionId)
@@ -287,7 +305,7 @@ export class ClaudeAdapter implements ExecutorAdapter {
     }
     try {
       let pending = ''
-      // execa stdout 迭代产出 Buffer 块（实测 9.6.1）——统一按 utf8 解码
+      // execa stdout 迭代产出 Buffer 块（实测 9.6.1→10.1 同形）——统一按 utf8 解码
       for await (const chunk of stdout as AsyncIterable<unknown>) {
         pending += typeof chunk === 'string' ? chunk : String(chunk)
         let nl = pending.indexOf('\n')
@@ -330,32 +348,31 @@ export class ClaudeAdapter implements ExecutorAdapter {
   }
 
   /**
-   * 优雅终止：SIGTERM → 宽限 graceMs → SIGKILL（与 dsh 同构升级链）。
+   * 优雅终止（整树）：SIGTERM 软杀整树 → 宽限 graceMs → SIGKILL 硬杀整树（与 dsh 同构
+   * 升级链，killDescendants 细节见 dsh 头注）。
    * 已退出的进程不重复杀；幂等（重复 kill 直接返回）。
-   * 注：17-§6 表行写 killpg TERM→KILL——当前 execa 9.6.1 无进程组杀原语，直杀子进程；
    * claude 无 dsh「吞 SIGTERM 退出 0」坑，但 kill 后 result 未到即无终态（isCompleted=false）。
    */
   async kill(h: Handle, graceMs: number): Promise<void> {
     const state = requireState(h)
     if (state.killed) return
     state.killed = true
+    if (state.settled) {
+      return // 已退出（含 spawn 失败）：无可杀
+    }
     const proc = state.subprocess
-    if (proc.exitCode !== null || proc.signalCode !== null) {
-      return // 已自然退出：无可杀
-    }
-    const exited = new Promise<void>((resolve) => {
-      proc.once('exit', () => resolve())
-      proc.once('error', () => resolve())
-    })
-    proc.kill('SIGTERM')
+    proc.kill('SIGTERM') // 整组软杀（killDescendants：信号直达进程组，孙进程同波及）
     const escalate = setTimeout(() => {
-      proc.kill('SIGKILL') // 宽限内未退：强杀（SIGKILL 不可被吞）
+      // 宽限到点整组硬杀：父吞 TERM 不退、或父先退而孙吞 TERM 残留，一概收口；
+      // 组已尽时为无害 no-op（execa 组杀 ESRCH 回落已退进程直杀返回 false，不抛）
+      proc.kill('SIGKILL')
     }, Math.max(0, graceMs))
-    try {
-      await exited
-    } finally {
-      clearTimeout(escalate)
-    }
+    escalate.unref() // 扫尾兜底不阻止进程退出（kill() 返回后定时器照常待触发）
+    // 10.x 无 exit 事件可听（Subprocess 非 EventEmitter）：等 promise 落定（与 dsh 同构）
+    await state.subprocess.then(
+      () => undefined,
+      () => undefined,
+    )
   }
 
   /**
@@ -369,10 +386,11 @@ export class ClaudeAdapter implements ExecutorAdapter {
     return completedTurn && hasOutput
   }
 
-  /** 退出码记录（证据价值，不参与成功判定）；null=被信号杀死 */
+  /** 退出码记录（证据价值，不参与成功判定）；null=被信号杀死；undefined=未落定（运行中/spawn 失败） */
   exitCode(h: Handle): number | null | undefined {
     const state = requireState(h)
-    return state.exitCode ?? state.subprocess.exitCode
+    // 10.x 无同步 exitCode 属性：流收尾档优先，未消费流时读落定观察器留档（与 dsh 同构）
+    return state.exitCode ?? state.settledExitCode
   }
 
   /**
@@ -463,7 +481,7 @@ function lastTurnEndUsage(events: readonly StreamEvent[]): TokenCounts | undefin
   return undefined
 }
 
-/** ENOENT 判定（未安装）：execa reject:false 下 spawn 失败挂在 result.cause（实测 9.6.1） */
+/** ENOENT 判定（未安装）：execa reject:false 下 spawn 失败挂在 result.cause（实测 9.6.1→10.1 同形） */
 function isENOENT(cause: unknown): boolean {
   const code = (cause as { code?: unknown } | undefined)?.code
   return code === 'ENOENT' || asError(cause).message.includes('ENOENT')

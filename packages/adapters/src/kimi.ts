@@ -47,8 +47,9 @@
  *     预算参数）；task.budgetCap 传入也无处落地——能力声明即契约，预算管控走框架断路
  *   - kimi stdout 无 step 级事件（claude 同构只有 system/assistant/result）：turns 取
  *     turn_end 计数（0 或 1），与 claude 回退口径同构
- *   - kill 与 dsh/claude/codex 同构升级链 SIGTERM→graceMs→SIGKILL 直杀子进程（17-§6
- *     kill 列 killpg 的同因取舍，见 dsh 头注）；被杀会话 wire 多半缺失——明示 log +
+ *   - kill 与 dsh/claude/codex 同构升级链 SIGTERM→graceMs→SIGKILL，execa 10
+ *     killDescendants 下信号直达整组（子+孙）——17-§6 kill 列 killpg 语义已兑现
+ *     （docs/27-§4.3 案 A，细节见 dsh 头注）；被杀会话 wire 多半缺失——明示 log +
  *     tokens 零值（不编造）
  *   - spawn 统一 reject:false——退出码只记录不参与判定（成功判定只认流内终态）
  *   - 伴生状态 sessions 为模块级私有 Map：随 daemon 进程存续，v0 不做回收（台账落盘后可重建）
@@ -99,6 +100,10 @@ interface SessionState {
   readonly wirePath: string
   streamConsumed: boolean
   killed: boolean
+  /** 子进程 promise 已落定（退出或 spawn 失败）——由 launch 的派生观察器置位（dsh 头注 10.x 项） */
+  settled: boolean
+  /** promise 落定时留档的退出码（null=被信号杀死；未落定/spawn 失败时 undefined） */
+  settledExitCode?: number | null
   /** spawn 层失败（如 ENOENT）——stdout 不可用时 stream() 如实抛出 */
   spawnError?: Error
   /** 流收尾时刻（kill 或自然退出后）；未收尾时 undefined */
@@ -221,8 +226,11 @@ export class KimiAdapter implements ExecutorAdapter {
       stdout: 'pipe',
       stderr: 'pipe',
       reject: false,
-      forceKillAfterDelay: false, // execa kill() 无 per-call 宽限：关闭默认 5s 兜底，kill() 自持升级链
-    })
+      killDescendants: true, // 16-§二 兑现（execa 10）：独立进程组，kill() 信号直达整组（子+孙）
+      forceKillAfterDelay: false, // graceMs 是 kill() per-call 参数；10.x kill() 仍无 per-call 宽限，升级链自持
+      // 类型注：execa 10 具体选项实例化与泛型 Subprocess 在 exactOptionalPropertyTypes 下
+      // 失协变（upstream 类型层缺口，运行时同物）——as Subprocess 单点收敛断言，四家同注
+    }) as Subprocess
     const sessionId = randomUUID()
     const state: SessionState = {
       subprocess,
@@ -232,13 +240,22 @@ export class KimiAdapter implements ExecutorAdapter {
       wirePath: this.wirePathResolver(sessionId, task.workspace),
       streamConsumed: false,
       killed: false,
+      settled: false,
     }
     sessions.set(sessionId, state)
-    // spawn 层失败（ENOENT 等）在 reject:false 下仍会 reject：记入伴生状态，stream() 如实抛出；
-    // 此处 catch 同时防止无人消费时的未处理拒绝
-    subprocess.catch((e: unknown) => {
-      state.spawnError = asError(e)
-    })
+    // execa 10：Subprocess 非 EventEmitter（无 .once/.exitCode 属性）——落定态由本派生观察器
+    // 维护（与 dsh 同构，详见 dsh 头注）：退出→settled+退出码留档；spawn 失败→spawnError+settled；
+    // reject 分支在此吞掉（防无人消费时的未处理拒绝）
+    subprocess.then(
+      (result) => {
+        state.settledExitCode = result.exitCode ?? null
+        state.settled = true
+      },
+      (e: unknown) => {
+        state.spawnError = asError(e)
+        state.settled = true
+      },
+    )
     const pid = subprocess.pid
     if (pid === undefined) {
       sessions.delete(sessionId)
@@ -275,7 +292,7 @@ export class KimiAdapter implements ExecutorAdapter {
     }
     try {
       let pending = ''
-      // execa stdout 迭代产出 Buffer 块（实测 9.6.1）——统一按 utf8 解码
+      // execa stdout 迭代产出 Buffer 块（实测 9.6.1→10.1 同形）——统一按 utf8 解码
       for await (const chunk of stdout as AsyncIterable<unknown>) {
         pending += typeof chunk === 'string' ? chunk : String(chunk)
         let nl = pending.indexOf('\n')
@@ -318,32 +335,31 @@ export class KimiAdapter implements ExecutorAdapter {
   }
 
   /**
-   * 优雅终止：SIGTERM → 宽限 graceMs → SIGKILL（与 dsh/claude/codex 同构升级链）。
+   * 优雅终止（整树）：SIGTERM 软杀整树 → 宽限 graceMs → SIGKILL 硬杀整树（与
+   * dsh/claude/codex 同构升级链，killDescendants 细节见 dsh 头注）。
    * 已退出的进程不重复杀；幂等（重复 kill 直接返回）。
-   * 注：17-§6 kill 列写 killpg 同上——execa 9.6.1 无进程组杀原语，直杀子进程（dsh 头注同因）；
    * 被杀会话 wire 多半缺失——流尾明示 log + tokens 零值（kill 后 result 未到即无终态）。
    */
   async kill(h: Handle, graceMs: number): Promise<void> {
     const state = requireState(h)
     if (state.killed) return
     state.killed = true
+    if (state.settled) {
+      return // 已退出（含 spawn 失败）：无可杀
+    }
     const proc = state.subprocess
-    if (proc.exitCode !== null || proc.signalCode !== null) {
-      return // 已自然退出：无可杀
-    }
-    const exited = new Promise<void>((resolve) => {
-      proc.once('exit', () => resolve())
-      proc.once('error', () => resolve())
-    })
-    proc.kill('SIGTERM')
+    proc.kill('SIGTERM') // 整组软杀（killDescendants：信号直达进程组，孙进程同波及）
     const escalate = setTimeout(() => {
-      proc.kill('SIGKILL') // 宽限内未退：强杀（SIGKILL 不可被吞）
+      // 宽限到点整组硬杀：父吞 TERM 不退、或父先退而孙吞 TERM 残留，一概收口；
+      // 组已尽时为无害 no-op（execa 组杀 ESRCH 回落已退进程直杀返回 false，不抛）
+      proc.kill('SIGKILL')
     }, Math.max(0, graceMs))
-    try {
-      await exited
-    } finally {
-      clearTimeout(escalate)
-    }
+    escalate.unref() // 扫尾兜底不阻止进程退出（kill() 返回后定时器照常待触发）
+    // 10.x 无 exit 事件可听（Subprocess 非 EventEmitter）：等 promise 落定（与 dsh 同构）
+    await state.subprocess.then(
+      () => undefined,
+      () => undefined,
+    )
   }
 
   /**
@@ -357,10 +373,11 @@ export class KimiAdapter implements ExecutorAdapter {
     return completedTurn && hasOutput
   }
 
-  /** 退出码记录（证据价值，不参与成功判定）；null=被信号杀死 */
+  /** 退出码记录（证据价值，不参与成功判定）；null=被信号杀死；undefined=未落定（运行中/spawn 失败） */
   exitCode(h: Handle): number | null | undefined {
     const state = requireState(h)
-    return state.exitCode ?? state.subprocess.exitCode
+    // 10.x 无同步 exitCode 属性：流收尾档优先，未消费流时读落定观察器留档（与 dsh 同构）
+    return state.exitCode ?? state.settledExitCode
   }
 }
 
@@ -442,7 +459,7 @@ function lastTurnEndUsage(events: readonly StreamEvent[]): TokenCounts | undefin
   return undefined
 }
 
-/** ENOENT 判定（未安装）：execa reject:false 下 spawn 失败挂在 result.cause（实测 9.6.1） */
+/** ENOENT 判定（未安装）：execa reject:false 下 spawn 失败挂在 result.cause（实测 9.6.1→10.1 同形） */
 function isENOENT(cause: unknown): boolean {
   const code = (cause as { code?: unknown } | undefined)?.code
   return code === 'ENOENT' || asError(cause).message.includes('ENOENT')
