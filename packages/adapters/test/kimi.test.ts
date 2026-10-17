@@ -150,8 +150,8 @@ describe('全链：launch→stream→wire 合流→resultStats（fixture：stdou
           // stdout 部分（claude 同构、无 usage）逐行无损：与全文 parseStream('claude') 严格一致；
           // wire 求和挂载只落伴生状态（消费方已 yield 的 turn_end 不回补——流式固有，头注）
           expect(collected).toStrictEqual(claudeShapedEvents())
-          // wire 挂载成功：无追加明示事件
-          expect(collected.some((e) => e.text?.includes('wire.jsonl'))).toBe(false)
+          // wire 挂载成功：无追加明示事件（log 变体才有 text——联合判别后窄化取用）
+          expect(collected.some((e) => e.type === 'log' && e.text.includes('wire.jsonl'))).toBe(false)
 
           expect(adapter.exitCode(h)).toBe(0) // fake CLI 正常退出（记录价值）
           expect(adapter.isCompleted(h)).toBe(true) // result 终态 + log 非空
