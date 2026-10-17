@@ -30,6 +30,7 @@ import type {
 } from '@studio-next/contract'
 import { registerBuiltins } from '../src/agentconfig.ts'
 import { createRegistry } from '../src/registry.ts'
+import type { RegistryEntry } from '../src/registry.ts'
 
 /** 捕获 CONFIG_INVALID 并断言两级分类形状（category + subcause 机器可比对键） */
 function captureConfigInvalid(fn: () => unknown): Error & ClassifiedError {
@@ -159,7 +160,12 @@ describe('注册表：注册 / 解析 / 拒收', () => {
   it('list() 返回快照：外部改动不回写注册表', () => {
     const registry = registerBuiltins(createRegistry())
     const snapshot = registry.list()
-    snapshot.push({ name: 'tamper', capabilities: fakeAdapter('x').capabilities, default: true })
+    // list() 契约为只读快照类型；本用例刻意原地篡改以证明不回写——断言意图优先于只读标注
+    ;(snapshot as RegistryEntry[]).push({
+      name: 'tamper',
+      capabilities: fakeAdapter('x').capabilities,
+      default: true,
+    })
     expect(registry.list().length).toBe(4)
     expect(registry.defaultName()).toBe('dsh')
   })

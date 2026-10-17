@@ -8,6 +8,9 @@
  *     ——退出码 0 ≠ 成功，成功判定只认 turn_end.completed+输出非空（isCompleted）
  *   - kill 普通挂起：SIGTERM 默认终止（信号死，无退出码）；kill 宽限升级：无视 SIGTERM
  *     的子进程在 graceMs 后被 SIGKILL 强杀
+ *   - 孙进程杀灭（execa 10 killDescendants 兑现面，docs/27-§4.3 案 A）：对照组裸 spawn
+ *     直杀父 pid 证孙存活可检出（9.x 直杀语义）→ 整树软杀父孙同死 → 孙吞 TERM 由宽限
+ *     到点的整组 SIGKILL 扫尾收口（kill() 父退即返回，不等满宽限）
  *   - detect：未安装（假 cmd / PATH 清空）明报不静默；可解析时版本+未锁版本 gap
  *   - estimate 冒烟（拟稿：v0.6 前细化）
  *   - AGENTS.md 通道 env 注入（映射拟稿，见 dsh.ts 头注）
@@ -16,6 +19,7 @@
  * env 注入说明：适配器 spawn 用 {...process.env} 打底——FAKE_* 旋钮经 process.env
  * 临时注入、finally 还原（withFakeEnv），不污染其他用例。
  */
+import { spawn } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -240,6 +244,124 @@ describe('kill 已知坑（17-§6：被 kill 后退出码=0 且 final 为空—�
       expect(adapter.isCompleted(h)).toBe(true) // 先前完成判定不受影响
     })
   })
+})
+
+// ---------------------------------------------------------------------------
+// 孙进程杀灭（execa 10 killDescendants：16-§二「唯一内建进程组杀法」兑现面，
+// docs/27-§4.3 案 A——9.x 直杀子进程覆盖不到子孙树，本组为升级核心价值的直接证明）
+// ---------------------------------------------------------------------------
+
+/** pid 存活探测（ps 等价）：signal 0 探活；孤儿僵尸在被收割前仍报在（waitDead 含收割窗口） */
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 轮询等 pid 消亡（含孤儿僵尸被 launchd/init 收割的窗口）；到点未死返回 false */
+async function waitDead(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (!isAlive(pid)) return true
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  return !isAlive(pid)
+}
+
+/** 等孙进程就绪：pid 文件落盘且探活成功（孙自落 pid=就绪信号——文件在 fake CLI 孙进程侧写） */
+async function waitGrandchildReady(pidFile: string, timeoutMs = 5_000): Promise<number> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const pid = Number.parseInt(readFileSync(pidFile, 'utf8').trim(), 10)
+      if (Number.isInteger(pid) && pid > 0 && isAlive(pid)) return pid
+    } catch {
+      // pid 文件尚未落盘：孙还在启动
+    }
+    await new Promise((r) => setTimeout(r, 25))
+  }
+  throw new Error(`孙进程就绪超时：${pidFile} 未落盘或孙未存活`)
+}
+
+describe('孙进程杀灭（execa 10 killDescendants：整树软杀 + 宽限整树硬杀）', () => {
+  it(
+    '对照组（9.x 语义）：裸 spawn 直杀父 pid——孙进程存活（断言机制非盲证，升级动机实锤）',
+    async () => {
+      const pidFile = join(workdir, `grandchild-control-${Date.now()}.pid`)
+      // 裸 child_process.spawn + 只杀父 pid ＝ execa 9.x 无 killDescendants 的同款直杀语义
+      const parent = spawn(process.execPath, [fakeCli], {
+        env: { ...process.env, FAKE_HANG: '1', FAKE_GRANDCHILD_PID_FILE: pidFile },
+        stdio: 'ignore',
+      })
+      let gpid = 0
+      try {
+        gpid = await waitGrandchildReady(pidFile)
+        parent.kill('SIGTERM') // 直杀父——不波及子孙树
+        await new Promise<void>((r) => parent.once('exit', r))
+        await new Promise((r) => setTimeout(r, 300)) // 给「本该整组波及」留足观察窗
+        expect(isAlive(gpid)).toBe(true) // 孙仍活：直杀覆盖不到——9.x 做不到整树杀的实证
+      } finally {
+        if (gpid > 0) {
+          // 对照组孤儿孙收口：直杀 pid + 等收割（不留长眠孤儿）
+          try {
+            process.kill(gpid, 'SIGKILL')
+          } catch {
+            // 已死
+          }
+          await waitDead(gpid, 3_000)
+        }
+      }
+    },
+    15_000,
+  )
+
+  it(
+    '整树软杀：FAKE_HANG 父 + 长眠孙——kill() 一发 SIGTERM，父孙同死',
+    async () => {
+      const pidFile = join(workdir, `grandchild-term-${Date.now()}.pid`)
+      await withFakeEnv({ FAKE_HANG: '1', FAKE_GRANDCHILD_PID_FILE: pidFile }, async () => {
+        const adapter = fakeAdapter()
+        const h = await adapter.launch(makeBrief())
+        const consuming = (async () => {
+          for await (const ev of adapter.stream(h)) void ev
+        })()
+        const gpid = await waitGrandchildReady(pidFile)
+        expect(isAlive(gpid)).toBe(true) // 杀前孙确在
+        await adapter.kill(h, 2_000) // 父默认 TERM 即死：kill() 快速返回
+        await consuming
+        expect(await waitDead(gpid, 3_000)).toBe(true) // 孙随整组同灭（对照组已证直杀做不到）
+      })
+    },
+    15_000,
+  )
+
+  it(
+    '宽限扫尾硬杀整树：孙吞 SIGTERM、父默认即死——kill() 父退即返回，孙在 graceMs 后被整组 SIGKILL 收口',
+    async () => {
+      const pidFile = join(workdir, `grandchild-sweep-${Date.now()}.pid`)
+      await withFakeEnv(
+        { FAKE_HANG: '1', FAKE_GRANDCHILD_PID_FILE: pidFile, FAKE_GRANDCHILD_IGNORE_TERM: '1' },
+        async () => {
+          const adapter = fakeAdapter()
+          const h = await adapter.launch(makeBrief())
+          const consuming = (async () => {
+            for await (const ev of adapter.stream(h)) void ev
+          })()
+          const gpid = await waitGrandchildReady(pidFile)
+          const t0 = Date.now()
+          await adapter.kill(h, 400) // 父默认 TERM 即死：kill() 不等满宽限即返回
+          expect(Date.now() - t0).toBeLessThan(350)
+          // 孙吞 TERM 存活过父退——此刻只有宽限扫尾定时器能收它：400ms 整组 SIGKILL
+          expect(await waitDead(gpid, 3_000)).toBe(true)
+          await consuming
+        },
+      )
+    },
+    15_000,
+  )
 })
 
 describe('detect（launch 前必跑；不达标明报，绝不静默降级）', () => {

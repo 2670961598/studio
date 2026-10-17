@@ -279,6 +279,68 @@ describe('kill 无终态面（claude：result 未到 = 无终态；17-§6 kill �
   })
 })
 
+// ---------------------------------------------------------------------------
+// 孙进程杀灭冒烟（execa 10 killDescendants 兑现面，docs/27-§4.3 案 A；
+// 对照组/整树软杀/吞信号扫尾三面详证在 dsh 套件——本冒烟钉住 claude spawn 选项不回退）
+// ---------------------------------------------------------------------------
+
+/** pid 存活探测（signal 0）；孤儿僵尸在被收割前仍报在（waitDead 含收割窗口） */
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 轮询等 pid 消亡；到点未死返回 false */
+async function waitDead(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (!isAlive(pid)) return true
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  return !isAlive(pid)
+}
+
+/** 等孙进程就绪：pid 文件落盘且探活成功（孙自落 pid=就绪信号，fake CLI 孙进程侧写） */
+async function waitGrandchildReady(pidFile: string, timeoutMs = 5_000): Promise<number> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const pid = Number.parseInt(readFileSync(pidFile, 'utf8').trim(), 10)
+      if (Number.isInteger(pid) && pid > 0 && isAlive(pid)) return pid
+    } catch {
+      // pid 文件尚未落盘：孙还在启动
+    }
+    await new Promise((r) => setTimeout(r, 25))
+  }
+  throw new Error(`孙进程就绪超时：${pidFile} 未落盘或孙未存活`)
+}
+
+describe('孙进程杀灭冒烟（execa 10 killDescendants：整树软杀——详证三面在 dsh 套件）', () => {
+  it(
+    'FAKE_HANG 父 + 长眠孙——kill() 一发 SIGTERM 父孙同死（9.x 直杀做不到）',
+    async () => {
+      const pidFile = join(workdir, `claude-grandchild-${Date.now()}.pid`)
+      await withFakeEnv({ FAKE_HANG: '1', FAKE_GRANDCHILD_PID_FILE: pidFile }, async () => {
+        const adapter = fakeAdapter()
+        const h = await adapter.launch(makeBrief())
+        const consuming = (async () => {
+          for await (const ev of adapter.stream(h)) void ev
+        })()
+        const gpid = await waitGrandchildReady(pidFile)
+        expect(isAlive(gpid)).toBe(true) // 杀前孙确在
+        await adapter.kill(h, 2_000) // 父默认 TERM 即死：kill() 快速返回
+        await consuming
+        expect(await waitDead(gpid, 3_000)).toBe(true) // 孙随整组同灭
+      })
+    },
+    15_000,
+  )
+})
+
 describe('detect（版本门槛 2.1.277 三态——docs/18-§一：≥门槛才原生读 AGENTS.md）', () => {
   it('≥门槛：`2.1.277 (Claude Code)` 形态 → ok=true、版本号、无 gaps', async () => {
     await withFakeEnv({ FAKE_VERSION: '2.1.277 (Claude Code)' }, async () => {

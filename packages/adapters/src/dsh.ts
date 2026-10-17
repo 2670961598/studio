@@ -23,11 +23,19 @@
  * 已知坑与取舍（沉淀于此，docs/18-§1.2）：
  *   - 「dsh 被 kill 后退出码=0 且 final 为空」（17-§6）：exitCode 只记录不参与判定；
  *     spawn 统一 reject:false——非零退出码/被信号杀死不抛错，退出码对收割只有证据价值
- *   - execa 锁定版 9.6.1 无 killDescendants 选项（16-§二 登记项在 upstream 更新主版本
- *     才有）：kill 链 = SIGTERM → graceMs → SIGKILL，仅直杀子进程不覆盖子孙进程树；
- *     是否升级 execa 主版本走批示（见汇报疑点，不默许漂移）
- *   - execa 的 kill() 不接收 per-call 宽限参数：spawn 时关闭其默认 5s 兜底
- *     （forceKillAfterDelay:false），SIGKILL 升级链由 kill() 自持——语义对齐 16-§二
+ *   - execa 已升 10.x（docs/27-§4.3 案 A 拍板，16-§二「唯一内建进程组杀法」兑现）：
+ *     spawn 配 killDescendants:true——Unix 落法为独立进程组，kill() 信号直达整组
+ *     （子+孙），kill 链语义升级为「SIGTERM 软杀整树 → graceMs → SIGKILL 硬杀整树」
+ *   - 10.x 实测（10.1.1 类型+源码）：kill(signal, error) 第二参是 Error 实例，仍无
+ *     per-call 宽限；forceKillAfterDelay 仍只支持 spawn 级——而 graceMs 是 kill() 的
+ *     per-call 契约参数，故弃 spawn 级兜底（forceKillAfterDelay:false），升级链自持
+ *   - 10.x Subprocess 不再是 ChildProcess/EventEmitter：无 .once/.on（逃生口
+ *     .nodeChildProcess）、无 .exitCode/.signalCode 同步属性——落定态改由 launch 的
+ *     promise 派生观察器维护（settled/settledExitCode 伴生字段）；kill() 等落定用
+ *     派生分支（reject 分支吞掉，见 kill() 注）
+ *   - 宽限扫尾定时器不因父先退而取消（unref 不阻退出）：吞 TERM 的孙进程由宽限到点的
+ *     整组 SIGKILL 收口（Unix 父退后 PGID 在组员存续期间保留，组杀仍可达；组已尽时
+ *     为无害 no-op。理论 PID 复用误杀窗口系 upstream 文档化已知局限，概率极低）
  *   - resultStats().cost 恒 {usd:0}：cost_native=false，待价目表折算；ResultStats 结构
  *     无备注字段，不改 contract——以本头注 + 汇报记录「待价目表折算」
  *   - 伴生状态 sessions 为模块级私有 Map：sessionId 用随机 UUID，多实例不冲突；随
@@ -74,6 +82,10 @@ interface SessionState {
   readonly rawLines: string[]
   streamConsumed: boolean
   killed: boolean
+  /** 子进程 promise 已落定（退出或 spawn 失败）——由 launch 的派生观察器置位（头注 10.x 项） */
+  settled: boolean
+  /** promise 落定时留档的退出码（null=被信号杀死；未落定/spawn 失败时 undefined） */
+  settledExitCode?: number | null
   /** spawn 层失败（如 ENOENT）——stdout 不可用时 stream() 如实抛出 */
   spawnError?: Error
   /** 流收尾时刻（kill 或自然退出后）；未收尾时 undefined */
@@ -184,8 +196,12 @@ export class DshAdapter implements ExecutorAdapter {
       stdout: 'pipe',
       stderr: 'pipe',
       reject: false,
-      forceKillAfterDelay: false, // execa kill() 无 per-call 宽限：关闭默认 5s 兜底，kill() 自持升级链
-    })
+      killDescendants: true, // 16-§二 兑现（execa 10）：独立进程组，kill() 信号直达整组（子+孙）
+      forceKillAfterDelay: false, // graceMs 是 kill() per-call 参数；10.x kill() 仍无 per-call 宽限，升级链自持
+      // 类型注：execa 10 的具体选项实例化（ResultPromise<字面选项>）与泛型 Subprocess 在
+      // exactOptionalPropertyTypes 下失协变（upstream 类型层缺口，运行时同物）——本行
+      // as Subprocess 为单点收敛断言，四家同注
+    }) as Subprocess
     const sessionId = randomUUID()
     const state: SessionState = {
       subprocess,
@@ -194,13 +210,23 @@ export class DshAdapter implements ExecutorAdapter {
       rawLines: [],
       streamConsumed: false,
       killed: false,
+      settled: false,
     }
     sessions.set(sessionId, state)
-    // spawn 层失败（ENOENT 等）在 reject:false 下仍会 reject：记入伴生状态，stream() 如实抛出；
-    // 此处 catch 同时防止无人消费时的未处理拒绝
-    subprocess.catch((e: unknown) => {
-      state.spawnError = asError(e)
-    })
+    // execa 10：Subprocess 非 EventEmitter（无 .once/.exitCode 属性）——落定态由本派生观察器
+    // 维护：退出→settled+退出码留档；spawn 层失败（ENOENT 等，reject:false 下仍 reject）
+    // →spawnError+settled。reject 分支在此吞掉（防无人消费时的未处理拒绝；stream()/kill()
+    // 各自的派生等待不外抛）
+    subprocess.then(
+      (result) => {
+        state.settledExitCode = result.exitCode ?? null
+        state.settled = true
+      },
+      (e: unknown) => {
+        state.spawnError = asError(e)
+        state.settled = true
+      },
+    )
     const pid = subprocess.pid
     if (pid === undefined) {
       sessions.delete(sessionId)
@@ -233,7 +259,7 @@ export class DshAdapter implements ExecutorAdapter {
     }
     try {
       let pending = ''
-      // execa stdout 迭代产出 Buffer 块（实测 9.6.1）——统一按 utf8 解码
+      // execa stdout 迭代产出 Buffer 块（实测 9.6.1→10.1 同形）——统一按 utf8 解码
       for await (const chunk of stdout as AsyncIterable<unknown>) {
         pending += typeof chunk === 'string' ? chunk : String(chunk)
         let nl = pending.indexOf('\n')
@@ -274,7 +300,10 @@ export class DshAdapter implements ExecutorAdapter {
   }
 
   /**
-   * 优雅终止：SIGTERM → 宽限 graceMs → SIGKILL（升级链自持，见文件头注）。
+   * 优雅终止（整树）：SIGTERM 软杀整树 → 宽限 graceMs → SIGKILL 硬杀整树（升级链自持）。
+   * killDescendants（execa 10）下每次 kill() 信号直达子进程所在进程组——子+孙一概波及；
+   * 直子退出即返回，扫尾定时器不因父先退而取消：吞 TERM 的孙进程由宽限到点的整组
+   * SIGKILL 收口（详见文件头注）。
    * 已退出的进程不重复杀；幂等（重复 kill 直接返回）。
    * 已知坑（17-§6）：dsh 可能吞 SIGTERM 后退出码 0——成功判定与此无关（isCompleted）。
    */
@@ -282,23 +311,23 @@ export class DshAdapter implements ExecutorAdapter {
     const state = requireState(h)
     if (state.killed) return
     state.killed = true
+    if (state.settled) {
+      return // 已退出（含 spawn 失败）：无可杀
+    }
     const proc = state.subprocess
-    if (proc.exitCode !== null || proc.signalCode !== null) {
-      return // 已自然退出：无可杀
-    }
-    const exited = new Promise<void>((resolve) => {
-      proc.once('exit', () => resolve())
-      proc.once('error', () => resolve())
-    })
-    proc.kill('SIGTERM')
+    proc.kill('SIGTERM') // 整组软杀（killDescendants：信号直达进程组，孙进程同波及）
     const escalate = setTimeout(() => {
-      proc.kill('SIGKILL') // 宽限内未退：强杀（SIGKILL 不可被吞）
+      // 宽限到点整组硬杀：父吞 TERM 不退、或父先退而孙吞 TERM 残留，一概收口；
+      // 组已尽时为无害 no-op（execa 组杀 ESRCH 回落已退进程直杀返回 false，不抛）
+      proc.kill('SIGKILL')
     }, Math.max(0, graceMs))
-    try {
-      await exited
-    } finally {
-      clearTimeout(escalate)
-    }
+    escalate.unref() // 扫尾兜底不阻止进程退出（kill() 返回后定时器照常待触发）
+    // 10.x 无 exit 事件可听（Subprocess 非 EventEmitter）：等 promise 落定——直子退出或
+    // spawn 失败均在此吞掉并返回（reject 分支兜底，正常路径 reject:false 不抛）
+    await state.subprocess.then(
+      () => undefined,
+      () => undefined,
+    )
   }
 
   /**
@@ -312,10 +341,11 @@ export class DshAdapter implements ExecutorAdapter {
     return completedTurn && hasOutput
   }
 
-  /** 退出码记录（证据价值，不参与成功判定）；null=被信号杀死 */
+  /** 退出码记录（证据价值，不参与成功判定）；null=被信号杀死；undefined=未落定（运行中/spawn 失败） */
   exitCode(h: Handle): number | null | undefined {
     const state = requireState(h)
-    return state.exitCode ?? state.subprocess.exitCode
+    // 10.x 无同步 exitCode 属性：流收尾档（state.exitCode）优先，未消费流时读落定观察器留档
+    return state.exitCode ?? state.settledExitCode
   }
 }
 
@@ -363,7 +393,7 @@ function aggregateUsage(events: readonly StreamEvent[]): TokenCounts {
   return fallback ?? { input: 0, output: 0 }
 }
 
-/** ENOENT 判定（未安装）：execa reject:false 下 spawn 失败挂在 result.cause（实测 9.6.1） */
+/** ENOENT 判定（未安装）：execa reject:false 下 spawn 失败挂在 result.cause（实测 9.6.1→10.1 同形） */
 function isENOENT(cause: unknown): boolean {
   const code = (cause as { code?: unknown } | undefined)?.code
   return code === 'ENOENT' || asError(cause).message.includes('ENOENT')
