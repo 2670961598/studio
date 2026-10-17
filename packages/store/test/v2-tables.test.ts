@@ -55,8 +55,8 @@ function expectExecRejected(fn: () => void, messageContains: string): void {
 }
 
 describe('v2 迁移（五表 + append-only 触发器）', () => {
-  it('建库即到最新版（v4，v2 五表随建库齐备）：五表在库、budgets scope 索引在库、personnel_events 两枚触发器在库', () => {
-    expect(ledger.version()).toBe(4)
+  it('建库即到最新版（v5，v2 五表随建库齐备）：五表在库、budgets scope 索引在库、personnel_events 两枚触发器在库', () => {
+    expect(ledger.version()).toBe(5)
     const tables = (
       ledger.db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as Array<{ name: unknown }>
     ).map((r) => String(r.name))
@@ -71,11 +71,11 @@ describe('v2 迁移（五表 + append-only 触发器）', () => {
     expect(indexes).toEqual(['idx_budgets_scope'])
   })
 
-  it('重开库 migrate 幂等：version 不涨、schema_version 恰四行、v2/v3/v4 不重放', () => {
+  it('重开库 migrate 幂等：version 不涨、schema_version 恰五行、v2/v3/v4/v5 不重放', () => {
     const again = openLedger(path.join(root, 'ledger.db'))
-    expect(again.version()).toBe(4)
+    expect(again.version()).toBe(5)
     const rows = again.db.prepare('SELECT COUNT(*) AS c FROM schema_version').get() as { c?: unknown }
-    expect(Number(rows.c)).toBe(4)
+    expect(Number(rows.c)).toBe(5)
     again.close()
   })
 
@@ -92,7 +92,7 @@ describe('v2 迁移（五表 + append-only 触发器）', () => {
     expectConfigInvalid(() => migrate(openSqlite(path.join(root, 'up-to-bad.db')), { upTo: 99 }), 'store/migration:bad-up-to')
   })
 
-  it('v1 库升级路径：v1 建库写入事件 → openLedger 升到最新版（v4），旧数据无损、五表补齐', () => {
+  it('v1 库升级路径：v1 建库写入事件 → openLedger 升到最新版（v5），旧数据无损、五表补齐', () => {
     // ① 构造 v1 库（migrate upTo=1：测试构造历史版本库的通道）+ 裸插入一条合法事件
     const p = path.join(root, 'upgrade.db')
     const v1db = openSqlite(p)
@@ -110,7 +110,7 @@ describe('v2 迁移（五表 + append-only 触发器）', () => {
 
     // ② v1 库重开（openLedger 全量迁移）→ v4（v2 五表 + v3 jobs + v4 daemon_kv 逐版本补齐），v1 数据原样可读
     const upgraded = openLedger(p)
-    expect(upgraded.version()).toBe(4)
+    expect(upgraded.version()).toBe(5)
     const events = upgraded.queryEvents()
     expect(events).toEqual([
       {
