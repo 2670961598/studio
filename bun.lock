@@ -137,6 +137,9 @@
         "@studio-next/contract": "workspace:*",
         "zod": "^4.0.0",
       },
+      "devDependencies": {
+        "@studio-next/core": "workspace:*",
+      },
     },
     "packages/studio-tools": {
       "name": "@studio-next/studio-tools",
