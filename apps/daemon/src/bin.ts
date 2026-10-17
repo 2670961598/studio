@@ -27,7 +27,7 @@
  *       proposed 则迁移 sandboxed——一条命令进沙箱。判定红非命令错误（exit 0，档案面）；
  *       无 --command 即 fail 如实（无验收命令=不可验证=不过）。
  *   cutover --db <库路径> --candidate <id> --file <新文件> --company <公司slug>
- *           [--no-restart] [--root <资产根目录>] [--actor <actor>] [--dept <部门path>]
+ *           [--no-restart] [--no-gray] [--root <资产根目录>] [--actor <actor>] [--dept <部门path>]
  *           [--level <1-9>]
  *       进化链切权执行器（20-§九管线「→灰度→切权」的切权环节，进化链四刀之三，
  *       src/cutover.ts）：approved/promoted 候选**受控上产**——双闸（状态前置 + 判负闸
@@ -35,8 +35,17 @@
  *       <目标>.bak-<候选id>（回滚锚点，保留）→ 同目录 tmp+rename 原子写 → 读回复核
  *       hash → approved 则迁移 promoted（core 判边+乐观锁）→ SCHEMA_EVOLVE 事件落账
  *       （note=候选+资产+旧新 hash）。任一失败面先回滚再如实报（不留半改态）。
+ *       切权成功**默认开灰度观察窗**（kv gray:<候选id>；--no-gray 跳过）。
  *       --no-restart 抑制重启提示；v0 恒不实际重启（supervisor 看护归运维刀——诚实边界）。
  *       库必须已存在（写面不代建库）。
+ *   gray --db <库路径> --candidate <id> [--check | --close] [--root <资产根目录>]
+ *       灰度观察窗三动作（20-§四灰度零事故；进化链四刀之四收官，src/gray.ts）：
+ *       缺省=查窗（窗状态/阈值/锚点只读）；--check=手动检查（窗内 ESCALATE/CIRCUIT_BREAK
+ *       事故信号计数 ≥ 阈值 → **自动回滚**：备份逐字节恢复+复核+promoted→retired+
+ *       SCHEMA_EVOLVE 事件 note=gray-rollback；窗到期无事故 → 关窗=灰度完成可请求制作人
+ *       过目；守夜中 → 无动作）；--close=手动关窗（幂等，关窗不回滚）。回滚是合法判定
+ *       结果非命令错误（exit 0）；无窗候选/用法错 exit 1；库必须已存在（写面不代建库）。
+ *       观察窗驱动接 daemon tick（每拍自动 check）归真单刀——本面为 check+CLI。
  *   postmortem --db <库路径> --company <slug> --issue <复盘单号> --input <复盘.json>
  *             [--casebook <案例库目录>] [--slug <条目slug>] [--date <YYYY-MM-DD>]
  *             [--dept <部门path>] [--level <1-9>] [--actor <actor>]
@@ -76,7 +85,7 @@
  *     逐项清单见 src/serve.ts 与 src/engine.ts 头注）
  *
  * argv 解析零依赖手写（单命令薄壳不值得引库；16-§二 选型纪律：引新依赖须登记选型表）。
- * 退出码：0 成功（sandbox 判定 PASS/FAIL 均 0——红是档案面非命令错误）｜1 用法错误 / 校验不通过 / init 失败 / 演习 FAIL / panel 失败 / overview 失败 / external 失败 / candidates 失败 / sandbox 链面失败（库/候选/状态/写入窗）/ cutover 链面失败（双闸/备份/写/复核/迁移/落账——失败已回滚）/ postmortem 失败 / serve 配置错｜
+ * 退出码：0 成功（sandbox 判定 PASS/FAIL 均 0——红是档案面非命令错误；gray 判定面回滚/关窗/守夜均 0——回滚是合法判定结果非命令错误）｜1 用法错误 / 校验不通过 / init 失败 / 演习 FAIL / panel 失败 / overview 失败 / external 失败 / candidates 失败 / sandbox 链面失败（库/候选/状态/写入窗）/ cutover 链面失败（双闸/备份/写/复核/迁移/落账——失败已回滚）/ gray 链面失败（无窗候选/备份缺失/回滚面失败——窗保持 open 待处置）/ postmortem 失败 / serve 配置错｜
  * 2 serve 运行中出错（tick 异常）。
  * 用 process.exitCode 而非 process.exit 收尾：让管道下的 stdout/stderr 先冲刷再自然退出。
  */
@@ -100,6 +109,7 @@ import { ENGINE_CONFIG_DEFAULTS } from './engine.ts'
 import { runServe } from './serve.ts'
 import { renderSandboxLines, runCandidateSandbox } from './sandbox.ts'
 import { renderCutoverLines, runCutover } from './cutover.ts'
+import { renderGrayCheckLines, renderGrayStatusLines, checkGrayWindow, closeGrayWindow, readGrayWindow } from './gray.ts'
 import { parsePostmortemInput, renderPostmortemLines, runPostmortemChain } from './postmortem.ts'
 
 const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
@@ -128,14 +138,24 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
       判定 PASS/FAIL 均非命令错误（exit 0——红是档案面）；--command 缺省=fail 如实落账；
       --timeout 缺省 60000；--root 缺省当前目录；库不存在即拒（候选必须在库，不代建库）
   studio-next cutover --db <库路径> --candidate <id> --file <新文件> --company <公司slug>
-                      [--no-restart] [--root <资产根目录>] [--actor <actor>]
+                      [--no-restart] [--no-gray] [--root <资产根目录>] [--actor <actor>]
                       [--dept <部门path>] [--level <1-9>]
       进化链切权执行器（20-§九切权环节，进化链四刀之三，src/cutover.ts）：approved/promoted
       候选受控上产——双闸（状态∈{approved,promoted} + 判负闸 authorize 写前复跑）→ 备份
       <目标>.bak-<候选id>（回滚锚点保留）→ tmp+rename 原子写 → 读回复核 → approved 迁移
       promoted → SCHEMA_EVOLVE 事件落账（note=候选+资产+旧新 hash）；失败面先回滚再报
-      （不留半改态）。--no-restart 抑制重启提示（v0 恒不实际重启——supervisor 看护归运维刀）；
+      （不留半改态）。切权成功默认开灰度观察窗（kv gray:<候选id>；--no-gray 跳过）。
+      --no-restart 抑制重启提示（v0 恒不实际重启——supervisor 看护归运维刀）；
       --root 缺省当前目录；库必须已存在（写面不代建库）
+  studio-next gray --db <库路径> --candidate <id> [--check | --close] [--root <资产根目录>]
+      灰度观察窗三动作（20-§四灰度零事故；进化链四刀之四收官，src/gray.ts）：缺省=查窗
+      （窗状态/阈值/备份锚点，只读）；--check=手动检查（窗内 ESCALATE/CIRCUIT_BREAK 事故
+      信号计数 ≥ 阈值 → 自动回滚——备份逐字节恢复+复核+promoted→retired+SCHEMA_EVOLVE 事件
+      note=gray-rollback；窗到期无事故 → 关窗=灰度完成可请求制作人过目；守夜中 → 无动作）；
+      --close=手动关窗（幂等；关窗不回滚——回滚只由事故阈值触发）。回滚是合法判定结果
+      非命令错误（exit 0）；无窗候选/用法错 exit 1；备份锚点按 cutover 定名从 --root（缺省
+      当前目录）派生；库必须已存在（写面不代建库）。观察窗驱动接 daemon tick 归真单刀——
+      本面为 check+CLI
   studio-next postmortem --db <库路径> --company <slug> --issue <复盘单号> --input <复盘.json>
                          [--casebook <案例库目录>] [--slug <条目slug>] [--date <YYYY-MM-DD>]
                          [--dept <部门path>] [--level <1-9>] [--actor <actor>]
@@ -491,7 +511,7 @@ async function cmdSandbox(argv: string[]): Promise<number> {
  * （sandbox 同款 existsSync 闸）。--no-restart 抑制重启提示（v0 恒不实际重启——诚实边界）。
  */
 async function cmdCutover(argv: string[]): Promise<number> {
-  const parsed = parseArgv(argv, new Set(['db', 'candidate', 'file', 'company', 'root', 'actor', 'dept', 'level']), undefined, new Set(['no-restart']))
+  const parsed = parseArgv(argv, new Set(['db', 'candidate', 'file', 'company', 'root', 'actor', 'dept', 'level']), undefined, new Set(['no-restart', 'no-gray']))
   if ('error' in parsed) {
     console.error(`cutover：${parsed.error}`)
     console.error(USAGE)
@@ -547,6 +567,7 @@ async function cmdCutover(argv: string[]): Promise<number> {
         assetRoot: parsed.flags.root ?? '.',
         company,
         restart: !parsed.booleans.has('no-restart'),
+        gray: !parsed.booleans.has('no-gray'),
         ...(parsed.flags.actor !== undefined ? { actor: parsed.flags.actor } : {}),
         ...(parsed.flags.dept !== undefined ? { dept: parsed.flags.dept } : {}),
         ...(level !== undefined ? { level } : {}),
@@ -563,6 +584,100 @@ async function cmdCutover(argv: string[]): Promise<number> {
   } catch (err) {
     // 链面失败如实分类上报（CONFIG_INVALID——cutover.ts 头注失败面枚举；失败已回滚不留半改态）
     console.error(`cutover 失败：${errText(err)}`)
+    return 1
+  }
+}
+
+/**
+ * gray 子命令：灰度观察窗薄壳（语义全在 src/gray.ts——进化链四刀之四收官）。
+ * 三动作（互斥）：缺省=查窗（只读 kv 状态面）｜--check=手动检查（判定三态：阈值破窗→
+ * 自动回滚字节级恢复+promoted→retired+note=gray-rollback 事件；到期无事故→关窗；守夜中
+ * →无动作）｜--close=手动关窗（幂等；关窗不回滚——回滚只由事故阈值触发，面分离）。
+ * 回滚是合法判定结果非命令错误（sandbox 判定面同款口径）→ exit 0；无窗候选/用法错/库
+ * 面错 exit 1。备份锚点由 cutover 定名约定派生：--root（缺省 '.'）+ 窗内 assetPath +
+ * `.bak-<候选id>`。库必须已存在（check/close 是写面——kv/事件/生产文件，不代建库）。
+ */
+async function cmdGray(argv: string[]): Promise<number> {
+  const parsed = parseArgv(argv, new Set(['db', 'candidate', 'root']), undefined, new Set(['check', 'close']))
+  if ('error' in parsed) {
+    console.error(`gray：${parsed.error}`)
+    console.error(USAGE)
+    return 1
+  }
+  if (parsed.positionals.length > 0) {
+    console.error(`gray：多余的位置参数：${parsed.positionals.join(' ')}`)
+    console.error(USAGE)
+    return 1
+  }
+  if (parsed.booleans.has('check') && parsed.booleans.has('close')) {
+    console.error('gray：--check 与 --close 互斥（检查=判定+自动处置；关窗=平安提前收口——三动作一次一个）')
+    console.error(USAGE)
+    return 1
+  }
+  const dbPath = parsed.flags.db
+  if (dbPath === undefined) {
+    console.error('gray：缺少 --db <库路径>')
+    console.error(USAGE)
+    return 1
+  }
+  const candidateId = parsed.flags.candidate
+  if (candidateId === undefined) {
+    console.error('gray：缺少 --candidate <候选 id>')
+    console.error(USAGE)
+    return 1
+  }
+  const resolvedDb = path.resolve(dbPath)
+  if (!existsSync(resolvedDb)) {
+    console.error(`gray：库不存在：${resolvedDb}（观察窗检查是写面（kv/事件/生产文件）——不代建库，先由 daemon/切权面建库）`)
+    return 1
+  }
+  const assetRoot = parsed.flags.root ?? '.'
+  try {
+    const ledger = openLedger(resolvedDb)
+    try {
+      // 备份锚点派生（cutover ⑥ 定名约定：--root + assetPath + .bak-<候选id>——回滚物理基础）
+      const deriveBackup = (assetPath: string): string => path.resolve(assetRoot, `${assetPath}.bak-${candidateId}`)
+
+      if (parsed.booleans.has('check')) {
+        const state = readGrayWindow(ledger, candidateId)
+        if (state === null) {
+          console.error(`gray：候选 ${candidateId} 无灰度观察窗（kv gray:${candidateId} 缺——无窗候选不检查；窗由 cutover 默认后缀开）`)
+          return 1
+        }
+        const result = checkGrayWindow(ledger, deriveBackup(state.assetPath))
+        for (const line of renderGrayCheckLines(result)) console.log(line)
+        console.log(
+          `候选 ${candidateId} 灰度检查完成：${result.rolled ? '已自动回滚（零事故破窗）' : result.done ? '窗已收口（平安）' : '守夜中（无动作）'}` +
+            `｜信号 ${String(result.incidents)} 条｜窗状态 ${readGrayWindow(ledger, candidateId)?.status ?? '?'}`,
+        )
+        return 0
+      }
+
+      if (parsed.booleans.has('close')) {
+        const { state, changed } = closeGrayWindow(ledger, candidateId)
+        for (const line of renderGrayStatusLines(state, deriveBackup(state.assetPath), Date.now())) console.log(line)
+        console.log(
+          changed
+            ? `候选 ${candidateId} 灰度观察窗已手动关窗（kv gray:${candidateId} → closed——窗平安提前收口=可请求制作人过目）`
+            : `候选 ${candidateId} 灰度观察窗已是 ${state.status}（幂等无动作）`,
+        )
+        return 0
+      }
+
+      // 缺省动作：查窗（只读）
+      const state = readGrayWindow(ledger, candidateId)
+      if (state === null) {
+        console.error(`gray：候选 ${candidateId} 无灰度观察窗（kv gray:${candidateId} 缺——窗由 cutover 默认后缀开，--no-gray 跳过的切权无窗）`)
+        return 1
+      }
+      for (const line of renderGrayStatusLines(state, deriveBackup(state.assetPath), Date.now())) console.log(line)
+      return 0
+    } finally {
+      ledger.close()
+    }
+  } catch (err) {
+    // 链面失败如实分类上报（CONFIG_INVALID——gray.ts 头注失败面枚举；回滚失败窗保持 open）
+    console.error(`gray 失败：${errText(err)}`)
     return 1
   }
 }
@@ -1003,6 +1118,8 @@ async function main(): Promise<number> {
       return cmdSandbox(rest)
     case 'cutover':
       return cmdCutover(rest)
+    case 'gray':
+      return cmdGray(rest)
     case 'postmortem':
       return cmdPostmortem(rest)
     case 'panel':

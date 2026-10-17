@@ -74,8 +74,9 @@
  *     缺省 '.'）。两旗标为实现单面的必要补全，已上报。
  *
  * 后续刀（本刀不做，头注声明）：
- *   - **灰度**（四刀之四）：shadow 双跑对比（新旧行为并行记账+决策字段级 diff，F3-04）——
- *     本刀直接切权，灰度环节在其后补链时插在切权前。
+ *   - **灰度**（四刀之四）：已落地为切权后观察窗（src/gray.ts，v0 文件类资产收窄语义见
+ *     其头注）——本文件尾部接线：切权成功即默认开窗（opts.gray !== false），--no-gray 跳过；
+ *     shadow 双跑对比（F3-04，公司面候选）仍归后续刀。
  *   - supervisor 看护（launchd/看护脚本拉起 daemon 重启加载）归运维刀。
  *   - evolve-guard 观察模式升阻断模式的接线本体（接线点已就绪，见「呼应」段）归真单刀。
  *
@@ -95,6 +96,7 @@ import type { CandidateRow, Ledger } from '@studio-next/store'
 import { createEvolveGuard } from './evolve-guard.ts'
 import type { EvolveGuard } from './evolve-guard.ts'
 import { makeUlid } from './id.ts'
+import { openGrayWindow } from './gray.ts'
 
 // ————————————————————————— 形状面 —————————————————————————
 
@@ -116,6 +118,8 @@ export interface CutoverOptions {
   issue?: string
   /** 切权后重启提示面：true（缺省）=打印「daemon 需重启加载」；v0 恒不实际重启（诚实边界） */
   restart?: boolean
+  /** 切权后开灰度观察窗：true（缺省）=开窗成为切权默认后缀（src/gray.ts）；--no-gray 跳过 */
+  gray?: boolean
   /** 时钟注入面（缺省 Date.now；事件 ts 取自此） */
   clock?: () => number
   /** ULID 工厂注入面（缺省 makeUlid；测试确定性替身） */
@@ -148,6 +152,10 @@ export interface CutoverResult {
   migrated: boolean
   /** 落账的 SCHEMA_EVOLVE 事件（store 读面回查应 deep-equal） */
   event: EventRecord
+  /** 灰度观察窗是否已开（缺省开窗；--no-gray/开窗失败=false——见 grayError） */
+  grayOpened: boolean
+  /** 开窗失败报文（null=开窗成功或 --no-gray 跳过；失败不回滚切权——如实上报） */
+  grayError: string | null
   /** restart 透传（渲染层打印重启提示用） */
   restart: boolean
 }
@@ -330,6 +338,20 @@ export function runCutover(ledger: Ledger, candidateId: string, opts: CutoverOpt
     phase = 'event'
     ledger.appendEvent(event)
 
+    // —— 灰度观察窗默认后缀（--no-gray 跳过）：生产写已收口，开窗只是 kv 登记——
+    //    开窗失败不回滚切权（回滚已成立的上产才是事故），如实上报进结果面；
+    //    重跑 cutover（promoted 幂等）即重试开窗（src/gray.ts 头注接线段）。
+    let grayOpened = false
+    let grayError: string | null = null
+    if (opts.gray !== false) {
+      try {
+        openGrayWindow(ledger, { candidateId: row.id, assetPath: row.asset_path, company: opts.company, clock })
+        grayOpened = true
+      } catch (grayErr) {
+        grayError = errText(grayErr)
+      }
+    }
+
     return {
       candidateId: row.id,
       assetPath: row.asset_path,
@@ -339,6 +361,8 @@ export function runCutover(ledger: Ledger, candidateId: string, opts: CutoverOpt
       newHash,
       migrated,
       event,
+      grayOpened,
+      grayError,
       restart: opts.restart !== false,
     }
   } catch (err) {
@@ -422,6 +446,11 @@ export function renderCutoverLines(result: CutoverResult, row: CandidateRow): st
     `[cutover] hash 迁移：${result.oldHash ?? '（无）'} → ${result.newHash}`,
     `[cutover] 状态：${result.migrated ? 'approved→promoted（core 判边+store 乐观锁）' : 'promoted 重切权（文件复位/重放，免迁移——幂等）'}`,
     `[cutover] 台账留痕：SCHEMA_EVOLVE 事件 ${result.event.id}｜issue=${result.event.issue}｜note 携候选+资产+旧新 hash+备份锚点`,
+    result.grayOpened
+      ? `[cutover] 灰度观察窗：已开窗（kv gray:${row.id}，缺省窗 24h·阈值 1 条事故信号——20-§四零事故守夜；检查面：studio-next gray --check，src/gray.ts）`
+      : result.grayError !== null
+        ? `[cutover] 灰度观察窗：**开窗失败（如实上报，切权不受影响——生产写已完成且复核过）**：${result.grayError}（重跑 cutover（promoted 幂等）即重试开窗）`
+        : '[cutover] 灰度观察窗：跳过（--no-gray）',
   ]
   if (result.restart) {
     lines.push('[cutover] daemon 需重启加载新资产（v0 只提示不实际重启——supervisor 看护归运维刀，诚实边界见 src/cutover.ts 头注）')
