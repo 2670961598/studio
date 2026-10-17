@@ -223,6 +223,12 @@ export type FakeAdapterMode =
 export interface FakeAdapterOptions {
   mode?: FakeAdapterMode
   name?: string
+  /**
+   * launch 捕获钩子（测试断言注入面用）：收到 daemon 传入的 TaskBrief 原体——
+   * env 通道下「子进程读 env」的回显替身（credentials 断言经此钩子取，不进流/日志，
+   * 凭据红名单不破——fake 流文本永不含凭据值）。
+   */
+  onLaunch?: (task: TaskBrief) => void
 }
 
 interface FakeSession {
@@ -271,6 +277,7 @@ export const FAKE_SUMMARY_JSON = JSON.stringify(
 export function createFakeAdapter(opts?: FakeAdapterOptions): ExecutorAdapter {
   const mode = opts?.mode ?? 'ok'
   const name = opts?.name ?? 'fake'
+  const onLaunch = opts?.onLaunch
   const sessions = new Map<string, FakeSession>()
   let sessionSeq = 0
 
@@ -286,6 +293,7 @@ export function createFakeAdapter(opts?: FakeAdapterOptions): ExecutorAdapter {
       return { estimated: { usd: 0.01 }, confidence: 1 }
     },
     async launch(task: TaskBrief): Promise<Handle> {
+      onLaunch?.(task) // 回显替身：真实 executor 在此把 credentials 透传进子进程 env（v1.4）
       sessionSeq += 1
       const sessionId = `${name}-${sessionSeq}`
       // worker 落产物（REPORT/summary 是 worker 侧产物，非闸门侧）；no_report 形态=worker 没交报告

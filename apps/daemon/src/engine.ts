@@ -26,12 +26,16 @@
  *     交付成本）+ 超帽 refusal 不派。判定引擎=core reserve/settle，接线件=src/budget-gate.ts
  *     （估算两态/失败保留 adopt/双行落账顺序的拟稿待批点均见该文件头注）。
  *   - docs/17-§7 worker 级 wkey：按单签发→随派发注入→关单吊销——接线件=src/worker-key.ts
- *     （deps.workerKeys 注入才启用；缺省不注入=零行为变更）。生命周期锚点：
- *     dispatch 相位预算过闸后、launch 前 mint+写 workspace 文件（`.studio-next/wkey`，0600）；
- *     GATE_FAIL/派发失败（非终局）=删文件+重派重签（一 attempt 一 key——**不吊销 ticket**：
- *     冻结的 revoke 是 ticket 级终局动作，会杀死重签新 key，per-key 吊销拟稿待批见该文件头注）；
- *     断路熔断（failHarvest 达阈值）与 CLOSE（recycle 相位）=终局吊销+删文件（17-§7
- *     「关单即吊销，杜绝归档后仍有效」）；GATE_PASS 后 key 存续到 CLOSE（frozen 口径）。
+ *     （deps.workerKeys 注入才启用；缺省不注入=零行为变更）。通道=**env**（2026-10-18
+ *     制作人定调：凭据经子进程环境变量注入，永不入提示词/档案/任务书；TaskBrief.
+ *     credentials v1.4 → 四家适配器无条件透传进子进程 env）。生命周期锚点：dispatch
+ *     相位预算过闸后、launch 前 mint+credentials 注入（超帽拒派不签发）；GATE_FAIL/
+ *     派发失败（非终局）=凭据随子进程 env 离场（结构性撤离）+重派重签（一 attempt
+ *     一 key——**不吊销 ticket**：冻结的 revoke 是 ticket 级终局动作，会杀死重签新 key，
+ *     per-key 吊销拟稿待批见该文件头注）；断路熔断（failHarvest 达阈值）与 CLOSE
+ *     （recycle 相位）=终局吊销（17-§7「关单即吊销，杜绝归档后仍有效」）；GATE_PASS
+ *     后 key 存续到 CLOSE（frozen 口径）。DISPATCH note 携 wkey 审计锚=nonce（凭据值
+ *     红名单——note/日志/brief 永不含 token）。
  *   - docs/17-§7 末行 读面分级：dispatch 装配时按岗选档（main_worker=Full/verifier=Blind/
  *     其余 Focused，拟稿可配）→ createView 构造视图 → 随装配入参进任务书与 L4——
  *     接线件=src/read-tiers.ts（装配期选择非运行期闸、与写闸的结构区别见该文件头注）。
@@ -40,10 +44,10 @@
  *   - gateRunner：默认实现=REPORT 存在性 + exit0 模拟（真验收命令执行归 v0.5 真单刀）；
  *   - 泳道租约：进程内 Map + TTL（**不持久**；续租/死主回收/跨进程互斥归后续刀——单进程 v0 无死主）；
  *   - 断路器状态：进程内（重启即清零；持久化拟走 events 派生，待批示）；
- *   - wkey 在途文件索引：进程内 Map（重启后 CLOSE 相位拿不到文件路径——已签 key 存活至
- *     TTL 自然过期兜底；路径可由 events 派生 attempt 重建，归后续刀）；吊销集在 gateway
- *     内存 authority（跨进程可见性疑点见 src/worker-key.ts 头注）；dispose 不吊销在途 key
- *     （work_records 留 running 的接管语义同款边界——接管单重签）；
+ *   - wkey：env 通道下无在途文件索引面（凭据离场=子进程终结，结构性撤离；daemon 不留
+ *     token 副本）；重启后 CLOSE 相位照常吊销（revoke 按 ticket，不依赖索引）；吊销集在
+ *     gateway 内存 authority（跨进程可见性疑点见 src/worker-key.ts 头注）；dispose 不吊销
+ *     在途 key（work_records 留 running 的接管语义同款边界——接管单重签）；
  *   - 重启后在途接管：work_records 留 'running' 但 handle 已失（WORKER_DEAD 检测归后续刀）；
  *     dispose() 仅对内存 handle 优雅 kill；
  *   - 合并相位：v0 无真 git 合并（MERGE 事件 + 状态迁移的**模拟**，note 如实标注）；
@@ -94,6 +98,7 @@ import type {
   ModelCatalog,
   PersonRef,
   ResultStats,
+  TaskBrief,
   TicketId,
 } from '@studio-next/contract'
 import {
@@ -122,7 +127,7 @@ import { makeUlid } from './id.ts'
 import type { PromptAssembler } from './prompt-assembly.ts'
 import { blindArtifactPaths, createView, resolveReadTier, roleOfAssignee } from './read-tiers.ts'
 import type { ReadTier } from './read-tiers.ts'
-import { mintWorkerKey, removeWorkerKeyFile, workerKeyGuidance, writeWorkerKeyFile } from './worker-key.ts'
+import { mintWorkerKey, workerKeyCredentials, workerKeyGuidance, WORKER_WKEY_ENV_KEY } from './worker-key.ts'
 import type { WorkerKeyDeps } from './worker-key.ts'
 
 // ————————————————————————— 配置 —————————————————————————
@@ -373,38 +378,18 @@ export function createEngine(deps: EngineDeps): Engine {
   const intentQueue: InvokeIntent[] = []
   let seq = 0
 
-  // worker 级 wkey（17-§7）：在途 key 文件索引（ticket → 文件绝对路径）——
-  // GATE_PASS 后 Inflight 已注销但 key 存续到 CLOSE，故独立于 inflight 存续；
-  // 重启丢失的边界与 dispose 不吊销的口径见文件头注「v0 占位」。
+  // worker 级 wkey（17-§7）：env 通道（TaskBrief.credentials v1.4）——凭据随 launch 进
+  // 子进程 env，daemon 不留 token 副本、无在途索引面（吊销按 ticket 走 gateway，不依赖
+  // 索引；workerKeys 未注入=面关闭）
   const workerKeys = deps.workerKeys
-  const liveWorkerKeys = new Map<TicketId, string>()
 
   /**
-   * 撤离一单的 wkey 文件（非终局面：GATE_FAIL 重派 / 派发失败重试——**不吊销 ticket**）。
-   * 【拟稿待批】冻结的 revoke(ticket) 是 ticket 级终局动作（无 per-key 吊销/解吊销面）：
-   * 在重派前吊销会把**重签的新 key 一并杀死**（同 ticket 全灭）。故非终局失败只删文件
-   * （凭据离场），旧 key 失效兜底=TTL+nonce 单次；per-key 吊销须 gateway 包扩 authority
-   * API（走批示），疑点随单上报。
+   * 吊销一单的 worker key（终局面：CLOSE / 断路熔断——此后不再重派，吊销安全）。
+   * env 通道下凭据本体已随子进程终结离场——吊销封死的是 TTL 兜底面（nonce 单次有效）。
    */
-  function discardWorkerKeyOf(ticket: TicketId): boolean {
-    if (workerKeys === undefined) return false
-    const filePath = liveWorkerKeys.get(ticket)
-    if (filePath !== undefined) {
-      removeWorkerKeyFile(filePath)
-      liveWorkerKeys.delete(ticket)
-    }
-    return true
-  }
-
-  /** 吊销一单的 worker key + 删文件（终局面：CLOSE / 断路熔断——此后不再重派，吊销安全） */
   function revokeWorkerKeyOf(ticket: TicketId): boolean {
     if (workerKeys === undefined) return false
     workerKeys.gateway.revoke(ticket)
-    const filePath = liveWorkerKeys.get(ticket)
-    if (filePath !== undefined) {
-      removeWorkerKeyFile(filePath)
-      liveWorkerKeys.delete(ticket)
-    }
     return true
   }
 
@@ -596,7 +581,6 @@ export function createEngine(deps: EngineDeps): Engine {
     const agentsTarget = path.join(workspace, 'AGENTS.md')
     const at = now()
     let launched: Handle | undefined
-    let mintedWkey: string | undefined
     try {
       // detect 前置（18-§一：launch 前必跑；不达标明报不静默降级）
       const detect = await adapter.detect()
@@ -630,9 +614,9 @@ export function createEngine(deps: EngineDeps): Engine {
       mkdirSync(workspace, { recursive: true })
       writeFileSync(agentsTarget, assembled.agentsMd.text, 'utf8')
       // 任务书追加 wkey 指引行（workerKeys 启用面；追加在六层组装产物之外、任务书是
-      // per-attempt 操作面——通道选型裁决见 worker-key.ts 头注）
+      // per-attempt 操作面——指引行只指路不含凭据值，env 通道定调见 worker-key.ts 头注）
       const briefText =
-        workerKeys === undefined ? assembled.brief.text : `${assembled.brief.text}\n${workerKeyGuidance(workspace)}\n`
+        workerKeys === undefined ? assembled.brief.text : `${assembled.brief.text}\n${workerKeyGuidance()}\n`
       writeFileSync(briefPath, briefText, 'utf8')
       const taskBrief = assembled.brief.taskBrief
       // 预算闸（TaskBrief 构造后、launch 前——20-§六.8 机制点）：估算（两态）→ reserve
@@ -659,17 +643,21 @@ export function createEngine(deps: EngineDeps): Engine {
       if (gate.kind === 'reserved') budget.budgetReserved += 1
       crashHook('dispatch-reserved') // 崩溃注入①（F3-11）：reserve 双行已落账、launch 前——受控测试缝，默认零行为（src/crash-points.ts）
       // worker wkey 签发+注入（17-§7：预算过闸后、launch 前——超帽拒派不签发凭据）：
-      // mint（scope=六动词全集、一 attempt 一 key）→ 写 workspace 文件（0600，文件通道）
-      if (workerKeys !== undefined) {
-        mintedWkey = writeWorkerKeyFile(
-          workspace,
-          mintWorkerKey(workerKeys.gateway, {
-            ticket,
-            ...(workerKeys.makeNonce !== undefined ? { makeNonce: workerKeys.makeNonce } : {}),
-          }).token,
-        )
+      // mint（scope=六动词全集、一 attempt 一 key）→ TaskBrief.credentials（v1.4 env 通道，
+      // 2026-10-18 制作人定调）——适配器无条件透传进子进程 env；daemon 不留 token 副本
+      //（审计锚=下方 DISPATCH note 携 nonce；凭据值红名单，任何 note/日志永不含）
+      const minted =
+        workerKeys !== undefined
+          ? mintWorkerKey(workerKeys.gateway, {
+              ticket,
+              ...(workerKeys.makeNonce !== undefined ? { makeNonce: workerKeys.makeNonce } : {}),
+            })
+          : undefined
+      const launchBrief: TaskBrief = {
+        ...taskBrief,
+        ...(minted !== undefined ? { credentials: workerKeyCredentials(minted.token) } : {}),
       }
-      launched = await adapter.launch(taskBrief)
+      launched = await adapter.launch(launchBrief)
       crashHook('dispatch-launched') // 崩溃注入②（F3-11）：launch 已返回、work_records 在途落账前——受控测试缝，默认零行为
       acquireLane(action.lane, ticket, at)
       const transitioned = await platform.issues.transition(ticket, action.toState)
@@ -697,12 +685,11 @@ export function createEngine(deps: EngineDeps): Engine {
         personId: person.id,
         dispatchedAtSeq: seq,
       })
-      if (mintedWkey !== undefined) liveWorkerKeys.set(ticket, mintedWkey)
       syncMirror(transitioned)
       makeEvent('DISPATCH', transitioned, attempt, tickEvents, {
         size: Buffer.byteLength(assembled.agentsMd.text, 'utf8'),
         payload_hash: `sha256:${createHash('sha256').update(assembled.agentsMd.text, 'utf8').digest('hex')}`,
-        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${mintedWkey !== undefined ? `;wkey=${mintedWkey}` : ''}`,
+        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${minted !== undefined ? `;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=${minted.nonce}` : ''}`,
       })
       return {
         ticket,
@@ -716,13 +703,9 @@ export function createEngine(deps: EngineDeps): Engine {
       // 派发失败如实分类上报（DISPOSITIONS: DISPATCH_FAIL/retry）；v0 不计断路连击（拟稿）
       const msg = err instanceof Error ? err.message : String(err)
       if (launched !== undefined) await adapter.kill(launched, config.killGraceMs).catch(() => undefined)
-      // 已签发的 worker wkey 随失败撤离（删文件；不吊销 ticket——重试重签同 ticket，
-      // ticket 级吊销是终局动作，见 discardWorkerKeyOf 头注拟稿）。此处 liveWorkerKeys
-      // 尚未登记（登记在 launch 成功后）——按已知路径直删。
-      if (mintedWkey !== undefined) {
-        removeWorkerKeyFile(mintedWkey)
-        liveWorkerKeys.delete(ticket)
-      }
+      // 已签发的 worker wkey 随失败撤离（env 通道：launch 失败=凭据未进任何存活子进程，
+      // token 只活在本次调用栈——丢弃即离场；不吊销 ticket——重试重签同 ticket，ticket 级
+      // 吊销是终局动作，见 worker-key.ts 头注拟稿；失效兜底=TTL+nonce 单次）。
       return fail(`DISPATCH_FAIL：${msg}`)
     }
   }
@@ -840,10 +823,11 @@ export function createEngine(deps: EngineDeps): Engine {
     const ticket = entry.ticket
     const fresh = await platform.issues.get(ticket)
     const flow = flowOf(fresh)
-    // worker wkey 撤离（17-§7）：GATE_FAIL 重派=删文件+重签（一 attempt 一 key）——
-    // **不吊销 ticket**（ticket 级吊销是终局动作，会杀死重签的新 key；per-key 吊销
-    // 拟稿待批，见 discardWorkerKeyOf 头注）；断路熔断（下方达阈值）才是终局=吊销
-    const wkeyDiscarded = discardWorkerKeyOf(ticket)
+    // worker wkey 撤离（17-§7）：GATE_FAIL 重派=凭据随子进程 env 离场（结构性撤离——
+    // 进程终结即离场，无文件面）+重签（一 attempt 一 key，新 TaskBrief 新 credentials）
+    // ——**不吊销 ticket**（ticket 级吊销是终局动作，会杀死重签的新 key；per-key 吊销
+    // 拟稿待批，见 worker-key.ts 头注）；断路熔断（下方达阈值）才是终局=吊销
+    const wkeyDiscarded = workerKeys !== undefined
     // 断路签名：四要件失败形态（同形态连击才熔断——breaker streak 语义）
     const signature = `harvest:${verdict.completed ? 'c' : '-'}${verdict.nonEmptyOutput ? 'o' : '-'}${verdict.reportExists ? 'r' : '-'}${verdict.exit0 ? 'g' : '-'}`
     ledger.endWorkRecord(entry.workRecordId, { status: 'failed', ended_at: now() })
@@ -854,11 +838,11 @@ export function createEngine(deps: EngineDeps): Engine {
       const rolled = await platform.issues.transition(ticket, flowAnchors(flow).fresh)
       syncMirror(rolled)
       makeEvent('GATE_FAIL', rolled, entry.attempt, tickEvents, {
-        note: `${detail};rollback=${flowAnchors(flow).fresh}${wkeyDiscarded ? ';wkey=file-removed（重派重签）' : ''}`,
+        note: `${detail};rollback=${flowAnchors(flow).fresh}${wkeyDiscarded ? ';wkey=env-离场（凭据随子进程终结；重派重签新 credentials）' : ''}`,
       })
     } else {
       makeEvent('GATE_FAIL', fresh, entry.attempt, tickEvents, {
-        note: `${detail};rollback=跳过（等级未登记流）${wkeyDiscarded ? ';wkey=file-removed（重派重签）' : ''}`,
+        note: `${detail};rollback=跳过（等级未登记流）${wkeyDiscarded ? ';wkey=env-离场（凭据随子进程终结；重派重签新 credentials）' : ''}`,
       })
     }
     // 断路器：worker 错误入账（同单同签名连击；达阈值熔断→open_bug）

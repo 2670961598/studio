@@ -23,8 +23,8 @@
  *   - executor 只注册 fake adapter（demo）；真 dsh 注册走 agent.yaml + agentconfig.wireRegistry。
  *   - 网关（17-§7 写入全收口）：**平台写路径已过闸**（src/gated-platform.ts——控制面 control key、
  *     署名注入、fail-closed；缺省开，daemon.yaml `gatewaySecret:` 配密钥、缺省开发值生产必换）。
- *     worker 级按单 wkey 已接（src/worker-key.ts：dispatch 签发+workspace 文件注入、
- *     GATE_FAIL/断路/CLOSE 吊销+删文件）；仍欠：studio-tools stdio 入口（worker 进程内挂 MCP
+ *     worker 级按单 wkey 已接（src/worker-key.ts：dispatch 签发+TaskBrief.credentials
+ *     env 注入、GATE_FAIL/断路/CLOSE 吊销）；仍欠：studio-tools stdio 入口（worker 进程内挂 MCP
  *     server 的入口单——工厂已备，须复用 createStudioToolsServer）与吊销集跨进程可见性
  *     （authority 落 store，gateway 包挂账）；审批流（呈批事件名待批示）同前。
  *   - 定时岗（v0.4，jobs: true）：scheduler（src/scheduler.ts）+ 引擎意图入口（engine.ingest）
@@ -416,7 +416,7 @@ function wireWorkerKeys(config: ServeConfig, snapshot: CompanySnapshot, clock: (
   if (!config.gateway) return undefined
   const { secret, ctx, author } = daemonIdentity(config, snapshot)
   const gateway = createGateway({ secret, clock, ticket: CONTROL_TICKET, ctx, author })
-  log('[serve] worker wkey 已接：按单签发 → workspace `.studio-next/wkey`（0600）注入 → GATE_FAIL/断路/CLOSE 吊销+删文件（17-§7；scope=六动词全集）')
+  log('[serve] worker wkey 已接：按单签发 → TaskBrief.credentials（env 通道，子进程 env STUDIO_TOOLS_WKEY）→ GATE_FAIL/断路/CLOSE 吊销（17-§7；scope=六动词全集；凭据值红名单——不入提示词/档案/任务书/日志）')
   return { gateway }
 }
 
@@ -577,7 +577,7 @@ export function buildServeRuntime(
     ...(config.budgetTicketCapUsd !== undefined ? { budgetTicketCapUsd: config.budgetTicketCapUsd } : {}),
     ...(config.budgetPersonCapUsd !== undefined ? { budgetPersonCapUsd: config.budgetPersonCapUsd } : {}),
   }
-  // worker 级 wkey（17-§7）：按单签发→workspace 文件注入→关单吊销（src/worker-key.ts）
+  // worker 级 wkey（17-§7）：按单签发→TaskBrief.credentials env 注入→关单吊销（src/worker-key.ts）
   const workerKeys = wireWorkerKeys(config, snapshot, clock, log)
   const engine = createEngine({
     // 写路径网关收口（17-§7）：raw platform 包一层 gated 代理——engine 写调用签名不变（透明）
