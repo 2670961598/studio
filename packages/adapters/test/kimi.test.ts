@@ -194,7 +194,7 @@ describe('全链：launch→stream→wire 合流→resultStats（fixture：stdou
       await withFakeEnv(
         {
           FAKE_FIXTURE: stdoutFixture,
-          FAKE_DELAY_MS: '30',
+          FAKE_DELAY_MS: '120',
           FAKE_WIRE_DIR: wireDir,
           FAKE_WIRE_FIXTURE: wireFixture,
         },

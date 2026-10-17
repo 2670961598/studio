@@ -110,7 +110,7 @@ describe('全链：launch→stream→resultStats（fixture：turn-completed）',
     '增量流：FAKE_DELAY_MS 逐行吐出——stream 逐行 yield，非整块缓冲',
     async () => {
       await withFakeEnv(
-        { FAKE_FIXTURE: completedFixture, FAKE_DELAY_MS: '30' },
+        { FAKE_FIXTURE: completedFixture, FAKE_DELAY_MS: '120' },
         async () => {
           const adapter = fakeAdapter()
           const h = await adapter.launch(makeBrief())
