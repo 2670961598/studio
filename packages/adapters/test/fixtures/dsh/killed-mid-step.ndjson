@@ -1,6 +1,0 @@
-# golden fixture · dsh · SIGTERM 中途被杀（已知坑场景）
-# 依据 docs/17-§6——dsh 被 kill 后退出码=0 且 final 为空：成功判定必须看 turn_end.completed + 输出非空，绝不看退出码
-# 本样本刻意没有 turn_end：归一化输出不含任何 completed 事件，收割侧应判「未完成」
-{"type":"step_start","step":"analyze","ts":"2026-10-16T09:10:00.000Z"}
-{"type":"step_end","step":"analyze","usage":{"input_tokens":900,"output_tokens":120,"cached_tokens":0}}
-{"type":"step_start","step":"implement","ts":"2026-10-16T09:10:02.000Z"}

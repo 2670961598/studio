@@ -1,19 +1,26 @@
 /**
  * dsh 适配器全链测试 —— 对 fake CLI harness（docs/18-§1.3 独立测试套件）
  *
- * 覆盖（任务口径：对 fake 全绿，真 CLI 行为留探针单）：
- *   - 全链：launch→stream 逐事件消费→resultStats 账目（tokens/duration/turns/cost）
- *   - 增量流：FAKE_DELAY_MS 逐行吐出——stream 逐行 yield 非整块缓冲
- *   - kill 已知坑（17-§6 冻结口径）：FAKE_HANG+FAKE_SIGTERM_EXIT=0 吞 SIGTERM 后退出码 0
- *     ——退出码 0 ≠ 成功，成功判定只认 turn_end.completed+输出非空（isCompleted）
+ * P0 重写（docs/31-§5 修正清单 + §7 五探针实录）：golden 全部换真机实录
+ * （P01/P04/P05/P07/A4/P08，来源见各 fixture 头注释）。
+ *
+ * 覆盖：
+ *   - 全链：launch（传任务串）→stream 逐事件消费→resultStats 账目（tokens/duration/turns/cost）
+ *   - launch 传任务串（P0）：任务书全文以 `--` 分隔的单个位置参数注入；真机 usage-error 面
+ *     （无任务 → 顶层 error 事件 + exit 1）经 FAKE_REQUIRE_TASK 复现；任务书不可读如实抛错
+ *   - 遥测红线（docs/31-§5-8）：DSH_TELEMETRY_MODE=DISABLED 注入且压过环境残留
+ *   - kill 面（docs/31-§7 P-08 真机定性）：空 final + 无 turn_end + exit 0 = 被 kill
+ *     （aborted 口径）——isCompleted 只认 turn_end.reason.kind==='completed'，且仅此一条
  *   - kill 普通挂起：SIGTERM 默认终止（信号死，无退出码）；kill 宽限升级：无视 SIGTERM
  *     的子进程在 graceMs 后被 SIGKILL 强杀
+ *   - 失败分类面（P1，docs/31-A4/§7 P-04）：无凭证=MISSING_CREDENTIAL、凭证无效=AUTH
+ *     （401 透传）——code 前缀留在 turn_end.error 串里
  *   - 孙进程杀灭（execa 10 killDescendants 兑现面，docs/27-§4.3 案 A）：对照组裸 spawn
  *     直杀父 pid 证孙存活可检出（9.x 直杀语义）→ 整树软杀父孙同死 → 孙吞 TERM 由宽限
  *     到点的整组 SIGKILL 扫尾收口（kill() 父退即返回，不等满宽限）
  *   - detect：未安装（假 cmd / PATH 清空）明报不静默；可解析时版本+未锁版本 gap
  *   - estimate 冒烟（拟稿：v0.6 前细化）
- *   - AGENTS.md 通道 env 注入（映射拟稿，见 dsh.ts 头注）
+ *   - AGENTS.md 通道 env 注入（映射已证伪留占位——见 dsh.ts 头注）
  *   - parseLine 单行导出与 parseStream 全文等价（streams 既有行为不改的旁证）
  *
  * env 注入说明：适配器 spawn 用 {...process.env} 打底——FAKE_* 旋钮经 process.env
@@ -26,22 +33,23 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
 import type { StreamEvent, TaskBrief } from '@studio-next/contract'
-import { DshAdapter } from '../src/dsh.ts'
+import { DSH_DEFAULT_CMD, DshAdapter } from '../src/dsh.ts'
 import { parseLine, parseStream } from '../src/streams.ts'
 
 const fakeCli = fileURLToPath(new URL('./fake-cli/fake-cli.mjs', import.meta.url))
-const completedFixture = fileURLToPath(
-  new URL('./fixtures/dsh/turn-completed.ndjson', import.meta.url),
-)
-const killedFixture = fileURLToPath(
-  new URL('./fixtures/dsh/killed-mid-step.ndjson', import.meta.url),
-)
+const p01Fixture = fileURLToPath(new URL('./fixtures/dsh/P01-真成功流.ndjson', import.meta.url))
+const p04Fixture = fileURLToPath(new URL('./fixtures/dsh/P04-错误凭据.ndjson', import.meta.url))
+const a4Fixture = fileURLToPath(new URL('./fixtures/dsh/A4-无凭证.ndjson', import.meta.url))
+const p08Fixture = fileURLToPath(new URL('./fixtures/dsh/P08-kill面.ndjson', import.meta.url))
 
 /** 每用例独立的临时工作区根（launch 的 cwd 必须真实存在） */
 const workdir = mkdtempSync(join(tmpdir(), 'dsh-adapter-test-'))
 afterAll(() => {
   rmSync(workdir, { recursive: true, force: true })
 })
+
+/** 任务书全文（launch 的任务串来源——argv 注入断言用；单行、无换行，便于整行回显断言） */
+const BRIEF_TEXT = 'TASK: 回声任务——按任务书全文回 PROBE-OK'
 
 interface BriefOverrides {
   AGENTS_MD?: TaskBrief['AGENTS_MD']
@@ -50,10 +58,14 @@ interface BriefOverrides {
 }
 
 function makeBrief(o: BriefOverrides = {}): TaskBrief {
+  const briefPath = o.briefPath ?? join(workdir, 'brief.md')
+  // P0 起 launch 读任务书全文作任务串——缺省任务书由测试侧落盘（真实装配管线的等价物）。
+  // 显式指定 briefPath 的用例归用例自管（estimate 长文 / 不存在路径），此处不越权代写
+  if (o.briefPath === undefined) writeFileSync(briefPath, BRIEF_TEXT)
   return {
     ticket: 'TEST-1',
     attempt: 1,
-    briefPath: o.briefPath ?? join(workdir, 'brief.md'),
+    briefPath,
     workspace: workdir,
     AGENTS_MD: o.AGENTS_MD ?? { channel: 'native', target: join(workdir, 'AGENTS.md') },
     ...(o.credentials !== undefined ? { credentials: o.credentials } : {}),
@@ -81,14 +93,13 @@ async function withFakeEnv(kvs: Record<string, string>, fn: () => Promise<void>)
   }
 }
 
-const goldenEvents = (): StreamEvent[] =>
-  parseStream(readFileSync(completedFixture, 'utf8'), 'dsh')
+const goldenEvents = (): StreamEvent[] => parseStream(readFileSync(p01Fixture, 'utf8'), 'dsh')
 
-describe('全链：launch→stream→resultStats（fixture：turn-completed）', () => {
+describe('全链：launch→stream→resultStats（golden：P01 真成功流）', () => {
   it(
-    '流事件与 golden 归一序列一致；账目 tokens/turns/cost/duration 如实',
+    '流事件与 golden 归一序列一致；账目 tokens/turns/cost/duration 如实；isCompleted=true',
     async () => {
-      await withFakeEnv({ FAKE_FIXTURE: completedFixture }, async () => {
+      await withFakeEnv({ FAKE_FIXTURE: p01Fixture }, async () => {
         const adapter = fakeAdapter()
         const h = await adapter.launch(makeBrief())
         expect(h.executor).toBe('dsh')
@@ -100,11 +111,13 @@ describe('全链：launch→stream→resultStats（fixture：turn-completed）',
         expect(collected).toStrictEqual(goldenEvents())
 
         expect(adapter.exitCode(h)).toBe(0) // fake CLI 正常退出（记录价值）
-        expect(adapter.isCompleted(h)).toBe(true) // turn_end.completed=true + log 非空
+        // 终态判据唯一化：turn_end(reason.kind=completed)→turn_end{completed:true} 存在即真
+        expect(adapter.isCompleted(h)).toBe(true)
 
         const stats = await adapter.resultStats(h)
-        expect(stats.tokens).toStrictEqual({ input: 3800, output: 2200, cached: 800 })
-        expect(stats.turns).toBe(2) // step_end 计数
+        // step_end camelCase usage 累计：inputTokens 4510 / outputTokens 26 / cacheReadTokens 256
+        expect(stats.tokens).toStrictEqual({ input: 4510, output: 26, cached: 256 })
+        expect(stats.turns).toBe(1) // step_end 计数（单 turn 单 step）
         expect(stats.cost).toStrictEqual({ usd: 0 }) // cost_native=false：待价目表折算（dsh.ts 头注）
         expect(stats.duration).toBeGreaterThanOrEqual(0)
       })
@@ -116,7 +129,7 @@ describe('全链：launch→stream→resultStats（fixture：turn-completed）',
     '增量流：FAKE_DELAY_MS 逐行吐出——stream 逐行 yield，非整块缓冲',
     async () => {
       await withFakeEnv(
-        { FAKE_FIXTURE: completedFixture, FAKE_DELAY_MS: '120' },
+        { FAKE_FIXTURE: p01Fixture, FAKE_DELAY_MS: '120' },
         async () => {
           const adapter = fakeAdapter()
           const h = await adapter.launch(makeBrief())
@@ -126,7 +139,7 @@ describe('全链：launch→stream→resultStats（fixture：turn-completed）',
             void ev
           }
           expect(stamps.length).toBe(goldenEvents().length)
-          // 首末事件间隔 ≥ 4×30ms：事件确系逐行到达
+          // 首末事件间隔 ≥ 120ms：事件确系逐行到达
           const first = stamps[0] ?? 0
           const last = stamps[stamps.length - 1] ?? 0
           expect(last - first).toBeGreaterThanOrEqual(120)
@@ -137,7 +150,7 @@ describe('全链：launch→stream→resultStats（fixture：turn-completed）',
   )
 
   it('stream 二次消费明报拒绝（一单一命、一流一收）', async () => {
-    await withFakeEnv({ FAKE_FIXTURE: completedFixture }, async () => {
+    await withFakeEnv({ FAKE_FIXTURE: p01Fixture }, async () => {
       const adapter = fakeAdapter()
       const h = await adapter.launch(makeBrief())
       for await (const ev of adapter.stream(h)) void ev
@@ -148,12 +161,83 @@ describe('全链：launch→stream→resultStats（fixture：turn-completed）',
   })
 })
 
-describe('kill 已知坑（17-§6：被 kill 后退出码=0 且 final 为空——退出码不构成成功）', () => {
+describe('launch 传任务串（P0：docs/31-§0 发现 2/§5-1——任务=单个位置参数，不传真机必败）', () => {
+  it('argv 注入：任务书全文以 `--` 分隔的单个位置参数追加（防任务串以 `-` 开头被当旗标）', async () => {
+    await withFakeEnv({ FAKE_ECHO_ARGS: '1' }, async () => {
+      const adapter = fakeAdapter()
+      const h = await adapter.launch(makeBrief())
+      const collected: StreamEvent[] = []
+      for await (const ev of adapter.stream(h)) collected.push(ev)
+      // 回显行（非 JSON）归一为 log：`--` 分隔符 + 任务书全文单参数
+      expect(collected).toStrictEqual([{ type: 'log', text: `fake-cli argv: -- ${BRIEF_TEXT}` }])
+    })
+  })
+
+  it('缺省命令基座冻结：dsh --profile headless --json（任务串在其后追加）', () => {
+    expect(DSH_DEFAULT_CMD).toStrictEqual(['dsh', '--profile', 'headless', '--json'])
+  })
+
   it(
-    'FAKE_HANG+FAKE_SIGTERM_EXIT=0：吞 SIGTERM 后退出码 0，但无 turn_end → 判定未完成',
+    'FAKE_REQUIRE_TASK=1（真机 usage-error 面）：任务串在 → 正常回放；适配器判定不受影响',
     async () => {
       await withFakeEnv(
-        { FAKE_FIXTURE: killedFixture, FAKE_HANG: '1', FAKE_SIGTERM_EXIT: '0' },
+        { FAKE_FIXTURE: p01Fixture, FAKE_REQUIRE_TASK: '1' },
+        async () => {
+          const adapter = fakeAdapter()
+          const h = await adapter.launch(makeBrief())
+          const collected: StreamEvent[] = []
+          for await (const ev of adapter.stream(h)) collected.push(ev)
+          expect(collected).toStrictEqual(goldenEvents())
+          expect(adapter.exitCode(h)).toBe(0)
+          expect(adapter.isCompleted(h)).toBe(true)
+        },
+      )
+    },
+    10_000,
+  )
+
+  it('任务书不可读：launch 如实抛错（装配管线缺件前置失败，不静默传空）', async () => {
+    const adapter = fakeAdapter()
+    const brief = makeBrief({ briefPath: join(workdir, 'no-such-brief.md') })
+    await expect(adapter.launch(brief)).rejects.toThrow(/任务书不可读/)
+  })
+})
+
+describe('遥测红线（docs/31-§5-8：dsh 默认 FEEDBACK_ONLY 外发 deepseeksvc.com——一律禁外发）', () => {
+  it('launch env 注入 DSH_TELEMETRY_MODE=DISABLED', async () => {
+    await withFakeEnv({ FAKE_ECHO_ENV: 'DSH_TELEMETRY_MODE' }, async () => {
+      const adapter = fakeAdapter()
+      const h = await adapter.launch(makeBrief())
+      const collected: StreamEvent[] = []
+      for await (const ev of adapter.stream(h)) collected.push(ev)
+      expect(collected).toStrictEqual([
+        { type: 'log', text: 'fake-cli env: DSH_TELEMETRY_MODE=DISABLED' },
+      ])
+    })
+  })
+
+  it('环境残留 FEEDBACK_ONLY 被注入值压过（红线优先级最高）', async () => {
+    await withFakeEnv(
+      { FAKE_ECHO_ENV: 'DSH_TELEMETRY_MODE', DSH_TELEMETRY_MODE: 'FEEDBACK_ONLY' },
+      async () => {
+        const adapter = fakeAdapter()
+        const h = await adapter.launch(makeBrief())
+        const collected: StreamEvent[] = []
+        for await (const ev of adapter.stream(h)) collected.push(ev)
+        expect(collected).toStrictEqual([
+          { type: 'log', text: 'fake-cli env: DSH_TELEMETRY_MODE=DISABLED' },
+        ])
+      },
+    )
+  })
+})
+
+describe('kill 面（docs/31-§7 P-08 真机定性：空 final + 无 turn_end + exit 0 = 被 kill——aborted 口径）', () => {
+  it(
+    'FAKE_HANG+FAKE_SIGTERM_EXIT=0：优雅空 final、无 turn_end、退出码 0——判定未完成（非成功非失败）',
+    async () => {
+      await withFakeEnv(
+        { FAKE_FIXTURE: p08Fixture, FAKE_HANG: '1', FAKE_SIGTERM_EXIT: '0' },
         async () => {
           const adapter = fakeAdapter()
           const h = await adapter.launch(makeBrief())
@@ -161,21 +245,23 @@ describe('kill 已知坑（17-§6：被 kill 后退出码=0 且 final 为空—�
           const consuming = (async () => {
             for await (const ev of adapter.stream(h)) collected.push(ev)
           })()
-          // 挂起段：fixture 已吐完（3 事件、无 turn_end），进程不退、stdout 未关
+          // 挂起段：fixture 已吐完（3 归一事件——final 空文本不产事件），进程不退、stdout 未关
           await new Promise((r) => setTimeout(r, 300))
           expect(collected.length).toBe(3)
 
           await adapter.kill(h, 2_000)
           await consuming // kill 后 stdout 关闭，流自然收尾
 
+          // P-08 实录形态：无任何 turn_end 事件（终态判据唯一化的根据）
           expect(collected.some((e) => e.type === 'turn_end')).toBe(false)
-          // 坑位实锤：退出码 0（吞 SIGTERM 后 exit 0）却没有任何 turn_end.completed——「未完成」
+          // 坑位实锤：退出码 0（优雅收尾）+ 空 final + 无 turn_end → isCompleted=false；
+          // 「输出非空」（session/turn_start 原文 log 在流里）绝不参与判定
           expect(adapter.exitCode(h)).toBe(0)
           expect(adapter.isCompleted(h)).toBe(false)
-          // 被杀半程的账目照样可收：部分 usage + 已完 step 计数
+          // 被杀半程的账目照样可收：无任何 step usage → 零账（不编造）
           const stats = await adapter.resultStats(h)
-          expect(stats.tokens).toStrictEqual({ input: 900, output: 120, cached: 0 })
-          expect(stats.turns).toBe(1)
+          expect(stats.tokens).toStrictEqual({ input: 0, output: 0 })
+          expect(stats.turns).toBe(0)
         },
       )
     },
@@ -186,7 +272,7 @@ describe('kill 已知坑（17-§6：被 kill 后退出码=0 且 final 为空—�
     '普通挂起（不吞信号）：SIGTERM 默认终止——信号死无退出码，判定未完成',
     async () => {
       await withFakeEnv(
-        { FAKE_FIXTURE: killedFixture, FAKE_HANG: '1' },
+        { FAKE_FIXTURE: p08Fixture, FAKE_HANG: '1' },
         async () => {
           const adapter = fakeAdapter()
           const h = await adapter.launch(makeBrief())
@@ -235,7 +321,7 @@ describe('kill 已知坑（17-§6：被 kill 后退出码=0 且 final 为空—�
   )
 
   it('kill 幂等 + 已退出进程不重复杀', async () => {
-    await withFakeEnv({ FAKE_FIXTURE: completedFixture }, async () => {
+    await withFakeEnv({ FAKE_FIXTURE: p01Fixture }, async () => {
       const adapter = fakeAdapter()
       const h = await adapter.launch(makeBrief())
       for await (const ev of adapter.stream(h)) void ev // 已自然退出
@@ -244,6 +330,57 @@ describe('kill 已知坑（17-§6：被 kill 后退出码=0 且 final 为空—�
       expect(adapter.isCompleted(h)).toBe(true) // 先前完成判定不受影响
     })
   })
+})
+
+describe('失败分类面（P1：docs/31-A4/§7 P-04——code 前缀留在 turn_end.error 串里）', () => {
+  it(
+    'P04 错误凭据：AUTH 前缀（401 透传）、isCompleted=false、usage 全 0 账如实、exit=1',
+    async () => {
+      await withFakeEnv({ FAKE_FIXTURE: p04Fixture, FAKE_EXIT: '1' }, async () => {
+        const adapter = fakeAdapter()
+        const h = await adapter.launch(makeBrief())
+        const collected: StreamEvent[] = []
+        for await (const ev of adapter.stream(h)) collected.push(ev)
+
+        const turnEnd = collected.find((e) => e.type === 'turn_end')
+        expect(turnEnd).toMatchObject({ completed: false })
+        // code 前缀保留：失败分类面（凭证无效=AUTH，与无凭证 MISSING_CREDENTIAL 并列）
+        expect(turnEnd).toMatchObject({ error: expect.stringMatching(/^AUTH: 401 /) })
+        expect(adapter.isCompleted(h)).toBe(false)
+        expect(adapter.exitCode(h)).toBe(1) // 真机失败面 exit=1（证据价值）
+
+        const stats = await adapter.resultStats(h)
+        expect(stats.tokens).toStrictEqual({ input: 0, output: 0, cached: 0 }) // 四桶全 0 如实入账
+        expect(stats.turns).toBe(1)
+      })
+    },
+    10_000,
+  )
+
+  it(
+    'A4 无凭证：MISSING_CREDENTIAL 前缀、step_end 无 usage（不完整则整条省略）→ 零账',
+    async () => {
+      await withFakeEnv({ FAKE_FIXTURE: a4Fixture, FAKE_EXIT: '1' }, async () => {
+        const adapter = fakeAdapter()
+        const h = await adapter.launch(makeBrief())
+        const collected: StreamEvent[] = []
+        for await (const ev of adapter.stream(h)) collected.push(ev)
+
+        const turnEnd = collected.find((e) => e.type === 'turn_end')
+        expect(turnEnd).toMatchObject({
+          completed: false,
+          error: expect.stringMatching(/^MISSING_CREDENTIAL: llm-deepseek: /),
+        })
+        expect(adapter.isCompleted(h)).toBe(false)
+        expect(adapter.exitCode(h)).toBe(1)
+
+        const stats = await adapter.resultStats(h)
+        expect(stats.tokens).toStrictEqual({ input: 0, output: 0 }) // 无任何 step usage：零账不编造
+        expect(stats.turns).toBe(1)
+      })
+    },
+    10_000,
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -413,7 +550,7 @@ describe('estimate（拟稿：预算估算模型 v0——v0.6 前细化）', () 
   })
 })
 
-describe('AGENTS.md 通道 env 注入（映射拟稿，dsh.ts agentsMdEnv）', () => {
+describe('AGENTS.md 通道 env 注入（映射已证伪留占位——docs/31-A1/§5-5，真通道=launch cwd 原生发现）', () => {
   // cmd 注入 node -e 回显目标 env：值经 stdout 以 log 事件回流断言
   const echoAdapter = (varName: string): DshAdapter =>
     new DshAdapter([
@@ -442,7 +579,7 @@ describe('AGENTS.md 通道 env 注入（映射拟稿，dsh.ts agentsMdEnv）', (
     expect(collected).toStrictEqual([{ type: 'log', text: target }])
   })
 
-  it('native 通道 → 不注入任何 DSH_* 通道变量', async () => {
+  it('native 通道 → 不注入任何 DSH_* 通道变量（与真机原生发现通道吻合）', async () => {
     const adapter = echoAdapter('DSH_AGENTS_MD')
     const h = await adapter.launch(
       makeBrief({ AGENTS_MD: { channel: 'native', target: join(workdir, 'AGENTS.md') } }),
@@ -479,9 +616,9 @@ describe('TaskBrief.credentials 透传（v1.4 短命按单凭据——launch env
   })
 })
 
-describe('parseLine 单行导出（streams.ts 新增导出——既有行为不改的旁证）', () => {
+describe('parseLine 单行导出（streams.ts 既有导出——行为不改的旁证）', () => {
   it('dsh 家族：fixture 逐行过 parseLine 展平 ≡ parseStream 全文解析', () => {
-    const text = readFileSync(completedFixture, 'utf8')
+    const text = readFileSync(p01Fixture, 'utf8')
     const flattened = text.split('\n').flatMap((l) => parseLine(l, 'dsh'))
     expect(flattened).toStrictEqual(parseStream(text, 'dsh'))
   })

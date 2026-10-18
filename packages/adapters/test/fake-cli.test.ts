@@ -2,7 +2,8 @@
  * fake CLI harness 冒烟测试 —— 证明假 CLI 本身可用（适配器 spawn 测试的地基）
  *
  * 覆盖：FAKE_FIXTURE 回放逐字节一致 / FAKE_EXIT 反映非零退出码 / FAKE_HANG 挂起且可被
- * SIGTERM 终止。不测流归一化（那是 streams.test.ts 的事）。
+ * SIGTERM 终止 / FAKE_REQUIRE_TASK 的 dsh 真机 usage-error 面（无任务 → 顶层 error 事件
+ * + exit 1；有任务 → 正常回放）。不测流归一化（那是 streams.test.ts 的事）。
  */
 import { execFile, spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
@@ -13,7 +14,7 @@ import { describe, expect, it } from 'vitest'
 const execFileAsync = promisify(execFile)
 
 const fakeCli = fileURLToPath(new URL('./fake-cli/fake-cli.mjs', import.meta.url))
-const dshFixture = fileURLToPath(new URL('./fixtures/dsh/turn-completed.ndjson', import.meta.url))
+const dshFixture = fileURLToPath(new URL('./fixtures/dsh/P01-真成功流.ndjson', import.meta.url))
 
 function runWith(extraEnv: Record<string, string>): Promise<{ stdout: string; stderr: string }> {
   return execFileAsync(process.execPath, [fakeCli], {
@@ -53,4 +54,31 @@ describe('fake CLI harness（docs/18-§1.3）', () => {
     await new Promise((resolve) => child.on('close', resolve))
     expect(closed).toEqual({ code: null, signal: 'SIGTERM' })
   }, 8000)
+
+  it('FAKE_REQUIRE_TASK=1 无任务（argv 无 --）：顶层 error 事件 + exit 1（dsh usage-error 面）', async () => {
+    await expect(runWith({ FAKE_REQUIRE_TASK: '1' })).rejects.toMatchObject({
+      code: 1,
+      stdout: '{"type":"error","message":"a task is required"}\n',
+    })
+  })
+
+  it('FAKE_REQUIRE_TASK=1 有任务（-- 之后非空）：正常回放 fixture', async () => {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [fakeCli, '--', 'say hi'],
+      { env: { ...process.env, FAKE_REQUIRE_TASK: '1', FAKE_FIXTURE: dshFixture } },
+    )
+    expect(stdout).toBe(readFileSync(dshFixture, 'utf8'))
+  })
+
+  it('FAKE_REQUIRE_TASK=1 任务为空串（-- 之后为空）：usage-error 面', async () => {
+    await expect(
+      execFileAsync(process.execPath, [fakeCli, '--', ''], {
+        env: { ...process.env, FAKE_REQUIRE_TASK: '1' },
+      }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stdout: '{"type":"error","message":"a task is required"}\n',
+    })
+  })
 })

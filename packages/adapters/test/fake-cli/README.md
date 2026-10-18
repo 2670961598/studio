@@ -24,6 +24,7 @@ FAKE_FIXTURE=../fixtures/dsh/turn-completed.ndjson node fake-cli.mjs
 | `FAKE_DELAY_MS` | 逐行输出间隔（毫秒），用于测增量流消费 | `0`（整块输出） |
 | `FAKE_SIGTERM_EXIT` | 设置后吞掉 SIGTERM 默认终止，改以该码退出（dsh 已知坑模拟）；配 `FAKE_HANG` 用 | 不启用（SIGTERM 默认终止） |
 | `FAKE_VERSION` | 设置后：命令行含 `--version` 即只打印该值并以 0 退出（executor detect 版本门槛三态测试）；不参与时 `--version` 与普通参数无异 | 不启用 |
+| `FAKE_REQUIRE_TASK` | `1` = 无任务位置参数（argv 无 `--` 或其后为空）时写一条顶层 error 事件（`{"type":"error","message":"a task is required"}`）并以 1 退出——dsh 真机 usage-error 面（docs/31-§0 发现 2：任务=单个位置参数，缺任务必败）；测适配器 launch 的任务串注入 | 不检查 |
 | `FAKE_ECHO_ARGS` | `1` = stdout 首行回显收到的 argv（`fake-cli argv: ...`），测适配器 launch 参数注入（预算帽 / 续跑 / 通道旗标） | 不回显 |
 | `FAKE_ECHO_ENV` | 逗号分隔 env 变量名：每名一行回显该变量值（`fake-cli env: NAME=值`，未设置时 `<unset>`），测适配器 launch env 注入（TaskBrief.credentials v1.4 透传断言）；只回显点名变量，不倾倒整份 env | 不回显 |
 | `FAKE_WIRE_DIR` | 设置后：**正常退出前**把 wire 内容写到 `<dir>/wire.jsonl`（目录递归建）——模拟 kimi「会话目录里落 session wire.jsonl」（docs/17-§6 已知坑：usage 在 wire 不在 stdout） | 不写 wire |
@@ -35,7 +36,7 @@ FAKE_FIXTURE=../fixtures/dsh/turn-completed.ndjson node fake-cli.mjs
 
 ```bash
 # 回放 dsh 完整流（stdout 与 fixture 逐字节一致，退出码 0）
-FAKE_FIXTURE=../fixtures/dsh/turn-completed.ndjson node fake-cli.mjs
+FAKE_FIXTURE=../fixtures/dsh/P01-真成功流.ndjson node fake-cli.mjs
 
 # 回放 claude 错误终态并以码 3 退出（适配器须以流内 result 事件为准，不能只看退出码）
 FAKE_FIXTURE=../fixtures/claude/result-error.jsonl FAKE_EXIT=3 node fake-cli.mjs
@@ -46,8 +47,12 @@ FAKE_FIXTURE=../fixtures/codex/turn-completed.jsonl FAKE_HANG=1 node fake-cli.mj
 # 缓慢吐行：测 stream() 的异步增量消费
 FAKE_FIXTURE=../fixtures/kimi/stdout-basic.jsonl FAKE_DELAY_MS=50 node fake-cli.mjs
 
-# dsh 已知坑：挂起后吞 SIGTERM、以退出码 0 死（docs/17-§6——成功判定只认流内终态，非退出码）
-FAKE_FIXTURE=../fixtures/dsh/killed-mid-step.ndjson FAKE_HANG=1 FAKE_SIGTERM_EXIT=0 node fake-cli.mjs
+# dsh 已知坑（docs/31-§7 P-08 真机定性）：挂起后吞 SIGTERM、以退出码 0 死——fixture 尾行
+# 的空 final（text:""）即被杀前的优雅收尾；成功判定只认流内 turn_end.reason.kind
+FAKE_FIXTURE=../fixtures/dsh/P08-kill面.ndjson FAKE_HANG=1 FAKE_SIGTERM_EXIT=0 node fake-cli.mjs
+
+# dsh 任务串注入（docs/31-§5-1）：无任务位置参数 → 顶层 error 事件 + exit 1（真机 usage-error 面）
+FAKE_REQUIRE_TASK=1 node fake-cli.mjs
 
 # kimi 场景：stdout 吐流（无 usage）+ 正常退出前落一份 wire.jsonl（usage 在里面——
 # 适配器会话结束后读取合流，docs/17-§6 已知坑）
@@ -60,6 +65,9 @@ node fake-cli.mjs
 
 - `FAKE_VERSION` 短路优先于一切：设置且 argv 含 `--version` 时连 fixture 回放都跳过；未设置时收到
   `--version` 走原路径（fixture/退出码旋钮照常生效），与旧版行为完全一致。
+- `FAKE_REQUIRE_TASK=1` 的检查次之（`FAKE_VERSION` 短路之后、一切输出旋钮之前）：任务取 argv
+  里 `--` 之后的位置参数——与 dsh 适配器 launch 的注入约定（`--` 分隔 + briefPath 全文单参数）
+  严格对齐；命中 usage-error 面时不写 wire、不派孙进程（真实失败发生在会话创建之前）。
 - 未设 `FAKE_SIGTERM_EXIT` 时不注册信号处理器：SIGTERM 走 Node 默认终止（被杀即死，无退出码）。
 - 设置 `FAKE_SIGTERM_EXIT=<码>` 即注册处理器：吞掉 SIGTERM 默认终止，以该码 `process.exit`
   ——模拟 dsh「被 kill 后退出码=0 且 final 为空」的坑位（docs/17-§6）；SIGKILL 仍不可吞。

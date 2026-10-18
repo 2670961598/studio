@@ -1,8 +1,9 @@
 /**
  * 流归一化器 golden 测试 —— 只对冻结行为负责（docs/18-§1.3：解析器对 fixture 全绿）
  *
- * 覆盖：四家 golden fixtures 逐一断言 + kimi wire 合并（求和挂 turn_end）+
- * kimi 缺 wire 明示 + 畸形行容错（截断 JSON / 纯文本 / BOM / CRLF / 空行与井号注释）。
+ * 覆盖：四家 golden fixtures 逐一断言（dsh=0.2.0-rc.2 真机五探针+A4 实录，docs/31-§7）+
+ * kimi wire 合并（求和挂 turn_end）+ kimi 缺 wire 明示 + 畸形行容错（截断 JSON / 纯文本 /
+ * BOM / CRLF / 空行与井号注释 / dsh 证伪旧形态降级）。
  * 断言用 toStrictEqual：usage 的「不存在」与 undefined 严格区分（exactOptionalPropertyTypes 口径）。
  */
 import { readFileSync } from 'node:fs'
@@ -18,26 +19,115 @@ function fixture(...parts: string[]): string {
   )
 }
 
-describe('dsh（NDJSON：step_end 带 usage，turn_end.completed——17-§6）', () => {
-  it('turn-completed：完整流的归一化序列', () => {
-    expect(parseStream(fixture('dsh', 'turn-completed.ndjson'), 'dsh')).toStrictEqual<
+describe('dsh（0.2.0-rc.2 真机八类 NDJSON——docs/31-§3.1/§7；golden=五探针+A4 实录）', () => {
+  it('P01 真成功流：八类事件逐行归一（session/turn_start 原文透传、camelCase usage、turn_end 无 usage 键）', () => {
+    expect(parseStream(fixture('dsh', 'P01-真成功流.ndjson'), 'dsh')).toStrictEqual<
       StreamEvent[]
     >([
-      { type: 'step_start', step: 'analyze' },
-      { type: 'step_end', step: 'analyze', usage: { input: 1200, output: 300, cached: 0 } },
-      { type: 'log', text: 'scan workspace: 3 files changed' },
-      { type: 'step_start', step: 'implement' },
-      { type: 'step_end', step: 'implement', usage: { input: 2600, output: 1900, cached: 800 } },
-      { type: 'turn_end', completed: true, usage: { input: 3800, output: 2200, cached: 800 } },
+      {
+        type: 'log',
+        text: '{"type":"session","sessionId":"session-2d65719e-2aa4-416a-af42-4a612026e671","cwd":"/private/tmp"}',
+      },
+      { type: 'log', text: '{"type":"status","phase":"turn_start","turn":1}' },
+      { type: 'step_start', step: '1' },
+      { type: 'log', text: 'Reply exactly PROBE-OK.' },
+      { type: 'log', text: 'PROBE-OK' },
+      { type: 'step_end', step: '1', usage: { input: 4510, output: 26, cached: 256 } },
+      { type: 'turn_end', completed: true },
+      { type: 'log', text: 'PROBE-OK' },
     ])
   })
 
-  it('killed-mid-step：无 turn_end —— 被 kill 的流不含任何 completed 事件（成功判定不看退出码）', () => {
-    const events = parseStream(fixture('dsh', 'killed-mid-step.ndjson'), 'dsh')
+  it('P04 错误凭据：turn_end.reason.kind=error + error.code=AUTH 前缀保留；usage 四桶全 0（无 cached 键）；final 空不产事件', () => {
+    expect(parseStream(fixture('dsh', 'P04-错误凭据.ndjson'), 'dsh')).toStrictEqual<
+      StreamEvent[]
+    >([
+      {
+        type: 'log',
+        text: '{"type":"session","sessionId":"session-c70a23a6-7b4f-4af8-89bf-4450515ea0b3","cwd":"/private/tmp"}',
+      },
+      { type: 'log', text: '{"type":"status","phase":"turn_start","turn":1}' },
+      { type: 'step_start', step: '1' },
+      { type: 'step_end', step: '1', usage: { input: 0, output: 0 } },
+      {
+        type: 'turn_end',
+        completed: false,
+        error:
+          'AUTH: 401 {"error":{"message":"The API Key appears to be invalid or may have expired. Please verify your credentials and try again.","type":"invalid_authentication_error"}}',
+      },
+    ])
+  })
+
+  it('A4 无凭证：MISSING_CREDENTIAL 失败分类面（与 AUTH 并列）；step_end 无 usage 键（不完整则整条省略）', () => {
+    expect(parseStream(fixture('dsh', 'A4-无凭证.ndjson'), 'dsh')).toStrictEqual<
+      StreamEvent[]
+    >([
+      {
+        type: 'log',
+        text: '{"type":"session","sessionId":"session-0ec30278-155a-46f7-bdcf-2ba8f08c2081","cwd":"/private/tmp/dsh-probe2"}',
+      },
+      { type: 'log', text: '{"type":"status","phase":"turn_start","turn":1}' },
+      { type: 'step_start', step: '1' },
+      { type: 'step_end', step: '1' },
+      {
+        type: 'turn_end',
+        completed: false,
+        error:
+          'MISSING_CREDENTIAL: llm-deepseek: no API key for provider route "deepseek-official"; store DEEPSEEK_API_KEY through the credentials service (the web Models page writes it), or export DEEPSEEK_API_KEY in the launching environment',
+      },
+    ])
+  })
+
+  it('P05 续跑面：turn:2 序号经 turn_start 原文透传留证；cacheReadTokens:4608（前缀缓存命中）→ cached', () => {
+    const events = parseStream(fixture('dsh', 'P05-续跑.ndjson'), 'dsh')
     expect(events).toStrictEqual<StreamEvent[]>([
-      { type: 'step_start', step: 'analyze' },
-      { type: 'step_end', step: 'analyze', usage: { input: 900, output: 120, cached: 0 } },
-      { type: 'step_start', step: 'implement' },
+      {
+        type: 'log',
+        text: '{"type":"session","sessionId":"session-2d65719e-2aa4-416a-af42-4a612026e671","cwd":"/private/tmp"}',
+      },
+      { type: 'log', text: '{"type":"status","phase":"turn_start","turn":2}' },
+      { type: 'step_start', step: '1' },
+      { type: 'log', text: 'The user asked me to reply exactly: PROBE-OK. Answer exact string only.' },
+      { type: 'log', text: 'PROBE-OK' },
+      { type: 'step_end', step: '1', usage: { input: 220, output: 37, cached: 4608 } },
+      { type: 'turn_end', completed: true },
+      { type: 'log', text: 'PROBE-OK' },
+    ])
+    // 续跑直证：turn 序号 2 存在于透传原文（同一 sessionId 第二回合）
+    const turnStart = events[1]
+    if (turnStart === undefined || turnStart.type !== 'log') {
+      throw new Error('P05 第二事件应为 turn_start 原文透传 log')
+    }
+    expect(turnStart.text).toContain('"turn":2')
+  })
+
+  it('P07 AGENTS 通道：正文/终答文本如实归一（标记串=通道端到端实证的输出面）', () => {
+    expect(parseStream(fixture('dsh', 'P07-AGENTS通道.ndjson'), 'dsh')).toStrictEqual<
+      StreamEvent[]
+    >([
+      {
+        type: 'log',
+        text: '{"type":"session","sessionId":"session-56e434e6-0b73-4b0f-9357-1ae3062e78f2","cwd":"/private/tmp/dsh-agents-probe"}',
+      },
+      { type: 'log', text: '{"type":"status","phase":"turn_start","turn":1}' },
+      { type: 'step_start', step: '1' },
+      { type: 'log', text: '4 AGENTS-CHANNEL-VERIFIED' },
+      { type: 'log', text: '4 AGENTS-CHANNEL-VERIFIED' },
+      { type: 'step_end', step: '1', usage: { input: 258, output: 32, cached: 4608 } },
+      { type: 'turn_end', completed: true },
+      { type: 'log', text: '4 AGENTS-CHANNEL-VERIFIED' },
+    ])
+  })
+
+  it('P08 kill 面：空 final 无 turn_end——归一序列不含任何 turn_end 事件（终态判据唯一化的根据）', () => {
+    const events = parseStream(fixture('dsh', 'P08-kill面.ndjson'), 'dsh')
+    expect(events).toStrictEqual<StreamEvent[]>([
+      {
+        type: 'log',
+        text: '{"type":"session","sessionId":"session-4e78cf0c-c9d9-4172-8364-c5ef43e8d147","cwd":"/private/tmp"}',
+      },
+      { type: 'log', text: '{"type":"status","phase":"turn_start","turn":1}' },
+      { type: 'step_start', step: '1' },
     ])
     expect(events.some((e) => e.type === 'turn_end')).toBe(false)
   })
@@ -123,21 +213,84 @@ describe('畸形行容错（四家一致的冻结行为）', () => {
     const text = [
       '# fixture 头注释：应被跳过',
       '',
-      '{"type":"step_start","step":"a"',
+      '{"type":"status","phase":"step_start","step"',
       'plain text not json',
-      '{"type":"step_start","step":"a"}',
+      '{"type":"status","phase":"step_start","step":1}',
       '   ',
     ].join('\n')
     expect(parseStream(text, 'dsh')).toStrictEqual<StreamEvent[]>([
-      { type: 'log', text: '{"type":"step_start","step":"a"' },
+      { type: 'log', text: '{"type":"status","phase":"step_start","step"' },
       { type: 'log', text: 'plain text not json' },
-      { type: 'step_start', step: 'a' },
+      { type: 'step_start', step: '1' },
     ])
   })
 
   it('BOM 与 CRLF 容忍', () => {
-    const text = '\u{FEFF}{"type":"turn_end","completed":true}\r\n'
+    const text =
+      '\u{FEFF}{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"completed"}}\r\n'
     expect(parseStream(text, 'dsh')).toStrictEqual<StreamEvent[]>([
+      { type: 'turn_end', completed: true },
+    ])
+  })
+
+  it('dsh 证伪旧形态（顶层 step_*/turn_end.completed/snake_case usage）一律降级 log 原文透传（不丢证据）', () => {
+    // docs/31-§4 证伪表：旧 parseDsh 假设的四种形态在真机 0.2.0-rc.2 均不存在——
+    // 现解析器不再识别它们，如实原文透传（证据留痕，不静默吞）
+    const text = [
+      '{"type":"step_start","step":"analyze"}',
+      '{"type":"step_end","step":"analyze","usage":{"input_tokens":1200,"output_tokens":300}}',
+      '{"type":"turn_end","completed":true}',
+      '{"type":"log","text":"旧拟稿形态"}',
+    ].join('\n')
+    expect(parseStream(text, 'dsh')).toStrictEqual<StreamEvent[]>([
+      { type: 'log', text: '{"type":"step_start","step":"analyze"}' },
+      {
+        type: 'log',
+        text: '{"type":"step_end","step":"analyze","usage":{"input_tokens":1200,"output_tokens":300}}',
+      },
+      { type: 'log', text: '{"type":"turn_end","completed":true}' },
+      { type: 'log', text: '{"type":"log","text":"旧拟稿形态"}' },
+    ])
+  })
+
+  it('dsh 真机形态的降级分支：step 非数字 / turn_end 无 reason / 正文缺 text / 空 final', () => {
+    const text = [
+      '{"type":"status","phase":"step_start","turn":1,"step":"1"}',
+      '{"type":"status","phase":"turn_end","turn":1}',
+      '{"type":"text"}',
+      '{"type":"final","text":""}',
+    ].join('\n')
+    expect(parseStream(text, 'dsh')).toStrictEqual<StreamEvent[]>([
+      { type: 'log', text: '{"type":"status","phase":"step_start","turn":1,"step":"1"}' },
+      { type: 'log', text: '{"type":"status","phase":"turn_end","turn":1}' },
+      { type: 'log', text: '{"type":"text"}' },
+    ])
+  })
+
+  it('dsh 顶层 error 事件（预运行失败）：turn_end{completed:false,error} 等价映射（docs/31-§3.1）', () => {
+    const text =
+      '{"type":"error","message":"session \\"nonexistent-probe-id\\" does not exist; omit --session-id to start a new Session"}'
+    expect(parseStream(text, 'dsh')).toStrictEqual<StreamEvent[]>([
+      {
+        type: 'turn_end',
+        completed: false,
+        error:
+          'session "nonexistent-probe-id" does not exist; omit --session-id to start a new Session',
+      },
+    ])
+  })
+
+  it('dsh turn_end.reason.kind 五枚举：completed 外四种一律 completed:false（blocked/aborted/max-tokens 无 error 串）', () => {
+    const text = [
+      '{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"blocked"}}',
+      '{"type":"status","phase":"turn_end","turn":2,"reason":{"kind":"aborted"}}',
+      '{"type":"status","phase":"turn_end","turn":3,"reason":{"kind":"max-tokens"}}',
+      '{"type":"status","phase":"turn_end","turn":4,"reason":{"kind":"completed"}}',
+    ].join('\n')
+    expect(parseStream(text, 'dsh')).toStrictEqual<StreamEvent[]>([
+      { type: 'turn_end', completed: false },
+      { type: 'turn_end', completed: false },
+      { type: 'turn_end', completed: false },
       { type: 'turn_end', completed: true },
     ])
   })

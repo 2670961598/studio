@@ -1,28 +1,46 @@
 /**
- * dsh 适配器（默认主力 executor）——首刀：对 fake CLI harness 全绿；真 CLI 行为留探针单
+ * dsh 适配器（默认主力 executor）——P0 重写：按 0.2.0-rc.2 真机事件形态对齐（docs/31）
  *
  * 依据：
- *   - docs/17-§6 dsh 行：launch=`dsh --profile headless --json`（锁版本）；流=NDJSON
- *     （step_end 带 usage）；tokens 有、成本无价目表折算（cost_native=false）；
- *     SIGTERM 可杀；成功判定=turn_end.completed+输出非空，非退出码
+ *   - docs/31-dsh真机探针报告：§5 修正清单 + §7 补充轮（五探针实录）——本轮 P0 重写的
+ *     直接依据；事件解析见 streams.ts parseDsh（八类顶层 type，status+phase，camelCase
+ *     usage，turn_end.reason.kind 终态）
+ *   - docs/17-§6 dsh 行：launch=`dsh --profile headless --json`（锁版本）；流=NDJSON；
+ *     tokens 有、成本无价目表折算（cost_native=false）；SIGTERM 可杀
  *   - docs/18-§一：ExecutorAdapter 六原语；detect 不达标明报，绝不静默降级
  *   - docs/16-§二：子进程用 execa；executor=dsh 默认锁 0.2.0-rc.2（锁版本升级走回归）
  *   - docs/25-§二（v1.4）：TaskBrief.credentials 短命按单凭据——launch env 无条件透传进
- *     子进程；其值不记录不打印（红名单），流/日志/账面文本永不含凭据
+ *     子进程；其值不记录不打印（红名单），流/日志/账面文本永不含凭据。dsh 侧凭证优先级
+ *     「进程 env 最高层」与该通道严丝合缝（docs/31-§3.5）
  *
- * 拟稿（首刀自拟口径，待真 dsh 探针单核实——只记录，不擅自定案）：
- *   - AGENTS.md 通道 env 映射最小集（agentsMdEnv）：native 不注入；user_level 注入
- *     DSH_AGENTS_MD=<target>；append_system_prompt 注入 DSH_APPEND_SYSTEM_PROMPT_FILE=<target>。
- *     变量名未见文档定义（镜像 claude append-system-prompt-file 语义自拟），真 dsh 的
- *     通道接口以探针结论为准，届时走批示改此处
- *   - capabilities.agents_md='native'：按「dsh 原生读 workspace 根 AGENTS.md」假设声明
- *   - estimate()：预算估算模型 v0——任务书字符量粗估 + confidence 低值，v0.6 前细化
- *   - isCompleted() 的「输出非空」以「存在非空 log 文本」近似（REPORT 落盘与闸门 exit
- *     归 core 收割四要件，不在适配器层）
+ * 真机对齐要点（P0，docs/31-§4 证伪表 → §5 修正清单）：
+ *   - launch 传任务串：dsh headless 的任务=单个位置参数（docs/31-§0 发现 2——旧实现
+ *     不传任务，真机每次 launch 必以 usage error 退出）。任务文本读 TaskBrief.briefPath
+ *     文件内容（契约已有字段，不涉改动），以 `--` 分隔符防任务串以 `-` 开头被当旗标
+ *   - isCompleted 终态判据唯一化（docs/31-§7 P-08 定性）：turn_end.reason.kind===
+ *     'completed' 且仅此一条。「空 final + 无 turn_end + exit 0」= 被 kill（aborted 口径，
+ *     非成功非失败）——退出码与「输出非空」一律不参与判定（旧「hasOutput 近似」已删）
+ *   - 失败分类（P1，docs/31-A4/§7 P-04）：无凭证=turn_end.reason.error.code
+ *     MISSING_CREDENTIAL；凭证无效=code AUTH（上游 401 透传）。code 以 `${code}: ${message}`
+ *     前缀形式留在 turn_end.error 串里（契约无结构位——前缀即分类载体）
+ *   - 遥测红线（docs/31-§5-8）：一切 dsh 拉起（launch/detect）注入
+ *     DSH_TELEMETRY_MODE=DISABLED——dsh 默认 FEEDBACK_ONLY 外发 deepseeksvc.com，禁外发
+ *   - resultStats：tokens 从 step_end usage 累计（turn_end 兜底分支已删——真机 turn_end
+ *     恒无 usage，docs/31-§3.2）；turns=step_end 计数（dsh 一个 turn 含 N 个 step，此处
+ *     近似记 step 数——契约 ResultStats 无备注位，不改 contract）
  *
  * 已知坑与取舍（沉淀于此，docs/18-§1.2）：
- *   - 「dsh 被 kill 后退出码=0 且 final 为空」（17-§6）：exitCode 只记录不参与判定；
- *     spawn 统一 reject:false——非零退出码/被信号杀死不抛错，退出码对收割只有证据价值
+ *   - 「dsh 被 kill 后：优雅空 final（final.text=""）且无 turn_end 事件、退出码 0」
+ *     （17-§6 坑位，docs/31-§7 P-08 真机定性收口）：exitCode 只记录不参与判定；终态
+ *     只认 turn_end.reason.kind（见上）。spawn 统一 reject:false——非零退出码/被信号
+ *     杀死不抛错，退出码对收割只有证据价值
+ *   - AGENTS.md 通道 env 映射（agentsMdEnv）已证伪（docs/31-A1）：DSH_AGENTS_MD /
+ *     DSH_APPEND_SYSTEM_PROMPT_FILE 在真机全配置面零命中——真实通道是 launch cwd 向上
+ *     原生发现 AGENTS.md（P-07 实证）。映射暂留作无操作占位（注入不存在的 env 无害），
+ *     user_level/append 通道的真方案（profile patch instructionFileCandidates 或 persona
+ *     前后缀）待批示后另改（docs/31-§5-5）
+ *   - 续跑：--session-id 真机可用（P-05 实证）但 capabilities.session_resume 仍 false——
+ *     启用需 launch 补分支 + cwd 一致硬约束落调度纪律（docs/31-§5-7，能力升级候选）
  *   - execa 已升 10.x（docs/27-§4.3 案 A 拍板，16-§二「唯一内建进程组杀法」兑现）：
  *     spawn 配 killDescendants:true——Unix 落法为独立进程组，kill() 信号直达整组
  *     （子+孙），kill 链语义升级为「SIGTERM 软杀整树 → graceMs → SIGKILL 硬杀整树」
@@ -38,10 +56,12 @@
  *     为无害 no-op。理论 PID 复用误杀窗口系 upstream 文档化已知局限，概率极低）
  *   - resultStats().cost 恒 {usd:0}：cost_native=false，待价目表折算；ResultStats 结构
  *     无备注字段，不改 contract——以本头注 + 汇报记录「待价目表折算」
- *   - 伴生状态 sessions 为模块级私有 Map：sessionId 用随机 UUID，多实例不冲突；随
+ *   - 伴生状态 sessions 为模块级私有 Map：sessionId 用随机 UUID（与 dsh 侧 session-<uuid>
+ *     脱钩——从流首 session 事件收存 dsh 侧 id 是 P1 项 docs/31-§5-6，未做）；随
  *     daemon 进程存续，v0 不做回收（台账落盘后状态可重建投影）
  *   - stream() 一会话只许消费一次（一单一命、一流一收）；resultStats() 只汇总已消费
  *     的事件（收割流程固定先收流后收账）
+ *   - estimate()：预算估算模型 v0 拟稿——任务书字符量粗估 + confidence 低值，v0.6 前细化
  */
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
@@ -139,7 +159,8 @@ export class DshAdapter implements ExecutorAdapter {
     const result = await execa(binary, ['--version'], {
       timeout: DETECT_TIMEOUT_MS,
       reject: false, // 探测失败走 gaps 明报，不靠异常表达
-      env: { ...process.env },
+      // 遥测红线（docs/31-§5-8）：一切 dsh 拉起一律禁外发（默认 FEEDBACK_ONLY → deepseeksvc.com）
+      env: { ...process.env, DSH_TELEMETRY_MODE: 'DISABLED' },
     })
     if (result.timedOut) {
       return { name: this.name, version: '', ok: false, gaps: ['dsh-detect-timeout'] }
@@ -182,16 +203,28 @@ export class DshAdapter implements ExecutorAdapter {
   }
 
   /**
-   * 拉起 dsh（execa）：cwd=task.workspace；env=进程环境 + AGENTS.md 通道变量最小集
-   * （agentsMdEnv 拟稿）+ TaskBrief.credentials（v1.4 短命按单凭据——无条件透传进
-   * 子进程 env，值不打印不记录）；句柄与逐行流缓冲存入伴生状态（模块私有 Map）。
-   * reject:false——退出码不构成异常（成功判定只认流内终态，17-§6 已知坑）。
+   * 拉起 dsh（execa）：cwd=task.workspace；任务串=TaskBrief.briefPath 文件内容，以 `--`
+   * 分隔符追加为单个位置参数（docs/31-§0 发现 2/§5-1：dsh headless 的任务=位置参数——
+   * 不传则真机必以 usage error 退出；`--` 防任务串以 `-` 开头被当旗标）。任务书不可读
+   * → 如实抛错（装配管线缺件，不静默传空串去撞真机的 "a task is required"）。
+   * env=进程环境 + AGENTS.md 通道变量（agentsMdEnv，已证伪占位——见文件头注）+
+   * TaskBrief.credentials（v1.4 短命按单凭据——无条件透传进子进程 env，值不打印不记录）
+   * + DSH_TELEMETRY_MODE=DISABLED（遥测红线，置于最后——红线优先级最高，credentials
+   * 仍无条件全量透传）。
+   * reject:false——退出码不构成异常（成功判定只认流内终态，见 isCompleted）。
    */
   async launch(task: TaskBrief): Promise<Handle> {
     const [binary = DSH_DEFAULT_CMD[0] ?? 'dsh', ...args] = this.cmd
-    const subprocess = execa(binary, args, {
+    const taskText = await readTaskText(task.briefPath)
+    const subprocess = execa(binary, [...args, '--', taskText], {
       cwd: task.workspace,
-      env: { ...process.env, ...agentsMdEnv(task.AGENTS_MD), ...(task.credentials ?? {}) },
+      env: {
+        ...process.env,
+        ...agentsMdEnv(task.AGENTS_MD),
+        ...(task.credentials ?? {}),
+        // 遥测红线（docs/31-§5-8）：dsh 默认 FEEDBACK_ONLY 外发 deepseeksvc.com——一律禁外发
+        DSH_TELEMETRY_MODE: 'DISABLED',
+      },
       stdin: 'ignore',
       stdout: 'pipe',
       stderr: 'pipe',
@@ -284,9 +317,10 @@ export class DshAdapter implements ExecutorAdapter {
 
   /**
    * 账目汇总（只统计伴生状态里已消费的事件）：
-   *   tokens：step_end 的 usage 求和（dsh 逐 step 记账；golden fixture 中和=turn_end 总账），
-   *           一个 step_end usage 都没有时回退最后一个带 usage 的 turn_end（终态总账兜底）
-   *   turns：step_end 计数；duration：launch→流收尾（未收尾取 now）
+   *   tokens：step_end 的 usage 求和（dsh 逐 step 记账且「不完整则整条省略」，docs/31-§3.2；
+   *           无任何 step usage 时记零账——kill 面/预运行失败面如实，不编造）
+   *   turns：step_end 计数（dsh 一个 turn 含 N 个 step 的近似记法——契约无备注位）
+   *   duration：launch→流收尾（未收尾取 now）
    *   cost：恒 {usd:0}——cost_native=false，「待价目表折算」（文件头注，不改 contract）
    */
   async resultStats(h: Handle): Promise<ResultStats> {
@@ -331,14 +365,14 @@ export class DshAdapter implements ExecutorAdapter {
   }
 
   /**
-   * 收割判定（17-§6 dsh 行冻结口径）：turn_end.completed=true 且存在非空 log 文本。
-   * 退出码不参与判定——「被 kill 后退出码=0 且 final 为空」的已知坑由本口径挡住。
+   * 收割判定——终态判据唯一化（docs/31-§7 P-08 真机定性）：存在 turn_end 且
+   * completed=true（即流内 turn_end.reason.kind==='completed'），且仅此一条。
+   * 退出码与「输出非空」一律不参与：kill 面=空 final + 无 turn_end + exit 0（P-08 实录），
+   * 旧「hasOutput 近似」会把 kill 判象混进判定面，已删。空 final + 无 turn_end = 被 kill
+   * （aborted 口径，非成功非失败——处置分类归 core）。
    */
   isCompleted(h: Handle): boolean {
-    const events = requireState(h).events
-    const completedTurn = events.some((e) => e.type === 'turn_end' && e.completed)
-    const hasOutput = events.some((e) => e.type === 'log' && e.text !== '')
-    return completedTurn && hasOutput
+    return requireState(h).events.some((e) => e.type === 'turn_end' && e.completed)
   }
 
   /** 退出码记录（证据价值，不参与成功判定）；null=被信号杀死；undefined=未落定（运行中/spawn 失败） */
@@ -354,12 +388,15 @@ export class DshAdapter implements ExecutorAdapter {
 // ---------------------------------------------------------------------------
 
 /**
- * AGENTS.md 通道 env 映射最小集（拟稿——变量名自拟，真 dsh 通道接口待探针单核实）：
- *   native               → 不注入（dsh 原生读 workspace 根 AGENTS.md）
- *   user_level           → DSH_AGENTS_MD=<target>（用户级通道文件路径）
- *   append_system_prompt → DSH_APPEND_SYSTEM_PROMPT_FILE=<target>（镜像 claude
- *                          append-system-prompt-file 语义）
- * target 落点由 L5 装配决定、适配器只透传（docs/25-§二 TaskBrief 注释）。
+ * AGENTS.md 通道 env 映射——【证伪占位】docs/31-A1/§3.6：DSH_AGENTS_MD /
+ * DSH_APPEND_SYSTEM_PROMPT_FILE 在真机全配置面（594KB schema + 全量 dump）零命中，
+ * 真实通道是 launch cwd 向上原生发现 AGENTS.md>CLAUDE.md（P-07 端到端实证）。映射暂留：
+ *   native               → 不注入（与真机原生发现吻合——A2「证实且保守了」）
+ *   user_level           → DSH_AGENTS_MD=<target>（真机不认此变量——无害空注）
+ *   append_system_prompt → DSH_APPEND_SYSTEM_PROMPT_FILE=<target>（同上）
+ * user_level/append 的真方案（per-company profile patch instructionFileCandidates 或
+ * personaPrefix/Suffix 内联）待批示后另改（docs/31-§5-5）。target 落点由 L5 装配决定、
+ * 适配器只透传（docs/25-§二 TaskBrief 注释）。
  */
 function agentsMdEnv(a: TaskBrief['AGENTS_MD']): Record<string, string> {
   switch (a.channel) {
@@ -372,25 +409,36 @@ function agentsMdEnv(a: TaskBrief['AGENTS_MD']): Record<string, string> {
   }
 }
 
-/** usage 账目归并：step_end usage 求和优先，无任何 step usage 时回退最后带 usage 的 turn_end */
+/**
+ * 任务串读取：briefPath 全文即任务文本（字节如实，不裁不拼——dsh headless 单位置参数）。
+ * 不可读 → 抛错（装配管线缺件，launch 前置失败如实上报，不静默传空）。
+ */
+async function readTaskText(briefPath: string): Promise<string> {
+  try {
+    return await readFile(briefPath, 'utf8')
+  } catch (e) {
+    throw new Error(`dsh: 任务书不可读（briefPath=${briefPath}）：${errMsg(e)}`)
+  }
+}
+
+/**
+ * usage 账目归并：只认 step_end usage 求和（docs/31-§3.2：真机 turn_end 恒无 usage，
+ * 旧 turn_end 兜底分支已删）；无任何 step usage → 零账（kill 面/预运行失败面，不编造）
+ */
 function aggregateUsage(events: readonly StreamEvent[]): TokenCounts {
   let input = 0
   let output = 0
   let cached = 0
   let seen = false
-  let fallback: TokenCounts | undefined
   for (const e of events) {
     if (e.type === 'step_end' && e.usage !== undefined) {
       seen = true
       input += e.usage.input
       output += e.usage.output
       cached += e.usage.cached ?? 0
-    } else if (e.type === 'turn_end' && e.usage !== undefined) {
-      fallback = e.usage
     }
   }
-  if (seen) return { input, output, cached }
-  return fallback ?? { input: 0, output: 0 }
+  return seen ? { input, output, cached } : { input: 0, output: 0 }
 }
 
 /** ENOENT 判定（未安装）：execa reject:false 下 spawn 失败挂在 result.cause（实测 9.6.1→10.1 同形） */

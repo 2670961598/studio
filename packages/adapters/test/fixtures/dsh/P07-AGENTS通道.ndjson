@@ -1,0 +1,11 @@
+# golden fixture · dsh 0.2.0-rc.2 真机实录（AGENTS.md 原生文件发现通道）
+# 来源：docs/31-§7 探针 P-07（2026-10-18）：临时 cwd 放 AGENTS.md（每答必附标记串）→ 真模型输出带标记
+# 通道=launch cwd 向上原生发现 AGENTS.md（docs/31-§3.6）；无任何 DSH_* 环境变量通道
+{"type":"session","sessionId":"session-56e434e6-0b73-4b0f-9357-1ae3062e78f2","cwd":"/private/tmp/dsh-agents-probe"}
+{"type":"status","phase":"turn_start","turn":1}
+{"type":"status","phase":"step_start","turn":1,"step":1}
+{"type":"thinking","text":"4 AGENTS-CHANNEL-VERIFIED"}
+{"type":"text","text":"4 AGENTS-CHANNEL-VERIFIED"}
+{"type":"status","phase":"step_end","turn":1,"step":1,"usage":{"inputTokens":258,"outputTokens":32,"totalTokens":4898,"cacheReadTokens":4608}}
+{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"completed"}}
+{"type":"final","text":"4 AGENTS-CHANNEL-VERIFIED"}

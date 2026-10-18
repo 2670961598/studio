@@ -10,8 +10,12 @@
  *   - parseStream(text, family) 同步解析全文，返回事件数组（流式增量版留给适配器 stream()）
  *   - 容错规则（四家一致）：BOM / CRLF 容忍；空行与井号开头行（fixture 头注释）跳过；
  *     解析失败或形态未识别的行不丢弃——降级为 {type:'log'} 原文透传（不粉饰、留证据）
- *   - dsh（NDJSON）：step_start/step_end/turn_end/log 四类事件直接映射，
- *     usage 从 input_tokens/output_tokens/cached_tokens 归一为 TokenCounts
+ *   - dsh（NDJSON，0.2.0-rc.2 真机形态——docs/31-§3.1/§7 实录）：顶层 type 八类
+ *     session/status/thinking/text/tool_call/tool_result/final/error；step/turn 是 status
+ *     事件的 phase 值；终态唯一判据 turn_end.reason.kind==='completed'；usage 仅在 step_end
+ *     且 camelCase 四桶（inputTokens/outputTokens/cacheReadTokens→cached）。原「四类顶层
+ *     事件 + snake_case usage + turn_end.completed 布尔」形态系证伪假设（docs/31-§4），
+ *     已按真机重写（P0）
  *   - claude（stream-json）：result 事件是唯一终态——subtype==='success' 且 is_error!==true
  *     才 completed=true；result 文本与 assistant 文本归一为 log；system 归一为 log
  *   - codex（exec --json）：item.started/item.completed 归一为 step 对；
@@ -83,7 +87,25 @@ export function parseLine(line: string, family: ExecutorFamily): StreamEvent[] {
 // 各家解析器
 // ---------------------------------------------------------------------------
 
-/** dsh：`dsh --profile headless --json` 的 NDJSON——step_end 带 usage、turn_end.completed（17-§6） */
+/**
+ * dsh：`dsh --profile headless --json` 的 NDJSON——0.2.0-rc.2 真机八类事件（docs/31-§3.1
+ * 形态学 + §7 五探针实录）。顶层 type：session / status / thinking / text / tool_call /
+ * tool_result / final / error；step/turn 不是顶层类型，是 status 事件的 phase 值。
+ *   - status+step_start/step_end → step 对（step 是 number，归一为字符串契约位）；
+ *     usage 仅在 step_end、camelCase 四桶；「该 step 所有 attempt 都报了 usage 才出现」
+ *     （A4 面实录）——缺席时 step_end 不带 usage 键
+ *   - status+turn_end → 终态唯一判据 reason.kind==='completed'（枚举 completed/error/
+ *     blocked/aborted/max-tokens，后四种一律 completed:false）；reason.error.{code,message}
+ *     进 turn_end.error，code 作前缀保留（AUTH / MISSING_CREDENTIAL——失败分类面，
+ *     docs/31-§7 增量）；turn_end 恒无 usage（真机无此账）
+ *   - status+turn_start 及未知 phase → 原文 log 透传（契约无 turn 位，turn 序号留证）
+ *   - thinking/text/final → 正文 text 字段归一为 log；空文本不产事件（kill 面
+ *     final:"" 的实录形态——终态判定绝不看 final 非空）
+ *   - session/tool_call/tool_result → 原文 log 透传（契约无位；sessionId/cwd 与工具
+ *     证据不丢，收存 sessionId 的 P1 项见 docs/31-§5-6）
+ *   - error（预运行失败：usage error/未知 session-id 等）→ turn_end{completed:false,
+ *     error} 等价映射（docs/31-§3.1 归一建议）
+ */
 function parseDsh(text: string): StreamEvent[] {
   const out: StreamEvent[] = []
   for (const line of lines(text)) {
@@ -93,34 +115,72 @@ function parseDsh(text: string): StreamEvent[] {
       continue
     }
     const type = asString(v['type'])
-    if (type === 'step_start') {
-      const step = asString(v['step'])
-      if (step !== undefined) {
-        out.push({ type: 'step_start', step })
-        continue
+    if (type === 'status') {
+      out.push(...parseDshStatus(v, line))
+    } else if (type === 'thinking' || type === 'text' || type === 'final') {
+      const t = asString(v['text'])
+      if (t === undefined) {
+        out.push(logEvent(line)) // 形态不合（无 text 字段）：原文透传
+      } else if (t !== '') {
+        out.push(logEvent(t)) // 空正文不产事件（final:"" 实录形态）
       }
-    } else if (type === 'step_end') {
-      const step = asString(v['step'])
-      if (step !== undefined) {
-        out.push(stepEndEvent(step, toUsage(v['usage'])))
-        continue
+    } else if (type === 'error') {
+      const msg = asString(v['message'])
+      if (msg !== undefined && msg !== '') {
+        out.push({ type: 'turn_end', completed: false, error: msg })
+      } else {
+        out.push(logEvent(line))
       }
-    } else if (type === 'turn_end') {
-      const completed = asBoolean(v['completed'])
-      if (completed !== undefined) {
-        out.push(turnEndEvent(completed, toUsage(v['usage'])))
-        continue
-      }
-    } else if (type === 'log') {
-      const logText = asString(v['text'])
-      if (logText !== undefined) {
-        out.push(logEvent(logText))
-        continue
-      }
+    } else {
+      // session / tool_call / tool_result / 未知类型：契约无位——原文透传（不丢证据）
+      out.push(logEvent(line))
     }
-    out.push(logEvent(line))
   }
   return out
+}
+
+/** dsh status 事件的 phase 分派（step/turn 状态都在这里——docs/31-§3.1；形态不合降级原文透传） */
+function parseDshStatus(v: Record<string, unknown>, line: string): StreamEvent[] {
+  const phase = asString(v['phase'])
+  if (phase === 'step_start') {
+    const step = asFiniteNumber(v['step']) // 真机是 number（docs/31-§4：string 假设证伪）
+    if (step !== undefined) return [{ type: 'step_start', step: String(step) }]
+  } else if (phase === 'step_end') {
+    const step = asFiniteNumber(v['step'])
+    if (step !== undefined) return [stepEndEvent(String(step), toUsageDsh(v['usage']))]
+  } else if (phase === 'turn_end') {
+    const reason = asRecord(v['reason'])
+    const kind = reason === undefined ? undefined : asString(reason['kind'])
+    if (reason !== undefined && kind !== undefined) {
+      const err = asRecord(reason['error'])
+      const code = err === undefined ? undefined : asString(err['code'])
+      const message = err === undefined ? undefined : asString(err['message'])
+      // code 前缀保留进 error 串（AUTH / MISSING_CREDENTIAL 失败分类面，docs/31-§7）——
+      // 契约 turn_end.error 是 string 无结构位，前缀即分类载体
+      const error = code !== undefined && message !== undefined ? `${code}: ${message}` : code ?? message
+      return [
+        { type: 'turn_end', completed: kind === 'completed', ...(error !== undefined ? { error } : {}) },
+      ]
+    }
+  }
+  // turn_start 及未识别/形态不合的 status：契约无位——原文透传（turn 序号留证：续跑面 turn:2）
+  return [logEvent(line)]
+}
+
+/**
+ * dsh 专属 usage 归一（camelCase——docs/31-§3.2 实测；与三家的 snake_case 面互不相干，
+ * toUsage 不动）：input=inputTokens、output=outputTokens、cached=cacheReadTokens；
+ * totalTokens/cacheWriteTokens/reasoningTokens 契约 TokenCounts 无位——弃（docs/31-§5-3）。
+ * input/output 缺任一则整条弃用（宁缺毋假，与「不完整则整条省略」同构）。
+ */
+function toUsageDsh(v: unknown): TokenCounts | undefined {
+  const r = asRecord(v)
+  if (r === undefined) return undefined
+  const input = asFiniteNumber(r['inputTokens'])
+  const output = asFiniteNumber(r['outputTokens'])
+  if (input === undefined || output === undefined) return undefined
+  const cached = asFiniteNumber(r['cacheReadTokens'])
+  return { input, output, ...(cached !== undefined ? { cached } : {}) }
 }
 
 /** claude：`claude -p --output-format stream-json`——终态只认 result 事件（17-§6） */

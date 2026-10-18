@@ -14,6 +14,11 @@
  *                       （=0 即 dsh 已知坑「被 kill 后退出码=0」；配 FAKE_HANG 使用）
  *   FAKE_VERSION        设置后：命令行含 --version 即只打印该值并以 0 退出（executor
  *                       detect 的版本门槛三态测试用）；未设置时 --version 与普通参数无异
+ *   FAKE_REQUIRE_TASK   =1：无任务位置参数（argv 无 `--` 或其后为空）→ stdout 写一条顶层
+ *                       error 事件 `{"type":"error","message":"a task is required"}` 并以
+ *                       1 退出——模拟 dsh 真机 usage-error 面（docs/31-§0 发现 2：任务=
+ *                       单个位置参数，缺任务必败；B7-headless-startup.js:76-80）——测适配器
+ *                       launch 的任务串注入（`--` 分隔符 + briefPath 全文）
  *   FAKE_ECHO_ARGS      =1：stdout 首行回显本进程收到的 argv（`fake-cli argv: ...`），
  *                       测适配器 launch 的参数注入（预算帽 / 续跑 / 通道旗标）
  *   FAKE_ECHO_ENV       逗号分隔 env 变量名：每名一行回显该变量值（`fake-cli env: NAME=值`，
@@ -49,6 +54,7 @@ const parsedSigtermExit = Number.parseInt(sigtermExitRaw, 10)
 const sigtermExit =
   sigtermExitRaw === '' ? undefined : Number.isNaN(parsedSigtermExit) ? 0 : parsedSigtermExit
 const fakeVersion = env.FAKE_VERSION ?? ''
+const requireTask = env.FAKE_REQUIRE_TASK === '1'
 const echoArgs = env.FAKE_ECHO_ARGS === '1'
 const echoEnvNames = (env.FAKE_ECHO_ENV ?? '')
   .split(',')
@@ -86,6 +92,18 @@ if (fakeVersion !== '' && process.argv.includes('--version')) {
 }
 
 async function main() {
+  if (requireTask) {
+    // dsh 真机 usage-error 面（docs/31-§0 发现 2：任务=单个位置参数，缺任务必败——
+    // B7-headless-startup.js:76-80）：顶层 error 事件 + exit 1，stdout 仍是结构化 NDJSON。
+    // 任务取 `--` 分隔符之后的位置参数（与 dsh 适配器 launch 的注入约定一致）
+    const argv = process.argv.slice(2)
+    const sep = argv.indexOf('--')
+    const task = sep >= 0 ? argv.slice(sep + 1).join(' ') : ''
+    if (task === '') {
+      writeOut('{"type":"error","message":"a task is required"}\n')
+      process.exit(1)
+    }
+  }
   if (grandchildPidFile !== '') {
     // 孙进程旋钮（execa 10 killDescendants 测试面，docs/27-§4.3 案 A）：普通 spawn 不建新
     // 组——孙继承本进程的进程组，整组杀（killDescendants Unix 落法）必须覆盖到它。
