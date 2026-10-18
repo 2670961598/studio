@@ -151,6 +151,13 @@
         "zod": "^4.0.0",
       },
     },
+    "packages/taiga": {
+      "name": "@studio-next/taiga",
+      "version": "0.1.0",
+      "dependencies": {
+        "@studio-next/contract": "workspace:*",
+      },
+    },
     "packages/yt": {
       "name": "@studio-next/yt",
       "version": "0.1.0",
@@ -308,6 +315,8 @@
     "@studio-next/store": ["@studio-next/store@workspace:packages/store"],
 
     "@studio-next/studio-tools": ["@studio-next/studio-tools@workspace:packages/studio-tools"],
+
+    "@studio-next/taiga": ["@studio-next/taiga@workspace:packages/taiga"],
 
     "@studio-next/yt": ["@studio-next/yt@workspace:packages/yt"],
 

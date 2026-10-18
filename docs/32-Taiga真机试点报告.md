@@ -54,3 +54,20 @@
 - Taiga 试点栈是否**保留运行**（占 ~1.5GB 内存；不保留我就 `docker compose down`，数据在卷里可 `up` 复活）。
 - Docker Desktop 死代理是否由你亲手清除（我不动你的全局配置）。
 - 试点通过后：发 FlowPlatform-Taiga 适配器切片（platform 泳道，契约包先行不动）。
+
+## 七、补记：适配器首刀冒烟实证（2026-10-18晚，platform 泳道）
+
+FlowPlatform-Taiga 适配器首刀（`packages/taiga`，feature/platform-taiga 分支）对运行中
+试点栈做只读+写面冒烟（`test/smoke/taiga-smoke.ts`，写面 WRITE_SMOKE=1 闸门），全绿。
+对 §四待核项与 docs/30 API 假设的三处**实测修正**：
+
+| # | 事项 | 实测结论（修正前假设 → 实证） |
+|---|---|---|
+| 1 | `x-pagination-count` 语义（§四待核） | **已核**：`x-pagination-count`=总条数，另有 `x-paginated`/`x-paginated-by`/`x-pagination-current`/`X-Pagination-Next`；翻页用 `?page=&page_size=` 可靠 |
+| 2 | 自定义属性值写端点 | **官方文档形状作废**：`POST …/custom-attributes-values/{id}` **405**；正解=先 `GET` 值对象（自动存在，含**自身独立 version**）再 `PATCH {attributes_values, version}`；值对象 version 与单实体 version 互不相干 |
+| 3 | 自定义属性值读回 | **实体序列化器不回显**：by_ref/单条/列表的 `custom_attributes_values` 一律 null（即使值已写入）；读写都必须走专用值端点 |
+
+另两处读面口径随冒烟固化：建单事件确证不进 history（轮询面 created 缺席=常态）；
+评论条目 author=JWT 操作者平台账号（admin/worker-*），非工号——端口缺口已随首刀记录
+（guards 无读位 / actor 语义跨实现不一致，见 `packages/taiga/src/index.ts` 头注）。
+冒烟副作用：probe-co 新增 #6/#7/#8 三张冒烟单（标题自带「可删」标记，供制作人查验后清理）。
