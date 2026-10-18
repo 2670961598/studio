@@ -4,6 +4,7 @@
 > 方法：全部结论来自本机实测（`/opt/homebrew/bin/dsh`，0.2.0-rc.2，→ `/opt/homebrew/lib/node_modules/@deepseek-ai/dsh`）与**装机自带的插件源码**（dsh 以明文 JS 发行，源码即真机事实）。原始输出全部落盘 `/tmp/dsh-probe2/`（索引见其 `INDEX.md`），本文每条事实标注证据文件。
 > 对照物：`docs/27-探针与真机核实清单.md` A1-A6 拟稿、`packages/adapters/src/dsh.ts`、`packages/adapters/src/streams.ts`。**本单未改任何 packages/ 代码**——修正走 §5 清单，过审后另派实现单。
 > 凭证缺口声明：本机 env / macOS keychain / ~/.dsh 三处均无 DEEPSEEK_API_KEY（证据 `B0-env-scan.txt`），**B 段真成功流（原案 7/8/9）未执行**；事件形态学降级取证自装机源码（`dsh-headless/lib/json-stream-*.js` 等），待凭证到位后以 P-01 真流复核回填 golden fixture。
+> **【2026-10-18 补充轮——缺口已闭合】**制作人定向「用本机 kimi 配置、以跑通为主」：实测发现 dsh 自带**休眠多 provider 适配器 `llm-pi-ai`**（含 `kimi-coding` 目录 provider，api.kimi.com/coding），经 profile patch 激活 + `KIMI_API_KEY` env 引用即可绕开 DeepSeek 凭证依赖。**B 段五探针（P-01/04/05/07/08）全部以真 LLM 流执行完毕**，结果与 §3 源码形态学逐条吻合，新增两条硬事实见 §6。证据：`/Volumes/BigDisk/probe-evidence/dsh/`（外置盘，制作人指令：实验数据一律外置盘）。
 
 ---
 
@@ -204,9 +205,31 @@ streams.ts dsh 解析器细目对照（全部实测/源码级）：
 
 ## 6. 遗留与待办
 
-1. **凭证到位后的复核单**（P-01/P-04/P-05/P-07/P-08 按 docs/27 原案）：真成功流 golden 回填（B7-B9 原案）、kill 面复现（A4 坑）、AGENTS.md 通道矩阵实测（P-07：真机复述标记串）、approval 交互行为、截断行为实测复核。
+1. **凭证到位后的复核单**（P-01/P-04/P-05/P-07/P-08 按 docs/27 原案）：真成功流 golden 回填（B7-B9 原案）、kill 面复现（A4 坑）、AGENTS.md 通道矩阵实测（P-07：真机复述标记串）、approval 交互行为、截断行为实测复核。**【2026-10-18 已全部执行，见 §7——仅 approval 交互与截断行为两小项仍开口】**
 2. §5-1 的任务文本来源若涉 contract（TaskBrief 加 prompt 字段）——走 docs/25 契约变更批示流。
 3. dsh 安装源核实（docs/27 §4.1 遗留#2）：本机为 npm 全局路径，镜像源渠道未在本单范围。
 4. 事件八类中 `thinking/tool_call/tool_result` 是否值得进 contract StreamEvent（现为 log 透传）——收割粒度需求方（core）拍板。
 
-> 原始证据目录 `/tmp/dsh-probe2/` 保留供审查（含 INDEX.md 索引与副作用记录）。
+> 原始证据目录 `/tmp/dsh-probe2/` 保留供审查（含 INDEX.md 索引与副作用记录）；
+> 补充轮证据在 `/Volumes/BigDisk/probe-evidence/dsh/`（外置盘），旧探针集已同步迁移至 `…/dsh-旧探针/`。
+
+---
+
+## 7. 补充轮（2026-10-18）：真成功流五探针实录
+
+> 凭证路径：**不经 DeepSeek**。dsh 的 `llm-pi-ai` 休眠多 provider 适配器（dsh-base 内建，注释明言「settings 供 providers 即活」）+ pi-ai 目录中的 `kimi-coding` provider（api.kimi.com/coding，anthropic-messages 协议，模型 k3/kimi-for-coding 等）。激活法（已固化）：`~/.dsh/profiles/headless/cordis.patch.yml` 覆盖两条目——`llm-pi-ai.config.providers.kimi-coding.apiKeyEnv=KIMI_API_KEY` + `agent-default-model.config={provider: kimi-coding, model: kimi-for-coding}`；密钥值取 kimi CLI 的 OAuth access_token（`~/.kimi-code/credentials/kimi-code.json`，**15 分钟过期，跑 `kimi -p x` 即刷新**）。遥测恒 `DSH_TELEMETRY_MODE=DISABLED`。
+
+| 探针 | 结果 | 硬事实（证据文件） |
+|---|---|---|
+| P-01 真成功流 | ✅ | 八类事件实测与 §3.1 形态学**逐条吻合**：`session→status(turn_start/step_start)→thinking→text→status(step_end 带 camelCase usage 四桶)→status(turn_end reason.kind=completed)→final`；final.text=text.text（`P01-真成功流.ndjson`） |
+| P-04 错误凭据 | ✅ | 与 A4 无凭证面**不同**：`turn_end.reason.kind="error"` 且 `error.code="AUTH"`、message 透传上游 401 JSON、usage 四桶全 0、final 空——适配器失败分类需区分 `MISSING_CREDENTIAL`（无凭证）与 `AUTH`（凭证无效）（`P04-错误凭据.ndjson`） |
+| P-05 续跑 | ✅ | `--session-id` 真续：turn:2、模型复述上轮内容、`cacheReadTokens:4608`（前缀缓存命中直证上下文延续）、cwd 逐字节约束复核成立——**agent.yaml session_resume 已改 true**（`P05-续跑.ndjson`） |
+| P-07 AGENTS 通道 | ✅ | 临时 cwd 放 AGENTS.md（「每答必附标记串」）→ 真模型输出带标记：原生文件发现通道端到端实证（`P07-AGENTS通道.ndjson`） |
+| P-08 kill 面 | ✅ | 长任务 6s 后 SIGTERM：**优雅空 final（final.text=""）且无 turn_end 事件、退出码 0**——A4 坑获真机定性：**「exit=0 + final 空」确实出现于 kill 面，isCompleted 严禁只看 final 非空/退出码，必须以 turn_end.reason.kind 为唯一终态判据**（`P08-kill面.ndjson`） |
+
+### 对 §5 修正清单的增量
+
+- §5-3（isCompleted）：终态判据唯一化 `turn_end.reason.kind==='completed'`；`final` 空且无 turn_end = 被 kill（非失败非成功，落 aborted 口径）。
+- §5-4（失败分类）：错误码面新增 `AUTH`（与 `MISSING_CREDENTIAL` 并列）。
+- 凭证通道定版：**worker env 注入 `KIMI_API_KEY`（或任何 provider 的 apiKeyEnv 名）**即可换 provider 运行——与 docs/25 v1.4 TaskBrief.credentials 通道完全对齐，dsh 侧零改动；DeepSeek key 到位后只需撤 patch 回默认 provider。
+- OAuth 15 分钟过期的运维事实：daemon 长期跑 kimi 路径需刷新策略（跑 `kimi -p x` 触发刷新 = 可用但脏；正式方案进适配器设计单再定）。
