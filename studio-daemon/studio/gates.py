@@ -1,6 +1,6 @@
 """gates — 冻结验收执行器（run-gate 原生版，证据 JSON 与 bash 版字段兼容）
 "完成"只认这里的落盘证据，不认任何 agent 自述。"""
-import hashlib, json, subprocess, time
+import hashlib, json, os, subprocess, time
 from pathlib import Path
 from .config import CONFIG
 from .screen_words import GATE_DANGER
@@ -43,15 +43,18 @@ def run_gate(issue: str, attempt_tag: str, lane: str, acct: str = "agent-8") -> 
                             capture_output=True, text=True).stdout.strip() or "nogit"
     branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo,
                             capture_output=True, text=True).stdout.strip() or "detached"
+    # GAMES-180 校准五（statSeeds 3→5）后全量 gate 峰值 ~700s+：600s 门限（3-seed 时代口径）
+    # 吃穿致 MERGE-VERIFY 误红回滚两次。环境变量化 GATE_TIMEOUT，默认 900s。
+    gate_timeout = int(os.environ.get("GATE_TIMEOUT", "900"))
     try:
         proc = subprocess.run(["bash", "-c", cmd], cwd=repo, capture_output=True,
-                              text=True, timeout=600)
+                              text=True, timeout=gate_timeout)
     except subprocess.TimeoutExpired as e:
         # TimeoutExpired.stdout/stderr 恒为 bytes（与 text=True 无关），必须先 decode
         out = e.stdout.decode("utf-8", "replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
         err = e.stderr.decode("utf-8", "replace") if isinstance(e.stderr, bytes) else (e.stderr or "")
         proc = subprocess.CompletedProcess([], 124,
-                                           out + f"\n[GATE-TIMEOUT 600s]",
+                                           out + f"\n[GATE-TIMEOUT {gate_timeout}s]",
                                            err)
     log.write_text(proc.stdout + proc.stderr)
     res = GateResult({

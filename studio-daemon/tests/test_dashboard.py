@@ -105,7 +105,7 @@ def test_概览三卡与收件箱(client, fake_yt):
     r = client.get("/api/dashboard")
     assert r.status_code == 200
     d = r.json()
-    assert [p["pid"] for p in d["projects"]] == ["STUDIO", "GAMES", "POLY"]
+    assert [p["pid"] for p in d["projects"]] == ["STUDIO", "GAMES", "POLY", "SNEXT"]
     poly = [p for p in d["projects"] if p["pid"] == "POLY"][0]
     assert poly["today_deliver"] == 1 and poly["cost7"]["tokens"] == 10
     assert len(poly["spark"]) == 7
