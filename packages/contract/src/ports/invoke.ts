@@ -1,11 +1,14 @@
 /**
  * 唤起源端口 —— 源注册表协议（docs/25-§3.4，依据 22 原文冻结）
  * 源只产意图，绝不直接驱动 worker；决策归状态机主循环。
+ *
+ * kind='escalate'（docs/35-§3 岗位运作规格首刀，制作人 2026-10-19 批复）：SLA/升级计时器源产
+ * ——payload 携单号+超时档；附原单上下文唤起（35-§4「升级唤起」）的引擎消费面归后续刀。
  */
 import type { CompanySlug, TicketId } from './kernel.ts'
 
 export interface InvokeIntent {
-  kind: 'ticket' | 'mention' | 'schedule' | 'relay' | 'resume' | 'webhook'
+  kind: 'ticket' | 'mention' | 'schedule' | 'relay' | 'resume' | 'webhook' | 'escalate'
   company: CompanySlug
   ticket?: TicketId
   payload?: unknown

@@ -40,5 +40,8 @@ export const PACKAGE_STATUS = "skeleton";
 // 目录契约校验器 v0（docs/04-§二/§九；docs/25-§3.5 目录端口）
 export * from './validator.ts'
 
+// 岗位运作规格解析面（v0.1-M5，docs/35-§3：档位展开/时长解析/ops 读视图——纯函数）
+export * from './cadence.ts'
+
 // init 脚手架 + 目录读取壳（v0.1-M3，docs/16-§四 验收口径「init 出模板公司并通过自检」）
 export * from './init.ts'

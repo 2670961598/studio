@@ -46,7 +46,8 @@
  * 拟稿待批点（本文件口径，汇报后走批示流）：
  *   - registry 无 manifest 必填：register 允许裸源（manifest 可选）。进化管线（可配可灰度）
  *     落地时再决定 manifest 是否升必填——本刀只校验「给了则 name 必须与源一致」。
- *   - watch-file 的 kind 白名单：行内可声明六源任一 kind（缺省 'webhook'）。是否应收窄为
+ *   - watch-file 的 kind 白名单：行内可声明任一 kind（缺省 'webhook'；v1.4 起 7 kind——
+ *     docs/35-§3 增 'escalate'）。是否应收窄为
  *     webhook 专属（防文件内容伪造 schedule 意图）待批示——本刀按「示例源从宽、引擎侧
  *     kind 消费门（v0.8 六源全通刀）兜底」处理。
  */
@@ -323,8 +324,8 @@ export interface FileWatchSource extends InvokeSource {
   readonly stats: FileWatchSourceStats
 }
 
-/** 六源 kind 白名单（InvokeIntent['kind'] 全集——行内声明缺省 webhook） */
-const INTENT_KINDS: ReadonlySet<string> = new Set(['ticket', 'mention', 'schedule', 'relay', 'resume', 'webhook'])
+/** kind 白名单（InvokeIntent['kind'] 全集——v1.4 增 'escalate'，docs/35-§3 首刀；行内声明缺省 webhook） */
+const INTENT_KINDS: ReadonlySet<string> = new Set(['ticket', 'mention', 'schedule', 'relay', 'resume', 'webhook', 'escalate'])
 
 /**
  * createFileWatchSource —— 监听文件变化产意图的示例源（22-§三.1 的验收靶子）。

@@ -45,7 +45,10 @@
  *     现行岗入口=快照 jobs（demo）/upsertJob 热更（测试与 API）。
  *   - 唤起源注册表（v0.8 地基，22-§一）：scheduler 源（jobs: true 时注册——源开关=既有 jobs
  *     键，缺省语义不动）+ matrix 源（matrix: true + 注入工厂，daemon 不强依赖 @studio-next/matrix）
- *     + watch-file 示例源（fileWatch: true + fileWatchPath，22-§三.1 验收靶子）。
+ *     + watch-file 示例源（fileWatch: true + fileWatchPath，22-§三.1 验收靶子）
+ *     + cadence 档位展开器（cadence: true，35-§3 首刀——档位岗调度表生命周期源）
+ *     + SLA/升级计时器（sla: true，35-§3 首刀——escalate 意图 + ESCALATE 落账；notify 发送
+ *     归 notify 端口后续刀）。
  *     startAll 的 emit 统一进 engine.ingest——源零直驱（注册表与源实现见 src/sources.ts）。
  *     意图消费门在引擎：v0.4 面只物化 schedule 意图，webhook/mention 等明报不支持
  *     （六源全通归 v0.8 后续刀）——注册面先行，消费面按刀推进。
@@ -87,6 +90,7 @@ import { createFakeAdapter, createFakePlatform } from './fakes.ts'
 import { createGatedPlatform } from './gated-platform.ts'
 import { createDefaultGateRunner, createAcceptanceGateRunner } from './gate.ts'
 import { makeUlid } from './id.ts'
+import { CADENCE_SOURCE_MANIFEST, createCadenceSource, createSlaSource, SLA_SOURCE_MANIFEST } from './jobs-sources.ts'
 import { createDefaultAssembler } from './prompt-assembly.ts'
 import { nextRunAt, type Scheduler } from './scheduler.ts'
 import type { WorkerKeyDeps } from './worker-key.ts'
@@ -143,6 +147,19 @@ export interface ServeConfig {
   fileWatch: boolean
   /** watch-file 监听文件路径（fileWatch: true 时必配；文件须先存在——CONFIG_INVALID 明报） */
   fileWatchPath?: string
+  /**
+   * cadence 档位展开器源开关（35-§3 首刀；缺省关）：true 时注册档位岗调度表生命周期源
+   * （src/jobs-sources.ts——start 播种/周期刷新/stop 移除 payload 带 cadence_tier 的岗；
+   * 到点意图仍走既有 scheduler→schedule 意图链，零新轮子）。jobs: false 时开了也无
+   * scheduler 消费（意图无人到点产出——配置面诚实共存，不代开 jobs）。
+   */
+  cadence: boolean
+  /**
+   * SLA/升级计时器源开关（35-§3 首刀；缺省关）：true 时注册 tick 驱动扫描器——岗单据
+   * first-ack 超时/升级链档产 kind='escalate' 意图 + ESCALATE 落账（src/jobs-sources.ts；
+   * 只产意图+落账，notify 发送归 notify 端口后续刀）。扫描轮询复用 jobPollMs。
+   */
+  sla: boolean
   /** 公司目录路径（可选：装载 CompanySnapshot；缺省用内置 demo 快照） */
   companyDir?: string
   /**
@@ -198,6 +215,8 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   jobPollMs: 15_000,
   matrix: false,
   fileWatch: false,
+  cadence: false,
+  sla: false,
   gateway: true,
 }
 
@@ -323,6 +342,12 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         break
       case 'fileWatchPath':
         cfg.fileWatchPath = str(value, key)
+        break
+      case 'cadence':
+        cfg.cadence = bool(value, key)
+        break
+      case 'sla':
+        cfg.sla = bool(value, key)
         break
       case 'gateway':
         cfg.gateway = bool(value, key)
@@ -703,6 +728,31 @@ export function buildServeRuntime(
     sources.register(
       createFileWatchSource({ company: config.company, file: path.resolve(config.fileWatchPath), log }),
       FILE_WATCH_MANIFEST,
+    )
+  }
+
+  // —— 岗位运作规格两新源（35-§3 首刀，src/jobs-sources.ts）——
+  // cadence 档位展开器：档位岗调度表生命周期（start 播种/刷新/stop 移除）；到点意图走
+  // 既有 scheduler→scheduleIntent 链（复用调度器 tick 零新轮子——jobs: true 才有 tick 面）
+  if (config.cadence) {
+    sources.register(
+      createCadenceSource({
+        ledger,
+        clock,
+        intervalMs: config.jobPollMs,
+        jobs: (): readonly ScheduledJob[] => snapshot.jobs,
+        log,
+      }),
+      CADENCE_SOURCE_MANIFEST,
+    )
+  }
+
+  // SLA/升级计时器：tick 驱动扫在途岗单据——first-ack/升级链超时产 escalate 意图 + ESCALATE
+  // 落账（只产意图+落账；notify 发送与 escalate 意图的引擎消费归 notify 端口后续刀）
+  if (config.sla) {
+    sources.register(
+      createSlaSource({ ledger, clock, company: config.company, intervalMs: config.jobPollMs, log }),
+      SLA_SOURCE_MANIFEST,
     )
   }
 

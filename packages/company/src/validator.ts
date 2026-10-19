@@ -24,10 +24,17 @@
  * （contract ScheduledJob，docs/25-§3.5）——daemon 侧 seedJobs 消费快照即可播种 jobs 表。
  * 模板字段 → ScheduledJob 字段的映射规则逐字段冻结在 OrgJobSchema 头注（缺省值与形状
  * 变换全部【拟稿待批】，编号 M4-①..⑧，制作人批示后固化）。
+ *
+ * v0.1-M5 岗位运作规格首刀（docs/35-§3，制作人 2026-10-19 批复「岗位拓展的很好，没啥问题」）：
+ * jobs 条目扩 triggers.cadence（五档位→装载期展开 cron，自定义 cron 保留）/ outputs / sla /
+ * escalate 四段——形状闸在本文件，档位/时长解析面与 daemon 读视图在 src/cadence.ts，daemon
+ * 侧两新唤起源（cadence 档位展开器 + SLA/升级计时器）消费 payload。oncall/subscribe 值守面
+ * 与 notify 发送端下刀（35-§4 矩阵两 ☐ 归后续单）。
  */
 import { LineCounter, parseDocument } from 'yaml'
 import { z } from 'zod'
 import type { CompanySnapshot, DeptNode, DirectoryIssue, MountResult, PersonRef, RoleName, ScheduledJob } from '@studio-next/contract'
+import { expandCadence, parseJobDuration } from './cadence.ts'
 import { ORG_CONFIG_SCHEMA_VERSION, lineOfPath, multifileRules, zodIssuesToDirectoryIssues } from './multifile.ts'
 
 const ORG_CONFIG_FILE = 'org-config.yaml'
@@ -44,18 +51,28 @@ function cronShapeOk(expr: string): boolean {
 }
 
 /**
- * 04-§三 D9 定时岗条目（v0.1-M4 收紧：原 z.record(z.string(), z.unknown()) 只收形状不装载，
- * 见 git 历史；本单起装载进 snapshot.jobs）。
+ * 04-§三 D9 定时岗条目（v0.1-M4 收紧装载进 snapshot.jobs；v0.1-M5 岗位运作规格首刀扩五段
+ * ——docs/35-§3，制作人 2026-10-19 批复；档位/时长解析面在 src/cadence.ts）。
  *
  * 映射表（模板实形 templates/company-2-level/org-config.yaml jobs 段 → contract ScheduledJob，
- * 逐字段冻结；缺省值与形状变换全部【拟稿待批】，编号 M4-①..⑧）：
+ * 逐字段冻结；缺省值与形状变换全部【拟稿待批】，编号 M4-①..⑧ + M5-①..⑥）：
  *
  *   模板字段     → ScheduledJob 字段     缺省 / 变换
  *   ─────────────────────────────────────────────────────────────────────────────
  *   id          → job_id                原样（必填非空；跨司唯一性归 store jobs 表主键口径【M4-⑧】）
  *   （无）      → company               = company.slug 本司注入（D9 挂公司目录，快照即本司）
  *   dept        → dept                  原样；缺省=根部门 path（首个 parent:null，兜底 departments[0]）【M4-①】
- *   cron        → cron                  原样（必填；形状闸 cronShapeOk ≤6 空白段，与 store 同规则【M4-③】）
+ *   cron        → cron                  原样；**与 triggers.cadence 恰给其一**【M5-⓪】（自定义 cron 或
+ *                                      档位二选一——docs/35-§3「节奏档位枚举……不写死表达式」）
+ *   triggers.cadence/at → cron 展开     cron=expandCadence(tier, at)（装载期即展开成真 cron——
+ *                                      contract ScheduledJob.cron 必填；缺省时刻表【M5-①】见 cadence.ts）
+ *   triggers.*  → payload.cadence_tier/_at  档位原样留观测（daemon cadence 源选岗面）【M5-③】
+ *   sla         → payload.sla           {first_ack_ms, resolve_hint_ms}——"15m"/"4h" 形时长解析
+ *                                      为 ms【M5-⑤】；执行面=daemon SLA 计时器源（first-ack 产
+ *                                      escalate 意图；resolve-hint 本刀只解析）
+ *   escalate    → payload.escalate      [{after_ms, unacked}]——升级链档（notify 目标原样串）
+ *                                      【M5-⑥】；语义执行（notify 链发送）归 notify 端口后续刀
+ *   outputs     → payload.outputs       string[] 产出物清单（报表模板名；模板绑定归报表面后续刀）【M5-④】
  *   role        → role                  原样（RoleName 开放串，不设枚举）；缺省=type（岗位缺省随任务类型兜底）【M4-②】
  *   type        → payload.type          任务类型不进顶层，随 payload 透传（与 daemon demo 岗
  *                                      payload={type,…} 同形；report|audit|…自由扩展不写死）【M4-④】
@@ -66,32 +83,86 @@ function cronShapeOk(expr: string): boolean {
  *                                      缺省='low'（定时岗缺省低档省成本）【M4-⑥】
  *   budget_cap  → budget_cap={usd:n}    yaml 裸数（USD/次）→ Money 形状变换【M4-⑦】；缺省=不设帽
  *
- *   payload 组装：{type?, output?} 只收已定义键；type 与 output 皆缺 → 不设 payload。
+ *   payload 组装：{type?, output?, cadence_tier?, cadence_at?, outputs?, sla?, escalate?} 只收已
+ *   定义键；全缺 → 不设 payload。
  *   role 与 type 至少给其一（下方 refine 挡——不造 'patroller' 类魔法缺省岗名，04-§九.0 不写死）。
  *   strictObject：未知键拒收（与 departments/people 段同纪律——结构收紧即报错定位到行，不静默忽略）。
  */
-const OrgJobSchema = z.strictObject({
-  /** → job_id（必填非空，原样） */
-  id: z.string().min(1),
-  /** → cron（必填；形状闸与 store JobRecord 同规则，解析归 daemon croner——M4-③） */
-  cron: z.string().min(1).refine(cronShapeOk, { message: 'cron 须为非空串且至多 6 个空白分隔段（段内语法解析归 daemon croner，此处只挡形状）' }),
-  /** → dept（可选；缺省=根部门 path——M4-①） */
-  dept: z.string().min(1).optional(),
-  /** → role（可选；缺省以 type 兜底——M4-②；RoleName 开放串不设枚举） */
-  role: z.string().min(1).optional(),
-  /** → payload.type（可选——M4-④；任务类型自由扩展不写死） */
-  type: z.string().min(1).optional(),
-  /** → level（可选；缺省=company.level——M4-⑤；界 1-9 同 store JobRecord / 04-§四） */
-  level: z.number().int().min(1).max(9).optional(),
-  /** → model_tier（可选；缺省='low'——M4-⑥；冻结枚举同 contract ModelTier['tier']） */
-  model_tier: z.enum(['high', 'mid', 'low']).optional(),
-  /** → budget_cap={usd:n}（可选裸数 USD/次——M4-⑦；缺省=不设帽） */
-  budget_cap: z.number().min(0).optional(),
-  /** → payload.output（可选——M4-④；产出落点，报表按 04-§三约定命名） */
-  output: z.string().min(1).optional(),
-}).refine((j) => j.role !== undefined || j.type !== undefined, {
-  message: 'role（岗位）与 type（任务类型）至少给其一——ScheduledJob.role 必填，缺 role 时以 type 兜底（M4-②）',
+
+/** 时长形态闸："15m"/"4h"/"30s"/"2d"（解析归 cadence.ts parseJobDuration，M5-② 语法拟稿） */
+const DurationSchema = z.string().min(1).refine((s) => parseJobDuration(s) !== null, {
+  message: '时长须形如 30s / 15m / 4h / 2d（正整数+单位，docs/35-§3）',
 })
+
+/** triggers 段（docs/35-§3 五入口中本刀落 schema 的 cadence 面；oncall/subscribe 下刀） */
+const OrgJobTriggersSchema = z
+  .strictObject({
+    cadence: z.enum(['hourly', 'daily', 'weekly', 'monthly', 'quarterly']).optional(),
+    at: z.string().min(1).optional(),
+  })
+  .refine((t) => t.cadence !== undefined, {
+    message: 'triggers 段至少给 cadence（at 不能单独出现——docs/35-§3）',
+  })
+  .refine((t) => !(t.cadence !== undefined && t.at !== undefined && !expandCadenceOk(t.cadence, t.at)), {
+    message: 'at 须形如 "HH:MM"（hourly 不收 at；d<N> 日锚仅 monthly/quarterly——docs/35-§3）',
+  })
+
+/** 档位+at 合法性（展开器零抛版：expandCadence 的规则判定，refine 用） */
+function expandCadenceOk(tier: 'hourly' | 'daily' | 'weekly' | 'monthly' | 'quarterly', at: string): boolean {
+  try {
+    expandCadence(tier, at)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const OrgJobSchema = z
+  .strictObject({
+    /** → job_id（必填非空，原样） */
+    id: z.string().min(1),
+    /** → cron（可选；与 triggers.cadence 恰给其一——M5-⓪；形状闸与 store JobRecord 同规则，解析归 daemon croner——M4-③） */
+    cron: z.string().min(1).refine(cronShapeOk, { message: 'cron 须为非空串且至多 6 个空白分隔段（段内语法解析归 daemon croner，此处只挡形状）' }).optional(),
+    /** → triggers.cadence 档位（可选；档位展开器接管 cron——M5-①/③） */
+    triggers: OrgJobTriggersSchema.optional(),
+    /** → dept（可选；缺省=根部门 path——M4-①） */
+    dept: z.string().min(1).optional(),
+    /** → role（可选；缺省以 type 兜底——M4-②；RoleName 开放串不设枚举） */
+    role: z.string().min(1).optional(),
+    /** → payload.type（可选——M4-④；任务类型自由扩展不写死） */
+    type: z.string().min(1).optional(),
+    /** → level（可选；缺省=company.level——M4-⑤；界 1-9 同 store JobRecord / 04-§四） */
+    level: z.number().int().min(1).max(9).optional(),
+    /** → model_tier（可选；缺省='low'——M4-⑥；冻结枚举同 contract ModelTier['tier']） */
+    model_tier: z.enum(['high', 'mid', 'low']).optional(),
+    /** → budget_cap={usd:n}（可选裸数 USD/次——M4-⑦；缺省=不设帽） */
+    budget_cap: z.number().min(0).optional(),
+    /** → payload.output（可选——M4-④；产出落点，报表按 04-§三约定命名） */
+    output: z.string().min(1).optional(),
+    /** → payload.outputs（可选 string[]——M5-④；产出物清单=报表模板名） */
+    outputs: z.array(z.string().min(1)).optional(),
+    /** → payload.sla（可选——M5-⑤；时长形态闸，ms 变换在装载） */
+    sla: z
+      .strictObject({
+        'first-ack': DurationSchema.optional(),
+        'resolve-hint': DurationSchema.optional(),
+      })
+      .refine((s) => s['first-ack'] !== undefined || s['resolve-hint'] !== undefined, {
+        message: 'sla 段至少给 first-ack / resolve-hint 其一（docs/35-§3）',
+      })
+      .optional(),
+    /** → payload.escalate（可选——M5-⑥；升级链档，notify 语义执行归 notify 端口后续刀） */
+    escalate: z
+      .array(z.strictObject({ after: DurationSchema, unacked: z.string().min(1) }))
+      .min(1)
+      .optional(),
+  })
+  .refine((j) => j.role !== undefined || j.type !== undefined, {
+    message: 'role（岗位）与 type（任务类型）至少给其一——ScheduledJob.role 必填，缺 role 时以 type 兜底（M4-②）',
+  })
+  .refine((j) => (j.cron !== undefined) !== (j.triggers !== undefined && j.triggers.cadence !== undefined), {
+    message: 'cron 与 triggers.cadence 恰给其一（自定义 cron 或节奏档位，不双写不缺省——docs/35-§3 / M5-⓪）',
+  })
 
 const OrgConfigSchema = z.strictObject({
   schema: z.literal(ORG_CONFIG_SCHEMA_VERSION),
@@ -193,27 +264,72 @@ function crossRules(doc: ReturnType<typeof parseDocument>, lc: LineCounter, org:
 }
 
 /**
- * jobs 装载（v0.1-M4，04-§三 D9）：yaml jobs 段 → ScheduledJob[]。
- * 映射规则逐字段冻结在 OrgJobSchema 头注（拟稿待批 M4-①..⑧）；company=本司 slug；
+ * jobs 装载（v0.1-M4，04-§三 D9；v0.1-M5 岗位运作规格五段——docs/35-§3）：yaml jobs 段 → ScheduledJob[]。
+ * 映射规则逐字段冻结在 OrgJobSchema 头注（拟稿待批 M4-①..⑧ + M5-①..⑥）；company=本司 slug；
  * dept 缺省=根部门（首个 parent:null，兜底 departments[0]——M4-①）。
  */
 function toJobs(org: OrgConfig): ScheduledJob[] {
   if (org.jobs === undefined) return []
   const rootDept = org.departments.find((d) => d.parent === null)?.path ?? org.departments[0]?.path ?? ''
-  return org.jobs.map((j) => ({
-    job_id: j.id,
-    company: org.company.slug,
-    dept: j.dept ?? rootDept, // M4-①
-    cron: j.cron,
-    // M4-②：schema refine 保证 role/type 至少其一（见 OrgJobSchema），断言免检
-    role: (j.role ?? j.type) as RoleName,
-    level: j.level ?? org.company.level, // M4-⑤
-    model_tier: j.model_tier ?? 'low', // M4-⑥
-    ...(j.budget_cap !== undefined ? { budget_cap: { usd: j.budget_cap } } : {}), // M4-⑦
-    ...(j.type !== undefined || j.output !== undefined
-      ? { payload: { ...(j.type !== undefined ? { type: j.type } : {}), ...(j.output !== undefined ? { output: j.output } : {}) } } // M4-④
-      : {}),
-  }))
+  return org.jobs.map((j) => {
+    // M5-⓪：cron 与 triggers.cadence 恰给其一（schema refine 保证），断言免检同 M4-② 风格
+    const cron = j.cron ?? expandCadence(j.triggers?.cadence as 'hourly' | 'daily' | 'weekly' | 'monthly' | 'quarterly', j.triggers?.at)
+    const sla = j.sla
+    return {
+      job_id: j.id,
+      company: org.company.slug,
+      dept: j.dept ?? rootDept, // M4-①
+      cron,
+      // M4-②：schema refine 保证 role/type 至少其一（见 OrgJobSchema），断言免检
+      role: (j.role ?? j.type) as RoleName,
+      level: j.level ?? org.company.level, // M4-⑤
+      model_tier: j.model_tier ?? 'low', // M4-⑥
+      ...(j.budget_cap !== undefined ? { budget_cap: { usd: j.budget_cap } } : {}), // M4-⑦
+      ...(hasOpsPayload(j, sla)
+        ? {
+            payload: {
+              ...(j.type !== undefined ? { type: j.type } : {}), // M4-④
+              ...(j.output !== undefined ? { output: j.output } : {}), // M4-④
+              ...(j.triggers?.cadence !== undefined ? { cadence_tier: j.triggers.cadence } : {}), // M5-③
+              ...(j.triggers?.at !== undefined ? { cadence_at: j.triggers.at } : {}), // M5-③
+              ...(j.outputs !== undefined ? { outputs: j.outputs } : {}), // M5-④
+              ...(sla !== undefined
+                ? {
+                    sla: {
+                      ...(sla['first-ack'] !== undefined ? { first_ack_ms: parseJobDuration(sla['first-ack']) as number } : {}), // M5-⑤
+                      ...(sla['resolve-hint'] !== undefined ? { resolve_hint_ms: parseJobDuration(sla['resolve-hint']) as number } : {}), // M5-⑤
+                    },
+                  }
+                : {}),
+              ...(j.escalate !== undefined
+                ? { escalate: j.escalate.map((e) => ({ after_ms: parseJobDuration(e.after) as number, unacked: e.unacked })) } // M5-⑥
+                : {}),
+            },
+          }
+        : {}),
+    }
+  })
+}
+
+/** ops 段存在性（payload 组装前置：type/output 既有 + cadence/outputs/sla/escalate 新段——全缺则不设 payload） */
+function hasOpsPayload(
+  j: {
+    type?: string | undefined
+    output?: string | undefined
+    outputs?: string[] | undefined
+    triggers?: { cadence?: string | undefined; at?: string | undefined } | undefined
+    escalate?: Array<{ after: string; unacked: string }> | undefined
+  },
+  sla?: { 'first-ack'?: string | undefined; 'resolve-hint'?: string | undefined } | undefined,
+): boolean {
+  return (
+    j.type !== undefined ||
+    j.output !== undefined ||
+    j.outputs !== undefined ||
+    j.triggers?.cadence !== undefined ||
+    sla !== undefined ||
+    j.escalate !== undefined
+  )
 }
 
 function toSnapshot(org: OrgConfig): CompanySnapshot {
