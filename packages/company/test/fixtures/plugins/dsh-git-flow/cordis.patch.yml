@@ -1,0 +1,5 @@
+# dsh-git-flow 的 dsh.bundle 补丁（docs/34-§3.1 insert 语法铁律）
+- insert:
+    - id: dsh-git-flow
+      name: ./src/index.mjs
+      config: {}

@@ -45,3 +45,8 @@ export * from './cadence.ts'
 
 // init 脚手架 + 目录读取壳（v0.1-M3，docs/16-§四 验收口径「init 出模板公司并通过自检」）
 export * from './init.ts'
+
+// 依赖清单与插件绑定引擎（DEV-26 正式化：docs/43-§四「员工的行为面」+ §十5-8 定稿增补；
+// 判定 normative 标尺 docs/51-契约 D——纯决策面 planPluginInstalls + 隔离根安装执行面 +
+// 契约 subject depsSubject）
+export * from './dependencies.ts'

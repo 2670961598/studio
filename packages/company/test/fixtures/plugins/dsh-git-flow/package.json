@@ -1,0 +1,12 @@
+{
+  "name": "dsh-git-flow",
+  "version": "2.0.1",
+  "type": "module",
+  "description": "最小合法 dsh 插件②（docs/34-§3.1 形态同①；依赖清单 dept 命中场景/热重载新增场景用）",
+  "main": "src/index.mjs",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

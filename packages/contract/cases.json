@@ -325,6 +325,820 @@
           "subcause": "rpt/invalid:summary"
         }
       }
+    },
+    {
+      "id": "C-deps-001",
+      "domain": "deps",
+      "docs": "43-§四",
+      "title": "良性三绑定解析（role/dept/role）——schema 字面量+bindings≥1",
+      "input": {
+        "parse": "schema: studio-next/dependencies@1\n\nbindings:\n  - when:\n      attr: role\n      is: 工程负责人\n    plugins:\n      - name: dsh-web-test\n        version: \"^1.2\"\n  - when:\n      attr: dept\n      is: 工程部\n    plugins:\n      - name: dsh-web-test\n        version: \"1.2.0\"\n  - when:\n      attr: role\n      is: 设计师\n    plugins:\n      - name: dsh-web-test\n        version: \"^9.0\"\n"
+      },
+      "expected": {
+        "out": {
+          "schema": "studio-next/dependencies@1",
+          "bindings": [
+            {
+              "when": {
+                "attr": "role",
+                "is": "工程负责人"
+              }
+            },
+            {
+              "when": {
+                "attr": "dept",
+                "is": "工程部"
+              }
+            },
+            {
+              "when": {
+                "attr": "role",
+                "is": "设计师"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "C-deps-002",
+      "domain": "deps",
+      "docs": "43-§四",
+      "title": "strictObject：未知顶层键拒收",
+      "input": {
+        "parse": "schema: studio-next/dependencies@1\n\nbindings:\n  - when:\n      attr: role\n      is: 工程负责人\n    plugins:\n      - name: dsh-web-test\n        version: \"^1.2\"\n  - when:\n      attr: dept\n      is: 工程部\n    plugins:\n      - name: dsh-web-test\n        version: \"1.2.0\"\n  - when:\n      attr: role\n      is: 设计师\n    plugins:\n      - name: dsh-web-test\n        version: \"^9.0\"\nharmless: true\n"
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID",
+          "subcause": "deps/invalid"
+        }
+      }
+    },
+    {
+      "id": "C-deps-003",
+      "domain": "deps",
+      "docs": "51-D-1",
+      "title": "version 第三形态（~1.2.3）拒收——只收 ^ 与精确两形态",
+      "input": {
+        "parse": "schema: studio-next/dependencies@1\n\nbindings:\n  - when:\n      attr: role\n      is: 工程负责人\n    plugins:\n      - name: dsh-web-test\n        version: \"~1.2.3\"\n  - when:\n      attr: dept\n      is: 工程部\n    plugins:\n      - name: dsh-web-test\n        version: \"1.2.0\"\n  - when:\n      attr: role\n      is: 设计师\n    plugins:\n      - name: dsh-web-test\n        version: \"^9.0\"\n"
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID",
+          "subcause": "deps/invalid"
+        }
+      }
+    },
+    {
+      "id": "C-deps-004",
+      "domain": "deps",
+      "docs": "43-§十-5",
+      "title": "attr 未知键（mood）拒收——绑定域=档案已知键封闭枚举（51-C-7）",
+      "input": {
+        "parse": "schema: studio-next/dependencies@1\n\nbindings:\n  - when:\n      attr: mood\n      is: 工程负责人\n    plugins:\n      - name: dsh-web-test\n        version: \"^1.2\"\n  - when:\n      attr: dept\n      is: 工程部\n    plugins:\n      - name: dsh-web-test\n        version: \"1.2.0\"\n  - when:\n      attr: role\n      is: 设计师\n    plugins:\n      - name: dsh-web-test\n        version: \"^9.0\"\n"
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID",
+          "subcause": "deps/invalid"
+        }
+      }
+    },
+    {
+      "id": "C-deps-005",
+      "domain": "deps",
+      "docs": "43-§四",
+      "title": "role 命中：工程负责人 → dsh-web-test ^1.2（首见为代表）",
+      "input": {
+        "enabled": {
+          "person": {
+            "id": "AGENT-1",
+            "dept": "departments/工程部",
+            "level": 2,
+            "role": "工程负责人"
+          },
+          "deps": {
+            "schema": "studio-next/dependencies@1",
+            "bindings": [
+              {
+                "when": {
+                  "attr": "role",
+                  "is": "工程负责人"
+                },
+                "plugins": [
+                  {
+                    "name": "dsh-web-test",
+                    "version": "^1.2"
+                  }
+                ]
+              },
+              {
+                "when": {
+                  "attr": "role",
+                  "is": "设计师"
+                },
+                "plugins": [
+                  {
+                    "name": "dsh-web-test",
+                    "version": "^9.0"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "out": [
+          {
+            "name": "dsh-web-test",
+            "version": "^1.2"
+          }
+        ]
+      }
+    },
+    {
+      "id": "C-deps-006",
+      "domain": "deps",
+      "docs": "43-§十-5",
+      "title": "dept 双候选：绑定 is=工程部 命中 path=departments/工程部（末段名）；is=全 path 亦命中",
+      "input": {
+        "demanded": {
+          "deps": {
+            "schema": "studio-next/dependencies@1",
+            "bindings": [
+              {
+                "when": {
+                  "attr": "dept",
+                  "is": "工程部"
+                },
+                "plugins": [
+                  {
+                    "name": "dsh-web-test",
+                    "version": "^1.2"
+                  }
+                ]
+              },
+              {
+                "when": {
+                  "attr": "dept",
+                  "is": "departments/研发部"
+                },
+                "plugins": [
+                  {
+                    "name": "dsh-git-flow",
+                    "version": "2.0.1"
+                  }
+                ]
+              }
+            ]
+          },
+          "persons": [
+            {
+              "id": "P-A",
+              "dept": "departments/工程部",
+              "level": 2
+            },
+            {
+              "id": "P-B",
+              "dept": "departments/研发部",
+              "level": 2
+            }
+          ]
+        }
+      },
+      "expected": {
+        "out": [
+          {
+            "name": "dsh-web-test",
+            "required": [
+              "^1.2"
+            ]
+          },
+          {
+            "name": "dsh-git-flow",
+            "required": [
+              "2.0.1"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "C-deps-007",
+      "domain": "deps",
+      "docs": "43-§四",
+      "title": "不命中：市场部增长官对全部绑定零启用 → 空集",
+      "input": {
+        "enabled": {
+          "person": {
+            "id": "P-X",
+            "dept": "departments/市场部",
+            "level": 3,
+            "role": "增长官"
+          },
+          "deps": {
+            "schema": "studio-next/dependencies@1",
+            "bindings": [
+              {
+                "when": {
+                  "attr": "role",
+                  "is": "工程负责人"
+                },
+                "plugins": [
+                  {
+                    "name": "dsh-web-test",
+                    "version": "^1.2"
+                  }
+                ]
+              },
+              {
+                "when": {
+                  "attr": "role",
+                  "is": "设计师"
+                },
+                "plugins": [
+                  {
+                    "name": "dsh-web-test",
+                    "version": "^9.0"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "out": []
+      }
+    },
+    {
+      "id": "C-deps-008",
+      "domain": "deps",
+      "docs": "43-§十-5",
+      "title": "skills 逐元素候选 + level 字符串化候选",
+      "input": {
+        "enabled": {
+          "person": {
+            "id": "P-F",
+            "dept": "departments/前端部",
+            "level": 3,
+            "skills": [
+              "typescript",
+              "vue"
+            ]
+          },
+          "deps": {
+            "schema": "studio-next/dependencies@1",
+            "bindings": [
+              {
+                "when": {
+                  "attr": "skills",
+                  "is": "vue"
+                },
+                "plugins": [
+                  {
+                    "name": "dsh-ui",
+                    "version": "^1.0"
+                  }
+                ]
+              },
+              {
+                "when": {
+                  "attr": "level",
+                  "is": "3"
+                },
+                "plugins": [
+                  {
+                    "name": "dsh-lv",
+                    "version": "1.0.0"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "expected": {
+        "out": [
+          {
+            "name": "dsh-lv",
+            "version": "1.0.0"
+          },
+          {
+            "name": "dsh-ui",
+            "version": "^1.0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "C-deps-009",
+      "domain": "deps",
+      "docs": "43-§十-6",
+      "title": "多绑定命中同一插件=约束并集（^1.2 与 1.2.0 并存）",
+      "input": {
+        "demanded": {
+          "deps": {
+            "schema": "studio-next/dependencies@1",
+            "bindings": [
+              {
+                "when": {
+                  "attr": "role",
+                  "is": "工程负责人"
+                },
+                "plugins": [
+                  {
+                    "name": "dsh-web-test",
+                    "version": "^1.2"
+                  }
+                ]
+              },
+              {
+                "when": {
+                  "attr": "dept",
+                  "is": "工程部"
+                },
+                "plugins": [
+                  {
+                    "name": "dsh-web-test",
+                    "version": "1.2.0"
+                  }
+                ]
+              }
+            ]
+          },
+          "persons": [
+            {
+              "id": "AGENT-1",
+              "dept": "departments/工程部",
+              "level": 2,
+              "role": "工程负责人"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "out": [
+          {
+            "name": "dsh-web-test",
+            "required": [
+              "^1.2",
+              "1.2.0"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "C-deps-010",
+      "domain": "deps",
+      "docs": "43-§十-6",
+      "title": "satisfiesSpec ^1.2 区间表：下界闭、跨 major 拒",
+      "input": {
+        "satisfies": {
+          "pairs": [
+            {
+              "spec": "^1.2",
+              "version": "1.2.0"
+            },
+            {
+              "spec": "^1.2",
+              "version": "1.9.9"
+            },
+            {
+              "spec": "^1.2",
+              "version": "1.1.9"
+            },
+            {
+              "spec": "^1.2",
+              "version": "2.0.0"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "out": [
+          {
+            "spec": "^1.2",
+            "version": "1.2.0",
+            "ok": true
+          },
+          {
+            "spec": "^1.2",
+            "version": "1.9.9",
+            "ok": true
+          },
+          {
+            "spec": "^1.2",
+            "version": "1.1.9",
+            "ok": false
+          },
+          {
+            "spec": "^1.2",
+            "version": "2.0.0",
+            "ok": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "C-deps-011",
+      "domain": "deps",
+      "docs": "43-§十-6",
+      "title": "^0.x 锁 minor、精确等值、缺 patch 归一 .0",
+      "input": {
+        "satisfies": {
+          "pairs": [
+            {
+              "spec": "^0.2",
+              "version": "0.2.5"
+            },
+            {
+              "spec": "^0.2",
+              "version": "0.3.0"
+            },
+            {
+              "spec": "2.0.1",
+              "version": "2.0.1"
+            },
+            {
+              "spec": "2.0.1",
+              "version": "2.0.0"
+            },
+            {
+              "spec": "1.2",
+              "version": "1.2.0"
+            },
+            {
+              "spec": "1.2",
+              "version": "1.2.1"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "out": [
+          {
+            "spec": "^0.2",
+            "version": "0.2.5",
+            "ok": true
+          },
+          {
+            "spec": "^0.2",
+            "version": "0.3.0",
+            "ok": false
+          },
+          {
+            "spec": "2.0.1",
+            "version": "2.0.1",
+            "ok": true
+          },
+          {
+            "spec": "2.0.1",
+            "version": "2.0.0",
+            "ok": false
+          },
+          {
+            "spec": "1.2",
+            "version": "1.2.0",
+            "ok": true
+          },
+          {
+            "spec": "1.2",
+            "version": "1.2.1",
+            "ok": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "C-deps-012",
+      "domain": "deps",
+      "docs": "43-§四",
+      "title": "决策纯面：无已装+公司包源满足约束 → install",
+      "input": {
+        "plan": {
+          "deps": {
+            "schema": "studio-next/dependencies@1",
+            "bindings": [
+              {
+                "when": {
+                  "attr": "role",
+                  "is": "工程负责人"
+                },
+                "plugins": [
+                  {
+                    "name": "dsh-web-test",
+                    "version": "^1.2"
+                  }
+                ]
+              }
+            ]
+          },
+          "persons": [
+            {
+              "id": "AGENT-1",
+              "dept": "departments/工程部",
+              "level": 2,
+              "role": "工程负责人"
+            }
+          ],
+          "installed": {},
+          "sources": {
+            "dsh-web-test": {
+              "origin": "package",
+              "version": "1.2.0"
+            }
+          }
+        }
+      },
+      "expected": {
+        "out": [
+          {
+            "name": "dsh-web-test",
+            "required": [
+              "^1.2"
+            ],
+            "origin": "package",
+            "action": "install",
+            "sourceVersion": "1.2.0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "C-deps-013",
+      "domain": "deps",
+      "docs": "43-§十-6",
+      "title": "决策纯面：双约束并集同被源 1.2.0 满足 → 一次 install（required 两约束）",
+      "input": {
+        "plan": {
+          "deps": {
+            "schema": "studio-next/dependencies@1",
+            "bindings": [
+              {
+                "when": {
+                  "attr": "role",
+                  "is": "工程负责人"
+                },
+                "plugins": [
+                  {
+                    "name": "dsh-web-test",
+                    "version": "^1.2"
+                  }
+                ]
+              },
+              {
+                "when": {
+                  "attr": "dept",
+                  "is": "工程部"
+                },
+                "plugins": [
+                  {
+                    "name": "dsh-web-test",
+                    "version": "1.2.0"
+                  }
+                ]
+              }
+            ]
+          },
+          "persons": [
+            {
+              "id": "AGENT-1",
+              "dept": "departments/工程部",
+              "level": 2,
+              "role": "工程负责人"
+            }
+          ],
+          "installed": {},
+          "sources": {
+            "dsh-web-test": {
+              "origin": "package",
+              "version": "1.2.0"
+            }
+          }
+        }
+      },
+      "expected": {
+        "out": [
+          {
+            "name": "dsh-web-test",
+            "required": [
+              "^1.2",
+              "1.2.0"
+            ],
+            "origin": "package",
+            "action": "install",
+            "sourceVersion": "1.2.0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "C-deps-014",
+      "domain": "deps",
+      "docs": "51-D-2",
+      "title": "决策纯面：源 1.2.0 不满足 ^9.0 → conflict（不装错版本）",
+      "input": {
+        "plan": {
+          "deps": {
+            "schema": "studio-next/dependencies@1",
+            "bindings": [
+              {
+                "when": {
+                  "attr": "role",
+                  "is": "设计师"
+                },
+                "plugins": [
+                  {
+                    "name": "dsh-web-test",
+                    "version": "^9.0"
+                  }
+                ]
+              }
+            ]
+          },
+          "persons": [
+            {
+              "id": "AGENT-2",
+              "dept": "departments/设计部",
+              "level": 2,
+              "role": "设计师"
+            }
+          ],
+          "installed": {},
+          "sources": {
+            "dsh-web-test": {
+              "origin": "package",
+              "version": "1.2.0"
+            }
+          }
+        }
+      },
+      "expected": {
+        "out": [
+          {
+            "name": "dsh-web-test",
+            "required": [
+              "^9.0"
+            ],
+            "origin": "package",
+            "action": "conflict",
+            "sourceVersion": "1.2.0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "C-deps-015",
+      "domain": "deps",
+      "docs": "43-§十-7",
+      "title": "决策纯面：无源 → missing（默认面：如实可见不阻断；51-D-3 failOnMissing 面）",
+      "input": {
+        "plan": {
+          "deps": {
+            "schema": "studio-next/dependencies@1",
+            "bindings": [
+              {
+                "when": {
+                  "attr": "role",
+                  "is": "工程负责人"
+                },
+                "plugins": [
+                  {
+                    "name": "dsh-ghost",
+                    "version": "^1.0"
+                  }
+                ]
+              }
+            ]
+          },
+          "persons": [
+            {
+              "id": "AGENT-1",
+              "dept": "departments/工程部",
+              "level": 2,
+              "role": "工程负责人"
+            }
+          ],
+          "installed": {},
+          "sources": {}
+        }
+      },
+      "expected": {
+        "out": [
+          {
+            "name": "dsh-ghost",
+            "required": [
+              "^1.0"
+            ],
+            "origin": "none",
+            "action": "missing"
+          }
+        ]
+      }
+    },
+    {
+      "id": "C-deps-016",
+      "domain": "deps",
+      "docs": "43-§四",
+      "title": "决策纯面：已装 1.4.2 满足 ^1.2 → satisfied（幂等零动作）",
+      "input": {
+        "plan": {
+          "deps": {
+            "schema": "studio-next/dependencies@1",
+            "bindings": [
+              {
+                "when": {
+                  "attr": "role",
+                  "is": "工程负责人"
+                },
+                "plugins": [
+                  {
+                    "name": "dsh-web-test",
+                    "version": "^1.2"
+                  }
+                ]
+              }
+            ]
+          },
+          "persons": [
+            {
+              "id": "AGENT-1",
+              "dept": "departments/工程部",
+              "level": 2,
+              "role": "工程负责人"
+            }
+          ],
+          "installed": {
+            "dsh-web-test": "1.4.2"
+          },
+          "sources": {
+            "dsh-web-test": {
+              "origin": "package",
+              "version": "1.2.0"
+            }
+          }
+        }
+      },
+      "expected": {
+        "out": [
+          {
+            "name": "dsh-web-test",
+            "required": [
+              "^1.2"
+            ],
+            "origin": "package",
+            "action": "satisfied",
+            "installedVersion": "1.4.2"
+          }
+        ]
+      }
+    },
+    {
+      "id": "C-deps-017",
+      "domain": "deps",
+      "docs": "43-§十-8",
+      "title": "配置指纹三态：deps 变翻/启用面变翻/双不变同指纹（sha256 投影）",
+      "input": {
+        "fingerprint": {
+          "deps": [
+            "schema: studio-next/dependencies@1\n\nbindings:\n  - when:\n      attr: role\n      is: 工程负责人\n    plugins:\n      - name: dsh-web-test\n        version: \"^1.2\"\n  - when:\n      attr: dept\n      is: 工程部\n    plugins:\n      - name: dsh-web-test\n        version: \"1.2.0\"\n  - when:\n      attr: role\n      is: 设计师\n    plugins:\n      - name: dsh-web-test\n        version: \"^9.0\"\n",
+            "schema: studio-next/dependencies@1\n\nbindings:\n  - when:\n      attr: role\n      is: 工程负责人\n    plugins:\n      - name: dsh-web-test\n        version: \"^1.2\"\n  - when:\n      attr: dept\n      is: 工程部\n    plugins:\n      - name: dsh-web-test\n        version: \"1.2.0\"\n  - when:\n      attr: role\n      is: 设计师\n    plugins:\n      - name: dsh-web-test\n        version: \"^9.0\"\n  - when:\n      attr: role\n      is: 审计官\n    plugins:\n      - name: dsh-x\n        version: \"^1.0\"\n"
+          ],
+          "enabled": [
+            {
+              "AGENT-1": [
+                {
+                  "name": "dsh-web-test",
+                  "version": "^1.2"
+                }
+              ]
+            },
+            {
+              "AGENT-1": [
+                {
+                  "name": "dsh-web-test",
+                  "version": "^1.2"
+                },
+                {
+                  "name": "dsh-git-flow",
+                  "version": "2.0.1"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expected": {
+        "out": {
+          "unchanged": true,
+          "depsChangedFlips": true,
+          "enabledChangedFlips": true
+        }
+      }
     }
   ]
 }

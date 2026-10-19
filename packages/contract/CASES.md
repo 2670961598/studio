@@ -47,7 +47,25 @@
 | `meta` | contract 自身（runner 自证） | 机制本身 |
 | `dir` | company 校验器 | 语义（规则命中）；行号定位由 company 单测负责 |
 | `evt` / `rpt` | contract 自身（src/schemas/，M1.2 已落：evt 5 条 + rpt 3 条） | 事件记录/REPORT+summary 格式 |
+| `deps` | company 依赖清单引擎（DEV-26 已落：17 条——解析/绑定求值/版本并集/决策纯面/指纹） | 语义（43-§四+§十5-8 / 51-D）；隔离根安装/registry+log+confirm/热重载 IO 面由 company 单测负责 |
 | `exe` / `plat` / `inv` / `mdl` / `gw` | 各泳道 | 端口冒烟 case |
+
+### deps 域 v1 语义说明（DEV-26，规范 v1.1 已冻结——docs/43-§四/§十5-8）
+
+> 依赖清单引擎（company 的 `depsSubject`）按 docs/43-§四（v1.1 主特性）落契约面。与 `dir`
+> 域同分工：契约 case 断言**语义**，company 单测（dependencies.test.ts）承载 IO 面。
+
+- subject 路由：case 输入按键分派到引擎纯面——`{parse}`→parseDependencies（strictObject
+  未知键/未知 attr/坏 version 形态拒收）、`{enabled}`/`{demanded}`→绑定求值（dept 双候选、
+  skills 逐元素、level 字符串化、多绑定同插件=约束并集）、`{satisfies}`→版本判定表
+  （^caret 区间/^0.x 锁 minor/精确等值/缺 patch 归一）、`{plan}`→安装决策纯面
+  planPluginInstalls（install/replace/satisfied/conflict/missing 五动作，零 IO）、
+  `{fingerprint}`→配置指纹三态（sha256(deps 原文‖启用集投影)，43-§十-8）。
+- 不进契约的面（IO/位置细节，归 company 单测）：隔离插件根落位（pluginRoot 注入无缺省值，
+  绝不写用户 ~/.dsh）、registry.json/install-log.jsonl、confirm 确认位、failOnMissing
+  严格面抛错、51-D-4 公司包插件形态闸（dsh.bundle 声明）——err 通道 subcause 面由单测断言。
+- 冲突语义红线（51-D-2）：源版本不满足约束并集=conflict 如实上报，**不装错版本**——
+  C-deps-014 钉死；缺源双面（51-D-3）：默认 missing 可见不阻断，failOnMissing 抛错归单测。
 
 ### dir 域 v1 语义增补（v0.1-M2.2，拟稿待批）
 
