@@ -10,8 +10,14 @@
  *   CLI：writeStopRequest（tmp+rename 原子写）→ awaitStopResult（轮询至 id 匹配）
  *   daemon：拍边界读请求（hotReload.check() 之后——停机前先把积压 reload 应答掉）→
  *           置停机标 → 主循环退出 → 优雅停收口 → writeStopResult 回执落盘
- *   幂等：请求文件不删、daemon 按 lastSeenId 去重（与 reload 拟稿同口径）；回执按 id
- *   匹配消费——旧回执不误读，重发请求（新 id）再得新回执
+ *   幂等（DEV-41 修复，2026-10-20 daemon-taiga6 一拍自停事故——旧口径「请求文件不删 +
+ *   lastSeenId 内存去重」在 daemon 重启后失忆：残留请求被当新请求消费，新进程起一拍即
+ *   自我停机；应急曾是清 control 目录重启）：
+ *     ① 去重位落 daemon_kv（键 STOP_LAST_SEEN_KV_KEY）——重启读回，与请求 id 比对去重；
+ *     ② 请求消费后原子改名 .consume——live 面清空，新进程见无请求即正常起（消费件留档
+ *       =最近一次已应答请求，单文件覆写有界不堆积）。
+ *   回执文件**保留**：CLI 轮询按 id 匹配 stop.result.json、不读请求文件——②消费不碍
+ *   兼容；旧回执不误读，重发请求（新 id）再得新回执。
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -19,6 +25,18 @@ import { controlDirOf } from './hot-reload.ts'
 
 export const STOP_REQUEST_FILE = 'stop.request.json'
 export const STOP_RESULT_FILE = 'stop.result.json'
+/**
+ * 消费后的请求文件名（DEV-41 ②：live 请求原子改名至此——新进程见无 live 请求即正常起；
+ * 留档=最近一次已应答请求，单文件覆写有界）。CLI 不读请求文件（只轮询回执按 id 匹配），
+ * live 面清空不碍兼容。
+ */
+export const STOP_REQUEST_CONSUMED_FILE = `${STOP_REQUEST_FILE}.consume`
+/**
+ * 停机请求去重位的 daemon_kv 键（DEV-41 ①：lastSeenId 落台账跨重启——serve.ts 消费时先
+ * 落 kv 再改名，重启读回与请求 id 比对；与 engine 的 'activity.cursor' / 'tick.seq' 同表
+ * 同命名法，见 packages/store migrations v4）。
+ */
+export const STOP_LAST_SEEN_KV_KEY = 'stop.lastSeenId'
 
 /** stop 请求（CLI 写；reason=运维口径的停机事由，随回执透传） */
 export interface StopRequest {
@@ -71,6 +89,23 @@ export function writeStopResult(rootDir: string, result: StopResult): void {
   const tmp = `${target}.tmp-${result.id}`
   writeFileSync(tmp, `${JSON.stringify(result, null, 2)}\n`, 'utf8')
   renameSync(tmp, target)
+}
+
+/**
+ * daemon 侧：消费请求（DEV-41 ②，2026-10-20 daemon-taiga6 事故修复）——决定应答停机请求
+ * 时把 live 请求原子改名 .consume（POSIX rename 语义：目标已存在则原子替换——留档恒为
+ * 最近一次已应答请求，有界）。改名后 live 面清空：daemon 重启见无请求即正常起，不再起一
+ * 拍自停。调用序（serve.ts）：**先**落 ①daemon_kv 去重位**再**本函数——改名前崩溃的窗口
+ * 由 kv 读回去重兜底。返回是否成功：失败（并发覆写/fs 异常）不阻断停机——去重已在 kv。
+ */
+export function consumeStopRequest(rootDir: string): boolean {
+  const dir = controlDirOf(rootDir)
+  try {
+    renameSync(path.join(dir, STOP_REQUEST_FILE), path.join(dir, STOP_REQUEST_CONSUMED_FILE))
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** CLI 侧：轮询回执至 id 匹配（超时 undefined——daemon 不在跑或拍太慢；提示见命令面） */

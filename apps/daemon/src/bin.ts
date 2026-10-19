@@ -93,6 +93,8 @@
  *       <rootDir>/control/stop.request.json，协议与 reload 手动通道同款）并等回执——
  *       daemon 在拍边界走自身优雅停（在途 worker 整树杀+台账落盘）。运维不再 kill
  *       `nohup sh -c` 外层壳（kill 壳不杀 node 孙进程——孤儿问题从通道面根除）。
+ *       DEV-41：daemon 消费请求后改名 .consume（去重位落 daemon_kv 跨重启）——残留
+ *       请求不再使重启进程一拍自停；回执文件保留，本命令轮询按 id 匹配不受影响。
  *   （v0 诚实边界：真 dsh / 真 YouTrack / 网关 wkey / 审批流 / localfile 平台均未接线——
  *     逐项清单见 src/serve.ts 与 src/engine.ts 头注）
  *
@@ -216,8 +218,9 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
       <rootDir>/control/stop.request.json，协议与 reload 手动通道同款）并轮询回执——daemon
       在拍边界收到后走自身优雅停（停唤起源→在途 drain→worker 整树杀→台账落盘），回执
       落盘为证。运维不再 kill nohup sh -c 外层壳（kill 壳不杀 node 孙进程——孤儿问题
-      从通道面根除）。超时无回执 exit 1（daemon 未运行/拍太慢/控制面目录不符）；工位根
-      发现序与 reload 同款。
+      从通道面根除）。DEV-41：daemon 消费请求后改名 .consume（去重位落 daemon_kv 跨
+      重启）——残留请求不再使重启进程一拍自停；回执文件保留，轮询按 id 匹配不受影响。
+      超时无回执 exit 1（daemon 未运行/拍太慢/控制面目录不符）；工位根发现序与 reload 同款。
 
 默认值：--dir 缺省 ./<slug>；--name 缺省 <slug>；--port 缺省 8787（panel）/ 8789（overview）/ 8788（external）
 文档：docs/04-公司目录与等级体系.md §二/§七/§九；docs/16-技术实现与里程碑.md §四；docs/02-需求-框架面.md F2-11/F2-12；docs/17-整体技术设计.md §8`
@@ -1173,6 +1176,8 @@ async function cmdReload(argv: string[]): Promise<number> {
  * 杀+台账落盘），回执为证。工位根发现序与 reload 同款：--root > --config（缺省
  * ./daemon.yaml，读其 rootDir）> 缺省 ./var。退出码：0=优雅停完成（回执 stopped=true）；
  * 1=超时无回执（daemon 未运行/拍太慢/控制面目录不符）或回执失败面。
+ * DEV-41（2026-10-20 daemon-taiga6 一拍自停事故）：daemon 侧消费请求后改名 .consume +
+ * 去重位落 daemon_kv——本命令面零改（写请求/轮询回执按 id 匹配不变；回执文件保留）。
  */
 async function cmdStop(argv: string[]): Promise<number> {
   const parsed = parseArgv(argv, new Set(['reason', 'root', 'config', 'timeout']))

@@ -112,7 +112,7 @@ import { CADENCE_SOURCE_MANIFEST, createCadenceSource, createSlaSource, SLA_SOUR
 import { createDefaultAssembler } from './prompt-assembly.ts'
 import type { PromptAssembler } from './prompt-assembly.ts'
 import { nextRunAt, type Scheduler } from './scheduler.ts'
-import { readStopRequest, writeStopResult } from './stop-channel.ts'
+import { consumeStopRequest, readStopRequest, STOP_LAST_SEEN_KV_KEY, writeStopResult } from './stop-channel.ts'
 import type { WorkerKeyDeps } from './worker-key.ts'
 import {
   createFileWatchSource,
@@ -1159,8 +1159,16 @@ export async function runServe(configPath: string): Promise<ServeResult> {
 
   // 未挂公司目录的 daemon：L1 热重载不适用——reload 请求仍回执拒绝（不悬空 CLI 轮询）
   let answeredRequestId: string | null = null
-  // 控制面停机请求的去重位（同 reload 口径；answeredStopId=null=未见请求）
-  let answeredStopId: string | null = null
+  // 控制面停机请求的去重位（DEV-41 ①：落 daemon_kv 跨重启——重启读回，残留请求不当新
+  // 请求消费；旧口径只存内存，daemon 重启即失忆，taiga6 一拍自停事故根因）
+  let stopLastSeenId: string | null = ledger.kvGet(STOP_LAST_SEEN_KV_KEY)
+  // 本进程已应答的停机请求 id（回执面：只对本进程消费的请求落回执——kv 读回的旧 id 不复回）
+  let honoredStopId: string | null = null
+  // 残留请求去重观测（静默去重=观察黑洞）：启动期 live 请求与 kv 去重位命中即落一行
+  const residualStop = readStopRequest(path.resolve(config.rootDir))
+  if (residualStop !== undefined && residualStop.id === stopLastSeenId) {
+    console.log(`[serve] 残留停机请求已去重（id=${residualStop.id}，daemon_kv 读回——DEV-41）：不当新请求消费，正常起拍`)
+  }
 
   console.log(`[serve] studio-next daemon 启动（company=${config.company} platform=${config.platform} db=${path.resolve(config.db)} tickMs=${config.tickMs}${config.jobs ? ` jobs=on pollMs=${config.jobPollMs}` : ''}）`)
   const stackMode =
@@ -1199,14 +1207,24 @@ export async function runServe(configPath: string): Promise<ServeResult> {
     } else {
       answeredRequestId = answerReloadNoCompanyDir(path.resolve(config.rootDir), config.company, answeredRequestId)
     }
-    // —— 控制面停机通道（DEV-9 顺带项，src/stop-channel.ts）：reload 应答在前（停机前
-    //    不悬空积压请求），停机请求在后；按 id 去重（请求文件不删，reload 同款口径） ——
+    // —— 控制面停机通道（DEV-9 顺带项，src/stop-channel.ts；DEV-41 重启失忆修复）：reload
+    //    应答在前（停机前不悬空积压请求），停机请求在后；按 id 去重——去重位跨重启双保险：
+    //    ① 先落 daemon_kv（改名前崩的窗口由重启读回兜底）② 再原子改名 .consume（live 面
+    //    清空，新进程见无请求即正常起）。拍边界纪律不变（docs/17-§2——停机也是拍收口面） ——
     const stopRequest = readStopRequest(path.resolve(config.rootDir))
-    if (stopRequest !== undefined && stopRequest.id !== answeredStopId) {
-      answeredStopId = stopRequest.id
+    if (stopRequest !== undefined && stopRequest.id !== stopLastSeenId) {
+      stopLastSeenId = stopRequest.id
+      honoredStopId = stopRequest.id
+      // ① 去重位先落台账（crash 窗口兜底：②改名前崩——重启后 kv 读回即去重）
+      ledger.kvSet(STOP_LAST_SEEN_KV_KEY, stopRequest.id)
+      // ② 消费请求（原子改名 .consume；失败不阻断停机——①已兜底）
+      const consumed = consumeStopRequest(path.resolve(config.rootDir))
       stopped = true
       stopReason = 'stop-request'
-      console.log(`[serve] 控制面停机请求（id=${stopRequest.id}${stopRequest.reason !== undefined ? ` reason=${stopRequest.reason}` : ''}）——本拍已收口，优雅停开始`)
+      console.log(
+        `[serve] 控制面停机请求（id=${stopRequest.id}${stopRequest.reason !== undefined ? ` reason=${stopRequest.reason}` : ''}）——本拍已收口，优雅停开始` +
+          `${consumed ? '（请求已消费：live 改名 .consume——重启见无请求即正常起）' : '（请求消费失败——daemon_kv 去重位兜底）'}`,
+      )
     }
     // 拍间隔等待（信号打断不硬等满）
     const deadline = Date.now() + config.tickMs
@@ -1219,10 +1237,11 @@ export async function runServe(configPath: string): Promise<ServeResult> {
   await stop()
   console.log('[serve] 已优雅关闭（台账落盘；work_records 在途项接管归后续刀）')
   // 控制面停机回执（src/stop-channel.ts）：优雅停收口**之后**落——CLI 见回执即在途
-  // worker 已整树杀、台账已落盘（孤儿进程面闭环）
-  if (answeredStopId !== null) {
+  // worker 已整树杀、台账已落盘（孤儿进程面闭环）。只回本进程应答的请求（honoredStopId）：
+  // kv 读回的旧 id 属上一进程的应答面，不复回（旧回执仍在盘，按 id 匹配不误读）
+  if (honoredStopId !== null) {
     writeStopResult(path.resolve(config.rootDir), {
-      id: answeredStopId,
+      id: honoredStopId,
       ok: true,
       stopped: true,
       detail: `优雅停收口完成：ticks=${ticks}（停唤起源→在途 drain→worker 整树杀→台账落盘）`,
