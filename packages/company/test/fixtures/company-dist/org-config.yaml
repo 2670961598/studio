@@ -1,0 +1,67 @@
+# Studio Next · 源码示范公司（git-url 分发仓形态，DEV-27 良性夹具（分发仓形态））
+#
+# 契约依据：docs/04-§二 目录契约；docs/43-§二 org-config schema（冻结契约）。
+# 本文件 + departments/ + people 档案 + prompts/ + charter + dependencies.yaml + plugins/
+# = 一家公司可通过 `studio-next company add <git-url>` 传播的完整内容（docs/43-§一）。
+
+schema: org-config/v1
+
+company:
+  name: 源码示范公司
+  slug: src-corp # 概览路由 /<slug>/；升级通道按此认家（错家公司拒升级）
+  mission: 把规范 v1.1 的传播/使用/拓展主线跑成一条可验证的导入链
+  charter_ref: charter.md
+  level: 2
+  level_distribution:
+    2: 1
+  platform: localfile # docs/23-§二：换平台=改配置行；导入流据此走 localfile fields.provision
+
+departments:
+  - name: 工程部
+    path: departments/工程部
+    leader: AGENT-1
+    level: 2
+    parent: null
+    lanes: [core]
+    functions: [交付]
+    relations: []
+
+people:
+  - id: AGENT-1
+    name: 源码工程师
+    login: agent-1
+    level: 2
+    dept: departments/工程部
+    role: 工程负责人 # 依赖清单 role 命中位（docs/43-§四：属性决定插件开关）
+    reports_to: null
+    skills: [typescript]
+    status: active
+    executor: dsh # v1.1 §五：executor 以 dsh 为核心
+    file: departments/工程部/people/AGENT-1.md
+
+jobs:
+  - id: src-daily-report
+    dept: departments/工程部
+    cron: "0 18 * * *"
+    role: 工程负责人
+    level: 2
+    type: report
+    model_tier: low
+    budget_cap: 2
+    output: reports/工程部/
+
+accounts:
+  - login: agent-1
+    level: 2
+    note: 源码示范公司的等级锚点账号
+
+yt:
+  project: SRC
+  starting_number: 1
+  fields: # 平台字段映射（导入流据此 provision——docs/23）
+    state: State
+    dept: 部门
+    level: 等级
+  flows: {}
+
+executors: {}
