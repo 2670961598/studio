@@ -33,6 +33,15 @@
  *                       再长眠不退——测 execa 10 killDescendants 的整树杀（docs/27-§4.3 案 A）
  *   FAKE_GRANDCHILD_IGNORE_TERM =1：孙进程注册吞 SIGTERM 的空处理器（软杀无效，只可硬杀）
  *                       ——测「宽限后 SIGKILL 整树扫尾」的升级链
+ *   FAKE_ECHO_ENV_KEYS =1：stdout 一行回显本进程可见的全部 env **键名**（逗号分隔，不含
+ *                       值——env 探测负样本的断言面：键名集合即子进程可见面全貌；只打名
+ *                       不打值，测试输出永不泄漏宿主 env 值）
+ *
+ * DSH_FAKE_* 别名（docs/43-附录A-1 起）：dsh 适配器 spawn env 收口为封闭允许集
+ * （PATH、HOME、LANG、LC_ 前缀、TZ、TMPDIR、DSH_ 前缀）后，FAKE_ 旋钮不再随宿主 env
+ * 透传到 dsh 位子进程。fake CLI 扮演的是 dsh 本尊，测试旋钮迁入 executor 自有命名空间：
+ * `DSH_FAKE_<KNOB>` 在本文件入口折算回 `FAKE_<KNOB>`（已显式设置的 FAKE_ 不覆盖）。
+ * kimi/claude/codex 适配器仍全量透传 env，继续用原名 FAKE_，互不影响。
  *
  * 注：除 FAKE_SIGTERM_EXIT（本进程）与 FAKE_GRANDCHILD_IGNORE_TERM（孙进程）外不注册任何
  * 信号处理器——SIGTERM 走 Node 默认终止行为。
@@ -40,6 +49,13 @@
 import { spawn } from 'node:child_process'
 import { mkdirSync, readFileSync, writeSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+
+// DSH_FAKE_<KNOB> → FAKE_<KNOB> 折算（见上方头注；只折算尚未显式设置的键）
+for (const [key, value] of Object.entries(process.env)) {
+  if (key.startsWith('DSH_FAKE_') && process.env[key.slice(4)] === undefined) {
+    process.env[key.slice(4)] = value
+  }
+}
 
 const env = process.env
 
@@ -139,6 +155,10 @@ async function main() {
     for (const name of echoEnvNames) {
       writeOut(`fake-cli env: ${name}=${env[name] ?? '<unset>'}\n`)
     }
+  }
+  if (env.FAKE_ECHO_ENV_KEYS === '1') {
+    // 键名全貌回显（只打名不打值——见头注；env 白名单断言的探测面）
+    writeOut(`fake-cli env-keys: ${Object.keys(env).sort().join(',')}\n`)
   }
   if (fixturePath !== '') {
     const text = readFileSync(fixturePath, 'utf8')

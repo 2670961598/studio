@@ -21,6 +21,12 @@
  *     （note=RELOAD_APPLY_FAILED）。apply 内部顺序（serve 侧注入体）：播种/移除调度岗
  *     （幂等可重入）→ 快照持有者替换 → engine.applyCompanyUpdate（纯赋值不抛）——
  *     前置失败时引擎面未动。
+ *   - 信任闸拦截（docs/43-附录A-3 批准指纹——装载校验≠变更批准；spike 验证 docs/44-§二
+ *     条款4）：公司目录有信任锚（.studio-next/）且锚 trust=false 或内容指纹 ≠ 批准指纹 →
+ *     **拒自动应用 + 撤销受信位（fail-closed 回 untrusted 渲染）+ ESCALATE**
+ *     （note=RELOAD_TRUST_DRIFT）——等制作人显式 re-approve 后经手动 reload 应用。锚文件
+ *     被监听排除表隔离（approve/revoke 不触发重装载——批准动作不自扰）。无锚目录
+ *     （init 通道建立）不闸，保持既有自动重装载行为。
  *
  * 事件名选型【拟稿待批，cutover.ts 同款上报式】：'RELOAD' 不在 17-§3 冻结的 25 类事件枚举
  * 内（contract EVENT_NAMES），contract 不可碰（AGENTS.md 纪律 2「契约不随便动」）——重载成功
@@ -56,7 +62,15 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { loadCompanyDirectory, readDirectoryFiles } from '@studio-next/company'
+import {
+  AIWS_DIR,
+  TRUST_DIR,
+  excludeAnchorFiles,
+  loadCompanyDirectory,
+  readDirectoryFiles,
+  readTrustAnchor,
+  revokeTrust,
+} from '@studio-next/company'
 import type { CompanySnapshot, DirectoryIssue, EventRecord } from '@studio-next/contract'
 import type { Ledger } from '@studio-next/store'
 
@@ -86,14 +100,20 @@ export interface StatDiff {
   modified: string[]
 }
 
-/** 与 readDirectoryFiles 同规则走目录（跳过 .git/.DS_Store；目录序确定）——只 stat 不读内容 */
+/**
+ * 与 readDirectoryFiles 同规则走目录（跳过 .git/.DS_Store/.AIWS；目录序确定）——只 stat 不读内容。
+ * 另排除信任锚目录 .studio-next/（TRUST_DIR，docs/43-附录A-3）：信任锚是 daemon 自管控制面
+ * 文件，不是公司资产——approve/revoke 写锚不得触发重装载（否则批准动作自身引发指纹漂移
+ * 告警，自扰环；「显式动作→显式应用」语义也由此保住：re-approve 只动锚、自动面无感）。
+ * .AIWS 排除=员工工作区不属公司配置面（docs/43-§五，AIWS_DIR 注见 init.ts）。
+ */
 export function statDirectory(root: string): StatIndex {
   const out: StatIndex = {}
   const walk = (dir: string, prefix: string): void => {
     const entries = readdirSync(dir, { withFileTypes: true })
     entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
     for (const entry of entries) {
-      if (entry.name === '.git' || entry.name === '.DS_Store') continue
+      if (entry.name === '.git' || entry.name === '.DS_Store' || entry.name === TRUST_DIR || entry.name === AIWS_DIR) continue
       const rel = prefix === '' ? entry.name : `${prefix}/${entry.name}`
       const abs = path.join(dir, entry.name)
       if (entry.isDirectory()) walk(abs, rel)
@@ -300,12 +320,12 @@ export interface HotReloadDeps {
 
 /** 一次 check() 的结论（null=本拍无事；serve 只做日志/观测） */
 export interface HotReloadReport {
-  kind: 'reloaded' | 'invalid' | 'apply-failed' | 'unchanged' | 'company-mismatch'
+  kind: 'reloaded' | 'invalid' | 'apply-failed' | 'unchanged' | 'company-mismatch' | 'trust-drift'
   /** 变更资产清单（+/-/~ 渲染；manual-unchanged/company-mismatch 为空串） */
   changes: string
   /** 新总指纹（reloaded/manual-unchanged 时有） */
   fingerprint?: string
-  /** 本次的台账事件（reloaded=SCHEMA_EVOLVE；invalid/apply-failed=ESCALATE；其余 null） */
+  /** 本次的台账事件（reloaded=SCHEMA_EVOLVE；invalid/apply-failed/trust-drift=ESCALATE；其余 null） */
   event: EventRecord | null
   detail?: string
 }
@@ -342,7 +362,8 @@ export function createHotReload(deps: HotReloadDeps): HotReload {
     const files: Record<string, string> = {}
     const walk = (dir: string, prefix: string): void => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        if (entry.name === '.git' || entry.name === '.DS_Store') continue
+        // 排除表同 statDirectory（.studio-next=锚自指隔离 docs/43-附录A-3；.AIWS=员工工作区）
+        if (entry.name === '.git' || entry.name === '.DS_Store' || entry.name === TRUST_DIR || entry.name === AIWS_DIR) continue
         const rel = prefix === '' ? entry.name : `${prefix}/${entry.name}`
         const abs = path.join(dir, entry.name)
         if (entry.isDirectory()) walk(abs, rel)
@@ -406,8 +427,11 @@ export function createHotReload(deps: HotReloadDeps): HotReload {
   }
 
   /**
-   * 重装载执行（读 → 校验 → 指纹 → 幂等闸 → apply → 落账 → 基线前移）。
-   * 校验红返回 {kind:'invalid'}（已落 ESCALATE）；**内容指纹与基线相同**（mtime 触碰/
+   * 重装载执行（读 → 校验 → 信任闸 → 指纹 → 幂等闸 → apply → 落账 → 基线前移）。
+   * 校验红返回 {kind:'invalid'}（已落 ESCALATE）；信任闸（有锚目录时——docs/43-附录A-3
+   * 批准指纹）红返回 {kind:'trust-drift'}：拒自动应用+撤销受信位+ESCALATE，等显式
+   * re-approve（锚文件被 stat 监听排除，re-approve 本身不触发重装载——「显式动作→显式
+   * 应用」，手动 reload 通道应用新内容）；**内容指纹与基线相同**（mtime 触碰/
    * 坏转好回原态）=无变更：基线 stats 刷新+拒载在册复位、不落事件（手动面回执 unchanged）；
    * 读/apply 抛错由调用方分类。手动触发带 requestId：各结局都回执（auto 段 null 不回执）。
    */
@@ -432,8 +456,36 @@ export function createHotReload(deps: HotReloadDeps): HotReload {
       }
       return { kind: 'invalid', changes: renderStatDiff(diff), event: evt, detail }
     }
+
+    // —— 信任锚闸（docs/43-附录A-3 批准指纹：装载校验≠变更批准）——
+    // 有锚目录才闸（init 通道建立的目录无锚，保持既有行为）；比对面=排除锚文件后的内容
+    // 指纹（approveCompanyDirectory 同口径——排除 .studio-next/ 自指）。锚 trust=false 或
+    // 指纹漂移 → 拒自动应用 + 撤销受信位（fail-closed 回 untrusted）+ ESCALATE，等显式 re-approve。
+    const anchor = readTrustAnchor(deps.companyDir)
+    if (anchor !== null) {
+      const contentFp = fingerprintDirectory(excludeAnchorFiles(files)).overall
+      if (!anchor.trust || anchor.fingerprint !== contentFp) {
+        const reason = !anchor.trust
+          ? '锚 trust=false（import 后未经制作人 approve——变更不可自动应用）'
+          : `内容指纹漂移（批准=${(anchor.fingerprint ?? '').slice(0, 19)}… 实测=${contentFp.slice(0, 19)}…）`
+        // fail-closed 降级：漂移即撤销受信位（回 untrusted 渲染），等显式 re-approve
+        revokeTrust(deps.companyDir, { by: 'daemon/hot-reload', at: new Date(deps.clock()).toISOString(), note: `RELOAD_TRUST_DRIFT（trigger=${trigger}）` })
+        const detail = `公司目录${reason}——拒自动应用+受信位已撤销，等待显式 re-approve（docs/43-附录A-3；slug=${anchor.slug}）`
+        const evt = appendEvent(makeEvent('ESCALATE', `RELOAD_TRUST_DRIFT：${detail}`, 1, deps.deptFallback))
+        stats.invalids += 1
+        lastRejectedStats = scanStats(deps.companyDir)
+        pending = null
+        deps.log(`[hot-reload] 信任闸拦下（保持旧态+trust 已撤销，trigger=${trigger}）：${reason}——ESCALATE ${evt.id} 已落账`)
+        if (requestId !== null) {
+          writeReloadResult(deps.rootDir, { id: requestId, ok: false, applied: false, reason: 'trust-drift', detail })
+        }
+        return { kind: 'trust-drift', changes: renderStatDiff(diff), event: evt, detail }
+      }
+    }
+
     const snapshot = mounted.snapshot
-    const next = fingerprintDirectory(files)
+    // 指纹面与基线同集（排除锚文件——基线 walk 已排除 .studio-next/，此处同口径，幂等闸才可比）
+    const next = fingerprintDirectory(excludeAnchorFiles(files))
     if (next.overall === baselineFingerprint.overall) {
       // 幂等闸：内容未变（stat 变而指纹同）——基线 stats 归位、拒载在册复位，零事件零应用
       baselineStats = scanStats(deps.companyDir)
@@ -453,7 +505,8 @@ export function createHotReload(deps: HotReloadDeps): HotReload {
     }
     const applyReport = deps.apply(snapshot)
     const oldFp = baselineFingerprint.overall
-    const bytes = Object.values(files).reduce((s, t) => s + Buffer.byteLength(t, 'utf8'), 0)
+    // bytes 同指纹口径（排除锚文件——账目 size 与指纹面同集，可对账）
+    const bytes = Object.values(excludeAnchorFiles(files)).reduce((s, t) => s + Buffer.byteLength(t, 'utf8'), 0)
     const evt = appendEvent(
       makeEvent(
         'SCHEMA_EVOLVE',

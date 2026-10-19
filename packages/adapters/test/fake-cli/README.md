@@ -31,6 +31,8 @@ FAKE_FIXTURE=../fixtures/dsh/turn-completed.ndjson node fake-cli.mjs
 | `FAKE_WIRE_FIXTURE` | wire 内容来源（golden fixture 全文，如 `../fixtures/kimi/stdout-basic.wire.jsonl`） | 空文件 |
 | `FAKE_GRANDCHILD_PID_FILE` | 设置后：spawn 一个长眠孙进程（`node -e` 普通派生，继承本进程进程组）；孙先把自己的 pid 写入该文件（就绪信号）再长眠——测 execa 10 `killDescendants` 整树杀（docs/27-§4.3 案 A） | 不派生 |
 | `FAKE_GRANDCHILD_IGNORE_TERM` | `1` = 孙进程注册吞 SIGTERM 的空处理器（软杀无效只可硬杀）——测「宽限后 SIGKILL 整树扫尾」升级链；须配 `FAKE_GRANDCHILD_PID_FILE` | 孙默认可被 SIGTERM 杀 |
+| `FAKE_ECHO_ENV_KEYS` | `1` = stdout 一行回显本进程可见的全部 env **键名**（`fake-cli env-keys: A,B,…`，逗号分隔排序，不含值）——env 白名单负样本的探测断言面（键名集合=子进程可见面全貌；只打名不打值） | 不回显 |
+| `DSH_FAKE_<KNOB>` | 任一 `FAKE_<KNOB>` 的 DSH 命名空间别名（如 `DSH_FAKE_FIXTURE`）——入口处折算回 `FAKE_<KNOB>`（已显式设置的 `FAKE_` 不覆盖）。dsh 适配器 spawn env 已收封闭允许集（docs/43-附录A-1），宿主 `FAKE_*` 旋钮到不了 dsh 位子进程，测试旋钮走 executor 自有的 `DSH_*` 通道 | 不折算 |
 
 ## 场景示例
 

@@ -40,6 +40,33 @@ import { ORG_CONFIG_SCHEMA_VERSION, lineOfPath, multifileRules, zodIssuesToDirec
 const ORG_CONFIG_FILE = 'org-config.yaml'
 
 /**
+ * slug 语法闸（docs/43-附录A-4 语法域：单一校验平面）：小写字母/数字/连字符，非空、
+ * 两端不断字——init 通道自此导入，org-config/import/manifest 各通道共一张表
+ * （panel 侧 URL 路由段闸同表收口：external/overview 导入本导出）。
+ */
+export const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+/**
+ * 产出落点相对路径闸（docs/43-附录A-4 语法域：标识/路径/目标域字段收语法域；spike 验证
+ * 记录 docs/44-§二 条款5）：
+ *   - 禁绝对路径（POSIX `/` 开头 / Windows 盘符）
+ *   - 禁 `..` 段（目录逃逸——docs/42-剧本6 output 自由串的解）
+ *   - 分隔符统一 POSIX（禁反斜杠）；内部空段非法（尾段空=目录标记，允许）
+ */
+export function isSafeRelativeOutputPath(p: string): boolean {
+  if (p === '' || p === '.') return false
+  if (p.startsWith('/') || p.includes('\\')) return false
+  if (/^[A-Za-z]:/.test(p)) return false
+  const segments = p.split('/')
+  if (segments.slice(0, -1).includes('')) return false
+  if (segments.includes('..')) return false
+  return true
+}
+
+const RELATIVE_OUTPUT_MESSAGE =
+  '产出落点须为相对公司目录根的 POSIX 路径（禁绝对路径、禁 .. 逃逸段、禁反斜杠——docs/43-附录A-4 语法域）'
+
+/**
  * cron 形状闸：非空且 trim 后至多 6 个空白分隔段（5 段标准 cron / croner 6 段含秒变体）。
  * 与 store JobRecord.cronShapeOk（packages/store/src/records.ts）同规则——段内语法解析
  * 归 daemon 侧 croner，此处与 store 同为形状挡板【M4-③ 拟稿待批：两处同规实现，
@@ -137,10 +164,10 @@ const OrgJobSchema = z
     model_tier: z.enum(['high', 'mid', 'low']).optional(),
     /** → budget_cap={usd:n}（可选裸数 USD/次——M4-⑦；缺省=不设帽） */
     budget_cap: z.number().min(0).optional(),
-    /** → payload.output（可选——M4-④；产出落点，报表按 04-§三约定命名） */
-    output: z.string().min(1).optional(),
-    /** → payload.outputs（可选 string[]——M5-④；产出物清单=报表模板名） */
-    outputs: z.array(z.string().min(1)).optional(),
+    /** → payload.output（可选——M4-④；产出落点，报表按 04-§三约定命名；语法域闸附录A-4） */
+    output: z.string().min(1).refine(isSafeRelativeOutputPath, { message: RELATIVE_OUTPUT_MESSAGE }).optional(),
+    /** → payload.outputs（可选 string[]——M5-④；产出物清单=报表模板名；语法域闸附录A-4） */
+    outputs: z.array(z.string().min(1).refine(isSafeRelativeOutputPath, { message: RELATIVE_OUTPUT_MESSAGE })).optional(),
     /** → payload.sla（可选——M5-⑤；时长形态闸，ms 变换在装载） */
     sla: z
       .strictObject({
@@ -168,7 +195,11 @@ const OrgConfigSchema = z.strictObject({
   schema: z.literal(ORG_CONFIG_SCHEMA_VERSION),
   company: z.strictObject({
     name: z.string().min(1),
-    slug: z.string().min(1),
+    // slug 语法域（docs/43-附录A-4）：与 init 通道同规——单一校验平面（SLUG_RE 单表，
+    // init.ts 导入共表）；URL 路由段安全（panel external/overview 同表收口）
+    slug: z.string().min(1).refine((s) => SLUG_RE.test(s), {
+      message: 'slug 须形如 my-corp（小写字母/数字/连字符，两端不断字——与 init 通道同规，docs/43-附录A-4）',
+    }),
     mission: z.string().optional(),
     charter_ref: z.string().min(1),
     level: z.number().int().min(2).max(9),
