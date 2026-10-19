@@ -14,13 +14,24 @@
  *   budgetTicketCapUsd / budgetPersonCapUsd（可选预算帽：票级恒生效；岗级仅态 A 生效）
  *   gateway: true|false（网关写收口开关，缺省开——17-§7；生产不得关）
  *   gatewaySecret: <网关 HMAC 密钥>（>=32B；缺省开发值——**生产必配**，见 DEV_GATEWAY_SECRET 警告）
+ *   platformDir: <LocalFile 平台根>（可选；platform: localfile 时缺省 <rootDir>/platform）
+ *   agentYaml: <agent.yaml 路径>（可选；给定时按 docs/17-§4 装载真 executor 注册表——
+ *     loadAgentConfig+wireRegistry+builtinResolver；缺省 fake adapter（demo））
+ *   acceptance: <冻结验收命令>（可选；给定时=真单模式——该命令是任务书 L4 / Blind 读面 /
+ *     真验收闸门（createAcceptanceGateRunner 真执行）三消费面的**单一事实源**；缺省
+ *     demo 占位常量+占位闸门（exit0 模拟）。多条命令写在一行内用 && / ; 连接——
+ *     扁平 YAML 子集不收列表，多行拆分归真 YAML 装载后续刀）
  *
- * v0 边界（诚实标注——v0.5 真单前还差什么）：
- *   - platform: localfile 未接线（@studio-next/localplatform 在 platform 泳道，未挂 daemon
- *     依赖——接入点=wirePlatform 的 localfile 分支）；v0 只支持 fake（demo 模式）。
+ * v0 边界（诚实标注——v0.5 真单刀后仍差什么）：
+ *   - platform: localfile **已接线**（@studio-next/localplatform，platformDir 可配）；
+ *     YouTrack 接线归 platform 泳道后续单。
  *   - 配置解析为零依赖手写扁平 YAML 子集（注释/#、key: value、引号剥壳、数字/布尔推断）——
  *     真 YAML（yaml@2 带行号 AST）装载归 daemon 依赖登记后的后续刀（16-§二 选型纪律）。
- *   - executor 只注册 fake adapter（demo）；真 dsh 注册走 agent.yaml + agentconfig.wireRegistry。
+ *   - executor 注册双形态（v0.5 真单刀）：agentYaml 给定时=真 executor（agent.yaml →
+ *     loadAgentConfig → wireRegistry（能力漂移/未知名 CONFIG_INVALID 明报）→ builtinResolver）；
+ *     缺省=fake adapter（demo，行为不变）。dsh 真跑的外部依赖（CLI 在 PATH、凭据 env、
+ *     profile patch）不在 daemon 面——凭据经进程 env 透传（TaskBrief.credentials 通道 +
+ *     launch `...process.env`），凭据值永不入配置/日志/台账（红名单）。
  *   - 网关（17-§7 写入全收口）：**平台写路径已过闸**（src/gated-platform.ts——控制面 control key、
  *     署名注入、fail-closed；缺省开，daemon.yaml `gatewaySecret:` 配密钥、缺省开发值生产必换）。
  *     worker 级按单 wkey 已接（src/worker-key.ts：dispatch 签发+TaskBrief.credentials
@@ -47,10 +58,11 @@
  *     如实报告（日志+ESCALATE 事件）**不阻断启动**；空库首启跳过（零检查如实）。真单刀接
  *     阻断模式+资产面扩展+真生产改动路径拦截（头注冻结边界）。
  */
-import { createRegistry } from '@studio-next/adapters'
+import { createRegistry, loadAgentConfig, wireRegistry, builtinResolver } from '@studio-next/adapters'
 import { createModelCatalog, fingerprint, parseModelsYaml } from '@studio-next/core'
 import { createGateway, CONTROL_TICKET } from '@studio-next/gateway'
 import type { SignatureContext } from '@studio-next/gateway'
+import { createLocalPlatform } from '@studio-next/localplatform'
 import { openLedger, type Ledger } from '@studio-next/store'
 import type {
   CompanySnapshot,
@@ -73,7 +85,7 @@ import {
 import { runEvolveStartupSelfCheck, type EvolveSelfCheckReport, type FrozenAsset } from './evolve-guard.ts'
 import { createFakeAdapter, createFakePlatform } from './fakes.ts'
 import { createGatedPlatform } from './gated-platform.ts'
-import { createDefaultGateRunner } from './gate.ts'
+import { createDefaultGateRunner, createAcceptanceGateRunner } from './gate.ts'
 import { makeUlid } from './id.ts'
 import { createDefaultAssembler } from './prompt-assembly.ts'
 import { nextRunAt, type Scheduler } from './scheduler.ts'
@@ -155,6 +167,19 @@ export interface ServeConfig {
    * 密钥只进 HMAC，永不入日志/错误消息/台账（gateway 纪律）。
    */
   gatewaySecret?: string
+  /** LocalFile 平台根（platform: localfile 时生效；缺省 <rootDir>/platform） */
+  platformDir?: string
+  /**
+   * agent.yaml 路径（可选，docs/17-§4 executor 注册面）：给定时装载真 executor 注册表
+   * （loadAgentConfig→wireRegistry→builtinResolver）；缺省 fake adapter（demo 不变）。
+   */
+  agentYaml?: string
+  /**
+   * 冻结验收命令（可选，v0.5 真单面）：给定时=真单模式——单一命令串（多条用 && / ; 连接）
+   * 拆为单元素数组，作为任务书 L4 acceptance / Blind 读面 / 真验收闸门三消费面的单一事实源；
+   * 缺省 demo 占位常量 + 占位闸门（exit0 模拟）。
+   */
+  acceptance?: string
 }
 
 export const DEFAULT_SERVE_CONFIG: ServeConfig = {
@@ -305,6 +330,15 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'gatewaySecret':
         cfg.gatewaySecret = str(value, key)
         break
+      case 'platformDir':
+        cfg.platformDir = str(value, key)
+        break
+      case 'agentYaml':
+        cfg.agentYaml = str(value, key)
+        break
+      case 'acceptance':
+        cfg.acceptance = str(value, key)
+        break
       default:
         throw new Error(`daemon.yaml：未知配置键 ${key}（v0 最小面，见 serve.ts 头注）`)
     }
@@ -354,13 +388,22 @@ export const DEMO_SNAPSHOT: CompanySnapshot = {
   ],
 }
 
-/** 平台接线（localplatform 接入点：platform 泳道合龙后在此分支挂 createLocalPlatform） */
+/** runServe 启动日志的闸门形态（buildServeRuntime 同判据：acceptance 配置给定=真单模式） */
+function realGateMode(config: ServeConfig): boolean {
+  return config.acceptance !== undefined
+}
+
+/**
+ * 平台接线：localfile=@studio-next/localplatform（docs/23 LocalFile 协作平台——真单首跑
+ * 用本地文件平台，不依赖 Taiga/YouTrack 写面）；fake=demo 内存平台。
+ * LocalFile 根=platformDir（缺省 <rootDir>/platform）。**provision（初始态=流表首态）不在此
+ * 做**：字段/状态 provision 是公司装载面的一次性运营动作（platform.fields.provision），
+ * daemon 不代写——建单初始态定格在 created 事件（packages/localplatform/issues.ts 头注）。
+ */
 function wirePlatform(config: ServeConfig): FlowPlatform {
   if (config.platform === 'localfile') {
-    throw new Error(
-      'platform: localfile 未接线——@studio-next/localplatform 在 platform 泳道（未挂 daemon 依赖）。' +
-        '接入点=serve.ts wirePlatform（挂依赖后改挂 createLocalPlatform(rootDir)）；v0 用 platform: fake（demo 模式）',
-    )
+    const root = path.resolve(config.platformDir ?? path.join(config.rootDir, 'platform'))
+    return createLocalPlatform(root)
   }
   return createFakePlatform()
 }
@@ -542,8 +585,22 @@ export function buildServeRuntime(
   const log = opts?.log ?? ((line: string): void => console.log(line))
   const clock = opts?.clock ?? ((): number => Date.now())
 
+  // —— executor 注册双形态（v0.5 真单刀）：agentYaml=真注册表；缺省=fake（demo 不变）——
   const registry = createRegistry()
-  registry.register(createFakeAdapter(), { default: true })
+  if (config.agentYaml !== undefined) {
+    const agentText = readFileSync(path.resolve(config.agentYaml), 'utf8')
+    wireRegistry(registry, loadAgentConfig(agentText), builtinResolver)
+    log(
+      `[serve] executor 注册（agent.yaml=${config.agentYaml}）：${registry.list().map((e) => `${e.name}${e.default ? '(default)' : ''}`).join('、')}`,
+    )
+  } else {
+    registry.register(createFakeAdapter(), { default: true })
+  }
+
+  // —— 冻结验收命令单一事实源（v0.5 真单刀）：acceptance 配置给定=真单模式（装配器 L4 /
+  //    Blind 读面 / 真验收闸门三消费面同源）；缺省=demo 占位常量——不双源漂移 ——
+  const acceptance: string[] = config.acceptance !== undefined ? [config.acceptance] : ACCEPTANCE
+  const realGate = config.acceptance !== undefined
 
   // 价目表装载（可选，17-§4）：daemon.yaml models: 段 → parseModelsYaml → catalog 注入引擎
   // （态 A）；缺省不装载=态 B 降级——**不拷贝 models.example.yaml**（示例价入账=伪依据）。
@@ -571,9 +628,10 @@ export function buildServeRuntime(
     laneTtlMs: config.laneTtlMs,
     breakerThreshold: config.breakerThreshold,
     autoApprove: config.autoApprove,
-    // 读面分级（17-§7）：Blind 档冻结验收命令来源——与装配器 acceptance **同一常量**
-    //（单一事实源，不双源漂移）；遇 Blind 派发而缺失 → createView fail-closed 明报
-    readBlindAcceptance: ACCEPTANCE,
+    // 读面分级（17-§7）：Blind 档冻结验收命令来源——与装配器 acceptance **同一事实源**
+    //（单一事实源，不双源漂移；真单模式=acceptance 配置）；遇 Blind 派发而缺失 →
+    // createView fail-closed 明报
+    readBlindAcceptance: acceptance,
     ...(config.budgetTicketCapUsd !== undefined ? { budgetTicketCapUsd: config.budgetTicketCapUsd } : {}),
     ...(config.budgetPersonCapUsd !== undefined ? { budgetPersonCapUsd: config.budgetPersonCapUsd } : {}),
   }
@@ -589,10 +647,14 @@ export function buildServeRuntime(
       fwkVersion: 'v0.5-demo',
       frameworkPrompts: '你是 Studio Next demo worker：按任务书目标产出，落 REPORT 与 summary，验收口径即闸门。',
       snapshot,
-      acceptance: ACCEPTANCE,
+      acceptance,
       docRefs: ['docs/17-§2（主循环七相位）', 'docs/17-§6（收割四要件）'],
     }),
-    gateRunner: createDefaultGateRunner(),
+    // 闸门双形态（v0.5 真单刀）：真单模式=真验收闸门（逐条真执行冻结验收命令，
+    // workspace cwd、超时杀进程组）；demo=占位闸门（exit0 模拟）——行为与既有测试面一致
+    gateRunner: realGate
+      ? createAcceptanceGateRunner(acceptance)
+      : createDefaultGateRunner(),
     clock,
     config: engineConfig,
     people: snapshot.people,
@@ -727,7 +789,13 @@ export async function runServe(configPath: string): Promise<ServeResult> {
   const { engine, sources, stop } = buildServeRuntime(config, ledger, snapshot)
 
   console.log(`[serve] studio-next daemon 启动（company=${config.company} platform=${config.platform} db=${path.resolve(config.db)} tickMs=${config.tickMs}${config.jobs ? ` jobs=on pollMs=${config.jobPollMs}` : ''}）`)
-  console.log('[serve] v0 demo 栈：fake platform + fake executor + 默认占位闸门（诚实边界见 src/serve.ts 头注）')
+  const stackMode =
+    config.platform === 'localfile'
+      ? `LocalFile 平台（${path.resolve(config.platformDir ?? path.join(config.rootDir, 'platform'))}）`
+      : 'fake 平台（demo）'
+  const execMode = config.agentYaml !== undefined ? `真 executor（agent.yaml=${config.agentYaml}）` : 'fake executor（demo）'
+  const gateMode = realGateMode(config) ? '真验收闸门（冻结验收命令真执行）' : '占位闸门（exit0 模拟）'
+  console.log(`[serve] 栈形态：${stackMode} + ${execMode} + ${gateMode}（边界见 src/serve.ts 头注）`)
   // 唤起源统一启动（22-§一）：各源 start(emit)——emit 统一进引擎 ingest 队列，
   // 下一拍 state-diff 前消费；单源启动异常由注册表隔离（捕获+计数+继续，src/sources.ts）
   sources.startAll((intent) => {
