@@ -9,6 +9,9 @@
  *
  * id 分配 v0：全量读末取 max+1（单 daemon 写 + 演示规模假设）；
  * 升级路径：实例内计数器或 meta/seq 落盘（接口不变，游标格式自解释）。
+ *
+ * kind 词表（v1.6 冻结，docs/25-§3.2）：本实现产 created/commented/transitioned/
+ * field-set（全在 PLATFORM_ACTIVITY_KINDS 冻结集内）。
  */
 import type { ActivityPage, PlatformActivity, TicketId } from '@studio-next/contract'
 import { LocalPlatformError } from './errors.ts'

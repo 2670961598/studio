@@ -17,12 +17,13 @@ import type {
   IssueRecord,
   KbHit,
   LinkType,
+  PlatformRole,
   SignedBody,
   TicketId,
 } from '@studio-next/contract'
 import { DEFAULT_PAGE_SIZE, activitySince } from './activity.ts'
 import { addComment, listComments } from './comments.ts'
-import { installGuards, uninstallGuards } from './guards.ts'
+import { installGuards, readGuardRoles, uninstallGuards } from './guards.ts'
 import { fieldSchema, provisionFields } from './fields.ts'
 import { ensureDir } from './fsutil.ts'
 import { createIssue, getIssue, listIssues, setIssueField, transitionIssue } from './issues.ts'
@@ -111,6 +112,9 @@ export function createLocalPlatform(root: string, opts?: LocalPlatformOptions): 
       },
       async uninstall(company: CompanySlug): Promise<void> {
         uninstallGuards(root, company)
+      },
+      async read(company: CompanySlug): Promise<PlatformRole[]> {
+        return readGuardRoles(root, company)
       },
     },
   }

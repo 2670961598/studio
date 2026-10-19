@@ -1,5 +1,5 @@
 /**
- * 面件测试：评论 add/list · links link/children · kb upsert/get/search · fields schema/provision · guards install/uninstall
+ * 面件测试：评论 add/list · links link/children · kb upsert/get/search · fields schema/provision · guards install/uninstall/read
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -199,5 +199,33 @@ describe('guards', () => {
       'bad-guard-rules',
     )
     await expectLocalReject(() => p.guards.install('', []), 'CONFIG_INVALID', 'bad-company-slug')
+  })
+
+  it('read 读位（v1.6）：已装规则的角色投影——allowRoles 去重主档、permissions=from→to 串', async () => {
+    const p = createLocalPlatform(root)
+    const read = p.guards.read
+    if (read === undefined) throw new Error('localplatform guards.read 应已实现（v1.6 修订刀）')
+    // 未安装 → 空清单（幂等口径同 uninstall）
+    expect(await read('acme')).toEqual([])
+    await p.guards.install('acme', [
+      { from: '新单', to: '已派发', allowRoles: ['worker'] },
+      { from: '待批', to: '已派发', allowRoles: ['worker', 'lead'] },
+      { from: '待批', to: '已归档' }, // 无 allowRoles（全员放行）不产生角色条目
+    ])
+    expect(await read('acme')).toEqual([
+      { slug: 'worker', name: 'worker', permissions: ['新单→已派发', '待批→已派发'] },
+      { slug: 'lead', name: 'lead', permissions: ['待批→已派发'] },
+    ])
+    // 空面：未装公司 / 卸载后
+    expect(await read('ghost')).toEqual([])
+    await p.guards.uninstall('acme')
+    expect(await read('acme')).toEqual([])
+  })
+
+  it('read 错误面：空 slug 拒收（与 install/uninstall 同口径）', async () => {
+    const p = createLocalPlatform(root)
+    const read = p.guards.read
+    if (read === undefined) throw new Error('localplatform guards.read 应已实现（v1.6 修订刀）')
+    await expectLocalReject(() => read(''), 'CONFIG_INVALID', 'bad-company-slug')
   })
 })

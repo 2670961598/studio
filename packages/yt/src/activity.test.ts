@@ -10,6 +10,7 @@
  * 依据：docs/25-§3.2 游标语义 + docs/03 N10 + docs/22-§三.2 意图幂等（重放去重哲学）
  */
 import { describe, expect, it } from 'vitest'
+import { isPlatformActivityKind } from '@studio-next/contract'
 import { FakeYouTrack, makePlatform, expectYtReject } from './testutil.ts'
 
 const ids = (items: { id: string }[]): string[] => items.map((x) => x.id)
@@ -275,14 +276,16 @@ describe('请求契约与公司作用域', () => {
     expect(ids(all.items)).toEqual(['168-1', '168-2', '168-3', '168-4', '168-5', '168-6', '168-7', '168-8'])
   })
 
-  it('未知类别原样透传（kind 词表未冻结——契约疑点见 index 头注）', async () => {
+  it('未知类别不再透传：归 unknown 兜底（v1.6 kind 词表冻结，docs/25-§3.2 修订刀第 3 条）', async () => {
     const p = makePlatform(new FakeYouTrack(), { project: 'STUDIO' })
     const page = await p.activity.since(null)
     const article = page.items.find((x) => x.id === '168-4')
-    expect(article).toMatchObject({ kind: 'ArticlesCategory' })
+    expect(article).toMatchObject({ kind: 'unknown' })
     expect(article?.issue).toBeUndefined()
     const links = page.items.find((x) => x.id === '168-5')
-    expect(links?.kind).toBe('IssueLinksCategory')
+    expect(links?.kind).toBe('unknown')
+    // 全流词表合规：所有 kind ∈ PLATFORM_ACTIVITY_KINDS 冻结集
+    expect(page.items.every((x) => isPlatformActivityKind(x.kind))).toBe(true)
   })
 
   it('ts 由平台时间戳派生为 ISO-8601', async () => {

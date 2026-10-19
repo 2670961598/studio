@@ -32,12 +32,13 @@
  * 返回的是**最旧 pageSize 条**（升序起头，靠 nextCursor 翻到最新），**不是最新一批**；
  * 「只要最新」的调用方应持最新已知活动 id 走增量（since(边界)），别拿 null 换页。
  *
- * kind 词表：已知类别归一成与 localplatform 对齐的动词（created/commented/
- * transitioned/field-set），未知类别原样透传类别 id（契约疑点：kind 词表未冻结，
- * 见 index 头注）。
+ * kind 词表（v1.6 冻结，docs/25-§3.2 修订刀第 3 条）：已知类别归一成与 localplatform
+ * 对齐的动词（created/commented/transitioned/field-set）；**未知类别不再原样透传**
+ * （透传通道已随词表冻结废除）——一律归入 unknown 兜底档（冻结词表成员），
+ * 契约侧 isPlatformActivityKind 拒收词表外值。
  * 公司作用域：project 绑定时只保留 `项目短名-` 前缀的单据活动与非单据活动。
- * actor 语义：YouTrack author.login=平台账号（N9 账号=等级锚点），**不是工号**
- * ——与 localplatform（actor=工号）不一致，契约疑点已记录不改 contract。
+ * actor 语义（v1.6 选A，docs/25-§3.2）：YouTrack author.login=平台账号（平台侧可归因
+ * 主体），**不是工号**——工号翻译归框架侧（公司目录账号映射表，docs/04-§五）。
  */
 import { z } from 'zod'
 import type { ActivityPage, PlatformActivity } from '@studio-next/contract'
@@ -65,7 +66,7 @@ const activityJsonSchema = z.looseObject({
 })
 type ActivityJson = z.infer<typeof activityJsonSchema>
 
-/** 已知类别 → 归一动词（与 localplatform 活动词表对齐）；未知原样透传 */
+/** 已知类别 → 归一动词（与 localplatform 活动词表对齐）；未知归 unknown（v1.6 词表冻结） */
 const KIND_BY_CATEGORY: Readonly<Record<string, string>> = {
   IssueCreatedCategory: 'created',
   IssueCommentedCategory: 'commented',
@@ -127,11 +128,12 @@ function toPlatformActivity(json: ActivityJson, project: string | undefined): Pl
   if (project !== undefined && project !== '' && idReadable !== undefined && !idReadable.startsWith(`${project}-`)) {
     return null // 公司作用域：别家项目的单据活动滤掉
   }
-  const kind = json.category?.id ?? 'unknown'
+  // 已知类别归一动词；未知/缺失类别 → unknown（v1.6 冻结词表兜底档，不透传）
+  const kind = KIND_BY_CATEGORY[json.category?.id ?? ''] ?? 'unknown'
   const act: PlatformActivity = {
     id: json.id,
     ts: new Date(json.timestamp).toISOString(),
-    kind: KIND_BY_CATEGORY[kind] ?? kind,
+    kind,
   }
   if (idReadable !== undefined) act.issue = idReadable
   if (json.author?.login !== undefined) act.actor = json.author.login

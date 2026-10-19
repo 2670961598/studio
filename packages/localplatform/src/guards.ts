@@ -7,8 +7,15 @@
  * 在 transition() 里按 installed 规则做表校验（接口不变）。
  *
  * uninstall 对未知公司幂等（删不存在的键 = 无操作）。
+ *
+ * read 读位（v1.6，docs/25-§3.2 修订刀第 1 条）：LocalFile **无平台角色真源**——
+ * read() = 已装 guard 规则的**角色投影**（契约靶子语义，如实投影不造）：
+ *   - allowRoles 去重为主档（slug=name=角色名，首见序）
+ *   - permissions = 该角色放行的「from→to」串（LocalFile 自有编码，非平台词表）
+ *   - 无 allowRoles 的规则（全员放行）不产生角色条目
+ *   - 未安装/已卸载公司 → 空清单（幂等口径同 uninstall）
  */
-import type { CompanySlug, GuardRule } from '@studio-next/contract'
+import type { CompanySlug, GuardRule, PlatformRole } from '@studio-next/contract'
 import { LocalPlatformError } from './errors.ts'
 import { isPlainObject, readJson, writeJson } from './fsutil.ts'
 import { guardsPath } from './layout.ts'
@@ -46,4 +53,19 @@ export function uninstallGuards(root: string, company: CompanySlug): void {
   if (!(company in all)) return // 幂等
   delete all[company]
   writeJson(guardsPath(root), all)
+}
+
+/** 读位（v1.6）：已装 guard 规则的角色投影（见文件头注）；未装/已卸载 → 空清单 */
+export function readGuardRoles(root: string, company: CompanySlug): PlatformRole[] {
+  requireCompanySlug(company)
+  const rules = loadGuardFile(root)[company] ?? []
+  const byRole = new Map<string, string[]>()
+  for (const rule of rules) {
+    for (const role of rule.allowRoles ?? []) {
+      const perms = byRole.get(role)
+      if (perms === undefined) byRole.set(role, [`${rule.from}→${rule.to}`])
+      else perms.push(`${rule.from}→${rule.to}`)
+    }
+  }
+  return [...byRole.entries()].map(([slug, permissions]) => ({ slug, name: slug, permissions }))
 }

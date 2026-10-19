@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import { rmSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { FlowPlatform } from '@studio-next/contract'
+import { isPlatformActivityKind } from '@studio-next/contract'
 import { createLocalPlatform } from './index.ts'
 import { expectLocalReject, fixedClock, tmpRoot } from './testutil.ts'
 
@@ -120,6 +121,17 @@ describe('游标语义：连续三轮 since()', () => {
     const first = await p.activity.since(null)
     expect(ids(first.items)).toEqual(['a-000001', 'a-000002'])
     expect(first.nextCursor).toBe('a-000002')
+  })
+
+  it('kind 词表合规（v1.6 冻结）：产出活动全在 PLATFORM_ACTIVITY_KINDS 集内', async () => {
+    const p = createLocalPlatform(root)
+    const a = await p.issues.create({ title: '甲' }) // created
+    await p.issues.transition(a.id, '已派发') // transitioned
+    await p.issues.setField(a.id, 'lane', 'core') // field-set
+    await p.comments.add(a.id, { body: 'x', signature: '[s]', author: 'AGENT-1' }) // commented
+    const page = await p.activity.since(null)
+    expect(page.items.map((x) => x.kind)).toEqual(['created', 'transitioned', 'field-set', 'commented'])
+    expect(page.items.every((x) => isPlatformActivityKind(x.kind))).toBe(true)
   })
 })
 

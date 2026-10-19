@@ -22,6 +22,7 @@ import type {
   IssueRecord,
   KbHit,
   LinkType,
+  PlatformRole,
   SignedBody,
   TicketId,
 } from '@studio-next/contract'
@@ -30,7 +31,7 @@ import { addComment, listComments } from './comments.ts'
 import { YouTrackPlatformError } from './errors.ts'
 import { FieldTranslator } from './fieldmap.ts'
 import { fieldSchema, provisionFields } from './fields.ts'
-import { installGuards, uninstallGuards } from './guards.ts'
+import { installGuards, readGuards, uninstallGuards } from './guards.ts'
 import { YtHttpClient, type FetchLike } from './http.ts'
 import { createIssue, listIssues, fetchIssueJson, setIssueField, toIssueRecord, transitionIssue, type IssueDeps } from './issues.ts'
 import { kbGet, kbSearch, kbUpsert } from './kb.ts'
@@ -140,6 +141,9 @@ export function createYouTrackPlatform(opts: YouTrackPlatformOptions): FlowPlatf
       },
       async uninstall(company: CompanySlug): Promise<void> {
         return uninstallGuards(company)
+      },
+      async read(company: CompanySlug): Promise<PlatformRole[]> {
+        return readGuards(company)
       },
     },
   }

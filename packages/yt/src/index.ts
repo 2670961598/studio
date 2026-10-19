@@ -7,8 +7,8 @@
  * 真实例冒烟=独立集成单。
  *
  * 本切片 v0 边界与显式缺口（明报不静默）：
- *   - guards.install/uninstall → 抛 CONFIG_INVALID/yt-guards-not-implemented（YouTrack
- *     workflow JS 是独立大件，N6；23 允许分步）
+ *   - guards.install/uninstall/read → 抛 CONFIG_INVALID/yt-guards-not-implemented（YouTrack
+ *     workflow JS 与角色/权限读取面是独立大件，N6；23 允许分步；read 位为 v1.6 修订刀新增）
  *   - fields.provision → 仅实例内热换绑；平台侧建字段（N10 onboard）未做，见 fields.ts
  *   - 超时/重试/限流不做（errors.ts 头注）
  *   - setField('parent') 只挂链不换链（删旧链留集成单）
@@ -28,11 +28,11 @@
  *      「cursor=null 返回自最旧起的对账全量（靠 nextCursor 翻到最新）；增量语义
  *      只对 since(边界) 成立」。行为与返回结构不动，纯措辞强化（activity.ts 头注同步）。
  *
- * 协议/文档疑点（只记录不改 contract）：
- *   1. PlatformActivity.kind 词表未冻结：本实现已知类别归一为 created/commented/
- *      transitioned/field-set（对齐 localplatform），未知类别原样透传类别 id
- *   2. PlatformActivity.actor 语义两实现不一致：localplatform=工号（SignedBody.author），
- *      YouTrack=平台账号 login（N9 账号=等级锚点）——建议契约层注明「actor=平台侧可归因主体」
+ * 协议/文档疑点（v1.6 修订刀已裁决两项，2026-10-19，docs/25-§3.2）：
+ *   1. ~~kind 词表未冻结~~ **已冻结**：PLATFORM_ACTIVITY_KINDS 六词（created/commented/
+ *      transitioned/field-set/change/unknown）——本实现未知类别不再透传，归 unknown 兜底
+ *   2. ~~actor 语义两实现不一致~~ **已定案（选A）**：actor=平台侧可归因主体（平台账号
+ *      login）；工号翻译归框架侧（公司目录账号映射表 docs/04-§五），翻译机制归后续刀
  *   3. updatedSince 查询发 `updated: <iso> .. *` 开区间语法（docs/03 白名单只实测过
  *      `created: a .. b` 闭区间），下界含等风险已由客户端严格后滤兜平；开区间语法本身待真实例验证
  *   4. activities 端点默认排序=新→旧的假设待真实例验证（本实现把响应顺序当权威顺序，
