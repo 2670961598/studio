@@ -9,8 +9,9 @@
  *     tokens 有、成本无价目表折算（cost_native=false）；SIGTERM 可杀
  *   - docs/18-§一：ExecutorAdapter 六原语；detect 不达标明报，绝不静默降级
  *   - docs/16-§二：子进程用 execa；executor=dsh 默认锁 0.2.0-rc.2（锁版本升级走回归）
- *   - docs/25-§二（v1.4）：TaskBrief.credentials 短命按单凭据——launch env 无条件透传进
- *     子进程；其值不记录不打印（红名单），流/日志/账面文本永不含凭据。dsh 侧凭证优先级
+ *   - docs/25-§二（v1.4）：TaskBrief.credentials 短命按单凭据——launch env 透传进
+ *     子进程（docs/43-附录A-1 起键域收封闭枚举闸：枚举外键结构拒收 CONFIG_INVALID）；
+ *     其值不记录不打印（红名单），流/日志/账面文本永不含凭据。dsh 侧凭证优先级
  *     「进程 env 最高层」与该通道严丝合缝（docs/31-§3.5）
  *   - docs/25-§3.1 v1.5 裁决（2026-10-19 制作人批，dsh 三件套）：①AGENTS.md 注入走 dsh
  *     插件（STUDIO_NEXT_INSTRUCTIONS → packages/dsh-bridge studio-next-bridge）②Handle
@@ -90,6 +91,7 @@ import type {
   TaskBrief,
   TokenCounts,
 } from '@studio-next/contract'
+import { configInvalid } from '@studio-next/contract'
 import { parseLine, extractDshSessionId } from './streams.ts'
 
 /** 缺省命令（docs/17-§6 dsh 行）：`dsh --profile headless --json` */
@@ -100,6 +102,71 @@ const LOCKED_VERSION = '0.2.0-rc.2'
 
 /** detect() 版本探测超时（毫秒）：挂死的 CLI 不许挡调度 */
 const DETECT_TIMEOUT_MS = 5_000
+
+// ---------------------------------------------------------------------------
+// worker env 白名单（docs/43-附录A-1 安全基线；spike 验证 docs/44-§二 条款1）
+// ---------------------------------------------------------------------------
+
+/**
+ * 宿主 env 封闭允许集（docs/43-附录A-1）：子进程只继承这些键，其余一律不透传
+ * （deny-by-default——不是「黑名单剔除」，是「白名单收录」）。
+ *   - PATH/HOME/TMPDIR/TZ/LANG/LC_*：进程运行必需键与本地化（executor 运行面）
+ *   - DSH_*：executor 自有配置命名空间（DSH_PROFILE / DSH_TELEMETRY_MODE 等——dsh 侧
+ *     凭证与配置均从该命名空间读，docs/31-§3.5「进程 env 最高层」）
+ * 框架注入键（STUDIO_NEXT_INSTRUCTIONS、TaskBrief.credentials、DSH_TELEMETRY_MODE 覆盖）
+ * 不经此集——它们在白名单之后按固定顺序追加（见 spawnHeadless）。
+ */
+const ENV_KEY_ALLOWLIST: readonly string[] = ['PATH', 'HOME', 'LANG', 'TZ', 'TMPDIR']
+const ENV_PREFIX_ALLOWLIST: readonly string[] = ['LC_', 'DSH_']
+
+/**
+ * credentials 键名封闭枚举（docs/43-附录A-1 凭据键域）：
+ *   - DEEPSEEK_API_KEY（类别 model-key）：dsh 的 provider route 凭证（docs/31-A4 真机
+ *     错误面指名「export DEEPSEEK_API_KEY in the launching environment」）
+ *   - STUDIO_TOOLS_WKEY（类别 platform-write）：worker 级平台写凭据（worker-key.ts，17-§7）
+ * 白名单外的键——尤其 PATH / NODE_OPTIONS / LD_* / DYLD_* / SHELL / HOME 类注入键——
+ * 结构拒收（CONFIG_INVALID），绝不静默剔除后放行其余。
+ */
+const CREDENTIAL_KEY_ENUM: readonly string[] = ['DEEPSEEK_API_KEY', 'STUDIO_TOOLS_WKEY']
+
+/** 注入高危键点名表（报错信息用——命中即明说这是注入面拒收，不是普通未知键） */
+const INJECTION_KEY_PATTERNS: readonly (readonly [RegExp, string])[] = [
+  [/^PATH$/, 'PATH 覆盖可劫持可执行解析'],
+  [/^NODE_OPTIONS$/, 'NODE_OPTIONS 可注入预载脚本'],
+  [/^LD_/, 'LD_* 动态链接器注入'],
+  [/^DYLD_/, 'DYLD_* macOS 动态链接器注入'],
+  [/^SHELL$/, 'SHELL 可指定任意解释器'],
+  [/^HOME$/, 'HOME 可劫持配置/凭证发现路径'],
+]
+
+/** 宿主 env → 子进程 env（只收录封闭允许集；deny-by-default，导出供测试直证） */
+export function filterWorkerEnv(base: Record<string, string | undefined>): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(base)) {
+    if (value === undefined) continue
+    if (ENV_KEY_ALLOWLIST.includes(key) || ENV_PREFIX_ALLOWLIST.some((p) => key.startsWith(p))) {
+      out[key] = value
+    }
+  }
+  return out
+}
+
+/**
+ * credentials 键域闸（封闭枚举）：白名单外键结构拒收并抛 CONFIG_INVALID。
+ * 值不校验不打印（红名单纪律不变——本闸只看键名）。
+ */
+export function assertCredentialKeys(creds: Record<string, string>): void {
+  for (const key of Object.keys(creds)) {
+    if (CREDENTIAL_KEY_ENUM.includes(key)) continue
+    const hit = INJECTION_KEY_PATTERNS.find(([re]) => re.test(key))
+    configInvalid(
+      'dsh/credential-key-rejected',
+      hit !== undefined
+        ? `credentials 键 ${JSON.stringify(key)} 属注入高危键（${hit[1]}）——封闭枚举外键结构拒收（docs/43-附录A-1；合法键：${CREDENTIAL_KEY_ENUM.join('、')}）`
+        : `credentials 键 ${JSON.stringify(key)} 不在封闭枚举内——结构拒收（docs/43-附录A-1；合法键：${CREDENTIAL_KEY_ENUM.join('、')}）`,
+    )
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Handle 伴生状态（模块内私有）
@@ -176,8 +243,12 @@ export class DshAdapter implements ExecutorAdapter {
     const result = await execa(binary, ['--version'], {
       timeout: DETECT_TIMEOUT_MS,
       reject: false, // 探测失败走 gaps 明报，不靠异常表达
-      // 遥测红线（docs/31-§5-8）：一切 dsh 拉起一律禁外发（默认 FEEDBACK_ONLY → deepseeksvc.com）
-      env: { ...process.env, DSH_TELEMETRY_MODE: 'DISABLED' },
+      // 遥测红线（docs/31-§5-8）+ env 白名单（docs/43-附录A-1）：探测子进程同走封闭
+      // 允许集——deny-by-default 不因「只是 --version」放宽。extendEnv:false 是白名单的
+      // **生效前提**：execa 缺省会把 env 选项并进 process.env（options.js
+      // `{...(extendEnv && process.env), ...envOption}`）——不关掉它，白名单形同虚设
+      env: { ...filterWorkerEnv(process.env), DSH_TELEMETRY_MODE: 'DISABLED' },
+      extendEnv: false,
     })
     if (result.timedOut) {
       return { name: this.name, version: '', ok: false, gaps: ['dsh-detect-timeout'] }
@@ -224,9 +295,10 @@ export class DshAdapter implements ExecutorAdapter {
    * 分隔符追加为单个位置参数（docs/31-§0 发现 2/§5-1：dsh headless 的任务=位置参数——
    * 不传则真机必以 usage error 退出；`--` 防任务串以 `-` 开头被当旗标）。任务书不可读
    * → 如实抛错（装配管线缺件，不静默传空串去撞真机的 "a task is required"）。
-   * env=进程环境 + AGENTS.md 通道变量（agentsMdEnv）+ TaskBrief.credentials（v1.4 短命
-   * 按单凭据——无条件透传进子进程 env，值不打印不记录）+ DSH_TELEMETRY_MODE=DISABLED
-   * （遥测红线，置于最后——红线优先级最高，credentials 仍无条件全量透传）。
+   * env=白名单允许集（filterWorkerEnv——docs/43-附录A-1 deny-by-default）+ AGENTS.md 通道
+   * 变量（agentsMdEnv）+ TaskBrief.credentials（v1.4 短命按单凭据——键域封闭枚举闸
+   * assertCredentialKeys，枚举外键结构拒收；值不打印不记录）+ DSH_TELEMETRY_MODE=DISABLED
+   * （遥测红线，置于最后——红线优先级最高）。extendEnv:false（白名单生效前提，见 detect 位注记）。
    * reject:false——退出码不构成异常（成功判定只认流内终态，见 isCompleted）。
    */
   async launch(task: TaskBrief): Promise<Handle> {
@@ -257,13 +329,17 @@ export class DshAdapter implements ExecutorAdapter {
     const taskText = await readTaskText(task.briefPath)
     const subprocess = execa(binary, [...args, ...extraArgs, '--', taskText], {
       cwd: task.workspace,
+      // env 白名单（docs/43-附录A-1，deny-by-default）：白名单允许集（PATH/HOME/LANG/
+      // LC_*/TZ/TMPDIR/DSH_*）+ 框架注入键（AGENTS.md 通道变量）+ TaskBrief.credentials
+      // （键域封闭枚举闸——枚举外键结构拒收 CONFIG_INVALID）+ 遥测红线覆盖（置末，优先级最高）
       env: {
-        ...process.env,
+        ...filterWorkerEnv(process.env),
         ...agentsMdEnv(task.AGENTS_MD),
-        ...(task.credentials ?? {}),
+        ...checkedCredentials(task.credentials),
         // 遥测红线（docs/31-§5-8）：dsh 默认 FEEDBACK_ONLY 外发 deepseeksvc.com——一律禁外发
         DSH_TELEMETRY_MODE: 'DISABLED',
       },
+      extendEnv: false, // 白名单生效前提（同 detect 位注记：execa 缺省并入 process.env）
       stdin: 'ignore',
       stdout: 'pipe',
       stderr: 'pipe',
@@ -435,6 +511,16 @@ export class DshAdapter implements ExecutorAdapter {
 // ---------------------------------------------------------------------------
 // 内部工具（纯函数）
 // ---------------------------------------------------------------------------
+
+/**
+ * credentials 键域检查 + 原样透传（值不打印不记录——红名单纪律不变）。
+ * 枚举外键在此结构拒收（CONFIG_INVALID）——launch 前置失败如实上报，不带病起进程。
+ */
+function checkedCredentials(creds: TaskBrief['credentials']): Record<string, string> {
+  if (creds === undefined) return {}
+  assertCredentialKeys(creds)
+  return { ...creds }
+}
 
 /**
  * AGENTS.md 通道 env 映射——插件通道（2026-10-19 三件套之一落地，docs/25-§3.1 v1.5 裁决#1）：

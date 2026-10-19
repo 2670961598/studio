@@ -30,8 +30,10 @@
  *   - AGENTS.md 通道 env 注入（映射已证伪留占位——见 dsh.ts 头注）
  *   - parseLine 单行导出与 parseStream 全文等价（streams 既有行为不改的旁证）
  *
- * env 注入说明：适配器 spawn 用 {...process.env} 打底——FAKE_* 旋钮经 process.env
- * 临时注入、finally 还原（withFakeEnv），不污染其他用例。
+ * env 注入说明：适配器 spawn env 已收封闭允许集（docs/43-附录A-1，filterWorkerEnv +
+ * extendEnv:false）——FAKE_* 旋钮经 withFakeEnv 注入时自动迁 DSH_FAKE_*（executor 自有
+ * 命名空间在允许集内，fake CLI 入口折算回 FAKE_*），临时注入、finally 还原，不污染其他
+ * 用例；白名单本体的负断言见 dsh-env-whitelist.test.ts。
  */
 import { spawn } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -83,10 +85,20 @@ function fakeAdapter(): DshAdapter {
   return new DshAdapter([process.execPath, fakeCli])
 }
 
-/** 临时注入 FAKE_* 旋钮到 process.env（适配器 spawn 时展开），结束还原 */
+/**
+ * 临时注入 fake CLI 旋钮到 process.env（适配器 spawn 时展开），结束还原。
+ * FAKE_* 键自动迁入 DSH 命名空间（FAKE_X → DSH_FAKE_X）：dsh 适配器 spawn env 已收封闭
+ * 允许集（docs/43-附录A-1），宿主 FAKE_* 到不了 dsh 位子进程——fake CLI 在入口把
+ * DSH_FAKE_* 折算回 FAKE_*（见 fake-cli.mjs 头注）。DSH_ 原生键（如 DSH_TELEMETRY_MODE
+ * 覆盖优先级测试）原样注入。
+ */
 async function withFakeEnv(kvs: Record<string, string>, fn: () => Promise<void>): Promise<void> {
-  const saved = new Map<string, string | undefined>()
+  const injected: Record<string, string> = {}
   for (const [k, v] of Object.entries(kvs)) {
+    injected[k.startsWith('FAKE_') ? `DSH_${k}` : k] = v
+  }
+  const saved = new Map<string, string | undefined>()
+  for (const [k, v] of Object.entries(injected)) {
     saved.set(k, process.env[k])
     process.env[k] = v
   }
@@ -661,7 +673,7 @@ describe('resumeWithSession（v1.5 三件套之二接线：--session-id 透传�
   })
 })
 
-describe('TaskBrief.credentials 透传（v1.4 短命按单凭据——launch env 无条件注入，值不打印不记录）', () => {
+describe('TaskBrief.credentials 透传（v1.4 短命按单凭据——launch env 注入，键域封闭枚举（docs/43-附录A-1），值不打印不记录）', () => {
   const ECHO_LINE = 'fake-cli env: STUDIO_TOOLS_WKEY='
 
   it('携带 credentials → 键值出现在子进程 env（FAKE_ECHO_ENV 回显 → log 事件）', async () => {

@@ -42,6 +42,7 @@ import { createHash, timingSafeEqual } from 'node:crypto'
 import path from 'node:path'
 import { Hono } from 'hono'
 import { configInvalid } from '@studio-next/contract'
+import { SLUG_RE } from '@studio-next/company'
 import type { CompanySnapshot, IssueCreate, IssueRecord } from '@studio-next/contract'
 import { openLedger, type Ledger, type TicketMirrorRecord } from '@studio-next/store'
 import { MAX_PAGE_SIZE, listenHono, type HonoShellHandle, type ListenHonoOptions } from '../server.ts'
@@ -137,8 +138,7 @@ function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-/** slug 形状闸（与 overview SLUG_RE 同规则：小写字母/数字/连字符） */
-const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+/** slug 形状闸：SLUG_RE 单表（@studio-next/company validator——init/org-config/panel 共一张表，docs/43-附录A-4） */
 
 /** 限数字符串长度的非空校验（触发面请求字段） */
 function reqString(v: unknown, field: string, maxLen: number): string | { error: string } {

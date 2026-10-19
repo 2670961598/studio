@@ -36,7 +36,7 @@ import { fileURLToPath } from 'node:url'
 import { simpleGit } from 'simple-git'
 import { configInvalid } from '@studio-next/contract'
 import type { DirectoryIssue } from '@studio-next/contract'
-import { loadCompanyDirectory } from './validator.ts'
+import { loadCompanyDirectory, SLUG_RE } from './validator.ts'
 
 /** init 入参（slug 必填；name 缺省用 slug；templateDir 缺省仓根 templates/company-2-level） */
 export interface InitOptions {
@@ -53,8 +53,9 @@ export interface InitResult {
   gitCommit: string
 }
 
-/** slug 是概览路由 /<slug>/ 的 URL 片段（04-§七）：小写字母/数字/连字符，禁空白与路径分隔符 */
-const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+/** slug 是概览路由 /<slug>/ 的 URL 片段（04-§七）：小写字母/数字/连字符，禁空白与路径分隔符。
+ * 语法表在 validator.ts（SLUG_RE 单表——init/org-config/import/manifest 四通道共一张表，
+ * docs/43-附录A-4；此处导入使用，不再持有本地副本） */
 
 /**
  * 员工工作区树目录名（制作人 2026-10-20 口谕增补；docs/43-§五）：

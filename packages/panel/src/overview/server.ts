@@ -32,6 +32,7 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { Hono } from 'hono'
 import { configInvalid } from '@studio-next/contract'
+import { SLUG_RE } from '@studio-next/company'
 import type { CompanySnapshot } from '@studio-next/contract'
 import { openLedger, type Ledger } from '@studio-next/store'
 import { listenHono, type HonoShellHandle, type ListenHonoOptions } from '../server.ts'
@@ -70,8 +71,7 @@ export interface OverviewAppOptions {
 /** createOverviewApp 返回的 app 类型（Hono 实例；测试用 app.request() 进程内驱动） */
 export type OverviewApp = Hono
 
-/** slug 形状闸（与 company init 的 SLUG_RE 同规则：小写字母/数字/连字符——它是 URL 路径段） */
-const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+/** slug 形状闸：SLUG_RE 单表（@studio-next/company validator——init/org-config/panel 共一张表，docs/43-附录A-4） */
 
 /** 运行期注册表行：数据源 + 懒开缓存的 ledger（工厂失败不缓存，下个请求重试） */
 interface CompanyRuntime {
