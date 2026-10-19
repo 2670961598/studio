@@ -81,6 +81,13 @@
  *       常驻主循环（v0.5）：七相位引擎 + 心跳日志；SIGINT/SIGTERM 优雅停（等当前拍收口→
  *       在途 drain→关台账）。配置最小面 {db, platform: localfile|fake, company, rootDir,
  *       tickMs, …}（扁平 YAML 子集，见 src/serve.ts 头注）；demo 模式=fake 全家桶零外部依赖
+ *   reload [--company <slug>] [--root <工位根>] [--config <daemon.yaml>] [--timeout <ms>]
+ *       L1 配置热重载手动触发（docs/38-§2 L1 / §4 R-A）：向运行中的 daemon 发重载请求
+ *       （控制面文件通道 <rootDir>/control/）并等回执——daemon 在拍边界重走公司目录装载面
+ *       （校验→快照→装配器/人员/调度岗替换），零进程重启。--company 给定且与目标 daemon
+ *       不符=回执拒绝（防错家）；daemon 未挂公司目录=回执 no-company-dir。工位根发现序：
+ *       --root > --config 的 rootDir（缺省 ./daemon.yaml）> ./var。幂等：内容未变回执
+ *       unchanged（exit 0）。
  *   （v0 诚实边界：真 dsh / 真 YouTrack / 网关 wkey / 审批流 / localfile 平台均未接线——
  *     逐项清单见 src/serve.ts 与 src/engine.ts 头注）
  *
@@ -102,10 +109,12 @@ import { CANDIDATE_STATUS_VALUES, openLedger, rebuild, renderDrillReport, runLed
 import type { CompanySnapshot } from '@studio-next/contract'
 import { CONTROL_TICKET, createGateway } from '@studio-next/gateway'
 import type { SignatureContext } from '@studio-next/gateway'
-import { DEV_GATEWAY_SECRET } from './serve.ts'
+import { DEV_GATEWAY_SECRET, parseDaemonConfig } from './serve.ts'
 import { createFakePlatform } from './fakes.ts'
 import { createGatedPlatform } from './gated-platform.ts'
 import { ENGINE_CONFIG_DEFAULTS } from './engine.ts'
+import { awaitReloadResult, writeReloadRequest } from './hot-reload.ts'
+import { makeUlid } from './id.ts'
 import { runServe } from './serve.ts'
 import { renderSandboxLines, runCandidateSandbox } from './sandbox.ts'
 import { renderCutoverLines, runCutover } from './cutover.ts'
@@ -183,11 +192,19 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
       常驻主循环（v0.5，docs/16-§四）：七相位引擎 + 心跳日志 + SIGINT/SIGTERM 优雅停。
       配置最小面（扁平 YAML 子集）：db / platform(fake|localfile) / company / rootDir / tickMs /
       maxActionsPerTick / maxInflight / stallAfterMs / laneTtlMs / breakerThreshold / autoApprove /
-      companyDir / jobs / jobPollMs / models / budgetTicketCapUsd / budgetPersonCapUsd；
+      companyDir / jobs / jobPollMs / models / budgetTicketCapUsd / budgetPersonCapUsd / reloadWatch；
       jobs: true 起定时岗调度器（v0.4：cron 到点→schedule 意图→主循环，结果落台账）；
       models: <models.yaml> 装载价目表→派发前预算闸估算校准（态 A；缺省态 B=适配器自报），
-      预算预留-结算不落即不派（20-§六.8）；demo 模式=fake 全家桶零外部依赖
+      预算预留-结算不落即不派（20-§六.8）；companyDir 给定时接 L1 配置热重载（指纹自动+
+      reload 手动，reloadWatch 缺省开）；demo 模式=fake 全家桶零外部依赖
       （真 dsh/YouTrack/网关未接线，见 src/serve.ts 头注）
+  studio-next reload [--company <slug>] [--root <工位根>] [--config <daemon.yaml>] [--timeout <ms>]
+      L1 配置热重载手动触发（docs/38-§2 L1 / §4 R-A）：向运行中的 daemon 发重载请求（控制面
+      文件通道 <rootDir>/control/reload.request.json）并轮询回执（缺省 15s）——daemon 在拍边界
+      重走公司目录装载面（校验→快照→装配器/人员索引/调度岗/署名上下文替换），零进程重启、
+      不中断在途单。--company 错家=回执拒绝 exit 1；未挂公司目录=回执 no-company-dir exit 1；
+      内容未变=回执 unchanged（幂等，exit 0）。工位根发现序：--root > --config（缺省
+      ./daemon.yaml）的 rootDir > 缺省 ./var。
 
 默认值：--dir 缺省 ./<slug>；--name 缺省 <slug>；--port 缺省 8787（panel）/ 8789（overview）/ 8788（external）
 文档：docs/04-公司目录与等级体系.md §二/§七/§九；docs/16-技术实现与里程碑.md §四；docs/02-需求-框架面.md F2-11/F2-12；docs/17-整体技术设计.md §8`
@@ -1069,9 +1086,75 @@ async function cmdExternal(argv: string[]): Promise<number> {
   return 0
 }
 
+/**
+ * reload 子命令：L1 配置热重载手动触发薄壳（执行体全在 daemon 侧 src/hot-reload.ts——
+ * 本命令只写控制面请求 + 轮询回执）。工位根发现序：--root > --config（缺省 ./daemon.yaml，
+ * 读其 rootDir）> 缺省 ./var。退出码：0=重载成功或幂等 unchanged；1=回执失败
+ * （company-mismatch/no-company-dir/config-invalid/apply-failed）或超时（daemon 不在跑/
+ * 拍太慢——--timeout 可调，缺省 15000ms）。
+ */
+async function cmdReload(argv: string[]): Promise<number> {
+  const parsed = parseArgv(argv, new Set(['company', 'root', 'config', 'timeout']))
+  if ('error' in parsed) {
+    console.error(`reload：${parsed.error}`)
+    console.error(USAGE)
+    return 1
+  }
+  if (parsed.positionals.length > 0) {
+    console.error(`reload：多余的位置参数：${parsed.positionals.join(' ')}`)
+    console.error(USAGE)
+    return 1
+  }
+  let timeoutMs = 15_000
+  if (parsed.flags.timeout !== undefined) {
+    timeoutMs = Number.parseInt(parsed.flags.timeout, 10)
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 100) {
+      console.error(`reload：--timeout 取值非法：${parsed.flags.timeout}（须为 >=100 的整数毫秒）`)
+      return 1
+    }
+  }
+
+  // 工位根发现序：--root > --config 的 rootDir > ./var（daemon 控制面落点 <rootDir>/control/）
+  let rootDir: string
+  if (parsed.flags.root !== undefined) {
+    rootDir = path.resolve(parsed.flags.root)
+  } else {
+    const configPath = parsed.flags.config ?? './daemon.yaml'
+    if (existsSync(path.resolve(configPath))) {
+      try {
+        rootDir = path.resolve(parseDaemonConfig(readFileSync(path.resolve(configPath), 'utf8')).rootDir)
+      } catch (err) {
+        console.error(`reload：daemon.yaml 解析失败（${configPath}）：${errText(err)}`)
+        return 1
+      }
+    } else if (parsed.flags.config !== undefined) {
+      console.error(`reload：--config 指定的 daemon.yaml 不存在：${configPath}`)
+      return 1
+    } else {
+      rootDir = path.resolve('./var')
+    }
+  }
+
+  const id = makeUlid(Date.now())
+  const request = { id, company: parsed.flags.company ?? null, requestedAt: Date.now() }
+  writeReloadRequest(rootDir, request)
+  console.log(`[reload] 请求已写：${path.join(rootDir, 'control', 'reload.request.json')}（id=${id}${request.company !== null ? `，company=${request.company}` : ''}）——等 daemon 拍边界处理（超时 ${timeoutMs}ms）`)
+
+  const result = await awaitReloadResult(rootDir, id, timeoutMs)
+  if (result === undefined) {
+    console.error(`reload：超时无回执（${timeoutMs}ms）——daemon 未运行 / tickMs 过大 / 控制面目录不符（rootDir=${rootDir}；可用 --root/--config 指定）`)
+    return 1
+  }
+  if (result.ok) {
+    console.log(`[reload] 回执 ok（id=${result.id}）：${result.applied ? '已重装载' : `无动作（${result.reason ?? 'unchanged'}）`}${result.detail !== undefined ? `——${result.detail}` : ''}`)
+    return 0
+  }
+  console.error(`[reload] 回执失败（id=${result.id}，reason=${result.reason ?? '?'}）：${result.detail ?? ''}`)
+  return 1
+}
+
 /** serve 子命令：薄壳转 runServe（配置装载/循环/优雅停语义全在 src/serve.ts） */
-async function cmdServe(argv: string[]): Promise<number> {
-  const parsed = parseArgv(argv, new Set(['config']))
+async function cmdServe(argv: string[]): Promise<number> {  const parsed = parseArgv(argv, new Set(['config']))
   if ('error' in parsed) {
     console.error(`serve：${parsed.error}`)
     console.error(USAGE)
@@ -1130,6 +1213,8 @@ async function main(): Promise<number> {
       return cmdExternal(rest)
     case 'serve':
       return cmdServe(rest)
+    case 'reload':
+      return cmdReload(rest)
     case undefined:
     case '-h':
     case '--help':

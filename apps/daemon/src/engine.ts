@@ -222,7 +222,7 @@ export interface EngineDeps {
   gateRunner: GateRunner
   clock: () => number
   config: EngineConfig
-  /** 人员索引（公司目录快照静态注入；人事流热更归后续刀） */
+  /** 人员索引（公司目录快照注入；L1 配置热重载经 applyCompanyUpdate 整组替换——docs/38-§2） */
   people: readonly PersonRef[]
   /** ULID 生成器（缺省 src/id.ts；测试可注入确定性序列） */
   makeId?: (ts: number) => string
@@ -358,17 +358,41 @@ export interface Engine {
   ingest(intents: readonly InvokeIntent[]): void
   /** 队列深度（观测/测试断言：未消费意图数） */
   readonly pendingIntents: number
+  /**
+   * 公司面热替换（docs/38-§2 L1 配置级热重载的引擎侧落点）：**拍边界调用**
+   * （serve 主循环在 tick() 收口后调——单线程下无并发 tick，结构性不中断在途单/
+   * dispatch）。整组替换人员索引、装配器与快照派生三键（defaultPersonId/deptFallback/
+   * defaultLane）；在途工位（inflight/泳道租约/已落盘指令文件）不动——旧单跑旧装配方，
+   * 替换后的新派发用新配置。引擎其余面（平台/台账/注册表/闸门/预算）不属公司目录资产，
+   * 不在 L1 热更面。
+   */
+  applyCompanyUpdate(update: CompanyRuntimeUpdate): void
   /** 在途 drain（v0：对内存 handle 优雅 kill；work_records 留 running——重启接管归后续刀） */
   dispose(): Promise<void>
   readonly config: EngineConfig
+}
+
+/** applyCompanyUpdate 入参：公司目录快照在引擎内的全部消费面（整组换，不半换） */
+export interface CompanyRuntimeUpdate {
+  people: readonly PersonRef[]
+  assembler: PromptAssembler
+  /** 快照派生三键（与 buildServeRuntime 启动装载同源公式） */
+  defaultPersonId: string
+  deptFallback: string
+  defaultLane: string
 }
 
 const CURSOR_KEY = 'activity.cursor'
 const TICK_SEQ_KEY = 'tick.seq'
 
 export function createEngine(deps: EngineDeps): Engine {
-  const { platform, ledger, registry, assembler, gateRunner, clock, config, people } = deps
+  const { platform, ledger, registry, gateRunner, clock, config } = deps
   const makeId = deps.makeId ?? makeUlid
+
+  // 公司面可替换绑定（docs/38-§2 L1）：applyCompanyUpdate 整组换（拍边界）——
+  // people/assembler 被 resolvePerson/executeDispatch 闭包引用，let 化后热替换即生效
+  let assembler = deps.assembler
+  let people = deps.people
 
   // 预算闸依赖（docs/16-§三 / 20-§六.8）：判定=core reserve/settle，落账=ledger.appendBudget，
   // 行 id=makeId（ULID，id.ts）；catalog 缺省=态 B 降级（两态见 budget-gate.ts 头注）
@@ -1291,6 +1315,15 @@ export function createEngine(deps: EngineDeps): Engine {
     },
     get pendingIntents(): number {
       return intentQueue.length
+    },
+    applyCompanyUpdate(update: CompanyRuntimeUpdate): void {
+      // 整组替换（不半换）：people+assembler 绑定与快照派生三键一起换——调用方保证
+      // 拍边界（serve 主循环）；本方法自身纯赋值不抛，失败面归调用方前置校验
+      people = update.people
+      assembler = update.assembler
+      config.defaultPersonId = update.defaultPersonId
+      config.deptFallback = update.deptFallback
+      config.defaultLane = update.defaultLane
     },
     dispose,
     get config(): EngineConfig {

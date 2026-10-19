@@ -59,6 +59,12 @@
  *     drain（v0=对内存 handle 优雅杀，work_records 留 running——重启接管归后续刀）→ 关台账。
  *     队列中未消费意图停机即弃（at-most-once，与调度器 markRan 已提交而 ingest 未消费的
  *     既有边界同语义——engine.ts 头注）。
+ *   - L1 配置热重载（docs/38-§2 L1 / §4 R-A，src/hot-reload.ts）：companyDir 给定时
+ *     每拍拍边界（tick 收口后）检查公司目录资产指纹（轻量 stat+mtime，reloadWatch 缺省开）
+ *     与控制面 reload 请求（<rootDir>/control/）；变更且稳定/手动触发 → 重走装载面（校验 →
+ *     快照 → 调度岗播种/移除 → 装配器/人员索引/署名上下文替换）→ RELOAD 落 SCHEMA_EVOLVE
+ *     继续跑——零进程重启、不中断在途单。坏配置拒载保持旧态 + ESCALATE（面板可见）。
+ *     daemon.yaml 自身与框架代码不在 L1 面（L2 归 R-C）。
  *   - 进化管线判负闸（v0 观察模式，src/evolve-guard.ts）：serve 启动对框架资产清单（v0
  *     极小样例集）跑 authorize（core assertChangeAuthorized ∘ 台账候选全集），unauthorized
  *     如实报告（日志+ESCALATE 事件）**不阻断启动**；空库首启跳过（零检查如实）。真单刀接
@@ -92,10 +98,12 @@ import { runEvolveStartupSelfCheck, type EvolveSelfCheckReport, type FrozenAsset
 import { createFakeAdapter, createFakePlatform } from './fakes.ts'
 import { createGatedPlatform } from './gated-platform.ts'
 import { createDefaultGateRunner, createAcceptanceGateRunner } from './gate.ts'
+import { answerReloadNoCompanyDir, createHotReload, type HotReload } from './hot-reload.ts'
 import { makeUlid } from './id.ts'
 import { provisionDshBridgeOverlay } from './instructions-store.ts'
 import { CADENCE_SOURCE_MANIFEST, createCadenceSource, createSlaSource, SLA_SOURCE_MANIFEST } from './jobs-sources.ts'
 import { createDefaultAssembler } from './prompt-assembly.ts'
+import type { PromptAssembler } from './prompt-assembly.ts'
 import { nextRunAt, type Scheduler } from './scheduler.ts'
 import type { WorkerKeyDeps } from './worker-key.ts'
 import {
@@ -164,6 +172,13 @@ export interface ServeConfig {
    * 只产意图+落账，notify 发送归 notify 端口后续刀）。扫描轮询复用 jobPollMs。
    */
   sla: boolean
+  /**
+   * L1 配置热重载·自动指纹监听开关（docs/38-§2 L1 / §4 R-A；缺省开，仅 companyDir 给定
+   * 时生效）：每拍轻量 stat+mtime 扫公司目录，变更且稳定 → 拍边界重装载（零进程重启）。
+   * false=只剩手动通道（`studio-next reload`）。坏配置拒载保持旧态（RELOAD_CONFIG_INVALID
+   * 落账，面板可见）。详见 src/hot-reload.ts 头注。
+   */
+  reloadWatch: boolean
   /** 公司目录路径（可选：装载 CompanySnapshot；缺省用内置 demo 快照） */
   companyDir?: string
   /**
@@ -221,6 +236,7 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   fileWatch: false,
   cadence: false,
   sla: false,
+  reloadWatch: true,
   gateway: true,
 }
 
@@ -353,6 +369,9 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'sla':
         cfg.sla = bool(value, key)
         break
+      case 'reloadWatch':
+        cfg.reloadWatch = bool(value, key)
+        break
       case 'gateway':
         cfg.gateway = bool(value, key)
         break
@@ -440,6 +459,8 @@ function wirePlatform(config: ServeConfig): FlowPlatform {
 /**
  * daemon 侧网关身份（控制面与 worker-key 签发共用的 secret/署名上下文/工号）。
  * 签名上下文取快照首部门+公司级（控制面无人员档案，拟稿待批）。
+ * **L1 热重载活对象**（docs/38-§2）：gateway 逐调用读 ctx 字段——reload 时 mutate
+ * company/dept/level 三字段即全 daemon 署名跟随新组织（hot-reload apply 段唯一写者）。
  */
 function daemonIdentity(config: ServeConfig, snapshot: CompanySnapshot): {
   secret: Uint8Array
@@ -461,14 +482,14 @@ function daemonIdentity(config: ServeConfig, snapshot: CompanySnapshot): {
 /**
  * 网关写收口接线（17-§7：engine 直调 platform 是最后一条未收口写路径——本函数收口）。
  * 控制面实例（ticket=CONTROL_TICKET）+ daemon 侧身份署名；gateway: false 时裸 platform 直返
- * （对照/测试用——生产不得关）。签名上下文取快照首部门+公司级（控制面无人员档案，拟稿待批）。
+ * （对照/测试用——生产不得关）。身份=共享活对象（daemonIdentity 产物——L1 热重载 mutate 面）。
  */
-function wireGatedPlatform(raw: FlowPlatform, config: ServeConfig, snapshot: CompanySnapshot, clock: () => number, log: (line: string) => void): FlowPlatform {
+function wireGatedPlatform(raw: FlowPlatform, config: ServeConfig, identity: ReturnType<typeof daemonIdentity>, clock: () => number, log: (line: string) => void): FlowPlatform {
   if (!config.gateway) {
     log('[serve] 警告：gateway=false——平台写路径未过闸（仅测试/对照用；生产不得关，17-§7）')
     return raw
   }
-  const { secret, ctx, author } = daemonIdentity(config, snapshot)
+  const { secret, ctx, author } = identity
   const usingDevSecret = config.gatewaySecret === undefined
   const gateway = createGateway({ secret, clock, ticket: CONTROL_TICKET, ctx, author })
   log(
@@ -483,10 +504,11 @@ function wireGatedPlatform(raw: FlowPlatform, config: ServeConfig, snapshot: Com
  * gateway: false 时不签发（与控制面同开关）；签发实例绑 CONTROL_TICKET——本实例只用
  * issue/revoke 面，verify 面结构性失效（永远不能验 worker key，防误用；worker 侧验签
  * 归 per-ticket studio-tools 接线，吊销跨进程可见性疑点见 worker-key.ts 头注）。
+ * 身份=共享活对象（与控制面同源——L1 热重载 mutate 面）。
  */
-function wireWorkerKeys(config: ServeConfig, snapshot: CompanySnapshot, clock: () => number, log: (line: string) => void): WorkerKeyDeps | undefined {
+function wireWorkerKeys(config: ServeConfig, identity: ReturnType<typeof daemonIdentity>, clock: () => number, log: (line: string) => void): WorkerKeyDeps | undefined {
   if (!config.gateway) return undefined
-  const { secret, ctx, author } = daemonIdentity(config, snapshot)
+  const { secret, ctx, author } = identity
   const gateway = createGateway({ secret, clock, ticket: CONTROL_TICKET, ctx, author })
   log('[serve] worker wkey 已接：按单签发 → TaskBrief.credentials（env 通道，子进程 env STUDIO_TOOLS_WKEY）→ GATE_FAIL/断路/CLOSE 吊销（17-§7；scope=六动词全集；凭据值红名单——不入提示词/档案/任务书/日志）')
   return { gateway }
@@ -550,12 +572,37 @@ export function seedJobs(
   return { seeded, kept }
 }
 
+/**
+ * L1 热重载·调度岗移除（docs/38-§2 L1；18-§三「重注册对应岗、不动其他岗」的移除对偶）：
+ * jobs 表中 company=本司、已不在新快照的岗 → removeJob（他司岗与其他来源岗不动）。
+ * 在途岗单据照常走收割链（调度器只管「不再触发」）；意图消费面对消失岗已有明报丢弃面
+ * （engine.ts「job 不在台账（热更移除？）——丢弃」）。
+ */
+export function removeMissingJobs(ledger: Ledger, snapshot: CompanySnapshot): number {
+  const keep = new Set(snapshot.jobs.map((j) => j.job_id))
+  let removed = 0
+  for (const job of ledger.listJobs()) {
+    if (job.company === snapshot.slug && !keep.has(job.job_id)) {
+      ledger.removeJob(job.job_id)
+      removed += 1
+    }
+  }
+  return removed
+}
+
 /** serve 运行栈（engine + 唤起源注册表 + 统一停机面；runServe 与测试共用装配） */
 export interface ServeRuntime {
   engine: Engine
   scheduler: Scheduler | null
   /** 唤起源注册表（22-§一）：startAll 的 emit 统一进 engine.ingest（runServe 接线） */
   sources: SourceRegistry
+  /**
+   * L1 配置热重载执行体（docs/38-§2 L1 / §4 R-A；companyDir 给定时存在）：
+   * runServe 主循环在**拍边界**（tick() 收口后）调 check()——指纹自动 + 控制面手动
+   * 两触发面；缺省=未挂公司目录（demo 快照），L1 不适用（reload 请求由
+   * answerReloadNoCompanyDir 回执拒绝）。详见 src/hot-reload.ts 头注。
+   */
+  hotReload?: HotReload
   /**
    * 启动期进化判负自检汇报（src/evolve-guard.ts，v0 观察模式）：ESCALATE 事件已在装配期
    * 落账（unauthorized 时）；本字段为汇报面（测试/面板观测锚）。
@@ -613,6 +660,12 @@ export function buildServeRuntime(
 ): ServeRuntime {
   const log = opts?.log ?? ((line: string): void => console.log(line))
   const clock = opts?.clock ?? ((): number => Date.now())
+
+  // —— 公司面活持有者（docs/38-§2 L1 热重载的替换点）：装配器/cadence 源/热重载 apply 段
+  //    统一读此对象——快照整组换（companyState.snapshot = next），闭包零重建
+  const companyState: { snapshot: CompanySnapshot } = { snapshot }
+  // daemon 网关身份（共享活对象——reload 时 mutate ctx 三字段，署名跟随新组织）
+  const identity = daemonIdentity(config, snapshot)
 
   // —— executor 注册双形态（v0.5 真单刀）：agentYaml=真注册表；缺省=fake（demo 不变）——
   const registry = createRegistry()
@@ -687,21 +740,25 @@ export function buildServeRuntime(
     ...(config.budgetTicketCapUsd !== undefined ? { budgetTicketCapUsd: config.budgetTicketCapUsd } : {}),
     ...(config.budgetPersonCapUsd !== undefined ? { budgetPersonCapUsd: config.budgetPersonCapUsd } : {}),
   }
+  // 装配器工厂（L1 热重载换装配器=换快照重建——静态部分不随公司目录变）
+  const makeAssembler = (): PromptAssembler =>
+    createDefaultAssembler({
+      fwkVersion: 'v0.5-demo',
+      frameworkPrompts: '你是 Studio Next demo worker：按任务书目标产出，落 REPORT 与 summary，验收口径即闸门。',
+      snapshot: companyState.snapshot,
+      acceptance,
+      docRefs: ['docs/17-§2（主循环七相位）', 'docs/17-§6（收割四要件）'],
+    })
+
   // worker 级 wkey（17-§7）：按单签发→TaskBrief.credentials env 注入→关单吊销（src/worker-key.ts）
-  const workerKeys = wireWorkerKeys(config, snapshot, clock, log)
+  const workerKeys = wireWorkerKeys(config, identity, clock, log)
   const engine = createEngine({
     // 写路径网关收口（17-§7）：raw platform 包一层 gated 代理——engine 写调用签名不变（透明）
-    platform: wireGatedPlatform(wirePlatform(config), config, snapshot, clock, log),
+    platform: wireGatedPlatform(wirePlatform(config), config, identity, clock, log),
     ...(workerKeys !== undefined ? { workerKeys } : {}),
     ledger,
     registry,
-    assembler: createDefaultAssembler({
-      fwkVersion: 'v0.5-demo',
-      frameworkPrompts: '你是 Studio Next demo worker：按任务书目标产出，落 REPORT 与 summary，验收口径即闸门。',
-      snapshot,
-      acceptance,
-      docRefs: ['docs/17-§2（主循环七相位）', 'docs/17-§6（收割四要件）'],
-    }),
+    assembler: makeAssembler(),
     // 闸门双形态（v0.5 真单刀）：真单模式=真验收闸门（逐条真执行冻结验收命令，
     // workspace cwd、超时杀进程组）；demo=占位闸门（exit0 模拟）——行为与既有测试面一致
     gateRunner: realGate
@@ -767,7 +824,7 @@ export function buildServeRuntime(
         ledger,
         clock,
         intervalMs: config.jobPollMs,
-        jobs: (): readonly ScheduledJob[] => snapshot.jobs,
+        jobs: (): readonly ScheduledJob[] => companyState.snapshot.jobs,
         log,
       }),
       CADENCE_SOURCE_MANIFEST,
@@ -784,6 +841,53 @@ export function buildServeRuntime(
   }
 
   log(`[serve] 唤起源注册表：${sources.list().map((e) => e.source.name).join('、') || '（空）'}——emit 统一进 engine.ingest（22-§一 源零直驱）`)
+
+  // —— L1 配置热重载执行体（docs/38-§2 L1 / §4 R-A；companyDir 给定时装配）——
+  //    apply 段（校验绿后调用，幂等可重入）：调度岗播种/移除（jobs: true 时——与启动同一
+  //    闸门）→ 快照持有者替换 → engine.applyCompanyUpdate（people/装配器/三派生键）→
+  //    署名上下文 mutate。在途单/泳道/指令文件不动（拍边界结构性保证，hot-reload.ts 头注）。
+  let hotReload: HotReload | undefined
+  if (config.companyDir !== undefined) {
+    hotReload = createHotReload({
+      companyDir: path.resolve(config.companyDir),
+      rootDir: path.resolve(config.rootDir),
+      ledger,
+      company: config.company,
+      clock,
+      makeId: makeUlid,
+      log,
+      deptFallback: engineConfig.deptFallback,
+      watch: config.reloadWatch,
+      apply(next: CompanySnapshot): { jobsSeeded: number; jobsKept: number; jobsRemoved: number } {
+        let seeded = 0
+        let kept = 0
+        let removed = 0
+        if (config.jobs) {
+          // 台账段先行（幂等可重入——seedJobs 逐岗独立 upsert；失败重试下一形态自愈）
+          const s = seedJobs(ledger, next.jobs, clock())
+          seeded = s.seeded
+          kept = s.kept
+          removed = removeMissingJobs(ledger, next)
+        }
+        // 纯赋值段（不抛）：快照持有者 → 引擎整组换 → 署名上下文
+        companyState.snapshot = next
+        engine.applyCompanyUpdate({
+          people: next.people,
+          assembler: makeAssembler(),
+          defaultPersonId: (next.people[0] as PersonRef | undefined)?.id ?? '',
+          deptFallback: next.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback,
+          defaultLane: next.departments[0]?.lanes[0] ?? ENGINE_CONFIG_DEFAULTS.defaultLane,
+        })
+        identity.ctx.company = next.name
+        identity.ctx.dept = next.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback
+        identity.ctx.level = Math.max(1, next.level)
+        return { jobsSeeded: seeded, jobsKept: kept, jobsRemoved: removed }
+      },
+    })
+    log(
+      `[serve] L1 热重载已接：公司目录指纹监听${config.reloadWatch ? '开（每拍 stat+mtime，稳定后拍边界重装载）' : '关（reloadWatch: false——只剩手动通道）'}；手动通道 studio-next reload（<rootDir>/control/，docs/38-§2）`,
+    )
+  }
 
   // —— 进化管线判负闸·启动自检（v0 观察模式，src/evolve-guard.ts；20-§九 无 candidate id
   //    的生产改动判负）：对框架资产清单逐项 authorize，unauthorized 落 ESCALATE 如实报告、
@@ -804,6 +908,7 @@ export function buildServeRuntime(
     scheduler,
     sources,
     evolveSelfCheck,
+    ...(hotReload !== undefined ? { hotReload } : {}),
     async stop(): Promise<void> {
       // 先停源（不再进新意图）→ 再停引擎（在途 drain）→ 关台账（SIGINT 停机顺序，22-§三.3）
       sources.stopAll()
@@ -863,7 +968,10 @@ export async function runServe(configPath: string): Promise<ServeResult> {
     snapshot = mounted.snapshot
   }
 
-  const { engine, sources, stop } = buildServeRuntime(config, ledger, snapshot)
+  const { engine, sources, stop, hotReload } = buildServeRuntime(config, ledger, snapshot)
+
+  // 未挂公司目录的 daemon：L1 热重载不适用——reload 请求仍回执拒绝（不悬空 CLI 轮询）
+  let answeredRequestId: string | null = null
 
   console.log(`[serve] studio-next daemon 启动（company=${config.company} platform=${config.platform} db=${path.resolve(config.db)} tickMs=${config.tickMs}${config.jobs ? ` jobs=on pollMs=${config.jobPollMs}` : ''}）`)
   const stackMode =
@@ -890,6 +998,13 @@ export async function runServe(configPath: string): Promise<ServeResult> {
       lastError = err instanceof Error ? err.message : String(err)
       stopReason = 'error'
       break
+    }
+    // —— L1 热重载拍边界（docs/38-§2）：tick() 已收口、下一拍未开——指纹自动 + 控制面手动
+    //    两触发面在此汇合；check() 恒不抛（失败面已落 ESCALATE/回执，hot-reload.ts 头注） ——
+    if (hotReload !== undefined) {
+      await hotReload.check()
+    } else {
+      answeredRequestId = answerReloadNoCompanyDir(path.resolve(config.rootDir), config.company, answeredRequestId)
     }
     // 拍间隔等待（信号打断不硬等满）
     const deadline = Date.now() + config.tickMs
