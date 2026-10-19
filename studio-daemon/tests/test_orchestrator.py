@@ -682,6 +682,37 @@ class Test亲批泳道:
         orch.pm_tick()
         assert state(yt, iid) == "已交付", "亲批不得被代批史的序位计数吞掉"
 
+    def test_core泳道限时代批窗_在效期_代批被消费(self, env, lanes, monkeypatch):
+        """STUDIO-118：制作人书面授权的窗口文件在效期内，委托账号在 core 泳道的批准有效。"""
+        from studio.config import CONFIG as _C
+        import time as _t
+        yt = env
+        # fake 后端评论作者=agent-pm：按委托表注入使其成为合法委托账号（与真实 agent-8 等价）
+        monkeypatch.setattr(_C, "delegated_approvals",
+                            dict(_C.delegated_approvals, POLY=["agent-pm", "agent-8"]))
+        monkeypatch.setattr(_C, "core_delegation",
+                            {"granted_by": _C.producer, "expires": int(_t.time() * 1000) + 3600_000})
+        iid = yt.new("POLY", "代批窗生效", "d", lane="core", typ="需求", track="L2 常规")
+        orch.pm_tick()
+        yt.comment(iid, "批准 审查意见：代批依据：制作人 2026-10-19 授权（STUDIO-118）")
+        orch.pm_tick()
+        assert state(yt, iid) == "已派发", "窗口内 core 泳道代批必须被消费"
+
+    def test_core泳道限时代批窗_过期或无窗_照旧不消费(self, env, lanes, monkeypatch):
+        """窗口过期（expires 已过）= 无窗，09-28 铁律原样保留：代批不被消费。"""
+        from studio.config import CONFIG as _C
+        import time as _t
+        yt = env
+        monkeypatch.setattr(_C, "delegated_approvals",
+                            dict(_C.delegated_approvals, POLY=["agent-pm", "agent-8"]))
+        monkeypatch.setattr(_C, "core_delegation",
+                            {"granted_by": _C.producer, "expires": int(_t.time() * 1000) - 1000})
+        iid = yt.new("POLY", "代批窗过期", "d", lane="core", typ="需求", track="L2 常规")
+        orch.pm_tick()
+        yt.comment(iid, "批准 审查意见：窗口已过期")
+        orch.pm_tick()
+        assert state(yt, iid) == "待批", "过期窗口下 core 泳道代批必须无效"
+
     def test_game泳道PM批准照常(self, env, lanes):
         yt = env
         monkeypatch_lanes = None

@@ -45,6 +45,11 @@ class Config:
         # 亲批泳道（制作人 2026-09-28 指令：三消 core 仓迭代多版、重要度最高，
         # 慎之又慎——该泳道单据一切批示只认制作人，代批账号的批准不被消费）
         self.producer_only_lanes: dict[str, list[str]] = {"POLY": ["core"]}
+        # 限时代批窗（制作人 2026-10-19 授权，STUDIO-118 留痕）：本地运营覆写文件
+        # ~/.config/polymatch3/core-delegation.json 存在且未过期 → POLY core 泳道对
+        # 委托账号开放代批；文件删除/过期即回到全等级制作人亲批。文件不入 git、
+        # 沙箱克隆不含——默认行为零变化。
+        self.core_delegation = self._load_core_delegation()
         # fail-safe（2026-09-28）：委托账号未在 youtrack.json 注册 token 时自动剔除并告警
         # ——代批账号切 agent-9 后，token 未就位前不会 401 崩溃，只是该账号暂不可代批
         _ag = self.yt_cfg.get("agents", {})
@@ -94,6 +99,27 @@ class Config:
             return self.yt_cfg["admin_token"]
         return self.yt_cfg["agents"][acct]["token"]
 
+    def _core_delegation_active(self) -> bool:
+        """窗口是否在效期内（expires 在此判定——属性可能被直接注入，过期即关）。"""
+        import time as _t
+        d = self.core_delegation
+        return bool(d) and d.get("granted_by") == self.producer \
+            and int(d.get("expires", 0)) > _t.time() * 1000
+
+    def _load_core_delegation(self) -> dict | None:
+        """限时代批窗文件校验：制作人授权（granted_by）+ 未过期（expires, ms）缺一不可。"""
+        import time as _t
+        p = POLYCFG / "core-delegation.json"
+        try:
+            if not p.exists():
+                return None
+            d = json.loads(p.read_text(encoding="utf-8"))
+            if d.get("granted_by") == self.producer and int(d.get("expires", 0)) > _t.time() * 1000:
+                return d
+        except Exception:
+            return None
+        return None
+
     def lane(self, name: str) -> dict:
         return self.lanes[name]
 
@@ -102,10 +128,14 @@ class Config:
         return author == self.producer or author in self.delegated_approvals.get(pid, [])
 
     def can_approve(self, pid: str, author: str, lane: str | None) -> bool:
-        """含泳道豁免的批准谓词：亲批泳道（producer_only_lanes）内制作人之外一律无效。"""
+        """含泳道豁免的批准谓词：亲批泳道（producer_only_lanes）内制作人之外一律无效——
+        唯一例外是限时代批窗（core_delegation 在效期内，STUDIO-118）。"""
         if author == self.producer:
             return True
         if lane and lane in self.producer_only_lanes.get(pid, []):
+            if (self._core_delegation_active() and pid == "POLY" and lane == "core"
+                    and author in self.delegated_approvals.get(pid, [])):
+                return True
             return False
         return author in self.delegated_approvals.get(pid, [])
 
