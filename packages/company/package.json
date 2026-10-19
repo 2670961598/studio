@@ -18,5 +18,8 @@
     "simple-git": "^3.27.0",
     "zod": "^4.0.0",
     "yaml": "^2.6.0"
+  },
+  "devDependencies": {
+    "@studio-next/localplatform": "workspace:*"
   }
 }

@@ -56,6 +56,15 @@ export interface InitResult {
 /** slug 是概览路由 /<slug>/ 的 URL 片段（04-§七）：小写字母/数字/连字符，禁空白与路径分隔符 */
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
+/**
+ * 员工工作区树目录名（制作人 2026-10-20 口谕增补；docs/43-§五）：
+ * `.AIWS/<部门路径>/<工号>/`——镜像 org-config 组织结构，员工在自己文件夹里做任意事。
+ * 落在公司根目录（公司 git 目录/var 的同级，**不进公司 git 目录**）；与 .git/.DS_Store
+ * 同款被内容指纹与文件监听排除（readDirectoryFiles 排除表——员工工作区不是公司配置面，
+ * 写它不得触发热重载/批准指纹漂移）。
+ */
+export const AIWS_DIR = '.AIWS'
+
 /** 默认模板：仓根 templates/company-2-level（16-§一 目录结构；分发内嵌问题见文件头 TODO） */
 function defaultTemplateDir(): string {
   return fileURLToPath(new URL('../../../templates/company-2-level', import.meta.url))
@@ -95,7 +104,8 @@ function errText(err: unknown): string {
 
 /**
  * 目录 → 内存文件映射（挂载壳：validator 零 IO 的补边，CLI / 后续 panel 共用）。
- * 键为相对根的 POSIX 风格路径；跳过 .git（版本库不是目录契约的一部分）与 .DS_Store。
+ * 键为相对根的 POSIX 风格路径；跳过 .git（版本库不是目录契约的一部分）、.DS_Store 与
+ * .AIWS（员工工作区树——与 .git 同款排除：不是公司配置面，不进指纹/监听，docs/43-§五）。
  */
 export async function readDirectoryFiles(root: string): Promise<Record<string, string>> {
   const files: Record<string, string> = {}
@@ -103,7 +113,7 @@ export async function readDirectoryFiles(root: string): Promise<Record<string, s
     const entries = await readdir(dir, { withFileTypes: true })
     entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
     for (const entry of entries) {
-      if (entry.name === '.git' || entry.name === '.DS_Store') continue
+      if (entry.name === '.git' || entry.name === '.DS_Store' || entry.name === AIWS_DIR) continue
       const abs = path.join(dir, entry.name)
       const rel = prefix === '' ? entry.name : `${prefix}/${entry.name}`
       if (entry.isDirectory()) await walk(abs, rel)

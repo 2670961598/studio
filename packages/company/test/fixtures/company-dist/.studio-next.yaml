@@ -1,0 +1,13 @@
+# Studio Next 挂载元信息（.studio-next.yaml）—— 分发仓（git-url 公司包）随行形态
+#
+# v1.1 语义（docs/43-§一）：公司包=git 仓库即公司。本文件以**本地挂载元信息**形态随行
+# （schema 与 org-config.yaml 同源——docs/44 §四-4「一名两义」的 v1.1 解法：分发仓不再
+# 携带独立的 company-package manifest，目录契约文件即包）。
+# created_at/last_validated_at/last_validation 由导入流盖戳（fresh 通道）；升级时保留本地侧。
+
+schema: org-config/v1
+template: git-import
+created_at: null
+last_validated_at: null
+last_validation: null
+framework_version: null

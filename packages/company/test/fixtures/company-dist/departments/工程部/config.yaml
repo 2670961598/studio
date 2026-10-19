@@ -1,0 +1,21 @@
+# 工程部 · 部门章程与规定（源码示范公司 DEV-27 夹具）
+
+name: 工程部
+path: departments/工程部
+level: 2
+parent: null
+leader: AGENT-1
+functions:
+  - 交付
+lanes:
+  - core
+reports_to: null
+
+rules:
+  - 一切交付以落盘证据为准
+  - 插件行为面按 dependencies.yaml 声明启用，不私装
+
+relations: []
+
+jobs:
+  - src-daily-report

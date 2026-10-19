@@ -5,6 +5,9 @@
  * 子命令：
  *   init <slug> [--name <公司名>] [--dir <目录>] [--template <模板目录>]
  *       从模板生成公司目录（默认模板 templates/company-2-level）：复制 → 占位替换 → 自检 → git 首提
+ *   company add <git-url> [名] [--dir|--work-root|--plugin-root|--platform-root|--aiws-root|--by]
+ *       git 网址即公司（DEV-27；docs/43-§一+§十1-4）：clone → 剥 .git 重建本地仓 → schema
+ *       校验 → provision+信任锚+.AIWS 建树+依赖清单安装（隔离根）；升级=同 url 再跑（幂等）
  *   validate <目录>
  *       目录结构校验：不合法逐条打印「文件:行 [规则] 修法」到 stderr，exit 1（04-§九）
  *   ledger drill <库路径>
@@ -106,7 +109,9 @@
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { initCompany, loadCompanyDirectory, readDirectoryFiles } from '@studio-next/company'
+import { companyAddGitUrl, deriveDirNameFromGitUrl } from '@studio-next/company'
 import type { InitOptions } from '@studio-next/company'
+import { createLocalPlatform } from '@studio-next/localplatform'
 import { servePanel } from '@studio-next/panel'
 import { serveOverview } from '@studio-next/panel/overview'
 import type { OverviewCompanySource } from '@studio-next/panel/overview'
@@ -134,6 +139,14 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
 用法：
   studio-next init <slug> [--name <公司名>] [--dir <目录>] [--template <模板目录>]
       从模板生成公司目录（默认模板 templates/company-2-level）：复制 → 占位替换 → 自检 → git 首提
+  studio-next company add <git-url> [名] [--dir <目录>] [--work-root <根>]
+                           [--plugin-root <目录>] [--platform-root <目录>]
+                           [--aiws-root <目录>] [--by <动作人>]
+      git 网址即公司（DEV-27；docs/43-§一，v1.1）：真实 git clone → 剥离活性 .git 重建
+      本地仓 → schema 校验 → 初始化（localfile 字段 provision+信任锚 trust=false+.AIWS
+      员工工作区树+依赖清单自动安装到隔离插件根——绝不写 ~/.dsh）。升级=同 url 再跑
+      （镜像同步+幂等——§十-2 四点）。布局：<work-root>/<名>=公司 git 目录；.AIWS/ 与
+      var/platform|plugins 在 work-root 下
   studio-next validate <目录>
       校验公司目录结构：不合法逐条打印「文件:行 [规则] 修法」到 stderr 并 exit 1
   studio-next ledger drill <库路径>
@@ -304,6 +317,87 @@ async function cmdInit(argv: string[]): Promise<number> {
     // initCompany 的失败即 ClassifiedError(CONFIG_INVALID)（宁失败不半成品，已撤除产物）
     console.error(`init 失败：${errText(err)}`)
     return 1
+  }
+}
+
+/**
+ * company add <git-url> [名] —— git 网址即公司（DEV-27；docs/43-§一，§十1-4 定稿增补）
+ *
+ * 链路：真实 git clone → 剥离活性 .git 重建本地仓（任意深度剥 .git，禁整目录复制）→
+ * schema 校验（写盘前）→ 初始化（localfile 平台字段 provision + 信任锚 trust=false +
+ * .AIWS 员工工作区树 + 依赖清单自动安装到隔离插件根）。升级=同 git-url 再次调用
+ * （镜像同步+内容变了才新提交+盖戳字段不回卷+有锚+slug 同家）。
+ * 布局：<work-root>/（缺省=目标目录的上级）
+ *   ├── <名>/            公司 git 目录（本命令产物）
+ *   ├── .AIWS/           员工工作区树（不进公司 git 目录——docs/43-§五）
+ *   └── var/platform|plugins   平台盘与隔离插件根（绝不写用户 ~/.dsh——docs/43-§四）
+ */
+async function cmdCompanyAdd(argv: string[]): Promise<number> {
+  const parsed = parseArgv(argv, new Set(['dir', 'work-root', 'plugin-root', 'platform-root', 'aiws-root', 'by']))
+  if ('error' in parsed) {
+    console.error(`company add：${parsed.error}`)
+    console.error(USAGE)
+    return 1
+  }
+  const gitUrl = parsed.positionals[0]
+  if (gitUrl === undefined) {
+    console.error('company add：缺少 <git-url>（例：studio-next company add /path/to/company-repo my-corp）')
+    console.error(USAGE)
+    return 1
+  }
+  const name = parsed.positionals[1]
+  if (parsed.positionals.length > 2) {
+    console.error(`company add：多余的位置参数：${parsed.positionals.slice(2).join(' ')}`)
+    console.error(USAGE)
+    return 1
+  }
+  const targetDir = path.resolve(parsed.flags.dir ?? path.join(parsed.flags['work-root'] ?? process.cwd(), name ?? deriveDirNameFromGitUrl(gitUrl)))
+  const workRoot = path.resolve(parsed.flags['work-root'] ?? path.dirname(targetDir))
+  const platformRoot = path.resolve(parsed.flags['platform-root'] ?? path.join(workRoot, 'var', 'platform'))
+  const pluginRoot = path.resolve(parsed.flags['plugin-root'] ?? path.join(workRoot, 'var', 'plugins'))
+
+  try {
+    const platform = createLocalPlatform(platformRoot)
+    const result = await companyAddGitUrl({
+      gitUrl,
+      ...(name !== undefined && parsed.flags.dir === undefined && parsed.flags['work-root'] !== undefined ? { name } : {}),
+      targetDir,
+      platform,
+      pluginRoot,
+      ...(parsed.flags['aiws-root'] !== undefined ? { aiwsRoot: path.resolve(parsed.flags['aiws-root']) } : {}),
+      ...(parsed.flags.by !== undefined ? { importedBy: parsed.flags.by } : {}),
+    })
+    console.log(`公司目录：${result.dir}（slug=${result.slug}${result.upgraded ? '；升级通道' : '；首次导入'}${result.upgraded && !result.contentChanged ? '·内容未变幂等' : ''}）`)
+    console.log(`git 提交：${result.gitCommit}`)
+    console.log(`信任锚：.studio-next/trust.json trust=false（待制作人批准——docs/44 v1 信任锚设计）`)
+    console.log(`平台字段 provision：${result.provisioned ? `已落 ${platformRoot}` : '未走（公司未声明 platform: localfile）'}`)
+    console.log(`员工工作区树：${result.aiws.root}（${result.aiws.personDirs.length} 个工号文件夹）`)
+    if (result.install !== undefined) {
+      const items = result.install.items.map((i) => `${i.name}:${i.action}`).join('、')
+      console.log(`依赖清单安装：${items === '' ? '（无依赖清单=零行为面）' : items}${result.install.confirmed ? '' : '；确认位=false 零落盘'}`)
+      console.log(`安装清单日志：${result.install.logFile}`)
+    }
+    return 0
+  } catch (err) {
+    // ClassifiedError(CONFIG_INVALID) 面向上报（宁失败不半成品——fresh 通道产物已撤除）
+    console.error(`company add 失败：${errText(err)}`)
+    return 1
+  }
+}
+
+async function cmdCompany(argv: string[]): Promise<number> {
+  const [sub, ...rest] = argv
+  switch (sub) {
+    case 'add':
+      return cmdCompanyAdd(rest)
+    case undefined:
+      console.error('company：缺少子命令（当前支持：add）')
+      console.error(USAGE)
+      return 1
+    default:
+      console.error(`company：未知子命令：${sub}（当前支持：add）`)
+      console.error(USAGE)
+      return 1
   }
 }
 
@@ -1281,6 +1375,8 @@ async function main(): Promise<number> {
   switch (command) {
     case 'init':
       return cmdInit(rest)
+    case 'company':
+      return cmdCompany(rest)
     case 'validate':
       return cmdValidate(rest)
     case 'ledger':

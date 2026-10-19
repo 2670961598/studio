@@ -46,6 +46,14 @@ export * from './cadence.ts'
 // init 脚手架 + 目录读取壳（v0.1-M3，docs/16-§四 验收口径「init 出模板公司并通过自检」）
 export * from './init.ts'
 
+// 信任锚（DEV-27 正式化：docs/44 v1 信任锚设计——git-url 导入流复用）
+export * from './trust.ts'
+
+// git-url 导入流（DEV-27 正式化：docs/43-§一「git 网址即公司」+ §十1-4 定稿增补——
+// 克隆→剥 .git 重建本地仓→schema 写盘前检→provision→锚 trust=false→.AIWS 建树→
+// 依赖清单安装挂点；直导通道同核；升级四点语义）
+export * from './git-import.ts'
+
 // 依赖清单与插件绑定引擎（DEV-26 正式化：docs/43-§四「员工的行为面」+ §十5-8 定稿增补；
 // 判定 normative 标尺 docs/51-契约 D——纯决策面 planPluginInstalls + 隔离根安装执行面 +
 // 契约 subject depsSubject）

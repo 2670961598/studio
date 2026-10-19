@@ -1,0 +1,32 @@
+# 依赖清单（docs/43-§四「员工的行为面」——v1.1 新增主特性）
+#
+# 属性值 → dsh 插件映射：员工档案属性命中 → 该插件对本员工启用 → 框架替他安装
+# （安装目标=隔离插件根，由 daemon/测试注入；源=公司包内 plugins/ 目录优先）。
+# version 两形态：^caret 区间 / 精确版（缺 patch 按 .0）。
+#
+# 本夹具三条绑定覆盖 规范判定口径的三种命中面（docs/43-§七-2）：
+#   1. role 命中（AGENT-1 是工程负责人）→ dsh-web-test ^1.2
+#   2. dept 命中（AGENT-1 的部门=departments/工程部，末段名=工程部）→ dsh-web-test 1.2.0（精确版形态）
+#   3. 不命中（无人是设计师）→ 该绑定对全员零启用（需求面不产生，不安装）
+
+schema: studio-next/dependencies@1
+
+bindings:
+  - when:
+      attr: role
+      is: 工程负责人
+    plugins:
+      - name: dsh-web-test
+        version: "^1.2"
+  - when:
+      attr: dept
+      is: 工程部
+    plugins:
+      - name: dsh-web-test
+        version: "1.2.0"
+  - when:
+      attr: role
+      is: 设计师
+    plugins:
+      - name: dsh-web-test
+        version: "^9.0"

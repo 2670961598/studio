@@ -1,0 +1,12 @@
+{
+  "name": "dsh-web-test",
+  "version": "1.2.0",
+  "type": "module",
+  "description": "最小合法 dsh 插件①（docs/34-§3.1 形态：ESM 具名导出 + dsh.bundle 声明 + cordis.patch.yml insert 条目）；依赖清单 role=工程负责人 命中即安装",
+  "main": "src/index.mjs",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
