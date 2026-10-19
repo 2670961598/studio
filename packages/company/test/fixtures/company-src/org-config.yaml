@@ -1,0 +1,34 @@
+# 依赖清单引擎测试用最小公司（DEV-26；docs/04-§二 目录契约 / docs/43-§四 行为面）
+#
+# 只保留 extractPersonAttrs 消费的段（people 的 id/dept/level/role/skills/executor/status）；
+# 完整公司目录夹具见 templates/company-2-level。AGENT-1 的 role/dept 命中
+# dependencies.yaml 前两条绑定（设计师 AGENT-2 在测试内联——隔离 dept 绑定干扰）。
+
+schema: org-config/v1
+
+company:
+  name: 依赖示范公司
+  slug: deps-corp
+  level: 2
+
+departments:
+  - name: 工程部
+    path: departments/工程部
+    leader: AGENT-1
+    level: 2
+    parent: null
+    lanes: [core]
+    functions: [交付]
+    relations: []
+
+people:
+  - id: AGENT-1
+    name: 依赖工程师
+    login: agent-1
+    level: 2
+    dept: departments/工程部
+    role: 工程负责人 # 依赖清单 role 命中位（docs/43-§四：属性决定插件开关）
+    reports_to: null
+    skills: [typescript]
+    status: active
+    executor: dsh
