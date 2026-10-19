@@ -124,6 +124,7 @@ import { gateDispatch, settleDispatch, type BudgetGateDeps } from './budget-gate
 import { crashHook } from './crash-points.ts'
 import type { GateRunner } from './gate.ts'
 import { makeUlid } from './id.ts'
+import { instructionsTarget, removeInstructions, writeInstructions } from './instructions-store.ts'
 import type { PromptAssembler } from './prompt-assembly.ts'
 import { blindArtifactPaths, createView, resolveReadTier, roleOfAssignee } from './read-tiers.ts'
 import type { ReadTier } from './read-tiers.ts'
@@ -319,6 +320,12 @@ interface Inflight {
   personId: string
   /** 派发拍序：本拍派发的下一拍才可收割（同拍单至多一动作的收割侧落点） */
   dispatchedAtSeq: number
+  /**
+   * bridge 通道（agents_md≠native）的每任务指令临时文件（docs/25-§3.1 v1.5#1）：
+   * 保留至收割完成（worker 全程可读、抗 compact 重注入）→ GATE_PASS/GATE_FAIL 删；
+   * native 通道无此文件（AGENTS.md 恒在 workspace，收割后保留——工位证据）。
+   */
+  instructionsPath?: string
 }
 
 /** 泳道租约（进程内 v0：holder=单号；TTL 到期视同无主——decide laneFree 同语义） */
@@ -545,7 +552,8 @@ export function createEngine(deps: EngineDeps): Engine {
   // ————————————————— 相位执行体 —————————————————
 
   /**
-   * 派发：装配（AGENTS.md+任务书落盘）→ **预算闸（reserve 双行落账→才 launch，
+   * 派发：装配（指令文件按通道能力路由落盘：native=workspace AGENTS.md；bridge 通道=
+   * 每任务临时文件 instructions-store.ts）→ **预算闸（reserve 双行落账→才 launch，
    * 20-§六.8 不落即不派）** → registry 选适配器 → launch → work_records 落在途
    * → 平台迁已派发 → events 落 DISPATCH（note 携分层指纹与 intentKey——幂等索引依据）。
    */
@@ -578,7 +586,16 @@ export function createEngine(deps: EngineDeps): Engine {
     const attempt = index.attemptOf(ticket)
     const workspace = path.join(config.rootDir, 'workspaces', ticket, `att${attempt}`)
     const briefPath = path.join(workspace, 'brief.md')
-    const agentsTarget = path.join(workspace, 'AGENTS.md')
+    // AGENTS.md 落点按 adapter 通道能力路由（04-§六 B5 + docs/25-§3.1 v1.5#1，零 if executor——
+    // 只读 capabilities）：native=workspace 根（原生发现，P-07）；user_level/append=bridge
+    // 插件通道——每任务指令临时文件（workspace 外，<rootDir>/tmp/instructions/<单号>.md，
+    // 0600），launch env STUDIO_NEXT_INSTRUCTIONS 指向它、由宿主插件注入系统提示 persona 段
+    const agentsChannelKind = adapter.capabilities.agents_md
+    const nativeAgents = agentsChannelKind === 'native'
+    const agentsTarget = nativeAgents
+      ? path.join(workspace, 'AGENTS.md')
+      : instructionsTarget(config.rootDir, ticket)
+    let instructionsPath: string | undefined // bridge 通道临时文件（收割/派发失败后清理）
     const at = now()
     let launched: Handle | undefined
     try {
@@ -612,7 +629,14 @@ export function createEngine(deps: EngineDeps): Engine {
         readView,
       })
       mkdirSync(workspace, { recursive: true })
-      writeFileSync(agentsTarget, assembled.agentsMd.text, 'utf8')
+      if (nativeAgents) {
+        writeFileSync(agentsTarget, assembled.agentsMd.text, 'utf8')
+      } else {
+        // bridge 通道（v1.5#1）：组装文本落每任务临时文件（0600，「生成物勿手改」横幅
+        // 由组装产物自带）——TaskBrief.AGENTS_MD.target 指向它，dsh 适配器注 env 交插件消费
+        instructionsPath = agentsTarget
+        writeInstructions(agentsTarget, assembled.agentsMd.text)
+      }
       // 任务书追加 wkey 指引行（workerKeys 启用面；追加在六层组装产物之外、任务书是
       // per-attempt 操作面——指引行只指路不含凭据值，env 通道定调见 worker-key.ts 头注）
       const briefText =
@@ -635,6 +659,7 @@ export function createEngine(deps: EngineDeps): Engine {
       })
       if (gate.kind === 'refused') {
         budget.budgetRefused += 1
+        if (instructionsPath !== undefined) removeInstructions(instructionsPath) // 拒派即删（无收割会来收本 attempt）
         return fail(
           `budget-refusal:${gate.reason}：估算 $${gate.estimated} + 在途 $${gate.inflight} 超帽 $${gate.cap}` +
             `——refusal 行已落账（可查，F1-09），不派（20-§六.8 预留不落即不派的镜像面）`,
@@ -684,6 +709,7 @@ export function createEngine(deps: EngineDeps): Engine {
         lane: action.lane,
         personId: person.id,
         dispatchedAtSeq: seq,
+        ...(instructionsPath !== undefined ? { instructionsPath } : {}),
       })
       syncMirror(transitioned)
       makeEvent('DISPATCH', transitioned, attempt, tickEvents, {
@@ -703,6 +729,9 @@ export function createEngine(deps: EngineDeps): Engine {
       // 派发失败如实分类上报（DISPOSITIONS: DISPATCH_FAIL/retry）；v0 不计断路连击（拟稿）
       const msg = err instanceof Error ? err.message : String(err)
       if (launched !== undefined) await adapter.kill(launched, config.killGraceMs).catch(() => undefined)
+      // bridge 通道临时指令文件即删：launch 失败=无收割会来收本 attempt，留着即泄漏
+      //（清理策略见 instructions-store.ts 头注；重派会重写同路径）
+      if (instructionsPath !== undefined) removeInstructions(instructionsPath)
       // 已签发的 worker wkey 随失败撤离（env 通道：launch 失败=凭据未进任何存活子进程，
       // token 只活在本次调用栈——丢弃即离场；不吊销 ticket——重试重签同 ticket，ticket 级
       // 吊销是终局动作，见 worker-key.ts 头注拟稿；失效兜底=TTL+nonce 单次）。
@@ -801,6 +830,9 @@ export function createEngine(deps: EngineDeps): Engine {
         duration_ms: stats.duration,
         note: `四要件齐（completed/非空/REPORT/exit0）；report=${gate.reportPath}${gate.summaryPath !== undefined ? `;summary=${gate.summaryPath}` : ''}${budgetNote}`,
       })
+      // bridge 通道指令临时文件：保留至收割完成→此刻删（v1.5#1 清理策略；内容指纹已在
+      // DISPATCH note/payload_hash 落账——证据不依赖文件存活）
+      if (entry.instructionsPath !== undefined) removeInstructions(entry.instructionsPath)
       return 'completed'
     }
     const missing = [
@@ -865,6 +897,8 @@ export function createEngine(deps: EngineDeps): Engine {
       })
       syncMirror(bug)
     }
+    // bridge 通道指令临时文件：收割失败面同样「收割完成即删」（回首批位重派会重写）
+    if (entry.instructionsPath !== undefined) removeInstructions(entry.instructionsPath)
     return 'failed'
   }
 
@@ -1236,6 +1270,8 @@ export function createEngine(deps: EngineDeps): Engine {
   }
 
   async function dispose(): Promise<void> {
+    // bridge 通道指令临时文件不在此删：work_records 留 running 的接管语义同款——
+    // 重启接管重写同路径（instructions-store.ts 头注清理策略）
     for (const entry of [...inflight.values()]) {
       try {
         const adapter = registry.resolve(entry.executor)

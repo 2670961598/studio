@@ -16,7 +16,9 @@
  *   - 零名单硬编码旁证：能力同形的第五家 fake 适配器被平等路由（注册即路由）
  *
  * 矩阵依据（四家 capabilities 冻结声明，见各自源文件）：
- *   dsh    budget_cap=F cancel_turn=F session_resume=F agents_md=native cost_native=F（default）
+ *   dsh    budget_cap=F cancel_turn=F session_resume=F agents_md=user_level cost_native=F（default；
+ *          user_level=bridge 插件通道——docs/25-§3.1 v1.5#1：daemon 落指令临时文件+env
+ *          STUDIO_NEXT_INSTRUCTIONS，studio-next-bridge 消费；原生发现通道仍并存）
  *   claude budget_cap=T cancel_turn=F session_resume=T agents_md=native cost_native=T
  *   codex  budget_cap=F cancel_turn=F session_resume=T agents_md=native cost_native=F
  *   kimi   budget_cap=F cancel_turn=F session_resume=T agents_md=native cost_native=F
@@ -101,6 +103,7 @@ describe('注册表：注册 / 解析 / 拒收', () => {
     })
     const dsh = entries.find((e) => e.name === 'dsh')
     expect(dsh?.capabilities.session_resume).toBe(false) // v0 不支持续跑，照实声明
+    expect(dsh?.capabilities.agents_md).toBe('user_level') // bridge 插件通道（v1.5#1，daemon 据此路由落盘+env 注入）
   })
 
   it('resolve 注册名返回适配器本体（name 与能力相符）', () => {
@@ -220,15 +223,21 @@ describe('能力路由矩阵（零 if executor 名单硬编码）', () => {
     expect(registry.pick({ budgetCap: true, sessionResume: true })?.name).toBe('claude')
   })
 
-  it('组合过滤：预算帽+原生成本+续跑 → claude；native 通道不收窄（四家皆 native）', () => {
+  it('组合过滤：预算帽+原生成本+续跑 → claude；user_level 通道只收窄到 dsh（v1.5#1 bridge 通道）', () => {
     const registry = registerBuiltins(createRegistry())
     expect(
-      registry.pickAll({ budgetCap: true, costNative: true, sessionResume: true, agentsMdChannel: 'native' }).map(
+      registry.pickAll({ budgetCap: true, costNative: true, sessionResume: true, agentsMdChannel: 'user_level' }).map(
         (a) => a.name,
       ),
-    ).toStrictEqual(['claude'])
-    expect(registry.pickAll({ agentsMdChannel: 'native' }).length).toBe(4)
-    expect(registry.pick({ agentsMdChannel: 'native' })?.name).toBe('dsh') // default 优先
+    ).toStrictEqual([])
+    expect(registry.pickAll({ agentsMdChannel: 'user_level' }).map((a) => a.name)).toStrictEqual(['dsh'])
+    expect(registry.pick({ agentsMdChannel: 'user_level' })?.name).toBe('dsh') // default 优先
+    // native 通道三家（claude/codex/kimi——dsh 已切 bridge 通道）
+    expect(registry.pickAll({ agentsMdChannel: 'native' }).map((a) => a.name)).toStrictEqual([
+      'claude',
+      'codex',
+      'kimi',
+    ])
   })
 
   it('组合无解（预算帽+不支持续跑）→ undefined：pick 无解是结果不是错误', () => {

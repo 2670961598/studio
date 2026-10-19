@@ -32,6 +32,9 @@
  *     缺省=fake adapter（demo，行为不变）。dsh 真跑的外部依赖（CLI 在 PATH、凭据 env、
  *     profile patch）不在 daemon 面——凭据经进程 env 透传（TaskBrief.credentials 通道 +
  *     launch `...process.env`），凭据值永不入配置/日志/台账（红名单）。
+ *     AGENTS.md 通道接线（v1.5#1，本刀）：dsh capabilities.agents_md='user_level'——
+ *     dispatch 落指令临时文件（workspace 外）+ launch env STUDIO_NEXT_INSTRUCTIONS；
+ *     bridge 插件 overlay 由启动期生成（见下方 provisioning 段），挂载归 agent.yaml cmd。
  *   - 网关（17-§7 写入全收口）：**平台写路径已过闸**（src/gated-platform.ts——控制面 control key、
  *     署名注入、fail-closed；缺省开，daemon.yaml `gatewaySecret:` 配密钥、缺省开发值生产必换）。
  *     worker 级按单 wkey 已接（src/worker-key.ts：dispatch 签发+TaskBrief.credentials
@@ -90,6 +93,7 @@ import { createFakeAdapter, createFakePlatform } from './fakes.ts'
 import { createGatedPlatform } from './gated-platform.ts'
 import { createDefaultGateRunner, createAcceptanceGateRunner } from './gate.ts'
 import { makeUlid } from './id.ts'
+import { provisionDshBridgeOverlay } from './instructions-store.ts'
 import { CADENCE_SOURCE_MANIFEST, createCadenceSource, createSlaSource, SLA_SOURCE_MANIFEST } from './jobs-sources.ts'
 import { createDefaultAssembler } from './prompt-assembly.ts'
 import { nextRunAt, type Scheduler } from './scheduler.ts'
@@ -620,6 +624,29 @@ export function buildServeRuntime(
     )
   } else {
     registry.register(createFakeAdapter(), { default: true })
+  }
+
+  // —— dsh bridge 插件 provisioning（docs/25-§3.1 v1.5#1 通道的装载自动化）：
+  //    注册表里有 bridge 通道 executor（agents_md≠native——能力路由既有面，零 if executor）
+  //    时，serve 启动生成运行时 overlay（<rootDir>/tmp/dsh-bridge-overlay.yml，
+  //    instructions-store.ts——装载法 B，docs/34-§3.1；不动机器全局 profile）。挂载声明
+  //    归部署的 agent.yaml：dsh cmd 追加 `--patch <overlay 路径>`（cmd=配置覆盖注入位）。
+  //    未挂载时 STUDIO_NEXT_INSTRUCTIONS 无消费者——注入不发生（明报提示，不拒启动）——
+  const bridgeChannelUsers = registry.list().filter((e) => e.capabilities.agents_md !== 'native')
+  if (bridgeChannelUsers.length > 0) {
+    const overlay = provisionDshBridgeOverlay(path.resolve(config.rootDir))
+    if (overlay !== undefined) {
+      log(
+        `[serve] bridge 插件 overlay 已生成：${overlay.overlayPath}（插件源 ${overlay.bridgeSrc}）` +
+          `——通道 executor：${bridgeChannelUsers.map((e) => e.name).join('、')}；agent.yaml 该家 cmd 追加 --patch <该路径> 即挂载（docs/34-§3.1 装载法 B；未挂载则注入不发生）`,
+      )
+    } else {
+      log(
+        '[serve] 警告：注册表含 bridge 通道 executor（' +
+          `${bridgeChannelUsers.map((e) => e.name).join('、')}）但 dsh-bridge 包不在仓内预期位置（仓外部署？）` +
+          '——overlay 未生成；须自行以 --patch 挂载 studio-next-bridge，否则 STUDIO_NEXT_INSTRUCTIONS 无消费者、身份注入不发生',
+      )
+    }
   }
 
   // —— 冻结验收命令单一事实源（v0.5 真单刀）：acceptance 配置给定=真单模式（装配器 L4 /
