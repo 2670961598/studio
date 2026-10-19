@@ -261,12 +261,25 @@ export class TaigaContext {
 
   /**
    * 写自定义属性值（真机实证 2026-10-18：POST 该路径 405 不通；正解=PATCH
-   * {attributes_values, version}，version 是**值对象自身**的乐观并发号，先 GET 取）
+   * {attributes_values, version}，version 是**值对象自身**的乐观并发号，先 GET 取）。
+   *
+   * 合并语义（P1 修复 2026-10-19 监督哨：PATCH 的 attributes_values 是**整体替换**——
+   * 只传单字段会抹掉其他自定义维（真机两次作案：设 lane 抹 level、补 level 抹 lane，
+   * 台账 studio-dev 22:12 前后）。正解=GET 现值合并后再 PATCH（值不删，只覆盖传入键）。
    */
   async patchAttrValues(internalId: number, attrs: Record<string, string | number>): Promise<void> {
     const path = `/${this.desc.collection}/custom-attributes-values/${String(internalId)}`
     const current = await this.client.request({ method: 'GET', path })
-    const version = reqNumber(asObject(current.json, 'attr-values'), 'version', 'attr-values')
-    await this.client.request({ method: 'PATCH', path, body: { attributes_values: attrs, version } })
+    const currentObj = asObject(current.json, 'attr-values')
+    const version = reqNumber(currentObj, 'version', 'attr-values')
+    const existing = asObject(currentObj['attributes_values'] ?? {}, 'attributes_values') as Record<
+      string,
+      string | number
+    >
+    await this.client.request({
+      method: 'PATCH',
+      path,
+      body: { attributes_values: { ...existing, ...attrs }, version },
+    })
   }
 }
