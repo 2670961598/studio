@@ -24,6 +24,10 @@
  *
  * v0 边界（诚实标注——v0.5 真单刀后仍差什么）：
  *   - platform: localfile **已接线**（@studio-next/localplatform，platformDir 可配）；
+ *     taiga **已接线**（@studio-next/taiga，docs/30 推荐 + docs/32 真机试点——daemon.yaml
+ *     键 taigaUrl/taigaProject/taigaEntity/taigaAuth/taigaFieldsFile；凭据只经进程 env
+ *     TAIGA_USERNAME+TAIGA_PASSWORD 或 TAIGA_TOKEN(+TAIGA_REFRESH) 供给，值永不入
+ *     daemon.yaml/日志/台账（红名单）；启动探针 fail-fast，见 wirePlatform/runServe）；
  *     YouTrack 接线归 platform 泳道后续单。
  *   - 配置解析为零依赖手写扁平 YAML 子集（注释/#、key: value、引号剥壳、数字/布尔推断）——
  *     真 YAML（yaml@2 带行号 AST）装载归 daemon 依赖登记后的后续刀（16-§二 选型纪律）。
@@ -76,8 +80,10 @@ import { createGateway, CONTROL_TICKET } from '@studio-next/gateway'
 import type { SignatureContext } from '@studio-next/gateway'
 import { createLocalPlatform } from '@studio-next/localplatform'
 import { openLedger, type Ledger } from '@studio-next/store'
+import { createTaigaPlatform, type TaigaAuth } from '@studio-next/taiga'
 import type {
   CompanySnapshot,
+  FieldProvisionMap,
   FlowPlatform,
   InvokeSource,
   ModelCatalog,
@@ -121,8 +127,8 @@ import {
 export interface ServeConfig {
   /** 台账库路径（不存在则建库+migrate——store openLedger 语义） */
   db: string
-  /** 协作平台：fake（demo）| localfile（未接线，接入点见 wirePlatform） */
-  platform: 'localfile' | 'fake'
+  /** 协作平台：fake（demo）| localfile（docs/23 LocalFile 平台）| taiga（docs/30 推荐 + docs/32 真机试点；接入点见 wirePlatform） */
+  platform: 'localfile' | 'taiga' | 'fake'
   /** 公司 slug（events/intents/mirror 的 company 维） */
   company: string
   /** 工位根（workspace = <rootDir>/workspaces/<单号>/att<N>） */
@@ -205,6 +211,27 @@ export interface ServeConfig {
   gatewaySecret?: string
   /** LocalFile 平台根（platform: localfile 时生效；缺省 <rootDir>/platform） */
   platformDir?: string
+  /** Taiga 实例根（platform: taiga 时必配；如 http://localhost:9000——/api/v1 由客户端拼接，尾斜杠自动剥） */
+  taigaUrl?: string
+  /** Taiga 项目 slug（platform: taiga 时必配；公司=项目，docs/30 §6 ③——单据 TicketId 前缀即它） */
+  taigaProject?: string
+  /** Taiga 单据承载实体（platform: taiga 时可选；userstory（缺省，docs/32 试点路径）| issue） */
+  taigaEntity?: 'userstory' | 'issue'
+  /**
+   * Taiga 认证态（platform: taiga 时必配）：password=env TAIGA_USERNAME+TAIGA_PASSWORD
+   * （JWT 自动登录+401 自动刷新/重登）；token=env TAIGA_TOKEN(+TAIGA_REFRESH 可续期；无
+   * refresh 且 token 失效须重启换新）。凭据值只进 env 永不入 daemon.yaml/日志/台账
+   * （红名单——与 gatewaySecret 纪律同源；文件形态 0600 token 归部署面装载进 env）。
+   */
+  taigaAuth?: 'password' | 'token'
+  /**
+   * Taiga 字段映射文件（platform: taiga 时可选；JSON 文件装 FieldProvisionMap 形状
+   * {fields:{业务名→平台属性名}, types?, states, stateFlow}——扁平 YAML 子集不收嵌套故
+   * 旁挂 JSON）。缺省=无映射：state/title/description/assignee 原生可用，type/dept/
+   * level/lane 等自定义维读不见、写显式报错 unmapped-field。同一份文件也是迁移期
+   * fields.provision 的输入（单一事实源，见 deliverables/migration.md）。
+   */
+  taigaFieldsFile?: string
   /**
    * agent.yaml 路径（可选，docs/17-§4 executor 注册面）：给定时装载真 executor 注册表
    * （loadAgentConfig→wireRegistry→builtinResolver）；缺省 fake adapter（demo 不变）。
@@ -306,9 +333,16 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'db':
         cfg.db = str(value, key)
         break
-      case 'platform':
-        cfg.platform = str(value, key) === 'localfile' ? 'localfile' : 'fake'
+      case 'platform': {
+        // 平台值收紧为显式枚举（CONFIG_INVALID 明报不猜）：原「未知值静默降 fake」会把
+        // platform: taiga 误配跑成 demo 假平台（写面黑洞）——taiga 接线后该静默面必须堵死。
+        const v = str(value, key)
+        if (v !== 'localfile' && v !== 'taiga' && v !== 'fake') {
+          throw new Error(`daemon.yaml：platform 须为 localfile|taiga|fake（实得 ${v}）`)
+        }
+        cfg.platform = v
         break
+      }
       case 'company':
         cfg.company = str(value, key)
         break
@@ -381,6 +415,31 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'platformDir':
         cfg.platformDir = str(value, key)
         break
+      case 'taigaUrl':
+        cfg.taigaUrl = str(value, key)
+        break
+      case 'taigaProject':
+        cfg.taigaProject = str(value, key)
+        break
+      case 'taigaEntity': {
+        const v = str(value, key)
+        if (v !== 'userstory' && v !== 'issue') {
+          throw new Error(`daemon.yaml：taigaEntity 须为 userstory|issue（实得 ${v}）`)
+        }
+        cfg.taigaEntity = v
+        break
+      }
+      case 'taigaAuth': {
+        const v = str(value, key)
+        if (v !== 'password' && v !== 'token') {
+          throw new Error(`daemon.yaml：taigaAuth 须为 password|token（实得 ${v}）——凭据值只经 env 供给，不入 daemon.yaml`)
+        }
+        cfg.taigaAuth = v
+        break
+      }
+      case 'taigaFieldsFile':
+        cfg.taigaFieldsFile = str(value, key)
+        break
       case 'agentYaml':
         cfg.agentYaml = str(value, key)
         break
@@ -389,6 +448,18 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         break
       default:
         throw new Error(`daemon.yaml：未知配置键 ${key}（v0 最小面，见 serve.ts 头注）`)
+    }
+  }
+  // —— taiga 必配键交叉校验（fail-fast：parse 面一次收口；直接构造 ServeConfig 的测试面
+  //    由 wirePlatform/createTaigaPlatform validateOptions 二道兜底）——
+  if (cfg.platform === 'taiga') {
+    const missing = [
+      ...(cfg.taigaUrl === undefined ? ['taigaUrl'] : []),
+      ...(cfg.taigaProject === undefined ? ['taigaProject'] : []),
+      ...(cfg.taigaAuth === undefined ? ['taigaAuth'] : []),
+    ]
+    if (missing.length > 0) {
+      throw new Error(`daemon.yaml：platform: taiga 缺必配键：${missing.join('、')}（见 serve.ts 头注 taiga 段）`)
     }
   }
   return cfg
@@ -442,16 +513,87 @@ function realGateMode(config: ServeConfig): boolean {
 }
 
 /**
+ * Taiga 凭据供给（token 供给面）：daemon.yaml 只配形态（taigaAuth: password|token），
+ * 值一律经进程 env——TAIGA_USERNAME+TAIGA_PASSWORD（密码态：JWT 自动登录，401 自动
+ * 刷新/重登，http.ts）或 TAIGA_TOKEN+TAIGA_REFRESH（token 态：预换 token，有 refresh
+ * 才可续）。凭据值永不入 daemon.yaml/日志/台账（红名单，与 gatewaySecret 纪律同源）；
+ * 缺键=fail-closed CONFIG_INVALID，只报缺哪个键名、不打印值。文件形态（0600 token
+ * 文件，docs/32 冒烟惯例）归部署面装载（systemd EnvironmentFile / docker secrets
+ * → env），daemon 只认 env。
+ */
+function resolveTaigaAuth(mode: 'password' | 'token'): TaigaAuth {
+  if (mode === 'password') {
+    const username = process.env['TAIGA_USERNAME']
+    const password = process.env['TAIGA_PASSWORD']
+    if (username === undefined || username === '' || password === undefined || password === '') {
+      throw new Error(
+        'CONFIG_INVALID：taigaAuth: password 需 env TAIGA_USERNAME + TAIGA_PASSWORD' +
+          '（值不入配置/日志；部署面经 EnvironmentFile/secrets 注入进程 env）',
+      )
+    }
+    return { type: 'password', username, password }
+  }
+  const token = process.env['TAIGA_TOKEN']
+  if (token === undefined || token === '') {
+    throw new Error(
+      'CONFIG_INVALID：taigaAuth: token 需 env TAIGA_TOKEN（可选 TAIGA_REFRESH 供续期；' +
+        '无 refresh 且 token 失效须重启换新——token 态无密码可重登）',
+    )
+  }
+  const refresh = process.env['TAIGA_REFRESH']
+  return { type: 'token', token, ...(refresh !== undefined && refresh !== '' ? { refresh } : {}) }
+}
+
+/**
+ * Taiga 字段映射装载（taigaFieldsFile）：扁平 YAML 子集不收嵌套，FieldProvisionMap
+ * 形状的映射旁挂 JSON 文件；读不到/非法 JSON/缺 fields 段=CONFIG_INVALID（明报不猜）。
+ * 深层形状（值非空、类型枚举）归 TaigaFieldMap/validateProvisionMap 二道校验。同一份
+ * 文件在迁移期也是 fields.provision 的输入（单一事实源，见 deliverables/migration.md）。
+ */
+function loadTaigaFieldMap(file: string): FieldProvisionMap {
+  let raw: unknown
+  try {
+    raw = JSON.parse(readFileSync(path.resolve(file), 'utf8'))
+  } catch (err) {
+    throw new Error(
+      `CONFIG_INVALID：taigaFieldsFile 不是合法 JSON（${file}）：${err instanceof Error ? err.message : String(err)}`,
+    )
+  }
+  const fields = (raw as Record<string, unknown> | null)?.['fields']
+  if (typeof raw !== 'object' || raw === null || typeof fields !== 'object' || fields === null) {
+    throw new Error(`CONFIG_INVALID：taigaFieldsFile 须是 FieldProvisionMap 形状（{fields,types?,states,stateFlow}，缺 fields 段）：${file}`)
+  }
+  return raw as FieldProvisionMap
+}
+
+/**
  * 平台接线：localfile=@studio-next/localplatform（docs/23 LocalFile 协作平台——真单首跑
- * 用本地文件平台，不依赖 Taiga/YouTrack 写面）；fake=demo 内存平台。
+ * 用本地文件平台，不依赖 Taiga/YouTrack 写面）；taiga=@studio-next/taiga（docs/30 推荐
+ * + docs/32 真机试点——构造期公司作用域绑定 baseUrl/project/entity/字段映射/凭据；
+ * 状态集/自定义属性经 fields.provision 建档后才可 transition/setField，缺档
+ * unknown-state/unknown-attribute 明报）；fake=demo 内存平台。
  * LocalFile 根=platformDir（缺省 <rootDir>/platform）。**provision（初始态=流表首态）不在此
  * 做**：字段/状态 provision 是公司装载面的一次性运营动作（platform.fields.provision），
  * daemon 不代写——建单初始态定格在 created 事件（packages/localplatform/issues.ts 头注）。
+ * taiga 同理：provision 归迁移/onboard 脚本（deliverables/migration.md），daemon 只消费。
  */
-function wirePlatform(config: ServeConfig): FlowPlatform {
+export function wirePlatform(config: ServeConfig): FlowPlatform {
   if (config.platform === 'localfile') {
     const root = path.resolve(config.platformDir ?? path.join(config.rootDir, 'platform'))
     return createLocalPlatform(root)
+  }
+  if (config.platform === 'taiga') {
+    if (config.taigaAuth === undefined) {
+      // parse 面已交叉校验；直接构造 ServeConfig 的测试面在此兜底（明报不猜）
+      throw new Error('CONFIG_INVALID：platform: taiga 需配 taigaAuth（password|token）——凭据值经 env TAIGA_* 供给')
+    }
+    return createTaigaPlatform({
+      baseUrl: config.taigaUrl ?? '',
+      project: config.taigaProject ?? '',
+      auth: resolveTaigaAuth(config.taigaAuth),
+      ...(config.taigaEntity !== undefined ? { entity: config.taigaEntity } : {}),
+      ...(config.taigaFieldsFile !== undefined ? { fields: loadTaigaFieldMap(config.taigaFieldsFile) } : {}),
+    })
   }
   return createFakePlatform()
 }
@@ -968,6 +1110,23 @@ export async function runServe(configPath: string): Promise<ServeResult> {
     snapshot = mounted.snapshot
   }
 
+  // —— Taiga 启动探针（fail-fast，platform: taiga 时）：一次只读 fields.schema() 拉通
+  //    网络→auth→项目解析→状态集四层（任一不通=启动期明报 exit 1，不等首拍 tick 才炸；
+  //    探针实例只读即弃、置于装配前——失败时引擎/源不构造；engine 实例的平台经
+  //    buildServeRuntime→wirePlatform 独立构造，网关收口不受影响）。 ——
+  if (config.platform === 'taiga') {
+    try {
+      const schema = await wirePlatform(config).fields.schema()
+      console.log(`[serve] Taiga 启动探针通过：schema ${String(schema.length)} 字段（auth/项目/状态集连通）`)
+    } catch (err) {
+      ledger.close()
+      throw new Error(
+        `CONFIG_INVALID：Taiga 启动探针失败（检查 taigaUrl/taigaProject/taigaAuth 凭据 env/平台状态集）：` +
+        `${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+  }
+
   const { engine, sources, stop, hotReload } = buildServeRuntime(config, ledger, snapshot)
 
   // 未挂公司目录的 daemon：L1 热重载不适用——reload 请求仍回执拒绝（不悬空 CLI 轮询）
@@ -977,7 +1136,9 @@ export async function runServe(configPath: string): Promise<ServeResult> {
   const stackMode =
     config.platform === 'localfile'
       ? `LocalFile 平台（${path.resolve(config.platformDir ?? path.join(config.rootDir, 'platform'))}）`
-      : 'fake 平台（demo）'
+      : config.platform === 'taiga'
+        ? `Taiga 平台（${config.taigaUrl ?? '?'} 项目=${config.taigaProject ?? '?'} 实体=${config.taigaEntity ?? 'userstory'}）`
+        : 'fake 平台（demo）'
   const execMode = config.agentYaml !== undefined ? `真 executor（agent.yaml=${config.agentYaml}）` : 'fake executor（demo）'
   const gateMode = realGateMode(config) ? '真验收闸门（冻结验收命令真执行）' : '占位闸门（exit0 模拟）'
   console.log(`[serve] 栈形态：${stackMode} + ${execMode} + ${gateMode}（边界见 src/serve.ts 头注）`)
