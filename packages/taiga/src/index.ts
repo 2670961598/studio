@@ -21,7 +21,7 @@
  *   JWT auth（type:normal）/ webhook HMAC-SHA1 / history 逐字段 diff+actor /
  *   roles permissions 数组 / 分页头 x-pagination-count|by|current（头名已核）/
  *   wiki PATCH version 语义 / roles PATCH 无 version / 重名 POST 400 形状 /
- *   links 关联模型五结论（/Volumes/BigDisk/probe-evidence/taiga-links/）
+ *   links 关联模型五结论（probe-evidence/taiga-links）
  *
  * 已知边界与显式 TODO：
  *   1. ~~custom-attributes-values 写端点真机未实测~~ **已实测修正（2026-10-18 首刀

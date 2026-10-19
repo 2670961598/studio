@@ -134,7 +134,7 @@ export async function createIssue(ctx: TaigaContext, input: IssueCreate): Promis
     throw new TaigaPlatformError(
       'CONFIG_INVALID',
       'links-unsupported',
-      'parent 维不可用：Taiga 同面父子链实测不可写（US↔US 无模型、epic 挂接端点 404、issue 生成链字段被静默丢弃；唯一可写从属链 US→task 发生在建 task 时）；证据=/Volumes/BigDisk/probe-evidence/taiga-links/',
+      'parent 维不可用：Taiga 同面父子链实测不可写（US↔US 无模型、epic 挂接端点 404、issue 生成链字段被静默丢弃；唯一可写从属链 US→task 发生在建 task 时）；证据=probe-evidence/taiga-links',
     )
   }
   const projectId = await ctx.project()
@@ -215,7 +215,7 @@ export async function setIssueField(ctx: TaigaContext, id: TicketId, field: stri
     throw new TaigaPlatformError(
       'CONFIG_INVALID',
       'links-unsupported',
-      'parent 维不可用：Taiga 同面父子链实测不可写（US↔US 无模型、epic 挂接端点 404、issue 生成链字段被静默丢弃）；证据=/Volumes/BigDisk/probe-evidence/taiga-links/',
+      'parent 维不可用：Taiga 同面父子链实测不可写（US↔US 无模型、epic 挂接端点 404、issue 生成链字段被静默丢弃）；证据=probe-evidence/taiga-links',
     )
   }
   if (isCustom) {

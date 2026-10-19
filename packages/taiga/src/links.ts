@@ -1,6 +1,6 @@
 /**
  * 链接面 —— 真机补测定版（docs/32 §四待核项已答；证据=
- * /Volumes/BigDisk/probe-evidence/taiga-links/ manifest P10-P60，2026-10-19）。
+ * probe-evidence/taiga-links manifest P10-P60，2026-10-19）。
  *
  * Taiga 关联模型实测结论：
  *   1. ref 是**项目级全局序列**（US 9→issue 10→epic 11→task 12→issue 13-15 连号，
@@ -72,7 +72,7 @@ export async function link(ctx: TaigaContext, a: TicketId, b: TicketId, type: Li
   throw new TaigaPlatformError(
     'CONFIG_INVALID',
     'links-unsupported',
-    `Taiga 实测不支持 ${type} 链：${reason}；证据=/Volumes/BigDisk/probe-evidence/taiga-links/（docs/32 §四待核项已答）`,
+    `Taiga 实测不支持 ${type} 链：${reason}；证据=probe-evidence/taiga-links（docs/32 §四待核项已答）`,
   )
 }
 

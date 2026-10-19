@@ -4,7 +4,7 @@
  *  - guards 写面：install=modify_us 收窄闸（只收窄不放宽、diff 写、幂等零 PATCH、
  *    unrestricted 边、未知角色/状态/公司作用域/空规则集的失败面）；uninstall=拆闸
  *    （全员放开、幂等零 PATCH）
- *  - links 面（真机定版，证据=/Volumes/BigDisk/probe-evidence/taiga-links/）：
+ *  - links 面（真机定版，证据=probe-evidence/taiga-links）：
  *    link() 三型显式 links-unsupported；children(userstory)=派生 task 链读回；
  *    children(issue)=生成链客户端过滤；单不存在 → issue-not-found
  */

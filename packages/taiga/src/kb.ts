@@ -3,7 +3,7 @@
  *
  *   path→slug 映射（2026-10-19 真机实测修正）：**Taiga wiki slug 不允许斜杠和点**
  *      （Django SlugField：仅 Unicode 字母/数字/下划线/连字符——POST /wiki 带
- *      'a/b' 或 '.md' 均为 400，证据 /Volumes/BigDisk/probe-evidence/taiga-links/
+ *      'a/b' 或 '.md' 均为 400，证据 probe-evidence/taiga-links
  *      manifest「slug 探针」三条）。首刀头注「slug 允许斜杠」系未实测假设，作废。
  *      端口 path（树形，如 guide/deploy.md）统一折平：'/' 与 '.' 归一为 '-'、
  *      首尾剥净、折叠重复（get/upsert/search 三面同规则，读写对称）；折平后
@@ -14,7 +14,7 @@
  *          Taiga 无 wiki 检索端点，客户端过滤，与 localplatform v0 同式；
  *          实测列表响应内嵌 content，无二次拉取）
  *   upsert 按 slug 幂等写（onboard 写面三件之一，2026-10-19 落地；真机端点形状
- *          全部经 /Volumes/BigDisk/probe-evidence/taiga-links/ P60-P66 核验）：
+ *          全部经 probe-evidence/taiga-links P60-P66 核验）：
  *          ① GET by_slug 探测——不存在 → POST /wiki {project, slug, content}（201，
  *             version=1；重复 slug 是 400 __all__，P65——所以必须先探测不盲 POST）
  *          ② 已存在且内容一致 → 不发写（真机 PATCH 会推 version/editions，幂等
