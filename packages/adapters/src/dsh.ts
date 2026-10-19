@@ -12,6 +12,10 @@
  *   - docs/25-§二（v1.4）：TaskBrief.credentials 短命按单凭据——launch env 无条件透传进
  *     子进程；其值不记录不打印（红名单），流/日志/账面文本永不含凭据。dsh 侧凭证优先级
  *     「进程 env 最高层」与该通道严丝合缝（docs/31-§3.5）
+ *   - docs/25-§3.1 v1.5 裁决（2026-10-19 制作人批，dsh 三件套）：①AGENTS.md 注入走 dsh
+ *     插件（STUDIO_NEXT_INSTRUCTIONS → packages/dsh-bridge studio-next-bridge）②Handle
+ *     可选 executorSessionId（端口级原则，dsh 首填）③StreamEvent.turn_end.errorCode
+ *     结构位（AUTH / MISSING_CREDENTIAL 先行）
  *
  * 真机对齐要点（P0，docs/31-§4 证伪表 → §5 修正清单）：
  *   - launch 传任务串：dsh headless 的任务=单个位置参数（docs/31-§0 发现 2——旧实现
@@ -21,8 +25,9 @@
  *     'completed' 且仅此一条。「空 final + 无 turn_end + exit 0」= 被 kill（aborted 口径，
  *     非成功非失败）——退出码与「输出非空」一律不参与判定（旧「hasOutput 近似」已删）
  *   - 失败分类（P1，docs/31-A4/§7 P-04）：无凭证=turn_end.reason.error.code
- *     MISSING_CREDENTIAL；凭证无效=code AUTH（上游 401 透传）。code 以 `${code}: ${message}`
- *     前缀形式留在 turn_end.error 串里（契约无结构位——前缀即分类载体）
+ *     MISSING_CREDENTIAL；凭证无效=code AUTH（上游 401 透传）。code 进契约结构位
+ *     turn_end.errorCode（v1.5，2026-10-19 批——前缀拼接方案废除），message 原文留在
+ *     turn_end.error（streams.ts parseDshStatus）
  *   - 遥测红线（docs/31-§5-8）：一切 dsh 拉起（launch/detect）注入
  *     DSH_TELEMETRY_MODE=DISABLED——dsh 默认 FEEDBACK_ONLY 外发 deepseeksvc.com，禁外发
  *   - resultStats：tokens 从 step_end usage 累计（turn_end 兜底分支已删——真机 turn_end
@@ -34,13 +39,14 @@
  *     （17-§6 坑位，docs/31-§7 P-08 真机定性收口）：exitCode 只记录不参与判定；终态
  *     只认 turn_end.reason.kind（见上）。spawn 统一 reject:false——非零退出码/被信号
  *     杀死不抛错，退出码对收割只有证据价值
- *   - AGENTS.md 通道 env 映射（agentsMdEnv）已证伪（docs/31-A1）：DSH_AGENTS_MD /
- *     DSH_APPEND_SYSTEM_PROMPT_FILE 在真机全配置面零命中——真实通道是 launch cwd 向上
- *     原生发现 AGENTS.md（P-07 实证）。映射暂留作无操作占位（注入不存在的 env 无害），
- *     user_level/append 通道的真方案（profile patch instructionFileCandidates 或 persona
- *     前后缀）待批示后另改（docs/31-§5-5）
- *   - 续跑：--session-id 真机可用（P-05 实证）但 capabilities.session_resume 仍 false——
- *     启用需 launch 补分支 + cwd 一致硬约束落调度纪律（docs/31-§5-7，能力升级候选）
+ *   - AGENTS.md 通道（2026-10-19 三件套之一）：插件通道——agentsMdEnv 对 user_level/
+ *     append_system_prompt 注 STUDIO_NEXT_INSTRUCTIONS=<target>，由 studio-next-bridge
+ *     宿主插件（packages/dsh-bridge）读文件注入系统提示 persona 前缀段；旧证伪变量
+ *     DSH_AGENTS_MD / DSH_APPEND_SYSTEM_PROMPT_FILE 已移除（docs/31-A1/§5-5，裁决
+ *     docs/25-§3.1 v1.5#1）；native=不注入（launch cwd 向上原生发现，P-07 实证）
+ *   - 续跑：resumeWithSession(task, executorSessionId) 已接线（--session-id 透传，P-05
+ *     实证形态）；capabilities.session_resume 仍 false——端口开关待「cwd 一致性落调度
+ *     纪律」立项后翻转（docs/31-§5-7；cwd 逐字节一致约束见 resumeWithSession 注）
  *   - execa 已升 10.x（docs/27-§4.3 案 A 拍板，16-§二「唯一内建进程组杀法」兑现）：
  *     spawn 配 killDescendants:true——Unix 落法为独立进程组，kill() 信号直达整组
  *     （子+孙），kill 链语义升级为「SIGTERM 软杀整树 → graceMs → SIGKILL 硬杀整树」
@@ -56,9 +62,11 @@
  *     为无害 no-op。理论 PID 复用误杀窗口系 upstream 文档化已知局限，概率极低）
  *   - resultStats().cost 恒 {usd:0}：cost_native=false，待价目表折算；ResultStats 结构
  *     无备注字段，不改 contract——以本头注 + 汇报记录「待价目表折算」
- *   - 伴生状态 sessions 为模块级私有 Map：sessionId 用随机 UUID（与 dsh 侧 session-<uuid>
- *     脱钩——从流首 session 事件收存 dsh 侧 id 是 P1 项 docs/31-§5-6，未做）；随
- *     daemon 进程存续，v0 不做回收（台账落盘后状态可重建投影）
+ *   - 伴生状态 sessions 为模块级私有 Map：sessionId 用随机 UUID（框架侧 handle 主键）；
+ *     dsh 侧 session-<uuid> 由 stream() 从流首 session 事件捕获，写进
+ *     Handle.executorSessionId（P1 收存 docs/31-§5-6，契约 v1.5——2026-10-19 三件套之二，
+ *     resumeWithSession/对账用；捕获前 Handle 无此键）；随 daemon 进程存续，v0 不做回收
+ *     （台账落盘后状态可重建投影）
  *   - stream() 一会话只许消费一次（一单一命、一流一收）；resultStats() 只汇总已消费
  *     的事件（收割流程固定先收流后收账）
  *   - estimate()：预算估算模型 v0 拟稿——任务书字符量粗估 + confidence 低值，v0.6 前细化
@@ -78,7 +86,7 @@ import type {
   TaskBrief,
   TokenCounts,
 } from '@studio-next/contract'
-import { parseLine } from './streams.ts'
+import { parseLine, extractDshSessionId } from './streams.ts'
 
 /** 缺省命令（docs/17-§6 dsh 行）：`dsh --profile headless --json` */
 export const DSH_DEFAULT_CMD: readonly string[] = ['dsh', '--profile', 'headless', '--json']
@@ -102,6 +110,11 @@ interface SessionState {
   readonly rawLines: string[]
   streamConsumed: boolean
   killed: boolean
+  /**
+   * dsh 侧会话 id（session-<uuid>）：stream() 从流首 session 事件捕获（P1 收存面
+   * docs/31-§5-6；契约 Handle.executorSessionId v1.5——同步写进 Handle 供续跑/对账）
+   */
+  executorSessionId?: string
   /** 子进程 promise 已落定（退出或 spawn 失败）——由 launch 的派生观察器置位（头注 10.x 项） */
   settled: boolean
   /** promise 落定时留档的退出码（null=被信号杀死；未落定/spawn 失败时 undefined） */
@@ -207,16 +220,38 @@ export class DshAdapter implements ExecutorAdapter {
    * 分隔符追加为单个位置参数（docs/31-§0 发现 2/§5-1：dsh headless 的任务=位置参数——
    * 不传则真机必以 usage error 退出；`--` 防任务串以 `-` 开头被当旗标）。任务书不可读
    * → 如实抛错（装配管线缺件，不静默传空串去撞真机的 "a task is required"）。
-   * env=进程环境 + AGENTS.md 通道变量（agentsMdEnv，已证伪占位——见文件头注）+
-   * TaskBrief.credentials（v1.4 短命按单凭据——无条件透传进子进程 env，值不打印不记录）
-   * + DSH_TELEMETRY_MODE=DISABLED（遥测红线，置于最后——红线优先级最高，credentials
-   * 仍无条件全量透传）。
+   * env=进程环境 + AGENTS.md 通道变量（agentsMdEnv）+ TaskBrief.credentials（v1.4 短命
+   * 按单凭据——无条件透传进子进程 env，值不打印不记录）+ DSH_TELEMETRY_MODE=DISABLED
+   * （遥测红线，置于最后——红线优先级最高，credentials 仍无条件全量透传）。
    * reject:false——退出码不构成异常（成功判定只认流内终态，见 isCompleted）。
    */
   async launch(task: TaskBrief): Promise<Handle> {
+    return this.spawnHeadless(task, [])
+  }
+
+  /**
+   * 续跑接线（预留面，2026-10-19 三件套之二落地）：以 dsh 侧会话 id（Handle.executorSessionId
+   * 捕获值）透传 `--session-id <id>` 续跑同一任务书（真机形态：dsh --profile headless --json
+   * --session-id session-… -- "任务串"，docs/31-§7 P-05 实证：turn:2、cacheReadTokens 前缀
+   * 缓存命中=上下文延续）。
+   * 硬约束（docs/31-§3.4 源码级，调度侧纪律）：cwd 必须与原会话记录的 cwd **逐字节一致**
+   * （header.cwd !== cwd → dsh 立即报错）；未知 id → stdout 0 事件即败（经 stream() 消费
+   * 为空流 + exit 1，isCompleted=false 如实）；subagent/fork 会话不可 adopt。
+   * 注意：capabilities.session_resume 仍 false——端口开关（路由进调度）待「cwd 一致性落
+   * 调度纪律」单独立项后翻转，本方法先行接线不声明能力（docs/31-§5-7）。
+   */
+  async resumeWithSession(task: TaskBrief, executorSessionId: string): Promise<Handle> {
+    if (executorSessionId.trim() === '') {
+      throw new Error('dsh: resumeWithSession 需要 dsh 侧会话 id（空串拒收——真机同款立即失败面）')
+    }
+    return this.spawnHeadless(task, ['--session-id', executorSessionId])
+  }
+
+  /** launch/resumeWithSession 共用落法：extraArgs 插在 `--` 任务串之前（dsh 旗标区） */
+  private async spawnHeadless(task: TaskBrief, extraArgs: string[]): Promise<Handle> {
     const [binary = DSH_DEFAULT_CMD[0] ?? 'dsh', ...args] = this.cmd
     const taskText = await readTaskText(task.briefPath)
-    const subprocess = execa(binary, [...args, '--', taskText], {
+    const subprocess = execa(binary, [...args, ...extraArgs, '--', taskText], {
       cwd: task.workspace,
       env: {
         ...process.env,
@@ -286,6 +321,16 @@ export class DshAdapter implements ExecutorAdapter {
     }
     const consume = (line: string): StreamEvent[] => {
       state.rawLines.push(line)
+      // P1 收存（docs/31-§5-6/§3.1）：流首 session 事件带 dsh 侧 session-<uuid>——捕获进
+      // 伴生状态与 Handle.executorSessionId（契约 v1.5，2026-10-19 批；续跑/对账两便）。
+      // 只捕获一次（首事件）；后续重复 session 行（真机无此面）不覆盖
+      if (state.executorSessionId === undefined) {
+        const dshSessionId = extractDshSessionId(line)
+        if (dshSessionId !== undefined) {
+          state.executorSessionId = dshSessionId
+          h.executorSessionId = dshSessionId
+        }
+      }
       const events = parseLine(line, 'dsh')
       state.events.push(...events)
       return events
@@ -388,24 +433,23 @@ export class DshAdapter implements ExecutorAdapter {
 // ---------------------------------------------------------------------------
 
 /**
- * AGENTS.md 通道 env 映射——【证伪占位】docs/31-A1/§3.6：DSH_AGENTS_MD /
- * DSH_APPEND_SYSTEM_PROMPT_FILE 在真机全配置面（594KB schema + 全量 dump）零命中，
- * 真实通道是 launch cwd 向上原生发现 AGENTS.md>CLAUDE.md（P-07 端到端实证）。映射暂留：
- *   native               → 不注入（与真机原生发现吻合——A2「证实且保守了」）
- *   user_level           → DSH_AGENTS_MD=<target>（真机不认此变量——无害空注）
- *   append_system_prompt → DSH_APPEND_SYSTEM_PROMPT_FILE=<target>（同上）
- * user_level/append 的真方案（per-company profile patch instructionFileCandidates 或
- * personaPrefix/Suffix 内联）待批示后另改（docs/31-§5-5）。target 落点由 L5 装配决定、
- * 适配器只透传（docs/25-§二 TaskBrief 注释）。
+ * AGENTS.md 通道 env 映射——插件通道（2026-10-19 三件套之一落地，docs/25-§3.1 v1.5 裁决#1）：
+ * user_level / append_system_prompt 两通道改注 `STUDIO_NEXT_INSTRUCTIONS=<target>`，由
+ * studio-next-bridge 宿主插件（packages/dsh-bridge）在 agent 创建时读文件注入系统提示
+ * persona 前缀段（docs/31-§5-5 真方案：真机无任何 DSH_* 注入 env——旧变量
+ * DSH_AGENTS_MD / DSH_APPEND_SYSTEM_PROMPT_FILE 全配置面零命中，已证伪移除 docs/31-A1）。
+ * 前提：插件已挂载（per-company profile patch insert 条目或 --patch overlay）——未挂载时
+ * 该 env 无消费者（无害空注，注入不发生）。dsh 侧两通道在此汇成一个注入面（无 append 专道）。
+ * native → 不注入（与真机原生发现吻合：launch cwd 向上扫 AGENTS.md>CLAUDE.md，P-07 实证）。
+ * target 落点由 L5 装配决定、适配器只透传（docs/25-§二 TaskBrief 注释；docs/04-§六）。
  */
 function agentsMdEnv(a: TaskBrief['AGENTS_MD']): Record<string, string> {
   switch (a.channel) {
     case 'native':
       return {}
     case 'user_level':
-      return { DSH_AGENTS_MD: a.target }
     case 'append_system_prompt':
-      return { DSH_APPEND_SYSTEM_PROMPT_FILE: a.target }
+      return { STUDIO_NEXT_INSTRUCTIONS: a.target }
   }
 }
 

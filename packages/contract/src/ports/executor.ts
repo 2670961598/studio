@@ -27,6 +27,12 @@ export interface Handle {
   readonly executor: string
   readonly sessionId: string
   pid: number
+  /**
+   * executor 侧会话 id（v1.5，2026-10-19 制作人批，端口级原则）：如 dsh 的 session-<uuid>——
+   * launch 后由 stream() 从流首 session 事件捕获写入（捕获前无此键）。续跑（--session-id
+   * 透传）与对账用；可选位：不支持捕获的 executor 不填，先填的家先受益（dsh 首个填写）。
+   */
+  executorSessionId?: string
 }
 
 export interface BudgetEstimate {

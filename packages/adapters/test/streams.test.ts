@@ -5,11 +5,13 @@
  * kimi wire 合并（求和挂 turn_end）+ kimi 缺 wire 明示 + 畸形行容错（截断 JSON / 纯文本 /
  * BOM / CRLF / 空行与井号注释 / dsh 证伪旧形态降级）。
  * 断言用 toStrictEqual：usage 的「不存在」与 undefined 严格区分（exactOptionalPropertyTypes 口径）。
+ * v1.5（2026-10-19 批）：dsh turn_end.errorCode 结构位（P04=AUTH / A4=MISSING_CREDENTIAL，
+ * message 原文留 error——前缀方案废除）+ extractDshSessionId 嗅探（session-id 收存面）。
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { parseStream } from '../src/streams.ts'
+import { extractDshSessionId, parseStream } from '../src/streams.ts'
 import type { StreamEvent } from '@studio-next/contract'
 
 function fixture(...parts: string[]): string {
@@ -38,7 +40,7 @@ describe('dsh（0.2.0-rc.2 真机八类 NDJSON——docs/31-§3.1/§7；golden=�
     ])
   })
 
-  it('P04 错误凭据：turn_end.reason.kind=error + error.code=AUTH 前缀保留；usage 四桶全 0（无 cached 键）；final 空不产事件', () => {
+  it('P04 错误凭据：errorCode=AUTH 结构位 + error=message 原文（v1.5 前缀方案废除）；usage 四桶全 0（无 cached 键）；final 空不产事件', () => {
     expect(parseStream(fixture('dsh', 'P04-错误凭据.ndjson'), 'dsh')).toStrictEqual<
       StreamEvent[]
     >([
@@ -53,12 +55,13 @@ describe('dsh（0.2.0-rc.2 真机八类 NDJSON——docs/31-§3.1/§7；golden=�
         type: 'turn_end',
         completed: false,
         error:
-          'AUTH: 401 {"error":{"message":"The API Key appears to be invalid or may have expired. Please verify your credentials and try again.","type":"invalid_authentication_error"}}',
+          '401 {"error":{"message":"The API Key appears to be invalid or may have expired. Please verify your credentials and try again.","type":"invalid_authentication_error"}}',
+        errorCode: 'AUTH',
       },
     ])
   })
 
-  it('A4 无凭证：MISSING_CREDENTIAL 失败分类面（与 AUTH 并列）；step_end 无 usage 键（不完整则整条省略）', () => {
+  it('A4 无凭证：MISSING_CREDENTIAL 失败分类面（与 AUTH 并列，errorCode 结构位）；step_end 无 usage 键（不完整则整条省略）', () => {
     expect(parseStream(fixture('dsh', 'A4-无凭证.ndjson'), 'dsh')).toStrictEqual<
       StreamEvent[]
     >([
@@ -73,7 +76,8 @@ describe('dsh（0.2.0-rc.2 真机八类 NDJSON——docs/31-§3.1/§7；golden=�
         type: 'turn_end',
         completed: false,
         error:
-          'MISSING_CREDENTIAL: llm-deepseek: no API key for provider route "deepseek-official"; store DEEPSEEK_API_KEY through the credentials service (the web Models page writes it), or export DEEPSEEK_API_KEY in the launching environment',
+          'llm-deepseek: no API key for provider route "deepseek-official"; store DEEPSEEK_API_KEY through the credentials service (the web Models page writes it), or export DEEPSEEK_API_KEY in the launching environment',
+        errorCode: 'MISSING_CREDENTIAL',
       },
     ])
   })
@@ -130,6 +134,27 @@ describe('dsh（0.2.0-rc.2 真机八类 NDJSON——docs/31-§3.1/§7；golden=�
       { type: 'step_start', step: '1' },
     ])
     expect(events.some((e) => e.type === 'turn_end')).toBe(false)
+  })
+})
+
+describe('extractDshSessionId（v1.5 session-id 收存面——docs/31-§5-6/§3.1：流首 session 事件带 dsh 侧 session-<uuid>）', () => {
+  it('session 事件行 → sessionId 原样返回（P01 golden 首行）', () => {
+    const line = '{"type":"session","sessionId":"session-2d65719e-2aa4-416a-af42-4a612026e671","cwd":"/private/tmp"}'
+    expect(extractDshSessionId(line)).toBe('session-2d65719e-2aa4-416a-af42-4a612026e671')
+  })
+
+  it('非 session 行（status/text/final/error/纯文本/畸形 JSON）→ undefined', () => {
+    expect(extractDshSessionId('{"type":"status","phase":"turn_start","turn":1}')).toBeUndefined()
+    expect(extractDshSessionId('{"type":"final","text":"PROBE-OK"}')).toBeUndefined()
+    expect(extractDshSessionId('{"type":"error","message":"boom"}')).toBeUndefined()
+    expect(extractDshSessionId('plain text line')).toBeUndefined()
+    expect(extractDshSessionId('{"type":"session","sessionId":')).toBeUndefined() // 截断 JSON
+  })
+
+  it('形态不合（sessionId 非字符串/空串）→ undefined（宁缺毋假）', () => {
+    expect(extractDshSessionId('{"type":"session","sessionId":42}')).toBeUndefined()
+    expect(extractDshSessionId('{"type":"session","sessionId":""}')).toBeUndefined()
+    expect(extractDshSessionId('{"type":"session","cwd":"/tmp"}')).toBeUndefined()
   })
 })
 

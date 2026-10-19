@@ -1,0 +1,12 @@
+# studio-next-bridge 的 dsh.bundle 补丁（docs/34-§3.1 insert 语法铁律：insert 键包完整条目；
+# 相对路径 name 锚定本文件所在目录——dsh 官方 host-plugin 参考同款形态）
+#
+# 装载法 A（bundle/profile 层）：dsh plugin --profile <p> add <本包路径>——dsh.bundle.patch
+#   使本包成为 profile 层（per-company provisioning 模板化的落点）。
+# 装载法 B（运行时 overlay）：dsh --profile <p> --patch <本文件绝对路径> —— 不落 profile，
+#   冒烟/探针用（packages/dsh-bridge/test/smoke/ 即此法）。
+- insert:
+    - id: studio-next-bridge
+      name: ./src/index.ts
+      config:
+        instructionsEnv: STUDIO_NEXT_INSTRUCTIONS

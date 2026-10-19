@@ -26,7 +26,18 @@ export interface ResultStats {
 export type StreamEvent =
   | { type: 'step_start'; step: string }
   | { type: 'step_end'; step: string; usage?: TokenCounts }
-  | { type: 'turn_end'; completed: boolean; usage?: TokenCounts; error?: string }
+  | {
+      type: 'turn_end'
+      completed: boolean
+      usage?: TokenCounts
+      error?: string
+      /**
+       * 机器可读错误码（v1.5，2026-10-19 制作人批，渐进兼容）：如 dsh 的 AUTH /
+       * MISSING_CREDENTIAL——message 原文保留在 error；前缀拼接方案废除
+       * （可选位：先填的家先受益，其余 executor 发现一个做一个）
+       */
+      errorCode?: string
+    }
   | { type: 'log'; text: string }
 
 // —— 任务书（装配管线输出，executor 输入）——

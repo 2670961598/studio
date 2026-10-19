@@ -1,0 +1,6 @@
+{
+  // 包级类型门禁（继承仓根 tsconfig.base.json）；冒烟脚本在 test/smoke/（套外手动跑，不进门禁）
+  "extends": "../../tsconfig.base.json",
+  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["test/smoke/**/*.ts"]
+}

@@ -1,0 +1,8 @@
+# 冒烟 overlay（运行时挂载，不落 profile——docs/34-§3.1 装载法 B；真机冒烟脚本
+# test/smoke/bridge-smoke.ts 以 `dsh --profile web --patch <本文件>` 挂载本插件）
+# name 相对路径锚定本文件所在目录（test/smoke/）→ ../../src/index.ts 即插件源
+- insert:
+    - id: studio-next-bridge
+      name: ../../src/index.ts
+      config:
+        instructionsEnv: STUDIO_NEXT_INSTRUCTIONS

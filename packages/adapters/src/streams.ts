@@ -95,9 +95,9 @@ export function parseLine(line: string, family: ExecutorFamily): StreamEvent[] {
  *     usage 仅在 step_end、camelCase 四桶；「该 step 所有 attempt 都报了 usage 才出现」
  *     （A4 面实录）——缺席时 step_end 不带 usage 键
  *   - status+turn_end → 终态唯一判据 reason.kind==='completed'（枚举 completed/error/
- *     blocked/aborted/max-tokens，后四种一律 completed:false）；reason.error.{code,message}
- *     进 turn_end.error，code 作前缀保留（AUTH / MISSING_CREDENTIAL——失败分类面，
- *     docs/31-§7 增量）；turn_end 恒无 usage（真机无此账）
+ *     blocked/aborted/max-tokens，后四种一律 completed:false）；reason.error.code 进
+ *     turn_end.errorCode 结构位（AUTH / MISSING_CREDENTIAL——v1.5 裁决，message 原文留在
+ *     error，前缀方案废除，docs/31-§7 增量）；turn_end 恒无 usage（真机无此账）
  *   - status+turn_start 及未知 phase → 原文 log 透传（契约无 turn 位，turn 序号留证）
  *   - thinking/text/final → 正文 text 字段归一为 log；空文本不产事件（kill 面
  *     final:"" 的实录形态——终态判定绝不看 final 非空）
@@ -153,13 +153,18 @@ function parseDshStatus(v: Record<string, unknown>, line: string): StreamEvent[]
     const kind = reason === undefined ? undefined : asString(reason['kind'])
     if (reason !== undefined && kind !== undefined) {
       const err = asRecord(reason['error'])
-      const code = err === undefined ? undefined : asString(err['code'])
       const message = err === undefined ? undefined : asString(err['message'])
-      // code 前缀保留进 error 串（AUTH / MISSING_CREDENTIAL 失败分类面，docs/31-§7）——
-      // 契约 turn_end.error 是 string 无结构位，前缀即分类载体
-      const error = code !== undefined && message !== undefined ? `${code}: ${message}` : code ?? message
+      const code = err === undefined ? undefined : asString(err['code'])
+      // errorCode 结构位（v1.5，2026-10-19 制作人批）：code 进 turn_end.errorCode，message
+      // 原文保留在 error——旧 `${code}: ${message}` 前缀拼接方案废除（dsh 两个码 AUTH /
+      // MISSING_CREDENTIAL 先行，docs/31-§7 P-04/A4；其余 executor 发现一个做一个）
       return [
-        { type: 'turn_end', completed: kind === 'completed', ...(error !== undefined ? { error } : {}) },
+        {
+          type: 'turn_end',
+          completed: kind === 'completed',
+          ...(message !== undefined ? { error: message } : {}),
+          ...(code !== undefined ? { errorCode: code } : {}),
+        },
       ]
     }
   }
@@ -181,6 +186,20 @@ function toUsageDsh(v: unknown): TokenCounts | undefined {
   if (input === undefined || output === undefined) return undefined
   const cached = asFiniteNumber(r['cacheReadTokens'])
   return { input, output, ...(cached !== undefined ? { cached } : {}) }
+}
+
+/**
+ * dsh 流首 session 事件的 sessionId 嗅探（P1 收存面，docs/31-§5-6/§3.1：`{type:'session',
+ * sessionId, cwd}` 是流首事件——dsh 侧 session-<uuid>）。行不是 session 事件 / 形态不合 /
+ * id 为空 → undefined（调用方只在未捕获时调用，捕获一次即止）。dsh 适配器 stream() 用它把
+ * dsh 侧会话 id 写进 Handle.executorSessionId（契约 v1.5，2026-10-19 批）——续跑
+ * （resumeWithSession --session-id 透传）与对账两便。v0.2 新增导出（既有行为一概不动）。
+ */
+export function extractDshSessionId(line: string): string | undefined {
+  const v = parseJson(line)
+  if (!isRecord(v) || v['type'] !== 'session') return undefined
+  const sessionId = asString(v['sessionId'])
+  return sessionId === undefined || sessionId === '' ? undefined : sessionId
 }
 
 /** claude：`claude -p --output-format stream-json`——终态只认 result 事件（17-§6） */

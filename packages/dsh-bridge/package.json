@@ -1,0 +1,20 @@
+{
+  "name": "@studio-next/dsh-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Studio Next dsh 宿主插件（bundle 可分发件）：读 STUDIO_NEXT_INSTRUCTIONS 指向文件，agent 创建时注入系统提示 persona 前缀段——AGENTS.md 注入通道插件化（docs/31-§3.6/§5-5、docs/34-§3.1/§3.2；制作人 2026-10-19 批，docs/25-§3.1 v1.5 裁决#1）",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  }
+}

@@ -88,6 +88,10 @@
         "zod": "^4.0.0",
       },
     },
+    "packages/dsh-bridge": {
+      "name": "@studio-next/dsh-bridge",
+      "version": "0.1.0",
+    },
     "packages/gateway": {
       "name": "@studio-next/gateway",
       "version": "0.1.0",
@@ -302,6 +306,8 @@
     "@studio-next/core": ["@studio-next/core@workspace:packages/core"],
 
     "@studio-next/daemon": ["@studio-next/daemon@workspace:apps/daemon"],
+
+    "@studio-next/dsh-bridge": ["@studio-next/dsh-bridge@workspace:packages/dsh-bridge"],
 
     "@studio-next/gateway": ["@studio-next/gateway@workspace:packages/gateway"],
 

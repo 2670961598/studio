@@ -14,7 +14,14 @@
  *   - kill 普通挂起：SIGTERM 默认终止（信号死，无退出码）；kill 宽限升级：无视 SIGTERM
  *     的子进程在 graceMs 后被 SIGKILL 强杀
  *   - 失败分类面（P1，docs/31-A4/§7 P-04）：无凭证=MISSING_CREDENTIAL、凭证无效=AUTH
- *     （401 透传）——code 前缀留在 turn_end.error 串里
+ *     （401 透传）——v1.5（2026-10-19 批）起 code 进 turn_end.errorCode 结构位，message
+ *     原文留 error（前缀拼接方案废除；golden fixtures 原文不动，断言切到结构位）
+ *   - session-id 收存（v1.5 三件套之二，docs/31-§5-6）：stream() 从流首 session 事件
+ *     捕获 dsh 侧 session-<uuid> 写入 Handle.executorSessionId（续跑/对账）
+ *   - resumeWithSession 接线：--session-id 透传进 argv 旗标区（P-05 真机形态）+ 空串拒收
+ *   - AGENTS.md 通道（v1.5 三件套之一）：user_level/append → STUDIO_NEXT_INSTRUCTIONS=
+ *     target（由 packages/dsh-bridge studio-next-bridge 插件消费——插件面测试归 dsh-bridge
+ *     包；本套只断言 env 注入）；native → 不注入（真机原生发现通道）
  *   - 孙进程杀灭（execa 10 killDescendants 兑现面，docs/27-§4.3 案 A）：对照组裸 spawn
  *     直杀父 pid 证孙存活可检出（9.x 直杀语义）→ 整树软杀父孙同死 → 孙吞 TERM 由宽限
  *     到点的整组 SIGKILL 扫尾收口（kill() 父退即返回，不等满宽限）
@@ -97,18 +104,22 @@ const goldenEvents = (): StreamEvent[] => parseStream(readFileSync(p01Fixture, '
 
 describe('全链：launch→stream→resultStats（golden：P01 真成功流）', () => {
   it(
-    '流事件与 golden 归一序列一致；账目 tokens/turns/cost/duration 如实；isCompleted=true',
+    '流事件与 golden 归一序列一致；账目 tokens/turns/cost/duration 如实；isCompleted=true；dsh 侧 sessionId 捕获入 Handle',
     async () => {
       await withFakeEnv({ FAKE_FIXTURE: p01Fixture }, async () => {
         const adapter = fakeAdapter()
         const h = await adapter.launch(makeBrief())
         expect(h.executor).toBe('dsh')
         expect(h.pid).toBeGreaterThan(0)
+        expect(h.executorSessionId).toBeUndefined() // 捕获前无此键（流首 session 事件消费时才写）
 
         const collected: StreamEvent[] = []
         for await (const ev of adapter.stream(h)) collected.push(ev)
         // spawn/行切割/单行归一全链无损：与全文 parseStream 严格一致
         expect(collected).toStrictEqual(goldenEvents())
+
+        // session-id 收存（v1.5，docs/31-§5-6）：流首 session 事件的 session-<uuid> → Handle
+        expect(h.executorSessionId).toBe('session-2d65719e-2aa4-416a-af42-4a612026e671')
 
         expect(adapter.exitCode(h)).toBe(0) // fake CLI 正常退出（记录价值）
         // 终态判据唯一化：turn_end(reason.kind=completed)→turn_end{completed:true} 存在即真
@@ -332,9 +343,9 @@ describe('kill 面（docs/31-§7 P-08 真机定性：空 final + 无 turn_end + 
   })
 })
 
-describe('失败分类面（P1：docs/31-A4/§7 P-04——code 前缀留在 turn_end.error 串里）', () => {
+describe('失败分类面（P1：docs/31-A4/§7 P-04——v1.5 起 errorCode 结构位，message 原文留 error）', () => {
   it(
-    'P04 错误凭据：AUTH 前缀（401 透传）、isCompleted=false、usage 全 0 账如实、exit=1',
+    'P04 错误凭据：errorCode=AUTH、error=401 原文（无前缀）、isCompleted=false、usage 全 0 账如实、exit=1',
     async () => {
       await withFakeEnv({ FAKE_FIXTURE: p04Fixture, FAKE_EXIT: '1' }, async () => {
         const adapter = fakeAdapter()
@@ -342,23 +353,29 @@ describe('失败分类面（P1：docs/31-A4/§7 P-04——code 前缀留在 turn
         const collected: StreamEvent[] = []
         for await (const ev of adapter.stream(h)) collected.push(ev)
 
-        const turnEnd = collected.find((e) => e.type === 'turn_end')
-        expect(turnEnd).toMatchObject({ completed: false })
-        // code 前缀保留：失败分类面（凭证无效=AUTH，与无凭证 MISSING_CREDENTIAL 并列）
-        expect(turnEnd).toMatchObject({ error: expect.stringMatching(/^AUTH: 401 /) })
+        const turnEnd = collected.find(
+          (e): e is Extract<StreamEvent, { type: 'turn_end' }> => e.type === 'turn_end',
+        )
+        expect(turnEnd).toBeDefined()
+        // v1.5 结构位：code 进 errorCode；error=message 原文（前缀方案废除）
+        expect(turnEnd?.errorCode).toBe('AUTH')
+        expect(turnEnd?.error).toMatch(/^401 /) // 上游 401 JSON 透传，无 AUTH 前缀
+        expect(turnEnd?.completed).toBe(false)
         expect(adapter.isCompleted(h)).toBe(false)
         expect(adapter.exitCode(h)).toBe(1) // 真机失败面 exit=1（证据价值）
 
         const stats = await adapter.resultStats(h)
         expect(stats.tokens).toStrictEqual({ input: 0, output: 0, cached: 0 }) // 四桶全 0 如实入账
         expect(stats.turns).toBe(1)
+        // 失败面照样捕获 dsh 侧 sessionId（对账面不因失败缺席）
+        expect(h.executorSessionId).toBe('session-c70a23a6-7b4f-4af8-89bf-4450515ea0b3')
       })
     },
     10_000,
   )
 
   it(
-    'A4 无凭证：MISSING_CREDENTIAL 前缀、step_end 无 usage（不完整则整条省略）→ 零账',
+    'A4 无凭证：errorCode=MISSING_CREDENTIAL（与 AUTH 并列）、error=llm-deepseek 原文、step_end 无 usage → 零账',
     async () => {
       await withFakeEnv({ FAKE_FIXTURE: a4Fixture, FAKE_EXIT: '1' }, async () => {
         const adapter = fakeAdapter()
@@ -366,17 +383,19 @@ describe('失败分类面（P1：docs/31-A4/§7 P-04——code 前缀留在 turn
         const collected: StreamEvent[] = []
         for await (const ev of adapter.stream(h)) collected.push(ev)
 
-        const turnEnd = collected.find((e) => e.type === 'turn_end')
-        expect(turnEnd).toMatchObject({
-          completed: false,
-          error: expect.stringMatching(/^MISSING_CREDENTIAL: llm-deepseek: /),
-        })
+        const turnEnd = collected.find(
+          (e): e is Extract<StreamEvent, { type: 'turn_end' }> => e.type === 'turn_end',
+        )
+        expect(turnEnd?.completed).toBe(false)
+        expect(turnEnd?.errorCode).toBe('MISSING_CREDENTIAL')
+        expect(turnEnd?.error).toMatch(/^llm-deepseek: no API key /) // 原文，无前缀
         expect(adapter.isCompleted(h)).toBe(false)
         expect(adapter.exitCode(h)).toBe(1)
 
         const stats = await adapter.resultStats(h)
         expect(stats.tokens).toStrictEqual({ input: 0, output: 0 }) // 无任何 step usage：零账不编造
         expect(stats.turns).toBe(1)
+        expect(h.executorSessionId).toBe('session-0ec30278-155a-46f7-bdcf-2ba8f08c2081')
       })
     },
     10_000,
@@ -550,7 +569,7 @@ describe('estimate（拟稿：预算估算模型 v0——v0.6 前细化）', () 
   })
 })
 
-describe('AGENTS.md 通道 env 注入（映射已证伪留占位——docs/31-A1/§5-5，真通道=launch cwd 原生发现）', () => {
+describe('AGENTS.md 通道 env 注入（v1.5 三件套之一：插件通道——STUDIO_NEXT_INSTRUCTIONS 由 packages/dsh-bridge studio-next-bridge 消费；docs/31-A1/§5-5 裁决 docs/25-§3.1 v1.5#1）', () => {
   // cmd 注入 node -e 回显目标 env：值经 stdout 以 log 事件回流断言
   const echoAdapter = (varName: string): DshAdapter =>
     new DshAdapter([
@@ -559,18 +578,18 @@ describe('AGENTS.md 通道 env 注入（映射已证伪留占位——docs/31-A1
       `process.stdout.write(process.env.${varName} ?? '<unset>')`,
     ])
 
-  it('user_level 通道 → DSH_AGENTS_MD=target 透传', async () => {
+  it('user_level 通道 → STUDIO_NEXT_INSTRUCTIONS=target 透传', async () => {
     const target = join(workdir, 'agents-user-level.md')
-    const adapter = echoAdapter('DSH_AGENTS_MD')
+    const adapter = echoAdapter('STUDIO_NEXT_INSTRUCTIONS')
     const h = await adapter.launch(makeBrief({ AGENTS_MD: { channel: 'user_level', target } }))
     const collected: StreamEvent[] = []
     for await (const ev of adapter.stream(h)) collected.push(ev)
     expect(collected).toStrictEqual([{ type: 'log', text: target }])
   })
 
-  it('append_system_prompt 通道 → DSH_APPEND_SYSTEM_PROMPT_FILE=target 透传', async () => {
+  it('append_system_prompt 通道 → STUDIO_NEXT_INSTRUCTIONS=target 透传（dsh 无 append 专道，两通道汇一）', async () => {
     const target = join(workdir, 'agents-append.md')
-    const adapter = echoAdapter('DSH_APPEND_SYSTEM_PROMPT_FILE')
+    const adapter = echoAdapter('STUDIO_NEXT_INSTRUCTIONS')
     const h = await adapter.launch(
       makeBrief({ AGENTS_MD: { channel: 'append_system_prompt', target } }),
     )
@@ -579,8 +598,8 @@ describe('AGENTS.md 通道 env 注入（映射已证伪留占位——docs/31-A1
     expect(collected).toStrictEqual([{ type: 'log', text: target }])
   })
 
-  it('native 通道 → 不注入任何 DSH_* 通道变量（与真机原生发现通道吻合）', async () => {
-    const adapter = echoAdapter('DSH_AGENTS_MD')
+  it('native 通道 → 不注入通道变量（真机原生发现：launch cwd 向上扫 AGENTS.md，P-07 实证）', async () => {
+    const adapter = echoAdapter('STUDIO_NEXT_INSTRUCTIONS')
     const h = await adapter.launch(
       makeBrief({ AGENTS_MD: { channel: 'native', target: join(workdir, 'AGENTS.md') } }),
     )
@@ -588,6 +607,57 @@ describe('AGENTS.md 通道 env 注入（映射已证伪留占位——docs/31-A1
     for await (const ev of adapter.stream(h)) collected.push(ev)
     // 无换行残行回流为 log：'<unset>' 证明未注入
     expect(collected).toStrictEqual([{ type: 'log', text: '<unset>' }])
+  })
+
+  it('证伪变量已移除：DSH_AGENTS_MD / DSH_APPEND_SYSTEM_PROMPT_FILE 全通道零注入', async () => {
+    for (const channel of ['user_level', 'append_system_prompt'] as const) {
+      const adapter = echoAdapter('DSH_AGENTS_MD')
+      const h = await adapter.launch(
+        makeBrief({ AGENTS_MD: { channel, target: join(workdir, 'agents-x.md') } }),
+      )
+      const collected: StreamEvent[] = []
+      for await (const ev of adapter.stream(h)) collected.push(ev)
+      expect(collected).toStrictEqual([{ type: 'log', text: '<unset>' }])
+    }
+  })
+})
+
+describe('resumeWithSession（v1.5 三件套之二接线：--session-id 透传——docs/31-§7 P-05 真机形态/§3.4 约束；capabilities.session_resume 仍 false）', () => {
+  it('argv 注入：--session-id <id> 插在 `--` 任务串之前（dsh 旗标区）', async () => {
+    await withFakeEnv({ FAKE_ECHO_ARGS: '1' }, async () => {
+      const adapter = fakeAdapter()
+      const h = await adapter.resumeWithSession(
+        makeBrief(),
+        'session-2d65719e-2aa4-416a-af42-4a612026e671',
+      )
+      const collected: StreamEvent[] = []
+      for await (const ev of adapter.stream(h)) collected.push(ev)
+      expect(collected).toStrictEqual([
+        {
+          type: 'log',
+          text: `fake-cli argv: --session-id session-2d65719e-2aa4-416a-af42-4a612026e671 -- ${BRIEF_TEXT}`,
+        },
+      ])
+    })
+  })
+
+  it('空串/纯空白会话 id 拒收（真机同款立即失败面前置明报）', async () => {
+    const adapter = fakeAdapter()
+    await expect(adapter.resumeWithSession(makeBrief(), '')).rejects.toThrow(/dsh 侧会话 id/)
+    await expect(adapter.resumeWithSession(makeBrief(), '   ')).rejects.toThrow(/dsh 侧会话 id/)
+  })
+
+  it('未知 id 面（真机 docs/31-§2 A5）：stdout 0 事件即败——isCompleted=false 如实（回放空输出 fixture）', async () => {
+    // fake CLI 无 FAKE_FIXTURE：零输出退出 1——真机未知 --session-id 的等价形态
+    await withFakeEnv({ FAKE_EXIT: '1' }, async () => {
+      const adapter = fakeAdapter()
+      const h = await adapter.resumeWithSession(makeBrief(), 'session-nonexistent')
+      const collected: StreamEvent[] = []
+      for await (const ev of adapter.stream(h)) collected.push(ev)
+      expect(collected).toStrictEqual([])
+      expect(adapter.isCompleted(h)).toBe(false)
+      expect(adapter.exitCode(h)).toBe(1)
+    })
   })
 })
 
