@@ -111,6 +111,7 @@ import { CADENCE_SOURCE_MANIFEST, createCadenceSource, createSlaSource, SLA_SOUR
 import { createDefaultAssembler } from './prompt-assembly.ts'
 import type { PromptAssembler } from './prompt-assembly.ts'
 import { nextRunAt, type Scheduler } from './scheduler.ts'
+import { readStopRequest, writeStopResult } from './stop-channel.ts'
 import type { WorkerKeyDeps } from './worker-key.ts'
 import {
   createFileWatchSource,
@@ -140,6 +141,8 @@ export interface ServeConfig {
   maxInflight: number
   /** 在工静默告警阈值 ms */
   stallAfterMs: number
+  /** 收割相位每工位每拍泵流时间片 ms（DEV-9 P1 冻结修复，docs/17-§2 拍有界；须 ≪ tickMs） */
+  harvestSliceMs: number
   /** 泳道租约 TTL ms */
   laneTtlMs: number
   /** 断路阈值 N */
@@ -254,6 +257,7 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   maxActionsPerTick: ENGINE_CONFIG_DEFAULTS.limits.maxActionsPerTick,
   maxInflight: ENGINE_CONFIG_DEFAULTS.limits.maxInflight,
   stallAfterMs: ENGINE_CONFIG_DEFAULTS.stallAfterMs,
+  harvestSliceMs: ENGINE_CONFIG_DEFAULTS.harvestSliceMs,
   laneTtlMs: ENGINE_CONFIG_DEFAULTS.laneTtlMs,
   breakerThreshold: ENGINE_CONFIG_DEFAULTS.breakerThreshold,
   autoApprove: false,
@@ -372,6 +376,9 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         break
       case 'stallAfterMs':
         cfg.stallAfterMs = num(value, key)
+        break
+      case 'harvestSliceMs':
+        cfg.harvestSliceMs = num(value, key)
         break
       case 'laneTtlMs':
         cfg.laneTtlMs = num(value, key)
@@ -872,6 +879,7 @@ export function buildServeRuntime(
     defaultLane: snapshot.departments[0]?.lanes[0] ?? ENGINE_CONFIG_DEFAULTS.defaultLane,
     limits: { maxActionsPerTick: config.maxActionsPerTick, maxInflight: config.maxInflight },
     stallAfterMs: config.stallAfterMs,
+    harvestSliceMs: config.harvestSliceMs,
     laneTtlMs: config.laneTtlMs,
     breakerThreshold: config.breakerThreshold,
     autoApprove: config.autoApprove,
@@ -1068,14 +1076,14 @@ function renderTick(report: TickReport): string {
   return (
     `tick#${report.seq} actions=${report.actions.length} dispatched=${p.dispatch.dispatched} ` +
     `budget=${p.dispatch.budgetReserved}reserved/${p.dispatch.budgetRefused}refused ` +
-    `harvest=${p.harvest.completed}/${p.harvest.checked} merged=${p.merge.merged} recycled=${p.recycle.recycled} ` +
+    `harvest=${p.harvest.completed}/${p.harvest.checked}/p${p.harvest.pending} merged=${p.merge.merged} recycled=${p.recycle.recycled} ` +
     `events=${p.account.eventsAppended} inflight=${report.inflightAfter} cursor=${p.collect.cursorAfter ?? '-'}${p.account.heartbeat ? ' [heartbeat]' : ''}`
   )
 }
 
 export interface ServeResult {
   ticks: number
-  stopReason: 'signal' | 'error'
+  stopReason: 'signal' | 'stop-request' | 'error'
   lastError?: string
 }
 
@@ -1131,6 +1139,8 @@ export async function runServe(configPath: string): Promise<ServeResult> {
 
   // 未挂公司目录的 daemon：L1 热重载不适用——reload 请求仍回执拒绝（不悬空 CLI 轮询）
   let answeredRequestId: string | null = null
+  // 控制面停机请求的去重位（同 reload 口径；answeredStopId=null=未见请求）
+  let answeredStopId: string | null = null
 
   console.log(`[serve] studio-next daemon 启动（company=${config.company} platform=${config.platform} db=${path.resolve(config.db)} tickMs=${config.tickMs}${config.jobs ? ` jobs=on pollMs=${config.jobPollMs}` : ''}）`)
   const stackMode =
@@ -1167,6 +1177,15 @@ export async function runServe(configPath: string): Promise<ServeResult> {
     } else {
       answeredRequestId = answerReloadNoCompanyDir(path.resolve(config.rootDir), config.company, answeredRequestId)
     }
+    // —— 控制面停机通道（DEV-9 顺带项，src/stop-channel.ts）：reload 应答在前（停机前
+    //    不悬空积压请求），停机请求在后；按 id 去重（请求文件不删，reload 同款口径） ——
+    const stopRequest = readStopRequest(path.resolve(config.rootDir))
+    if (stopRequest !== undefined && stopRequest.id !== answeredStopId) {
+      answeredStopId = stopRequest.id
+      stopped = true
+      stopReason = 'stop-request'
+      console.log(`[serve] 控制面停机请求（id=${stopRequest.id}${stopRequest.reason !== undefined ? ` reason=${stopRequest.reason}` : ''}）——本拍已收口，优雅停开始`)
+    }
     // 拍间隔等待（信号打断不硬等满）
     const deadline = Date.now() + config.tickMs
     while (!stopped && Date.now() < deadline) {
@@ -1177,6 +1196,16 @@ export async function runServe(configPath: string): Promise<ServeResult> {
   console.log(`[serve] 停机（${stopReason}${lastError !== undefined ? `：${lastError}` : ''}）——先停唤起源（不进新意图）+ 在途 drain`)
   await stop()
   console.log('[serve] 已优雅关闭（台账落盘；work_records 在途项接管归后续刀）')
+  // 控制面停机回执（src/stop-channel.ts）：优雅停收口**之后**落——CLI 见回执即在途
+  // worker 已整树杀、台账已落盘（孤儿进程面闭环）
+  if (answeredStopId !== null) {
+    writeStopResult(path.resolve(config.rootDir), {
+      id: answeredStopId,
+      ok: true,
+      stopped: true,
+      detail: `优雅停收口完成：ticks=${ticks}（停唤起源→在途 drain→worker 整树杀→台账落盘）`,
+    })
+  }
   process.off('SIGINT', onSignal)
   process.off('SIGTERM', onSignal)
   return { ticks, stopReason, ...(lastError !== undefined ? { lastError } : {}) }

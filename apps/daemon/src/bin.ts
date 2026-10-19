@@ -88,6 +88,11 @@
  *       不符=回执拒绝（防错家）；daemon 未挂公司目录=回执 no-company-dir。工位根发现序：
  *       --root > --config 的 rootDir（缺省 ./daemon.yaml）> ./var。幂等：内容未变回执
  *       unchanged（exit 0）。
+ *   stop [--reason <事由>] [--root <工位根>] [--config <daemon.yaml>] [--timeout <ms>]
+ *       控制面优雅停机（DEV-9 顺带项）：向运行中的 daemon 发停机请求（控制面文件通道
+ *       <rootDir>/control/stop.request.json，协议与 reload 手动通道同款）并等回执——
+ *       daemon 在拍边界走自身优雅停（在途 worker 整树杀+台账落盘）。运维不再 kill
+ *       `nohup sh -c` 外层壳（kill 壳不杀 node 孙进程——孤儿问题从通道面根除）。
  *   （v0 诚实边界：真 dsh / 真 YouTrack / 网关 wkey / 审批流 / localfile 平台均未接线——
  *     逐项清单见 src/serve.ts 与 src/engine.ts 头注）
  *
@@ -114,6 +119,7 @@ import { createFakePlatform } from './fakes.ts'
 import { createGatedPlatform } from './gated-platform.ts'
 import { ENGINE_CONFIG_DEFAULTS } from './engine.ts'
 import { awaitReloadResult, writeReloadRequest } from './hot-reload.ts'
+import { awaitStopResult, writeStopRequest, type StopRequest } from './stop-channel.ts'
 import { makeUlid } from './id.ts'
 import { runServe } from './serve.ts'
 import { renderSandboxLines, runCandidateSandbox } from './sandbox.ts'
@@ -205,6 +211,13 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
       不中断在途单。--company 错家=回执拒绝 exit 1；未挂公司目录=回执 no-company-dir exit 1；
       内容未变=回执 unchanged（幂等，exit 0）。工位根发现序：--root > --config（缺省
       ./daemon.yaml）的 rootDir > 缺省 ./var。
+  studio-next stop [--reason <事由>] [--root <工位根>] [--config <daemon.yaml>] [--timeout <ms>]
+      控制面优雅停机（DEV-9 顺带项）：向运行中的 daemon 发停机请求（控制面文件通道
+      <rootDir>/control/stop.request.json，协议与 reload 手动通道同款）并轮询回执——daemon
+      在拍边界收到后走自身优雅停（停唤起源→在途 drain→worker 整树杀→台账落盘），回执
+      落盘为证。运维不再 kill nohup sh -c 外层壳（kill 壳不杀 node 孙进程——孤儿问题
+      从通道面根除）。超时无回执 exit 1（daemon 未运行/拍太慢/控制面目录不符）；工位根
+      发现序与 reload 同款。
 
 默认值：--dir 缺省 ./<slug>；--name 缺省 <slug>；--port 缺省 8787（panel）/ 8789（overview）/ 8788（external）
 文档：docs/04-公司目录与等级体系.md §二/§七/§九；docs/16-技术实现与里程碑.md §四；docs/02-需求-框架面.md F2-11/F2-12；docs/17-整体技术设计.md §8`
@@ -1153,6 +1166,78 @@ async function cmdReload(argv: string[]): Promise<number> {
   return 1
 }
 
+/**
+ * stop 子命令：控制面优雅停机薄壳（DEV-9 顺带项——孤儿进程问题的通道面；执行体全在
+ * daemon 侧 src/serve.ts runServe + src/stop-channel.ts）。动机：`nohup sh -c "…"` 双层
+ * 壳下 kill 外层 sh 不杀 node 孙进程——停机改走 daemon 自身优雅停（在途 worker 整树
+ * 杀+台账落盘），回执为证。工位根发现序与 reload 同款：--root > --config（缺省
+ * ./daemon.yaml，读其 rootDir）> 缺省 ./var。退出码：0=优雅停完成（回执 stopped=true）；
+ * 1=超时无回执（daemon 未运行/拍太慢/控制面目录不符）或回执失败面。
+ */
+async function cmdStop(argv: string[]): Promise<number> {
+  const parsed = parseArgv(argv, new Set(['reason', 'root', 'config', 'timeout']))
+  if ('error' in parsed) {
+    console.error(`stop：${parsed.error}`)
+    console.error(USAGE)
+    return 1
+  }
+  if (parsed.positionals.length > 0) {
+    console.error(`stop：多余的位置参数：${parsed.positionals.join(' ')}`)
+    console.error(USAGE)
+    return 1
+  }
+  let timeoutMs = 15_000
+  if (parsed.flags.timeout !== undefined) {
+    timeoutMs = Number.parseInt(parsed.flags.timeout, 10)
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 100) {
+      console.error(`stop：--timeout 取值非法：${parsed.flags.timeout}（须为 >=100 的整数毫秒）`)
+      return 1
+    }
+  }
+
+  // 工位根发现序：--root > --config 的 rootDir > ./var（daemon 控制面落点 <rootDir>/control/）
+  let rootDir: string
+  if (parsed.flags.root !== undefined) {
+    rootDir = path.resolve(parsed.flags.root)
+  } else {
+    const configPath = parsed.flags.config ?? './daemon.yaml'
+    if (existsSync(path.resolve(configPath))) {
+      try {
+        rootDir = path.resolve(parseDaemonConfig(readFileSync(path.resolve(configPath), 'utf8')).rootDir)
+      } catch (err) {
+        console.error(`stop：daemon.yaml 解析失败（${configPath}）：${errText(err)}`)
+        return 1
+      }
+    } else if (parsed.flags.config !== undefined) {
+      console.error(`stop：--config 指定的 daemon.yaml 不存在：${configPath}`)
+      return 1
+    } else {
+      rootDir = path.resolve('./var')
+    }
+  }
+
+  const id = makeUlid(Date.now())
+  const request: StopRequest = {
+    id,
+    requestedAt: Date.now(),
+    ...(parsed.flags.reason !== undefined ? { reason: parsed.flags.reason } : {}),
+  }
+  writeStopRequest(rootDir, request)
+  console.log(`[stop] 请求已写：${path.join(rootDir, 'control', 'stop.request.json')}（id=${id}${request.reason !== undefined ? `，reason=${request.reason}` : ''}）——等 daemon 拍边界优雅停（超时 ${timeoutMs}ms）`)
+
+  const result = await awaitStopResult(rootDir, id, timeoutMs)
+  if (result === undefined) {
+    console.error(`stop：超时无回执（${timeoutMs}ms）——daemon 未运行 / tickMs 过大 / 控制面目录不符（rootDir=${rootDir}；可用 --root/--config 指定）`)
+    return 1
+  }
+  if (result.ok && result.stopped) {
+    console.log(`[stop] 回执 ok（id=${result.id}）：daemon 已优雅停——在途 worker 整树杀、台账已落盘${result.detail !== undefined ? `——${result.detail}` : ''}`)
+    return 0
+  }
+  console.error(`[stop] 回执失败（id=${result.id}）：${result.detail ?? result.reason ?? '未知失败面'}`)
+  return 1
+}
+
 /** serve 子命令：薄壳转 runServe（配置装载/循环/优雅停语义全在 src/serve.ts） */
 async function cmdServe(argv: string[]): Promise<number> {  const parsed = parseArgv(argv, new Set(['config']))
   if ('error' in parsed) {
@@ -1215,6 +1300,8 @@ async function main(): Promise<number> {
       return cmdServe(rest)
     case 'reload':
       return cmdReload(rest)
+    case 'stop':
+      return cmdStop(rest)
     case undefined:
     case '-h':
     case '--help':

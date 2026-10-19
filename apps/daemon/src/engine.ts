@@ -4,6 +4,11 @@
  * 规格依据（实现单引用）：
  *   - docs/17-§2 主循环（相位机，每拍幂等）：采集 → state-diff → 派发 → 收割 → 合并 → 回收 → 落账/心跳。
  *     同一 tick 内单只一单至多一动作（decide 每单调一次，结构性保证）；tick 返回结构化 actions 落账。
+ *     **拍有界（DEV-9 P1 冻结修复，2026-10-19 生产事故）**：收割相位对在途流**增量泵收**
+ *     （每工位每拍至多 harvestSliceMs）——真机 dsh 流直到 worker 进程退出才收尾，整流
+ *     内联消费会阻塞整拍（事故面：18:35:05 派发后 3m29s 零事件、控制面 reload 无回执、
+ *     进程 S 态 0% CPU——心跳/热重载/看门狗全挂在拍边界上）。驻留迭代器跨拍续收，
+ *     事件折算状态随 Inflight 驻留；流收尾拍走原判定体（四要件面不动）。
  *   - docs/17-§6 末 收割成功契约四要件：终态事件 completed + 输出非空 + REPORT 落盘 + 闸门 exit=0。
  *     前两要件由引擎消费 adapter.stream() 判定；后两要件由**可注入 gateRunner**（src/gate.ts，
  *     v0 占位实现，诚实标注）执行。
@@ -98,6 +103,7 @@ import type {
   ModelCatalog,
   PersonRef,
   ResultStats,
+  StreamEvent,
   TaskBrief,
   TicketId,
 } from '@studio-next/contract'
@@ -155,6 +161,13 @@ export interface EngineConfig {
   laneTtlMs: number
   /** 在工静默告警阈值（ms；只盯已派发态，decide 4 号判定） */
   stallAfterMs: number
+  /**
+   * 收割相位增量泵流的每工位每拍时间片（ms；DEV-9 P1 冻结修复，docs/17-§2 拍有界）：
+   * 事件就绪即折算（microtask 先于计时器——完成流仍同拍收口，fake 全家桶行为不变）；
+   * 无事件即驻留让出拍界（心跳/热重载/看门狗回拍边界）。墙钟（非注入时钟）——
+   * 泵流节奏是运行时活性面，不进台账账面。
+   */
+  harvestSliceMs: number
   /** 断路阈值 N（17-§6 默认 3） */
   breakerThreshold: number
   /** demo 模式自动批（真制作人批准信号经网关动作词归一，v0 布尔拟稿） */
@@ -202,6 +215,7 @@ export const ENGINE_CONFIG_DEFAULTS: EngineConfig = {
   limits: { maxActionsPerTick: 4, maxInflight: 2 },
   laneTtlMs: 30 * 60_000,
   stallAfterMs: 60 * 60_000,
+  harvestSliceMs: 50,
   breakerThreshold: 3,
   autoApprove: false,
   heartbeatIssue: '-',
@@ -326,6 +340,21 @@ interface Inflight {
    * native 通道无此文件（AGENTS.md 恒在 workspace，收割后保留——工位证据）。
    */
   instructionsPath?: string
+  // —— 增量泵收状态（DEV-9 P1 冻结修复，docs/17-§2 拍有界；一次性流跨拍续收） ——
+  /** 驻留的一次性流迭代器（首收拍创建；一流一收纪律不变——dsh 单发流不二开） */
+  streamIter?: AsyncIterator<StreamEvent>
+  /** 驻留中的 next()（附 catch 防悬空拒绝：异常记 streamError，下一拍收口 WORKER_DEAD） */
+  streamNext?: Promise<IteratorResult<StreamEvent>> | undefined
+  /** 驻留期已吞的流异常（与同步抛同面收口） */
+  streamError?: string
+  /** 流已收尾（done）——本拍可走判定体 */
+  streamDone?: boolean
+  /** 逐拍折算的四要件输入（要件 1：终态 completed） */
+  foldCompleted?: boolean
+  /** 逐拍折算的四要件输入（要件 2：输出非空） */
+  foldNonEmpty?: boolean
+  /** 逐拍折算的 turn_end.error（终局错误原文，失败面 note 用） */
+  foldTerminalError?: string
 }
 
 /** 泳道租约（进程内 v0：holder=单号；TTL 到期视同无主——decide laneFree 同语义） */
@@ -384,6 +413,32 @@ export interface CompanyRuntimeUpdate {
 
 const CURSOR_KEY = 'activity.cursor'
 const TICK_SEQ_KEY = 'tick.seq'
+
+// —— 增量泵收运行件（DEV-9 P1 冻结修复，docs/17-§2 拍有界） ——
+
+/** 驻留哨兵：parkRace 计时器到点（本拍无事件/时间片尽）——迭代器驻留，下一拍续收 */
+const PARKED = Symbol('harvest-parked')
+
+/**
+ * 有界竞速：next() 就绪（含拒绝——原样传播走 WORKER_DEAD 面）则即时返回；ms 内未就绪
+ * 返回 PARKED。挂起分支的拒绝由泵侧预附 catch 吞并记档（无悬空 unhandled rejection）。
+ */
+function parkRace(next: Promise<IteratorResult<StreamEvent>>, ms: number): Promise<IteratorResult<StreamEvent> | typeof PARKED> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(PARKED), Math.max(1, ms))
+    timer.unref()
+    next.then(
+      (r) => {
+        clearTimeout(timer)
+        resolve(r)
+      },
+      (e) => {
+        clearTimeout(timer)
+        reject(e)
+      },
+    )
+  })
+}
 
 export function createEngine(deps: EngineDeps): Engine {
   const { platform, ledger, registry, gateRunner, clock, config } = deps
@@ -764,12 +819,16 @@ export function createEngine(deps: EngineDeps): Engine {
   }
 
   /**
-   * 收割一单：消费 stream（要件 1/2）→ gateRunner（要件 3/4）→ 四要件齐=迁证据就绪+
-   * 预算 settle 双行冲销（16-§三：actual=每成功交付成本）+GATE_PASS+work_records 收口+
-   * 断路复位；不齐=回滚首批位+GATE_FAIL+断路连击（熔断瞬间 ESCALATE+建 bug 单）——
-   * 失败路径**不结算**：预留保留（断路器回首批位后重派沿用同一笔额度，budget-gate 头注拟稿）。
+   * 收割一单（增量泵收版，DEV-9 P1 冻结修复，docs/17-§2 拍有界）：流未收尾先泵一个
+   * 时间片（config.harvestSliceMs 墙钟）——事件就绪即折算、无事件即驻留返回 'streaming'
+   * （单据留在在途，下一拍续收；心跳/热重载/看门狗回拍边界）；流收尾拍走判定体
+   * finalizeHarvest（四要件面零改动，docs/17-§6）。判定序不变：流（要件 1/2）→ gateRunner
+   * （要件 3/4）→ 四要件齐=迁证据就绪+预算 settle 双行冲销（16-§三：actual=每成功交付成本）
+   * +GATE_PASS+work_records 收口+断路复位；不齐=回滚首批位+GATE_FAIL+断路连击（熔断瞬间
+   * ESCALATE+建 bug 单）——失败路径**不结算**：预留保留（断路器回首批位后重派沿用同一笔
+   * 额度，budget-gate 头注拟稿）。
    */
-  async function harvestOne(entry: Inflight, tickEvents: EventRecord[], errors: string[]): Promise<'completed' | 'failed'> {
+  async function harvestOne(entry: Inflight, tickEvents: EventRecord[], errors: string[]): Promise<'completed' | 'failed' | 'streaming'> {
     let adapter: ExecutorAdapter
     try {
       adapter = registry.resolve(entry.executor)
@@ -781,27 +840,82 @@ export function createEngine(deps: EngineDeps): Engine {
         exit0: false,
       })
     }
-    const ticket = entry.ticket
-    let completed = false
-    let nonEmptyOutput = false
-    let terminalError: string | undefined
-    try {
-      for await (const ev of adapter.stream(entry.handle)) {
-        if (ev.type === 'log' && ev.text.trim() !== '') nonEmptyOutput = true
-        if (ev.type === 'turn_end') {
-          completed = ev.completed
-          if (ev.error !== undefined) terminalError = ev.error
-        }
+    if (entry.streamDone !== true) {
+      let pumped: 'parked' | 'done'
+      try {
+        pumped = await pumpHarvestStream(adapter, entry)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return failHarvest(entry, tickEvents, `WORKER_DEAD：流消费异常 ${msg}`, {
+          completed: entry.foldCompleted ?? false,
+          nonEmptyOutput: entry.foldNonEmpty ?? false,
+          reportExists: false,
+          exit0: false,
+        })
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      return failHarvest(entry, tickEvents, `WORKER_DEAD：流消费异常 ${msg}`, {
-        completed,
-        nonEmptyOutput,
-        reportExists: false,
-        exit0: false,
-      })
+      if (pumped === 'parked') return 'streaming'
     }
+    return finalizeHarvest(adapter, entry, tickEvents, errors)
+  }
+
+  /**
+   * 增量泵流（DEV-9 修复核心）：本工位本拍至多 config.harvestSliceMs——已就绪事件连续
+   * 折算（microtask 先于计时器：完成流/fake 流仍同拍收干，既有测试行为不变）；时间片尽
+   * 或流暂无事件 → 驻留让出拍界（保留迭代器+挂起 next() 跨拍续收；一流一收纪律不变）。
+   * 挂起 next() 的拒绝被吞并记 streamError（防悬空 unhandled rejection）——下一拍泵首查
+   * 即抛，与同步抛同走 WORKER_DEAD 面，不静默。
+   */
+  async function pumpHarvestStream(adapter: ExecutorAdapter, entry: Inflight): Promise<'parked' | 'done'> {
+    if (entry.streamError !== undefined) throw new Error(entry.streamError)
+    if (entry.streamIter === undefined) {
+      entry.streamIter = adapter.stream(entry.handle)[Symbol.asyncIterator]()
+      entry.foldCompleted = false
+      entry.foldNonEmpty = false
+    }
+    const deadline = Date.now() + config.harvestSliceMs
+    for (;;) {
+      if (Date.now() >= deadline) return 'parked' // 时间片尽——拍有界硬保证（洪流面亦让出）
+      if (entry.streamNext === undefined) {
+        const next = entry.streamIter.next()
+        // 驻留期拒绝兜底：吞并记档（防悬空拒绝）；活跃泵内的拒绝经 parkRace 原样传播
+        next.catch((err) => {
+          if (entry.streamError === undefined) {
+            entry.streamError = err instanceof Error ? err.message : String(err)
+          }
+        })
+        entry.streamNext = next
+      }
+      const winner = await parkRace(entry.streamNext, deadline - Date.now())
+      if (winner === PARKED) return 'parked'
+      entry.streamNext = undefined
+      if (winner.done) {
+        entry.streamDone = true
+        return 'done'
+      }
+      foldHarvestEvent(entry, winner.value)
+    }
+  }
+
+  /** 流事件 → 四要件输入折算（要件 1：turn_end.completed；要件 2：非空 log） */
+  function foldHarvestEvent(entry: Inflight, ev: StreamEvent): void {
+    if (ev.type === 'log' && ev.text.trim() !== '') entry.foldNonEmpty = true
+    if (ev.type === 'turn_end') {
+      entry.foldCompleted = ev.completed
+      if (ev.error !== undefined) entry.foldTerminalError = ev.error
+    }
+  }
+
+  /** 判定体（原收割后半零改动迁移）：折算态（要件 1/2）→ gateRunner（要件 3/4）→ 收口 */
+  async function finalizeHarvest(
+    adapter: ExecutorAdapter,
+    entry: Inflight,
+    tickEvents: EventRecord[],
+    errors: string[],
+  ): Promise<'completed' | 'failed'> {
+    const ticket = entry.ticket
+    const completed = entry.foldCompleted ?? false
+    const nonEmptyOutput = entry.foldNonEmpty ?? false
+    const terminalError = entry.foldTerminalError
     const gate = await gateRunner.run({
       ticket,
       attempt: entry.attempt,
@@ -1161,6 +1275,11 @@ export function createEngine(deps: EngineDeps): Engine {
       harvest.checked += 1
       try {
         const outcome = await harvestOne(entry, tickEvents, errors)
+        if (outcome === 'streaming') {
+          // 流驻留（增量泵收，DEV-9 修复）：本拍未收口——计 pending，下一拍续收
+          harvest.pending += 1
+          continue
+        }
         if (outcome === 'completed') harvest.completed += 1
         else harvest.failed += 1
         mutations += 1
