@@ -5,8 +5,11 @@
  *   - docs/17-§5：六层装配 → AGENTS.md + 任务书；分层指纹记账（C2-08 冻结式）。
  *     prompt 包纯逻辑零盘 IO（「落盘归 daemon」）——本文件即 daemon 侧落盘者：
  *     buildLayers(sources) → assembleAgentsMd + renderTaskBrief → 写盘（engine 调用）。
- *   - docs/04-§六 B5：AGENTS.md 落点通道优先用户级；v0 demo 按 adapter 能力声明走
- *     workspace 根（native 通道），用户级通道落点注入归后续刀（拟稿）。
+ *   - docs/04-§六 B5：AGENTS.md 落点通道优先用户级；按 adapter 能力声明路由（engine 侧）：
+ *     native=workspace 根（原生发现通道）；user_level/append=bridge 插件通道——每任务
+ *     指令临时文件（workspace 外，<rootDir>/tmp/instructions/<单号>.md，0600），launch env
+ *     STUDIO_NEXT_INSTRUCTIONS 指向它、由 dsh 宿主插件 studio-next-bridge 消费注入系统
+ *     提示 persona 前缀段（docs/25-§3.1 v1.5 裁决#1；清理策略=保留至收割完成再删）。
  *   - 署名 [公司·部门·岗位·级别] 由网关注入（17-§7）——v0 无网关，本装配器代拼（拟稿，
  *     真网关接线后改为透传网关注入值）。
  *
@@ -44,7 +47,7 @@ export interface AssembleDispatchInput {
   capabilities: ExecutorCapabilities
   workspace: string
   briefPath: string
-  /** AGENTS.md 落点（按 adapter 通道决定：native=workspace 根；其余通道归适配器注入） */
+  /** AGENTS.md 落点（engine 按通道能力路由：native=workspace 根；user_level/append=bridge 每任务指令临时文件） */
   agentsTarget: string
   /** AGENTS.md 通道说明（随任务书注入；channel 与 target 同 TaskBrief.AGENTS_MD） */
   agentsChannel: { channel: 'native' | 'user_level' | 'append_system_prompt'; target: string }

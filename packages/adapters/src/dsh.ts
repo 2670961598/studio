@@ -39,11 +39,15 @@
  *     （17-§6 坑位，docs/31-§7 P-08 真机定性收口）：exitCode 只记录不参与判定；终态
  *     只认 turn_end.reason.kind（见上）。spawn 统一 reject:false——非零退出码/被信号
  *     杀死不抛错，退出码对收割只有证据价值
- *   - AGENTS.md 通道（2026-10-19 三件套之一）：插件通道——agentsMdEnv 对 user_level/
- *     append_system_prompt 注 STUDIO_NEXT_INSTRUCTIONS=<target>，由 studio-next-bridge
- *     宿主插件（packages/dsh-bridge）读文件注入系统提示 persona 前缀段；旧证伪变量
- *     DSH_AGENTS_MD / DSH_APPEND_SYSTEM_PROMPT_FILE 已移除（docs/31-A1/§5-5，裁决
- *     docs/25-§3.1 v1.5#1）；native=不注入（launch cwd 向上原生发现，P-07 实证）
+ *   - AGENTS.md 通道（2026-10-19 三件套之一，本刀接线收口）：插件通道——capabilities.
+ *     agents_md='user_level'（daemon 据此路由：组装指令落每任务临时文件 <rootDir>/tmp/
+ *     instructions/<单号>.md（workspace 外，0600）），agentsMdEnv 对 user_level/append_
+ *     system_prompt 注 STUDIO_NEXT_INSTRUCTIONS=<target>，由 studio-next-bridge 宿主插件
+ *     （packages/dsh-bridge）读文件注入系统提示 persona 前缀段；旧证伪变量 DSH_AGENTS_MD /
+ *     DSH_APPEND_SYSTEM_PROMPT_FILE 已移除（docs/31-A1/§5-5，裁决 docs/25-§3.1 v1.5#1）；
+ *     插件挂载=provisioning 面（agent.yaml cmd --patch overlay——serve 启动生成，
+ *     apps/daemon/src/instructions-store.ts），未挂载时 env 无消费者（注入不发生）；
+ *     原生发现通道（launch cwd 向上扫 AGENTS.md，P-07 实证）与本通道可并存不冲突
  *   - 续跑：resumeWithSession(task, executorSessionId) 已接线（--session-id 透传，P-05
  *     实证形态）；capabilities.session_resume 仍 false——端口开关待「cwd 一致性落调度
  *     纪律」立项后翻转（docs/31-§5-7；cwd 逐字节一致约束见 resumeWithSession 注）
@@ -151,7 +155,7 @@ export class DshAdapter implements ExecutorAdapter {
     budget_cap: false, // 17-§6 dsh 行无预算帽旗标；预算管控走框架断路（价目表折算后）
     cancel_turn: false, // 无单轮取消原语，只能整进程 kill
     session_resume: false, // v0 不声明续跑；不支持时明报并降级新派（调度侧职责）
-    agents_md: 'native', // 拟稿：假设原生读 workspace AGENTS.md（待探针；通道 env 见 agentsMdEnv）
+    agents_md: 'user_level', // bridge 插件通道（docs/25-§3.1 v1.5#1 落地）：daemon 落指令临时文件（workspace 外）→ 本适配器注 STUDIO_NEXT_INSTRUCTIONS → studio-next-bridge 注入系统提示 persona 段；原生发现通道（P-07）仍在，无插件时 env 无消费者（注入不发生——provisioning 归 agent.yaml cmd --patch 挂载）
     cost_native: false, // 17-§6：tokens 有，成本无价目表折算
   }
 

@@ -71,7 +71,7 @@ const legalYaml = `executors:
       budget_cap: false
       cancel_turn: false
       session_resume: false
-      agents_md: native
+      agents_md: user_level
       cost_native: false
     patches:
       prod: { model: high }
@@ -97,7 +97,7 @@ describe('loadAgentConfig：四态与边界', () => {
       budget_cap: false,
       cancel_turn: false,
       session_resume: false,
-      agents_md: 'native',
+      agents_md: 'user_level',
       cost_native: false,
     })
     expect(dsh?.patches).toStrictEqual({ prod: { model: 'high' }, explore: { model: 'low' } })
