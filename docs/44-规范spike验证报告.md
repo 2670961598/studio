@@ -153,3 +153,100 @@ bun run test                               # 1490 全绿（Node 24.21.0）
 ```
 
 （运行环境：Node 24.21.0 经 mise 注入 PATH；bun 1.4.3。）
+
+---
+
+# §v1.1 增量验证（2026-10-20 ｜ 分支 spike/spec-v1.1，提交 b14b9a5）
+
+> 验证对象：docs/43 v1.1 §七 两项新增机制（git-url 导入流 / 依赖清单自动安装）+
+> 制作人 2026-10-20 口谕增补（.AIWS 员工工作区树）。
+> v1 十条机制的验证记录见上文（§一-§七，spike/spec-v1 分支，1490/1490）；本节为增量，
+> 与 v1 结论合并生效。判定纪律不变：良性示例包全链绿 + 每机制端到端证据 +
+> 「修到能跑」=不过；零 LLM 打桩；恶意样本只存在于测试 tmp（运行时构造）。
+
+## 一、增量判定表
+
+| # | 机制（docs/43 v1.1） | 判定 | 执行点（spike 实落） | 证据（测试 → 摘要） |
+|---|---|---|---|---|
+| 1 | §七-1 git-url 导入流：克隆→剥离活性 .git→重建本地仓→schema 校验→初始化全链（含升级=再次导入） | **通过** | `packages/company/src/git-import.ts`：`companyAddGitUrl`（真实 git clone 本地仓路径/file:// 两形态当 git-url，零外网）→ `importCompanyRepo` 导入核（本地路径直导同核——docs/43 §一「同构」）；内容复制排除任何深度 .git → `git init`+首提（干净本地仓）；`loadCompanyDirectory` 全目录面**写盘前先检**；初始化=localfile 字段 provision（FlowPlatform 端口注入，公司声明 `platform: localfile` 才走）+信任锚 trust=false（`trust.ts` 自 v1 spike cbae8c2 移植，语义零改动）+依赖清单自动安装挂点；升级=镜像同步（含删除）+HEAD 不变不产新提交+锚重落 trust=false | `git-import.test.ts` 18 用例：克隆全链（slug/锚/provision/安装/git 首提/工作树净）；**恶意钩子剥离三维负断言**（源仓运行时预埋 `.git/hooks/post-merge` 外联钩子 + `core.hooksPath=./.evil-hooks` 配置劫持 → 目标 hooks 面无 post-merge/配置无 hooksPath/全目录无恶意内容体）；本地路径直导通道同断言（naive 整目录复制会带过——机制面挡）；升级 v2（改 prompts+加岗+删标记文件）→ 内容更新+git 两提交+锚 history 追加+指纹翻新+钩子仍剥离；幂等（同 v2 再导 contentChanged=false 零新提交）；错家公司 slug-mismatch 目标不动；无锚目录拒升级；结构闸四负例（未知顶层/自带锚目录/exec 位/符号链接）+schema 不过拒收无半成品；CLI 冒烟（真 bin 进程 `company add` exit 0+四产物落盘） |
+| 2 | §七-2 依赖清单自动安装：dependencies.yaml 解析→属性绑定求值→插件安装/启用/热重载全链（含版本解析与缺失源处理） | **通过** | `packages/company/src/dependencies.ts`：strictObject 解析（`when{attr,is}→plugins[{name,version}]`）；绑定求值（属性候选：dept=path 全量+末段名双候选、skills 逐元素、level 字符串化）；最小语义化版本（^caret 含 ^0.x 锁 minor / 精确版缺 patch 归一 .0；多绑定同名=约束并集全满足才装，冲突不装错版本）；安装=源定位（公司包 plugins/ 优先→PluginSource 外部源接口）→落位（目录复制进**注入的隔离插件根**——引擎无缺省值，结构上不可能写 ~/.dsh）+registry.json 登记+install-log.jsonl 安装清单日志+confirm 确认位（拒装=零落盘只出清单）；缺源=missing 如实可见（failOnMissing=true 严格面）；热重载=配置指纹 sha256(deps 原文+启用集投影) 变化→重算+增量补装、不变→零动作幂等 | `dependencies.test.ts` 22 用例：解析负例 5（未知键/坏 schema/坏 version/未知 attr）；版本表（^1.2 区间/^0.2 锁 minor/精确等值/缺 patch 归一）；三命中面（role 命中/dept 末段名命中/设计师不命中+无人空集）；e2e 双插件安装（落位 dsh.bundle 形态完整随行+registry 两员+日志一行）；幂等重跑 satisfied；多约束并集一次安装；confirm=false 零落盘零登记日志留痕；缺源 missing+failOnMissing 抛；版本冲突不落位；外部源接口第二源真装；无依赖清单=空报告（能力声明语义）；热重载三段（首装→指纹不变零动作日志不增行→deps 变化重算补装+状态落盘）+指纹三态（deps 变/启用面变/双不变）+人员面收缩触发重算（已装保留） |
+| 3 | .AIWS 员工工作区树（2026-10-20 口谕增补） | **通过** | `ensureAiwsTree`（git-import.ts）：`.AIWS/<部门路径>/<工号>/` 镜像 org-config（部门文件夹先建、工号文件夹挂 dept.path 下；幂等 mkdir；fresh 与升级同建）；落点=公司根目录（targetDir 同级，**不进公司 git 目录**），可注入 aiwsRoot；排除表三处同步（init.ts readDirectoryFiles / hot-reload.ts statDirectory+基线 walk——与 .git/.DS_Store 同款） | `git-import.test.ts`：建树同构（部门得文件夹/AGENT-1 在工程部下得文件夹/公司 git 目录内无 .AIWS）；排除双证①批准后员工文件夹写任意内容→内容指纹不变→trust 态不被扰动；双证②父级根读面零 .AIWS 键+对照公司内容照常在（排除不是漏读）。`hot-reload.test.ts` 3 用例（daemon 侧）：statDirectory 排除表直证（.AIWS 在扫描根内也不进 stat 面）；**对抗布局**（.AIWS 放进被监听的公司目录内部）写任意内容 check() 全程 null 零 RELOAD 事件；对照组改 org-config 同栈即 reloaded（排除没挡错面） |
+
+**全仓测试 1499 通过 / 0 失败**（基线 1456 + 新增 43：git-import 18 + dependencies 22
++ hot-reload 增 3；存量零破坏）；`bun run typecheck` 绿（Node 24.21.0 / bun 1.4.3，
+mise 注入）。判定：**两机制+增补均过，建议随 v1 结论一并进入⑥制作人终审。**
+
+## 二、良性全链证据摘要（一条命令安装）
+
+- CLI 真进程冒烟：`node bin.ts company add <本地 fixture 仓> src-corp --work-root <tmp>`
+  → exit 0；stdout 摘要 `slug=src-corp；首次导入`/`trust=false`/`dsh-web-test:install`；
+  四产物落盘（公司 git 目录 / `.studio-next/trust.json` / `.AIWS/departments/工程部/AGENT-1/`
+  / `var/plugins/dsh-web-test` + `var/platform` 字段盘）。
+- 依赖清单三绑定（role 命中 `^1.2` + dept 命中 `1.2.0` 精确 + 设计师不命中 `^9.0`）→
+  AGENT-1 启用集=去重后一枚 `dsh-web-test`，双约束并集 `['^1.2','1.2.0']` 同被源 1.2.0
+  满足——一次安装；设计师绑定零需求面不安装。
+- 升级链：fixture 仓推进 v2（改 prompts+org-config 加 src-night-audit 岗+删
+  docs/upgrade-marker-v1.md）→ 再导 → 快照 jobs 两岗、prompts 带 v2 段、标记文件被
+  镜像删除、git 两提交、锚 `['import','approve','import']` trust=false（升级把已批准面
+  打回未批准——fail-closed）；同 v2 三导 → contentChanged=false 零新提交。
+
+## 三、机制发现与对 docs/43 v1.1 的反馈（spike 核心增量，按重要度）
+
+1. **本地路径直导是剥离开口的主通道，规范须点名**：git clone 本身不携 hooks/config
+   （负断言对 clone 通道是「传输层天然不携」）；真正会把 `.git/hooks/post-merge` 与
+   `core.hooksPath` 带过来的是**本地路径/tarball 直导被 naive 整目录复制**。spike 落法：
+   两通道共用同一导入核（内容复制在任何深度排除 .git 后重建仓）。docs/43 §一「同构
+   支持」应补一句：「直导通道必须走与克隆相同的剥离管线，禁止整目录复制」。
+2. **升级语义四点需规范定稿**（§一原文只说「升级=同一导入流」）：(a) 幂等口径=内容
+   镜像后 HEAD 不变则不产新提交；(b) 信任语义=升级把受信面打回 false（即便升级前已
+   approve——与 v1 漂移 fail-closed 语义一致）；(c) `.studio-next.yaml` 盖戳字段
+   （created_at/last_validated_at）是 daemon 自管状态，升级不随源回卷（源的 null 桩
+   不得抹掉本地值）；(d) 升级通道只认有锚公司+slug 同家（错家/外来目录拒收）。
+3. **分发仓自带 `.studio-next/` 锚目录=信任态劫持面，须显式拒**：自带锚可伪造
+   `trust:true` 历史与指纹。封闭内容集不含该目录+专则 `import/anchor-present` 拒收
+   （v1 结构闸在 v1.1 因「.git 允许但剥离」语义重构，锚目录拒收需重申入附录 A）。
+4. **「一名两义」在 v1.1 自然消解但留有尾巴**：v1 spike 发现分发 manifest 与挂载
+   meta 同名（§四-4，当时推荐分发件改名 package.yaml）。v1.1 分发仓=公司目录本体，
+   `.studio-next.yaml` 以挂载元信息形态随行、无独立 manifest——冲突不复存在。但
+   §一「manifest 记 schema 版本」的现状承载=org-config schema 字段+git 历史；若未来
+   要独立分发元数据（版本/来源/多模板族），仍应取名 package.yaml 而非复用
+   `.studio-next.yaml`。
+5. **依赖清单 attr 域应收封闭枚举，dept 匹配面须写明**：示例 `is: 研发部` 是部门名
+   而 person.dept 是 path（`departments/研发部`）——spike 落「path 全量+末段名双候选」
+   匹配；attr 收档案已知键封闭枚举（role/dept/level/skills/executor/status，未知拒收）。
+   §四应补：「绑定域=档案已知键；档案正文自由字典不参与绑定」——§二「属性面=自由
+   字典」与 §四「行为面=插件绑定」的边界由此定清。
+6. **版本解析最小面与并集语义**：只收 `^x.y(.z)` 与精确两形态（`~/>=/通配` 不收）；
+   缺 patch 归一 `.0`；`^0.x` 锁 minor（标准 caret 表）；多绑定命中同一插件=约束并集，
+   源版本须满足全部约束，否则 conflict 如实上报**不装错版本**。§四「可指定版本号」
+   应写明这两种形态与并集语义。
+7. **缺源处理双面语义**：默认 missing 进安装报告如实可见、不阻断导入（依赖清单同时
+   是能力声明——§五「非 dsh 损失哪些能力」的同源数据）；`failOnMissing=true` 为导入侧
+   fail-fast 严格面。外部源=PluginSource 接口（公司包 plugins/ 优先，按序询问）——
+   §四「可指定来源」的落地形态，npm/registry 落位归正式单。
+8. **热重载不卸载**：启用集收缩时已装插件保留（registry 是追加事实，卸载语义归正式
+   单）；配置指纹=sha256(dependencies.yaml 原文 ‖ 排序后启用集投影)——deps 内容与
+   命中面任一变化都触发重算。dsh 侧 profile patch 指向隔离根即装载（insert 条目随
+   插件 cordis.patch.yml 旅行——docs/34-§3.1 形态不破坏）。
+9. **.AIWS 根归属待定稿**：口谕「与 company git 目录/var 平级」→ spike 落缺省
+   `<targetDir 同级>/.AIWS`+可注入 aiwsRoot。多公司共享同一 work-root 时 .AIWS 并树
+   （同 dept path 会合流）——正式单需定：per-company 根或 work-root 级共享+slug 段；
+   派发时 worker cwd 固定到员工文件夹属后续实现单（口谕已界定不在本 spike）。
+10. **两条工程注记**：(a) simple-git 的 block-unsafe-operations 插件拦 `core.hooksPath`
+    配置（库侧同认此为危险面——夹具须直写 .git/config 植入；佐证 hooksPath 劫持是
+    真实攻击面）；(b) **exec 位经 git clone 可旅行**（git 记录 mode 100755，克隆产物
+    保有）——结构闸必须跑在**克隆产物**上而非源仓工作树，spike 按此实现。
+
+## 四、复现口径（v1.1 增量冻结验收命令）
+
+```bash
+cd /Volumes/BigDisk/StudioNext-spike && git checkout spike/spec-v1.1
+bun install
+bun run typecheck                                                       # 绿
+bunx vitest run packages/company/test/git-import.test.ts \
+                  packages/company/test/dependencies.test.ts \
+                  apps/daemon/test/hot-reload.test.ts                   # 67 用例全绿（新增 43）
+bun run test                                                            # 1499 全绿（Node 24.21.0）
+```
+
+（提交 `b14b9a5`；未推送、不回并——throwaway 原型仓纪律同 v1 spike。）
