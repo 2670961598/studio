@@ -157,6 +157,15 @@ export class TaigaContext {
     return this.attrList
   }
 
+  /**
+   * 作废状态集/属性集缓存（写面专用：provision/guards 改了平台侧元数据后调用，
+   * 逼下次读回真源——provision 前后各一次，保证幂等判重与 schema() 反映新档）
+   */
+  invalidateMeta(): void {
+    this.statusList = null
+    this.attrList = null
+  }
+
   async statusIdByName(name: string): Promise<number> {
     const hit = (await this.statuses()).find((s) => s.name === name)
     if (hit === undefined) {

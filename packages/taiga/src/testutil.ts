@@ -46,8 +46,27 @@ export interface FakeHistoryEntry {
 }
 
 export interface FakeWikiPage {
+  id: number
   slug: string
   content: string
+  /** 页自身乐观并发号（真机 P61-P63：缺/错 version 均 400；成功 version+1、editions+1） */
+  version: number
+  editions: number
+}
+
+export interface FakeTask {
+  id: number
+  ref: number
+  subject: string
+  userStory: number
+}
+
+export interface FakeIssue {
+  id: number
+  ref: number
+  subject: string
+  /** 生成链只读（真机 P40-P45/P58：POST/PATCH 均被静默丢弃；UI 专属动作） */
+  generatedFromIssue: number | null
 }
 
 export interface CallLog {
@@ -105,6 +124,10 @@ export class FakeTaiga {
   ]
   entities: FakeEntity[] = []
   wiki: FakeWikiPage[] = []
+  /** task 派生链（真机 P30-P32：POST /tasks {user_story} + GET /tasks?user_story= 过滤有效） */
+  tasks: FakeTask[] = []
+  /** issue 生成链读面（真机结论：字段回显但 API 不可写——只服务 children(issue)） */
+  issues: FakeIssue[] = []
   /** 测试旋钮：下一次 PATCH 强制 409（模拟 GET 与 PATCH 之间的并发写） */
   conflictNextPatch = false
 
@@ -113,11 +136,16 @@ export class FakeTaiga {
   private entitySeq = 100
   private refSeq = 0
   private tokenSeq = 0
+  private statusSeq = 6
+  private attrSeq = 16
+  private wikiSeq = 2
+  private taskSeq = 200
+  private issueSeq = 300
   private currentToken = 'jwt-test-0'
   private validRefresh = 'refresh-test-0'
 
   constructor() {
-    this.wiki.push({ slug: 'home', content: '# 知识库根页\n零依赖跑法见下游' })
+    this.wiki.push({ id: 1, slug: 'home', content: '# 知识库根页\n零依赖跑法见下游', version: 1, editions: 1 })
   }
 
   // —— 测试辅助 ——
@@ -166,8 +194,39 @@ export class FakeTaiga {
     return this.entities.find((x) => x.ref === ref)
   }
 
+  /** 播种派生 task（ref 沿项目全局序列——真机 P10-P30 连号口径） */
+  seedTask(input: { subject: string; userStory: number }): FakeTask {
+    const t: FakeTask = { id: this.taskSeq++, ref: ++this.refSeq, subject: input.subject, userStory: input.userStory }
+    this.tasks.push(t)
+    return t
+  }
+
+  /** 播种 issue（生成链字段只读——真机 P40-P45；generatedFromIssue 仅服务 children 读面） */
+  seedIssue(input: { subject: string; generatedFromIssue?: number }): FakeIssue {
+    const i: FakeIssue = { id: this.issueSeq++, ref: ++this.refSeq, subject: input.subject, generatedFromIssue: input.generatedFromIssue ?? null }
+    this.issues.push(i)
+    return i
+  }
+
+  /** 播种 wiki 页（测试只关心 slug/content；id/version/editions 由 fake 分配） */
+  seedWikiPage(slug: string, content: string): FakeWikiPage {
+    const page: FakeWikiPage = { id: this.wikiSeq++, slug, content, version: 1, editions: 1 }
+    this.wiki.push(page)
+    return page
+  }
+
   countHistoryFetches(): number {
     return this.calls.filter((c) => c.path.startsWith('/api/v1/history/')).length
+  }
+
+  /** 写调用计数（幂等断言用：POST/PATCH/PUT/DELETE 条数，不含 auth 交换） */
+  countWriteCalls(filter?: (c: CallLog) => boolean): number {
+    return this.calls.filter(
+      (c) =>
+        (c.method === 'POST' || c.method === 'PATCH' || c.method === 'PUT' || c.method === 'DELETE') &&
+        !c.path.startsWith('/api/v1/auth') &&
+        (filter === undefined || filter(c)),
+    ).length
   }
 
   // —— fetch 注入面 ——
@@ -227,15 +286,57 @@ export class FakeTaiga {
       })
     }
 
-    // —— 状态集 / 属性集 / 角色 ——
+    // —— 状态集 / 属性集 / 角色（读 + onboard 写面路由）——
     if (method === 'GET' && path === '/api/v1/userstory-statuses') {
       return respond(200, this.statuses.map((s, i) => ({ id: s.id, name: s.name, slug: s.slug, order: i + 1, is_closed: s.id === 5, is_archived: false, color: '#70728F', wip_limit: null, project: 1 })))
+    }
+    if (method === 'POST' && path === '/api/v1/userstory-statuses') {
+      // 真机 P80/P81：POST {project, name} 201；重名 400 {"name": ["Duplicated name"]}
+      const b = (body ?? {}) as { project?: number; name?: string }
+      const name = typeof b.name === 'string' ? b.name : ''
+      if (b.project !== 1 || name.trim() === '') {
+        return respond(400, { project: 'This field is required.', name: 'This field is required.' })
+      }
+      if (this.statuses.some((s) => s.name === name)) {
+        return respond(400, { name: ['Duplicated name'] })
+      }
+      const created = { id: this.statusSeq++, name, slug: `smoke-${String(this.statusSeq)}` }
+      this.statuses.push(created)
+      return respond(201, { id: created.id, name, slug: created.slug, order: 10, is_closed: false, is_archived: false, color: '#999999', wip_limit: null, project: 1 })
     }
     if (method === 'GET' && path === '/api/v1/userstory-custom-attributes') {
       return respond(200, this.attributes.map((a, i) => ({ id: a.id, name: a.name, description: '', type: a.type, order: i + 1, project: 1, extra: null, created_date: '2026-10-18T00:00:01.000Z', modified_date: '2026-10-18T00:00:01.000Z' })))
     }
+    if (method === 'POST' && path === '/api/v1/userstory-custom-attributes') {
+      // 真机 P82-P84：POST {project, name, type?} 201（type 生效）；重名 400
+      const b = (body ?? {}) as { project?: number; name?: string; type?: string }
+      const name = typeof b.name === 'string' ? b.name : ''
+      if (b.project !== 1 || name.trim() === '') {
+        return respond(400, { project: 'This field is required.', name: 'This field is required.' })
+      }
+      if (this.attributes.some((a) => a.name === name)) {
+        return respond(400, { name: ['Already exists one with the same name.'], project: ['Already exists one with the same name.'] })
+      }
+      const type = typeof b.type === 'string' ? b.type : 'text'
+      const created = { id: this.attrSeq++, name, type }
+      this.attributes.push(created)
+      return respond(201, { id: created.id, name, description: '', type, order: Date.now(), project: 1, extra: null, created_date: '2026-10-19T00:00:01.000Z', modified_date: '2026-10-19T00:00:01.000Z' })
+    }
     if (method === 'GET' && path === '/api/v1/roles') {
       return respond(200, this.roles.map((r, i) => ({ id: r.id, name: r.name, slug: r.slug, project: 1, order: (i + 1) * 10, computable: r.computable, permissions: [...r.permissions], members_count: 0 })))
+    }
+    const roleMatch = /^\/api\/v1\/roles\/(\d+)$/.exec(path)
+    if (roleMatch !== null && method === 'PATCH') {
+      // 真机 P70-P72：PATCH /roles/{id} {permissions} → 200 整角色回显，无 version
+      const roleId = Number(roleMatch[1])
+      const role = this.roles.find((r) => r.id === roleId)
+      if (role === undefined) return respond(404, { _error_message: 'Role not found', _error_type: 'not_found' })
+      const b = (body ?? {}) as { permissions?: unknown }
+      if (!Array.isArray(b.permissions) || !b.permissions.every((p) => typeof p === 'string')) {
+        return respond(400, { permissions: ['This field must be a list of strings.'] })
+      }
+      role.permissions = [...(b.permissions as string[])]
+      return respond(200, { id: role.id, name: role.name, slug: role.slug, project: 1, order: 10, computable: role.computable, permissions: [...role.permissions], members_count: 0 })
     }
 
     // —— 实体列表（分页头 + 无 description，实测形态）——
@@ -358,7 +459,7 @@ export class FakeTaiga {
       return respond(200, entries.map((h) => this.historyJson(h, e.ref)))
     }
 
-    // —— wiki ——
+    // —— wiki（读 + upsert 写面；真机 P60-P66 端点形状）——
     if (method === 'GET' && path === '/api/v1/wiki') {
       const pageSize = Number(query['page_size'] ?? '30')
       const page = Number(query['page'] ?? '1')
@@ -373,6 +474,64 @@ export class FakeTaiga {
       const hit = this.wiki.find((w) => w.slug === query['slug'])
       if (hit === undefined) return respond(404, { _error_message: 'Wiki page not found', _error_type: 'not_found' })
       return respond(200, this.wikiJson(hit))
+    }
+    if (method === 'POST' && path === '/api/v1/wiki') {
+      // 真机 P65/P66：POST {project, slug, content} 201（version=1）；重复 slug 400 __all__
+      const b = (body ?? {}) as { project?: number; slug?: string; content?: string }
+      if (b.project !== 1 || typeof b.slug !== 'string' || b.slug === '' || typeof b.content !== 'string') {
+        return respond(400, { project: 'This field is required.', slug: 'This field is required.', content: 'This field is required.' })
+      }
+      if (this.wiki.some((w) => w.slug === b.slug)) {
+        return respond(400, { __all__: ['Wiki page with this Project and Slug already exists.'] })
+      }
+      const page: FakeWikiPage = { id: this.wikiSeq++, slug: b.slug, content: b.content, version: 1, editions: 1 }
+      this.wiki.push(page)
+      return respond(201, this.wikiJson(page))
+    }
+    m = /^\/api\/v1\/wiki\/(\d+)$/.exec(path)
+    if (m !== null && method === 'PATCH') {
+      // 真机 P61-P63：PATCH {content, version}——缺/错 version 400；成功 version+1、editions+1
+      const page = this.wiki.find((w) => w.id === Number(m[1]))
+      if (page === undefined) return respond(404, { _error_message: 'Wiki page not found', _error_type: 'not_found' })
+      const b = (body ?? {}) as { content?: string; version?: number }
+      if (typeof b.content !== 'string' || b.version !== page.version) {
+        return respond(400, { version: 'The version parameter is not valid' })
+      }
+      page.content = b.content
+      page.version += 1
+      page.editions += 1
+      return respond(200, this.wikiJson(page))
+    }
+
+    // —— task 派生链（真机 P30-P32：GET /tasks?user_story= 过滤有效）——
+    if (method === 'GET' && path === '/api/v1/tasks') {
+      const usFilter = query['user_story'] !== undefined ? Number(query['user_story']) : null
+      const list = this.tasks.filter((t) => usFilter === null || t.userStory === usFilter)
+      const pageSize = Number(query['page_size'] ?? '30')
+      const page = Number(query['page'] ?? '1')
+      const slice = list.slice((page - 1) * pageSize, page * pageSize)
+      return respond(200, slice.map((t) => this.taskJson(t)), {
+        'x-pagination-count': String(list.length),
+        'x-paginated-by': String(pageSize),
+        'x-pagination-current': String(page),
+      })
+    }
+
+    // —— issue 生成链读面（真机 P40-P45：字段回显、过滤参数平台不认→客户端过滤）——
+    if (method === 'GET' && path === '/api/v1/issues') {
+      const pageSize = Number(query['page_size'] ?? '30')
+      const page = Number(query['page'] ?? '1')
+      const slice = this.issues.slice((page - 1) * pageSize, page * pageSize)
+      return respond(200, slice.map((i) => this.issueJson(i)), {
+        'x-pagination-count': String(this.issues.length),
+        'x-paginated-by': String(pageSize),
+        'x-pagination-current': String(page),
+      })
+    }
+    if (method === 'GET' && path === '/api/v1/issues/by_ref') {
+      const hit = this.issues.find((x) => x.ref === Number(query['ref'] ?? '-1'))
+      if (hit === undefined) return respond(404, { _error_message: 'Issue not found', _error_type: 'not_found' })
+      return respond(200, this.issueJson(hit))
     }
 
     this.unmatched.push({ method, path, query, ...(body === undefined ? {} : { body }) })
@@ -444,16 +603,46 @@ export class FakeTaiga {
 
   private wikiJson(w: FakeWikiPage): Record<string, unknown> {
     return {
-      id: 1,
+      id: w.id,
       project: 1,
       slug: w.slug,
       content: w.content,
       owner: 5,
       last_modifier: 5,
       created_date: '2026-10-18T00:00:01.000Z',
-      modified_date: '2026-10-18T00:00:01.000Z',
-      editions: 1,
+      modified_date: '2026-10-19T00:00:01.000Z',
+      editions: w.editions,
+      version: w.version,
+    }
+  }
+
+  private taskJson(t: FakeTask): Record<string, unknown> {
+    return {
+      id: t.id,
+      ref: t.ref,
+      subject: t.subject,
+      user_story: t.userStory,
+      status: 1,
       version: 1,
+      project: 1,
+      created_date: '2026-10-19T00:00:01.000Z',
+      modified_date: '2026-10-19T00:00:01.000Z',
+    }
+  }
+
+  private issueJson(i: FakeIssue): Record<string, unknown> {
+    return {
+      id: i.id,
+      ref: i.ref,
+      subject: i.subject,
+      status: 1,
+      version: 1,
+      project: 1,
+      generated_from_issue: i.generatedFromIssue,
+      generated_from_task: null,
+      generated_from_user_story: null,
+      created_date: '2026-10-19T00:00:01.000Z',
+      modified_date: '2026-10-19T00:00:01.000Z',
     }
   }
 }
@@ -473,13 +662,14 @@ export const TEST_FIELDS: FieldProvisionMap = {
 
 export function makePlatform(
   fake: FakeTaiga,
-  opts?: { pageSize?: number; fields?: FieldProvisionMap },
+  opts?: { pageSize?: number; fields?: FieldProvisionMap; entity?: 'userstory' | 'issue' },
 ): FlowPlatform {
   return createTaigaPlatform({
     baseUrl: TEST_BASE_URL,
     project: 'probe-co',
     auth: TEST_PASSWORD_AUTH,
     fields: opts?.fields ?? TEST_FIELDS,
+    ...(opts?.entity === undefined ? {} : { entity: opts.entity }),
     ...(opts?.pageSize === undefined ? {} : { pageSize: opts.pageSize }),
     fetch: fake.fetch,
   })

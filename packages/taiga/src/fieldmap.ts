@@ -13,6 +13,7 @@ import { TaigaPlatformError } from './errors.ts'
 
 const PORT_TYPES = ['string', 'int', 'enum', 'date', 'text'] as const
 export type PortFieldType = (typeof PORT_TYPES)[number]
+export { PORT_TYPES }
 
 export class TaigaFieldMap {
   private readonly fields: Record<string, string>

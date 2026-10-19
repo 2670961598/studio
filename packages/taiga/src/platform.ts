@@ -119,12 +119,12 @@ export function createTaigaPlatform(opts: TaigaPlatformOptions): FlowPlatform {
         return fieldSchema(ctx)
       },
       async provision(map: FieldProvisionMap): Promise<void> {
-        return provisionFields(map)
+        return provisionFields(ctx, map)
       },
     },
     kb: {
       async upsert(path: string, md: string): Promise<void> {
-        return kbUpsert(path, md)
+        return kbUpsert(ctx, path, md)
       },
       async search(q: string): Promise<KbHit[]> {
         return kbSearch(ctx, q)
@@ -140,18 +140,18 @@ export function createTaigaPlatform(opts: TaigaPlatformOptions): FlowPlatform {
     },
     links: {
       async link(a: TicketId, b: TicketId, type: LinkType): Promise<void> {
-        return addLink(a, b, type)
+        return addLink(ctx, a, b, type)
       },
       async children(id: TicketId): Promise<TicketId[]> {
-        return linkChildren(id)
+        return linkChildren(ctx, id)
       },
     },
     guards: {
       async install(company: CompanySlug, rules: GuardRule[]): Promise<void> {
-        return installGuards(company, rules)
+        return installGuards(ctx, company, rules)
       },
       async uninstall(company: CompanySlug): Promise<void> {
-        return uninstallGuards(company)
+        return uninstallGuards(ctx, company)
       },
     },
   }
