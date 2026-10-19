@@ -40,6 +40,15 @@ export interface IssueCreate {
   level?: number
   assignee?: PersonId
   parent?: TicketId
+  /**
+   * 建单落位状态（可选，docs/25-§3.2）：建单时单据落在哪个状态。
+   * 解析序（适配器统一口径）：显式 initialState > FieldProvisionMap.states[0]
+   * （states 按流序声明、首元素=流程初态）> 平台默认态（各平台自带，不猜）。
+   * 显式给值服务「不参与派发」的建单方（如定时岗物化的留痕工件落终态）。
+   * 这只是建单时的初始落位，不是状态迁移通道——状态推进仍只有 transition() 一条路
+   * （docs/18-§二）；平台不认识的目标态必须显式报错，不静默回落默认态。
+   */
+  initialState?: string
 }
 
 export interface Comment {
@@ -70,6 +79,7 @@ export interface FieldProvisionMap {
   fields: Record<string, string>
   /** 业务字段名 → 字段类型（缺省 string） */
   types?: Record<string, 'string' | 'int' | 'enum' | 'date' | 'text'>
+  /** 流程状态全集，按流序声明——**首元素=流程初态**（建单落位依据，见 IssueCreate.initialState） */
   states: string[]
   stateFlow: Record<string, string[]>
 }

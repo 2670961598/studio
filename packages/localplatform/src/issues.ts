@@ -14,6 +14,9 @@
  *     LocalFile 是单项目平台，该过滤维忽略（不能凭空造数据）
  *   - IssueCreate.description 可写但 IssueRecord 无此字段，get() 查不回（事件里有留痕）
  *   - IssueCreate 无 lane，lane 只能经 setField 补
+ *   - 建单落位（docs/25-§3.2 IssueCreate.initialState）：显式入参 > provision
+ *     states[0]（流程初态）> 默认 open；provision 存在时显式入参必须在 states 声明集内
+ *     （否则显式报错，不静默落错态）
  */
 import { readdirSync } from 'node:fs'
 import type { IssueCreate, IssueQuery, IssueRecord, TicketId } from '@studio-next/contract'
@@ -102,6 +105,9 @@ function validateIssueCreate(input: IssueCreate): void {
   }
   if (input.level !== undefined && (typeof input.level !== 'number' || !Number.isInteger(input.level))) {
     throw new LocalPlatformError('CONFIG_INVALID', 'bad-create-input', 'level 必须是整数')
+  }
+  if (input.initialState !== undefined && (typeof input.initialState !== 'string' || input.initialState.trim() === '')) {
+    throw new LocalPlatformError('CONFIG_INVALID', 'bad-create-input', 'initialState 必须是非空字符串')
   }
 }
 
@@ -194,13 +200,21 @@ export function listIssues(root: string, q: IssueQuery): IssueRecord[] {
 
 export function createIssue(root: string, now: () => string, input: IssueCreate): IssueRecord {
   validateIssueCreate(input)
+  // 初始 state：显式入参 > provisioned states[0]（流程初态）> 默认 open（定格进 created 事件，派生自洽）
+  // 校验先于单据 IO：provision 存在时显式入参必须在 states 声明集内（不静默落错态）
+  const prov = readProvision(root)
+  if (input.initialState !== undefined && prov !== null && !prov.states.includes(input.initialState)) {
+    throw new LocalPlatformError(
+      'CONFIG_INVALID',
+      'bad-create-input',
+      `initialState=${input.initialState} 不在 provision states 声明集 [${prov.states.join(',')}] 内`,
+    )
+  }
+  const firstState = input.initialState ?? prov?.states[0] ?? DEFAULT_INITIAL_STATE
   const ids = scanIssueIds(root)
   const last = ids[ids.length - 1]
   const nextNo = last === undefined ? 1 : (ticketNo(last) ?? 0) + 1
   const id = `${ISSUE_PREFIX}${nextNo}`
-  // 初始 state：provisioned states[0]，否则默认 open（定格进 created 事件，派生自洽）
-  const prov = readProvision(root)
-  const firstState = prov?.states[0] ?? DEFAULT_INITIAL_STATE
   appendJsonl(issuePath(root, id), { type: 'created', ts: now(), state: firstState, input })
   appendActivity(root, now, { issue: id, kind: 'created' })
   return deriveIssue(id, parseIssueEvents(root, id))

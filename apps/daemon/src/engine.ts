@@ -22,9 +22,18 @@
  *   - docs/22-§一/§二 唤起源（schedule 源，v0.4）：ingest() 是意图注入口——调度器
  *     onDue 产 kind='schedule' 意图（payload 携 job_id，dedupKey=job_id+触发时刻），
  *     **只产意图不直接干活**；引擎在 state-diff 前把意图物化为「岗单据」进 decide 主链：
- *     PATROL 留痕 → 新单 → 派发 → 收割 → …（定时岗结果落台账的机制面，16-§四 v0.4）。
+ *     PATROL 留痕 → 派发 → 收割 → …（定时岗结果落台账的机制面，16-§四 v0.4）。
+ *     **岗单物化落位分型**（DEV-40，2026-10-20 哨查事故防复发）：工单型岗落流程初态
+ *     （新单）照走派发-收割链；巡查岗（payload.type='patrol'）是巡查工件不是工单——
+ *     落终态锚点（delivered 无前向边=结构性不可派发），decide 恒走回收 CLOSE
+ *     （宰相批注：巡查工件落新单会被派发烧配额——镜像 18 张 New 积压即此类）。
  *     意图幂等（22-§三.2）：同键 schedule 意图只物化一次——PATROL 留痕派生键集
  *     （append-only **不释放**：markRan 已记账，源重投不得重跑）+ 拍内去重。
+ *   - noop 观测面（2026-10-20 哨查事故防复发）：decide 的 noop 决策（NOOP_UNKNOWN_STATE/
+ *     NOOP_UNKNOWN_FLOW/NOOP_IDLE/WAIT_APPROVAL/DEDUP_NOOP）无台账事件（事件词表
+ *     冻结）也无平台动作——静默 noop=观察黑洞（14 张 P0/P1 单卡 2 小时无处可见）。
+ *     TickDecisionEntry 携决策时平台态 state，serve 每拍为每个 noop 决策落一行日志
+ *     （单号+原因码+态，见 serve.ts renderNoopDecision）。
  *   - docs/18-§三 状态归位：调度器不是控制面——岗单据与普通单走同一状态机同一收割链。
  *   - docs/16-§三 预算 / docs/20-§六.8：派发前预算闸（reserve→双行落账→才 launch——
  *     预算预留-结算**不落即不派**的机制化收口）+ 收割成功 settle 冲销（actual=每成功
@@ -272,6 +281,8 @@ export interface TickDecisionEntry {
   intentKey: string
   code: DecisionCode
   actionType: Action['type']
+  /** 决策时单据平台态（noop 观测面载荷：NOOP_UNKNOWN_STATE 等原因码须配单号+态可见） */
+  state: string
 }
 
 /** 动作执行结果（派发/呈批/collect/merge/recycle/stall 面） */
@@ -1136,13 +1147,24 @@ export function createEngine(deps: EngineDeps): Engine {
         continue
       }
       try {
-        // 物化岗单据：L0 流（无人审批环）+ job.role 命工号则精确指派（口径见文件头注拟稿）
+        // 物化岗单据：L0 流（无人审批环）+ job.role 命工号则精确指派（口径见文件头注拟稿）。
+        // 落位分型（DEV-40，2026-10-20 哨查事故防复发，docs/25-§3.2 IssueCreate.initialState）：
+        //   - 工单型岗（report/cadence 等产出实工件）：不指定落位→适配器落流程初态（新单），
+        //     照走 v0.4 派发-收割链（16-§四）；budget_cap 正因会派发才存在。
+        //   - 巡查岗（payload.type='patrol'，公司目录 type 语义「巡检台账/在途/心跳，产出
+        //     巡逻纪要」）：巡查工件不是工单——落终态锚点（delivered 无前向边=结构性不可
+        //     派发），decide 恒走回收 CLOSE（宰相批注：落新单会被派发烧配额——镜像 18 张
+        //     New 积压即此类）。L0 流缺失时不指定落位：单据落平台态，decide
+        //     NOOP_UNKNOWN_FLOW 经 noop 观测面（serve noop 日志行）可见，不静默。
+        const isPatrolArtifact = ((job.payload as { type?: unknown } | undefined)?.type) === 'patrol'
+        const l0Flow = resolveFlow(config.flows ?? DEFAULT_FLOW_TABLE, flowLevelKey(0))
         const created = await platform.issues.create({
           title: `[定时岗] ${job.job_id} ${new Date(startedAt).toISOString()}`,
           type: 'task',
           dept: job.dept,
           level: 0,
           assignee: job.role,
+          ...(isPatrolArtifact && l0Flow !== undefined ? { initialState: flowAnchors(l0Flow).delivered } : {}),
         })
         syncMirror(created)
         makeEvent('PATROL', created, 1, tickEvents, {
@@ -1194,7 +1216,7 @@ export function createEngine(deps: EngineDeps): Engine {
         stallAfterMs: config.stallAfterMs,
       })
       const { action, intentKey } = out
-      decisions.push({ ticket, intentKey, code: action.code, actionType: action.type })
+      decisions.push({ ticket, intentKey, code: action.code, actionType: action.type, state: issue.state })
       decidedActions.push(action)
       switch (action.type) {
         case 'dispatch':

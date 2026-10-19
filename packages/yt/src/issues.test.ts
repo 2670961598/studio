@@ -3,6 +3,7 @@
  *  - 映射往返：IssueRecord ↔ YouTrack customFields（enum={name}/person={login}/int 裸值）
  *  - 查询翻译：IssueQuery → YouTrack 查询语言（白名单语法）+ 未映射过滤维显式报错
  *  - 生命周期：create（含 parent 落链/项目绑定/N11 按名解析）/transition/setField 分派
+ *  - 建单落流程初态（DEV-40）：显式 initialState > provision states[0] > 实例默认
  *  - 分页拼接：$top/$skip 内部翻页取全量
  * 依据：docs/25-§3.2 + docs/03 N10/N11
  */
@@ -241,5 +242,47 @@ describe('create / transition / setField', () => {
     await p.issues.setField('STUDIO-3', 'parent', 'STUDIO-1')
     expect((await p.issues.get('STUDIO-3')).parent).toBe('STUDIO-1')
     expect(await p.links.children('STUDIO-1')).toEqual(['STUDIO-2', 'STUDIO-3'])
+  })
+})
+
+describe('建单落流程初态（DEV-40，2026-10-20 哨查事故防复发；docs/25-§3.2 IssueCreate.initialState）', () => {
+  it('默认建单：provision states[0]（新单）恰同实例 bundle 默认 → 落新单，零多余迁移 POST（负断言）', async () => {
+    const fake = new FakeYouTrack()
+    const p = makePlatform(fake, { project: 'STUDIO' })
+    const rec = await p.issues.create({ title: '甲' })
+    expect(rec.state).toBe('新单')
+    // 负断言：目标=落位态 → 不补迁移写（幂等通道不发请求）
+    expect(fake.calls.filter((c) => c.method === 'POST' && /^\/api\/issues\/STUDIO-\d+$/.test(c.path))).toHaveLength(0)
+    expect(fake.calls.filter((c) => c.method === 'POST' && c.path === '/api/issues')).toHaveLength(1)
+  })
+
+  it('provision 初态≠实例默认 → 建后补一次 transition 落 states[0]（负断言：不落平台默认新单）', async () => {
+    const fake = new FakeYouTrack()
+    const fields: FieldProvisionMap = { ...TEST_PROVISION, states: ['待批', '新单', '已派发', '已交付'] }
+    const p = makePlatform(fake, { project: 'STUDIO', fields })
+    const rec = await p.issues.create({ title: '甲' })
+    expect(rec.state).toBe('待批') // 正断言：provision 首元素落位
+    expect(rec.state).not.toBe('新单') // 负断言：实例 bundle 默认不再穿透（事故面）
+    expect((await p.issues.get(rec.id)).state).toBe('待批')
+    // 落位通道：POST 建 + POST 迁移（State customField 名字寻址）
+    const migrate = lastCallTo(fake, 'POST', `/api/issues/${rec.id}`)
+    expect(migrate?.body).toEqual({ customFields: [{ name: 'State', value: { name: '待批' } }] })
+  })
+
+  it('显式 initialState 优先于 provision 初态（解析序：入参 > states[0] > 实例默认）', async () => {
+    const fake = new FakeYouTrack()
+    const p = makePlatform(fake, { project: 'STUDIO' })
+    const rec = await p.issues.create({ title: '甲', initialState: '已派发' })
+    expect(rec.state).toBe('已派发')
+    expect(rec.state).not.toBe('新单')
+    const migrate = lastCallTo(fake, 'POST', `/api/issues/${rec.id}`)
+    expect(migrate?.body).toEqual({ customFields: [{ name: 'State', value: { name: '已派发' } }] })
+  })
+
+  it('initialState 空白串 → bad-create-input（校验先于建单 IO；负断言：零建单请求）', async () => {
+    const fake = new FakeYouTrack()
+    const p = makePlatform(fake, { project: 'STUDIO' })
+    await expectYtReject(() => p.issues.create({ title: '甲', initialState: '  ' }), 'CONFIG_INVALID', 'bad-create-input')
+    expect(fake.calls.filter((c) => c.method === 'POST' && c.path === '/api/issues')).toHaveLength(0)
   })
 })

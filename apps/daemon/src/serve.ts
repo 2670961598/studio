@@ -98,6 +98,7 @@ import {
   ENGINE_CONFIG_DEFAULTS,
   type Engine,
   type EngineConfig,
+  type TickDecisionEntry,
   type TickReport,
 } from './engine.ts'
 import { runEvolveStartupSelfCheck, type EvolveSelfCheckReport, type FrozenAsset } from './evolve-guard.ts'
@@ -498,8 +499,10 @@ export const DEMO_SNAPSHOT: CompanySnapshot = {
   ],
   jobs: [
     // v0.4 首个定时岗样例（16-§四「健康巡检」）：5 分钟巡逻——demo 模式出厂即跑通
-    // 「cron 到点 → schedule 意图 → 岗单据 → 派发 → 收割 → 台账」全链（结果=PATROL 起头的事件链）。
-    // 真「健康巡检」实职（巡检台账/在途/心跳并产巡逻纪要）归后续运维单——本岗只验机制。
+    // 「cron 到点 → schedule 意图 → 岗单据 → 台账」链（PATROL 起头）。
+    // 落位分型（DEV-40）：type='patrol'=巡查工件——物化落终态（已交付），同拍回收 CLOSE，
+    // **不派发**（宰相批注 2026-10-20：巡查工件派发=烧配额；真「健康巡检」实职归后续
+    // 运维单）。工单型岗（report/cadence）落初态照走派发-收割链（见 engine.ts 物化段）。
     {
       job_id: 'health-patrol',
       company: 'demo',
@@ -1081,6 +1084,23 @@ function renderTick(report: TickReport): string {
   )
 }
 
+/**
+ * noop 决策观测行（docs/17-§2 state-diff 相位；导出纯函数供测试）。
+ * noop（NOOP_UNKNOWN_STATE/NOOP_UNKNOWN_FLOW/NOOP_IDLE/WAIT_APPROVAL/DEDUP_NOOP）
+ * 不落台账事件（事件词表冻结）也不改平台——若再无日志行即成观察黑洞：单据静默卡死
+ * 无处可见（2026-10-20 哨查事故：14 张 P0/P1 单落 New 态被 NOOP_UNKNOWN_STATE
+ * 静默跳过 2 小时，靠台账缺席+镜像态反推才定位）。故 serve 运行面每拍为每个 noop
+ * 决策落一行：单号+原因码+决策时平台态。候选集是活动驱动的，行量有界。
+ */
+export function renderNoopDecision(seq: number, entry: TickDecisionEntry): string {
+  return `[serve] tick#${seq} noop：${entry.ticket} code=${entry.code} state=${entry.state}（noop 无台账事件，此行=唯一观测面）`
+}
+
+/** 一拍全部 noop 决策观测行（actionType=noop 的决策逐条可见） */
+export function noopLinesOf(report: TickReport): string[] {
+  return report.phases.stateDiff.decisions.filter((d) => d.actionType === 'noop').map((d) => renderNoopDecision(report.seq, d))
+}
+
 export interface ServeResult {
   ticks: number
   stopReason: 'signal' | 'stop-request' | 'error'
@@ -1164,6 +1184,8 @@ export async function runServe(configPath: string): Promise<ServeResult> {
       const report = await engine.tick()
       ticks += 1
       console.log(`[serve] ${renderTick(report)}`)
+      // noop 观测面（见 renderNoopDecision 头注）：静默 noop=观察黑洞，逐条落行
+      for (const line of noopLinesOf(report)) console.log(line)
       for (const err of report.errors) console.error(`[serve] tick#${report.seq} 错误：${err}`)
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err)

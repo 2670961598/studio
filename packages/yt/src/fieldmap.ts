@@ -100,11 +100,14 @@ export function validateProvision(map: FieldProvisionMap): void {
 export class FieldTranslator {
   private fields: Record<string, string>
   private types: Record<string, FieldTypeName>
+  /** 流程状态全集（按流序；首元素=流程初态，建单落位依据，见 IssueCreate.initialState） */
+  private states: readonly string[]
 
   constructor(map: FieldProvisionMap) {
     validateProvision(map)
     this.fields = { ...map.fields }
     this.types = { ...(map.types ?? {}) }
+    this.states = [...map.states]
   }
 
   /** 换绑（provision 用）：整体替换映射与类型 */
@@ -112,14 +115,20 @@ export class FieldTranslator {
     validateProvision(map)
     this.fields = { ...map.fields }
     this.types = { ...(map.types ?? {}) }
+    this.states = [...map.states]
   }
 
-  /** 当前绑定快照（fields.schema() 用） */
+  /** 流程初态（provision states[0]；空 states → undefined=无声明，建单保持平台默认态） */
+  initialState(): string | undefined {
+    return this.states[0]
+  }
+
+  /** 当前绑定快照（fields.schema() 用；stateFlow 不参与翻译，恒空——见头注） */
   snapshot(): FieldProvisionMap {
     return {
       fields: { ...this.fields },
       types: { ...this.types },
-      states: [],
+      states: [...this.states],
       stateFlow: {},
     }
   }

@@ -9,7 +9,7 @@ import { createTaigaPlatform } from './platform.ts'
 import { FakeTaiga, TEST_BASE_URL, TEST_FIELDS, TEST_PASSWORD_AUTH, expectTaigaReject, makePlatform } from './testutil.ts'
 
 describe('建单回环', () => {
-  it('最小建单：默认态 New、TicketId=<slug>-<ref>、记录可 get 回', async () => {
+  it('最小建单：落 provision 初态（TEST_FIELDS 首元素=New，恰同平台默认态）、TicketId=<slug>-<ref>、记录可 get 回', async () => {
     const fake = new FakeTaiga()
     const p = makePlatform(fake)
     const rec = await p.issues.create({ title: '甲' })
@@ -55,6 +55,69 @@ describe('建单回环', () => {
 
   it('title 空 → bad-create-input', async () => {
     await expectTaigaReject(() => makePlatform(new FakeTaiga()).issues.create({ title: '  ' }), 'CONFIG_INVALID', 'bad-create-input')
+  })
+})
+
+describe('建单落流程初态（DEV-40，2026-10-20 哨查事故防复发；docs/25-§3.2 IssueCreate.initialState）', () => {
+  /** 真实公司 provision 形状：五态中文流，states[0]=流程初态（新单） */
+  const FLOW_FIELDS: FieldProvisionMap = {
+    fields: {},
+    states: ['新单', '已派发', '证据就绪', '复验通过', '已交付'],
+    stateFlow: {},
+  }
+
+  /** fake 平台注册中文状态集（平台状态集=迁移真值源） */
+  function flowFake(): FakeTaiga {
+    const fake = new FakeTaiga()
+    fake.statuses.push(
+      { id: 10, name: '新单', slug: 'xin-dan' },
+      { id: 11, name: '已派发', slug: 'yi-pai-fa' },
+      { id: 12, name: '证据就绪', slug: 'zheng-ju' },
+      { id: 13, name: '复验通过', slug: 'fu-yan' },
+      { id: 14, name: '已交付', slug: 'yi-jiao-fu' },
+    )
+    return fake
+  }
+
+  it('provision 定位：落 states[0]（新单）不落平台默认 New——负断言 state≠New（事故面：落 New 被 decide 判 NOOP_UNKNOWN_STATE 静默卡死）', async () => {
+    const fake = flowFake()
+    const p = makePlatform(fake, { fields: FLOW_FIELDS })
+    const rec = await p.issues.create({ title: '甲' })
+    expect(rec.state).toBe('新单') // 正断言：流程初态落位
+    expect(rec.state).not.toBe('New') // 负断言：不再是平台默认态（观察黑洞源）
+    expect((await p.issues.get(rec.id)).state).toBe('新单') // 平台权威态已迁移
+    // 落位通道：POST 建（平台默认 status）后补一次 PATCH 迁移（status 端点定版）
+    const statusWrites = fake.calls.filter(
+      (c) => c.method === 'PATCH' && c.path.includes('userstories') && typeof (c.body as Record<string, unknown> | undefined)?.['status'] === 'number',
+    )
+    expect(statusWrites).toHaveLength(1)
+    expect(statusWrites[0]?.body).toMatchObject({ status: 10 })
+  })
+
+  it('显式 initialState 优先于 provision 初态（解析序：入参 > states[0] > 平台默认）', async () => {
+    const p = makePlatform(flowFake(), { fields: FLOW_FIELDS })
+    const rec = await p.issues.create({ title: '甲', initialState: '已派发' })
+    expect(rec.state).toBe('已派发')
+    expect((await p.issues.get(rec.id)).state).toBe('已派发')
+  })
+
+  it('initialState 空/非字符串 → bad-create-input（校验先于建单 IO）', async () => {
+    const p = makePlatform(flowFake(), { fields: FLOW_FIELDS })
+    await expectTaigaReject(() => p.issues.create({ title: '甲', initialState: '  ' }), 'CONFIG_INVALID', 'bad-create-input')
+    await expectTaigaReject(() => p.issues.create({ title: '甲', initialState: 3 as never }), 'CONFIG_INVALID', 'bad-create-input')
+    await expect(p.issues.list({})).resolves.toHaveLength(0) // 负断言：未发建单请求即拒
+  })
+
+  it('provision states 为空 → 无初态知识，诚实落平台默认 New（不猜）', async () => {
+    const p = makePlatform(new FakeTaiga(), { fields: { fields: {}, states: [], stateFlow: {} } })
+    const rec = await p.issues.create({ title: '甲' })
+    expect(rec.state).toBe('New')
+  })
+
+  it('目标初态平台状态集不认识 → 显式报错 unknown-state（配置错配大声失败，不静默回落默认态）', async () => {
+    // provision 声明新单，但 fake 平台状态集没有它（真实事故面：provision 与平台漂移）
+    const p = makePlatform(new FakeTaiga(), { fields: FLOW_FIELDS })
+    await expectTaigaReject(() => p.issues.create({ title: '甲' }), 'CONFIG_INVALID', 'unknown-state')
   })
 })
 

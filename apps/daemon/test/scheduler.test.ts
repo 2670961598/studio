@@ -472,6 +472,28 @@ describe('schedule 意图：ingest → 物化岗单据 → decide → 派发全�
     expect(existsSync(record?.report_ref ?? '')).toBe(true)
   })
 
+  it('巡查岗物化落终态（DEV-40 落位分型，宰相批注 2026-10-20）：PATROL+CLOSE 同拍收口，不派发不烧配额', async () => {
+    // 巡查岗（payload.type='patrol'）物化的单是巡查工件不是工单——落终态锚点（已交付，
+    // 无前向边=结构性不可派发）；镜像 18 张 New 积压即旧口径落初态/默认态的配额烧损面
+    const s = buildEngineStack('patrol-artifact')
+    s.ledger.upsertJob(job({ job_id: 'night-patrol', next_run_at: 1, payload: { type: 'patrol' } }))
+    s.engine.ingest([intent('night-patrol', s.clock.now())])
+    const report = await s.engine.tick()
+    expect(report.errors).toEqual([])
+    expect(report.phases.stateDiff.candidates).toBe(1)
+    expect(report.phases.dispatch.dispatched).toBe(0) // 负断言：巡查工件不派发
+    expect(report.events.map((e) => e.event)).toEqual(['PATROL', 'CLOSE']) // 物化留痕+终态回收，同拍收口
+    const ticket = (await s.platform.issues.list({})).find((i) => i.title.includes('night-patrol'))
+    expect(ticket).toBeDefined()
+    expect(ticket?.state).toBe('已交付') // 终态落位（delivered 锚点）
+    expect(ticket?.level).toBe(0) // L0 流（无人审批环）
+    expect(eventsOf(s.ledger, 'DISPATCH')).toHaveLength(0) // 负断言：零派发账
+    expect(s.ledger.listWorkRecords()).toHaveLength(0) // 负断言：零在途工位（不烧配额）
+    expect(s.ledger.queryBudgets({ scope_kind: 'issue', scope_id: ticket!.id }).filter((b) => b.kind === 'reserve')).toHaveLength(0) // 负断言：零预算预留
+    await s.engine.dispose()
+    s.ledger.close()
+  })
+
   it('同键意图重复投递只物化一次（拍内去重）；收口后重投也不重跑（PATROL 键不释放）', async () => {
     // 拍内去重：同键双投只物化一张岗单据
     stack.engine.ingest([intent('health-patrol', stack.clock.now()), intent('health-patrol', stack.clock.now())])
@@ -691,10 +713,12 @@ describe('spawn 冒烟：studio-next serve（jobs: true，SIGINT 优雅停）', 
       const dir = path.join(root, 'serve-smoke')
       mkdirSync(dir, { recursive: true })
       const dbPath = path.join(dir, 'ledger.sqlite')
-      // 预置欠账：health-patrol 的 next_run_at 远在过去（停机欠跑形）——seedJobs 保欠账，
+      // 预置欠账：daily-report（工单型岗 type='report'，不在 DEMO_SNAPSHOT 内——快照播种
+      // 不覆写，payload 保持在位；快照内 health-patrol 现为巡查工件落终态不走派发链，
+      // DEV-40 落位分型）的 next_run_at 远在过去（停机欠跑形）——seedJobs 保欠账，
       // 首拍补跑一次（18-§三 启动补跑 coalesce 的真进程面）
       const seed = openLedger(dbPath)
-      seed.upsertJob(job({ job_id: 'health-patrol', cron: '*/5 * * * *', next_run_at: 1 }))
+      seed.upsertJob(job({ job_id: 'daily-report', cron: '*/5 * * * *', next_run_at: 1, payload: { type: 'report' } }))
       seed.close()
       const configPath = path.join(dir, 'daemon.yaml')
       writeFileSync(
@@ -734,7 +758,7 @@ describe('spawn 冒烟：studio-next serve（jobs: true，SIGINT 优雅停）', 
 
       expect(code).toBe(0) // 信号优雅停（signal → exit 0）
       expect(stdout).toContain('jobs=on')
-      expect(stdout).toContain('[scheduler] job health-patrol 到点')
+      expect(stdout).toContain('[scheduler] job daily-report 到点')
       expect(stdout).toMatch(/harvest=1\//)
       expect(stderr).toBe('')
 
@@ -745,13 +769,13 @@ describe('spawn 冒烟：studio-next serve（jobs: true，SIGINT 优雅停）', 
       expect(names).toContain('DISPATCH')
       expect(names).toContain('GATE_PASS')
       const patrol = ledger.queryEvents().find((e) => e.event === 'PATROL')
-      expect(patrol?.note).toContain('job=health-patrol')
+      expect(patrol?.note).toContain('job=daily-report')
       const work = ledger.listWorkRecords()
       expect(work).toHaveLength(1)
       expect(work[0]?.status).toBe('done')
       expect(work[0]?.report_ref).toMatch(/REPORT\.md$/)
       // 调度面收口：跑史记账、next_run_at 已越过启动时刻（欠账清空、节奏对齐）
-      const row = ledger.getJob('health-patrol')
+      const row = ledger.getJob('daily-report')
       expect(row?.last_run_at).toBeGreaterThan(1)
       expect(row?.next_run_at).toBeGreaterThan(row.last_run_at as number)
       ledger.close()
