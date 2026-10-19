@@ -57,14 +57,19 @@ export function writeServeConfig(dir: string, spec: ServeConfigSpec): string {
 }
 
 /**
- * 播种/重挂欠账岗（health-patrol，next_run_at=1=远过去——seedJobs 保欠账、调度器首拍补跑）。
- * serve 启动前调用（顺序写库，避开与运行中 serve 的并发写）；崩溃后重启前同函数重挂=
- * 模拟真实平台的单据存续再驱动（见文件头注「失忆补偿」）。
+ * 播种/重挂欠账岗（daily-report，工单型岗 type='report'，next_run_at=1=远过去——seedJobs
+ * 保欠账、调度器首拍补跑）。serve 启动前调用（顺序写库，避开与运行中 serve 的并发写）；
+ * 崩溃后重启前同函数重挂=模拟真实平台的单据存续再驱动（见文件头注「失忆补偿」）。
+ *
+ * 岗选型（DEV-40 落位分型）：崩溃注入集的工作源必须走「物化→派发→收割」链——故用
+ * 工单型岗（type='report'）。job_id 取 'daily-report'（不在 DEMO_SNAPSHOT 内）：快照
+ * 播种（seedJobs）不覆盖该行，payload 保持在位；若复用快照内 'health-patrol'（demo
+ * 巡查岗 type='patrol'）会被快照行覆写为巡查工件落终态，dispatch 链断（崩溃点不可达）。
  */
 export function seedDueJob(dir: string): void {
   const ledger = openLedger(path.join(dir, 'ledger.sqlite'))
   ledger.upsertJob({
-    job_id: 'health-patrol',
+    job_id: 'daily-report',
     company: 'demo',
     dept: 'departments/工程部',
     cron: '*/5 * * * *',
@@ -72,6 +77,7 @@ export function seedDueJob(dir: string): void {
     level: 2,
     model_tier: 'low',
     next_run_at: 1,
+    payload: { type: 'report' },
   })
   ledger.close()
 }

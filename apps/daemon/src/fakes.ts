@@ -104,7 +104,9 @@ export function createFakePlatform(opts?: FakePlatformOptions): FlowPlatform {
         const rec: FakeIssue = {
           id,
           title: input.title,
-          state: '新单',
+          // 建单落位（docs/25-§3.2 IssueCreate.initialState）：fake 平台无 provision，
+          // 解析序=显式入参 > 平台默认态（新单）
+          state: input.initialState ?? '新单',
           updated: now(),
           created: now(),
           ...(input.description !== undefined ? { description: input.description } : {}),

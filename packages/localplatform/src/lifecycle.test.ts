@@ -126,6 +126,45 @@ describe('issues 生命周期全链', () => {
   })
 })
 
+describe('建单落流程初态（DEV-40，2026-10-20 哨查事故防复发；docs/25-§3.2 IssueCreate.initialState）', () => {
+  it('显式 initialState 优先于 provision 初态（解析序：入参 > states[0] > 默认 open），定格进 created 事件', async () => {
+    const p = createLocalPlatform(root)
+    await p.fields.provision({
+      fields: {},
+      states: ['新单', '已派发', '已交付'],
+      stateFlow: { 新单: ['已派发'], 已派发: ['已交付'] },
+    })
+    const rec = await p.issues.create({ title: '甲', initialState: '已派发' })
+    expect(rec.state).toBe('已派发')
+    expect(rec.state).not.toBe('新单') // 负断言：显式入参不被 provision 初态覆盖
+    expect((await p.issues.get(rec.id)).state).toBe('已派发') // created 事件定格（派生自洽）
+  })
+
+  it('initialState 不在 provision states 内 → bad-create-input（真值源=provision 状态集，不静默落错态；负断言：零落盘）', async () => {
+    const p = createLocalPlatform(root)
+    await p.fields.provision({
+      fields: {},
+      states: ['新单', '已派发', '已交付'],
+      stateFlow: { 新单: ['已派发'], 已派发: ['已交付'] },
+    })
+    await expectLocalReject(() => p.issues.create({ title: '甲', initialState: 'New' }), 'CONFIG_INVALID', 'bad-create-input')
+    expect(await p.issues.list({})).toHaveLength(0) // 负断言：拒于落盘前
+  })
+
+  it('initialState 空白串 → bad-create-input（校验先于单据 IO）', async () => {
+    const p = createLocalPlatform(root)
+    await expectLocalReject(() => p.issues.create({ title: '甲', initialState: '  ' }), 'CONFIG_INVALID', 'bad-create-input')
+    expect(await p.issues.list({})).toHaveLength(0)
+  })
+
+  it('未 provision 时显式 initialState 可用（与 transition 同形：无状态集即无真值源可拦）', async () => {
+    const p = createLocalPlatform(root)
+    const rec = await p.issues.create({ title: '甲', initialState: '已交付' })
+    expect(rec.state).toBe('已交付')
+    expect(rec.state).not.toBe(DEFAULT_INITIAL_STATE) // 负断言：不回落默认 open
+  })
+})
+
 describe('issues.list 过滤维', () => {
   it('stateIn / assignee / lane / updatedSince 各维过滤；stateIn=[] 全不中；project 忽略', async () => {
     // 固定步进时钟：updatedSince 的严格大于语义不靠真实时钟的 ms 抖动

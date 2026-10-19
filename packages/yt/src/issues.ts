@@ -224,6 +224,9 @@ function validateCreate(input: IssueCreate): void {
   if (input['parent'] !== undefined && typeof input['parent'] !== 'string') {
     throw new YouTrackPlatformError('CONFIG_INVALID', 'bad-create-input', 'parent 必须是字符串')
   }
+  if (input['initialState'] !== undefined && (typeof input['initialState'] !== 'string' || input['initialState'].trim() === '')) {
+    throw new YouTrackPlatformError('CONFIG_INVALID', 'bad-create-input', 'initialState 必须是非空字符串')
+  }
 }
 
 /** create：映射可写的记录维 → customFields；提供了却未映射 → 显式报错（不静默丢）
@@ -278,9 +281,19 @@ export async function createIssue(deps: IssueDeps, input: IssueCreate): Promise<
   if (input.parent !== undefined && input.parent !== '') {
     // parent 维=Subtask 链（links.parent-child 同源）；补链后重取保证返回记录含 parent
     await links.link(input.parent, created.idReadable, 'parent-child')
-    return toIssueRecord(await fetchIssueJson(http, created.idReadable), tr)
   }
-  return toIssueRecord(created, tr)
+  // 建单落位（docs/25-§3.2 IssueCreate.initialState）：显式入参 > provision states[0]
+  // （流程初态）> 平台默认态（项目 State 字段 bundle 默认值）。YouTrack 建单可随 body
+  // 直写 State customField，但走 transitionIssue 同一通道（幂等 + 校验同源）。
+  let rec = toIssueRecord(created, tr)
+  if (input.parent !== undefined && input.parent !== '') {
+    rec = toIssueRecord(await fetchIssueJson(http, created.idReadable), tr)
+  }
+  const target = input.initialState ?? tr.initialState()
+  if (target !== undefined && rec.state !== target) {
+    return transitionIssue(http, tr, created.idReadable, target)
+  }
+  return rec
 }
 
 /** transition：写 state 自定义字段（值 {name}，名字寻址）；返回推进后的记录 */

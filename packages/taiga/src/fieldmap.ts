@@ -18,11 +18,14 @@ export { PORT_TYPES }
 export class TaigaFieldMap {
   private readonly fields: Record<string, string>
   private readonly types: Record<string, PortFieldType>
+  /** 流程状态全集（按流序；首元素=流程初态，建单落位依据，见 IssueCreate.initialState） */
+  private readonly states: readonly string[]
 
   constructor(map?: FieldProvisionMap) {
     if (map === undefined) {
       this.fields = {}
       this.types = {}
+      this.states = []
       return
     }
     if (typeof map !== 'object' || map === null || typeof map.fields !== 'object' || map.fields === null) {
@@ -41,6 +44,12 @@ export class TaigaFieldMap {
       }
       this.types[business] = t
     }
+    this.states = [...map.states]
+  }
+
+  /** 流程初态（provision states[0]；无 provision/空 states → undefined=无声明，建单保持平台默认态） */
+  initialState(): string | undefined {
+    return this.states[0]
   }
 
   /** 业务名 → 平台名（未映射返回 undefined：读侧跳过、写侧报错由调用方定） */

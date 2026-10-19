@@ -20,6 +20,10 @@
  *   - updatedSince = 严格大于（ISO 字典序，与 localplatform/yt 同口径）
  *   - stateIn 空数组 → 空集不发请求；lane 未映射却要过滤 → 显式报错（不静默）
  *   - parent 维依赖 links 面：真机补测定版=同面父子链不可写（links.ts 头注）→ parent 显式报错
+ *   - create 落位（docs/25-§3.2 IssueCreate.initialState）：显式入参 > provision
+ *     states[0]（流程初态）> 平台默认态（Taiga=New）；目标≠落位时建单后补一次
+ *     transition——外部建单（放单脚本/导入流）落在 New 会被 decide 判
+ *     NOOP_UNKNOWN_STATE 静默跳过（2026-10-20 哨查事故根因），建单口收口
  */
 import type { IssueCreate, IssueQuery, IssueRecord, PersonId, TicketId } from '@studio-next/contract'
 import type { TaigaContext, EntityRaw } from './context.ts'
@@ -126,6 +130,9 @@ function validateCreate(input: IssueCreate): void {
   if (input.level !== undefined && (typeof input.level !== 'number' || !Number.isInteger(input.level))) {
     throw new TaigaPlatformError('CONFIG_INVALID', 'bad-create-input', 'level 必须是整数')
   }
+  if (input.initialState !== undefined && (typeof input.initialState !== 'string' || input.initialState.trim() === '')) {
+    throw new TaigaPlatformError('CONFIG_INVALID', 'bad-create-input', 'initialState 必须是非空字符串')
+  }
 }
 
 export async function createIssue(ctx: TaigaContext, input: IssueCreate): Promise<IssueRecord> {
@@ -156,9 +163,18 @@ export async function createIssue(ctx: TaigaContext, input: IssueCreate): Promis
   }
   if (Object.keys(attributes).length > 0) {
     await ctx.patchAttrValues(created.id, attributes)
-    return getIssue(ctx, ctx.ticketId(created.ref)) // 重取：记录含自定义维
   }
-  return toIssueRecord(ctx, created)
+  // 建单落位（docs/25-§3.2 IssueCreate.initialState）：解析序=显式入参 > provision
+  // states[0]（流程初态）> 平台默认态。Taiga 建单恒落平台默认 status（New），若目标
+  // 落位不同则补一次 transition（幂等：已在目标态不重放写）。目标态平台不认识 →
+  // transition 内部显式报错（unknown-state），不静默回落默认态。
+  const landed =
+    Object.keys(attributes).length > 0 ? await getIssue(ctx, ctx.ticketId(created.ref)) : await toIssueRecord(ctx, created)
+  const target = input.initialState ?? ctx.fieldMap.initialState()
+  if (target !== undefined && landed.state !== target) {
+    return transitionIssue(ctx, ctx.ticketId(created.ref), target)
+  }
+  return landed
 }
 
 /** PATCH 单条（内部 id 寻址 + version 乐观并发） */
