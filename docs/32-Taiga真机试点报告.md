@@ -71,3 +71,34 @@ FlowPlatform-Taiga 适配器首刀（`packages/taiga`，feature/platform-taiga �
 评论条目 author=JWT 操作者平台账号（admin/worker-*），非工号——端口缺口已随首刀记录
 （guards 无读位 / actor 语义跨实现不一致，见 `packages/taiga/src/index.ts` 头注）。
 冒烟副作用：probe-co 新增 #6/#7/#8 三张冒烟单（标题自带「可删」标记，供制作人查验后清理）。
+
+## 八、补记：onboard 写面三件 + links 真机补测（2026-10-19，platform 泳道）
+
+onboard 刀（feature/platform-taiga-onboard）对 §四待核项与写面三件的实测答卷。
+原始证据：`/Volumes/BigDisk/probe-evidence/taiga-links/`（manifest P00-P84 + 冒烟日志）。
+
+**links 关联模型五结论**（§四「issue↔US 横向关联是否存在」的最终答案）：
+
+| # | 结论 | 要点 |
+|---|---|---|
+| 1 | ref 是**项目级全局序列** | US/issue/epic/task 连号（9→10→11→12→13-15）；TicketId 跨实体不撞号，但 issues 面按单实体集合寻址 |
+| 2 | epic↔US **API 不可挂接** | relateduserstories 系端点全 404；PATCH US {epics} 字段被静默忽略 |
+| 3 | US→task 派生链**全通** | POST /tasks {user_story} + GET /tasks?user_story= 过滤——唯一 API 可写从属链 |
+| 4 | issue 生成链**只读不写** | generated_from_* 在 POST/PATCH 均被静默丢弃、过滤参数不生效；UI 专属动作 |
+| 5 | 横向关联（relates/depends）**无模型** | relations 端点 404；未知 PATCH 字段被忽略 |
+
+适配器落面（`packages/taiga/src/links.ts`）：children(userstory)=派生 task 链读、
+children(issue)=生成链客户端过滤（恒空）；link() 三型显式 `links-unsupported` 报错
+（含 issues.create/setField 的 parent 维）——真实可支持的才落，不支持面不装懂。
+
+**onboard 写面三件端点形状修正/确认**：
+
+| 面 | 实测形状 |
+|---|---|
+| fields.provision | 状态/属性 POST {project, name[, type]} 201；**重名 400**（Duplicated name / Already exists one with the same name）→ 幂等必须 GET-first；type 参数生效（number 建档成功） |
+| kb.upsert | PATCH /wiki/{id} **必须带页自身 version**（缺/错均 400）；POST 重复 slug 400 __all__ → 先探测后建；**wiki slug 不允许斜杠和点**（Django SlugField）——首刀「slug 允许斜杠」假设作废，落地为 path 折平映射（'/'、'.'→'-'，尾缀 .md 先剥） |
+| guards | PATCH /roles/{id} {permissions} 200 整角色回显，**无 version**；install=modify_{entity} 收窄（只收窄不放宽、diff 写、幂等零 PATCH）；uninstall=拆闸全员放开（非恢复出厂，语义已在 guards.ts 头注明示） |
+
+**onboard 两跑幂等冒烟**（WRITE_SMOKE=1，test/smoke/taiga-onboard-smoke.ts）：
+第一跑 5 写（1 wiki + 4 roles 收窄）→ 第二跑 **0 写**、两跑指纹一致 → 全绿。
+单测面：FakeTaiga 按真机响应形状扩写面桩，包内 8 套 77 用例全绿。

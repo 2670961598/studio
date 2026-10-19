@@ -48,9 +48,9 @@ describe('建单回环', () => {
     await expectTaigaReject(() => p.issues.create({ title: '甲', type: '缺陷' }), 'CONFIG_INVALID', 'unmapped-field')
   })
 
-  it('建单带 parent → links 骨架显式报错（docs/32 §四待核项）', async () => {
+  it('建单带 parent → links 定版显式报错（同面父子链不可写）', async () => {
     const p = makePlatform(new FakeTaiga())
-    await expectTaigaReject(() => p.issues.create({ title: '甲', parent: 'probe-co-9' }), 'CONFIG_INVALID', 'taiga-links-not-implemented')
+    await expectTaigaReject(() => p.issues.create({ title: '甲', parent: 'probe-co-9' }), 'CONFIG_INVALID', 'links-unsupported')
   })
 
   it('title 空 → bad-create-input', async () => {
@@ -147,10 +147,10 @@ describe('setField 分派表', () => {
     expect((await p.issues.get('probe-co-1')).assignee).toBeUndefined()
   })
 
-  it('state → 拒收（transition 唯一通道）；parent → links 骨架；未知字段 → unknown-field', async () => {
+  it('state → 拒收（transition 唯一通道）；parent → links 定版；未知字段 → unknown-field', async () => {
     const p = makePlatform(new FakeTaiga())
     await expectTaigaReject(() => p.issues.setField('x', 'state', 'Done'), 'CONFIG_INVALID', 'state-via-set-field')
-    await expectTaigaReject(() => p.issues.setField('probe-co-1', 'parent', 'probe-co-2'), 'CONFIG_INVALID', 'taiga-links-not-implemented')
+    await expectTaigaReject(() => p.issues.setField('probe-co-1', 'parent', 'probe-co-2'), 'CONFIG_INVALID', 'links-unsupported')
     await expectTaigaReject(() => p.issues.setField('probe-co-1', 'mystery', 'v'), 'CONFIG_INVALID', 'unknown-field')
   })
 

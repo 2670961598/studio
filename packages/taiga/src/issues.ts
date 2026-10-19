@@ -19,12 +19,12 @@
  *   - IssueQuery 全维客户端过滤（公司作用域内单实体集，数百单量级成本可忽略——docs/32 §四）
  *   - updatedSince = 严格大于（ISO 字典序，与 localplatform/yt 同口径）
  *   - stateIn 空数组 → 空集不发请求；lane 未映射却要过滤 → 显式报错（不静默）
- *   - parent 维依赖 links 面：本切片 links 留骨架（docs/32 §四 issue↔US 关联待核）→ parent 显式报错
+ *   - parent 维依赖 links 面：真机补测定版=同面父子链不可写（links.ts 头注）→ parent 显式报错
  */
 import type { IssueCreate, IssueQuery, IssueRecord, PersonId, TicketId } from '@studio-next/contract'
 import type { TaigaContext, EntityRaw } from './context.ts'
 import { parseEntity, parseEntityList } from './context.ts'
-import { notImplemented, TaigaPlatformError } from './errors.ts'
+import { TaigaPlatformError } from './errors.ts'
 import { asObject } from './shape.ts'
 
 export const LIST_PAGE_SIZE = 100
@@ -131,7 +131,11 @@ function validateCreate(input: IssueCreate): void {
 export async function createIssue(ctx: TaigaContext, input: IssueCreate): Promise<IssueRecord> {
   validateCreate(input)
   if (input.parent !== undefined) {
-    throw notImplemented('links', 'parent 维依赖单据关联（issue↔US 横向关联未实测，docs/32 §四待核项），links 面本切片留骨架')
+    throw new TaigaPlatformError(
+      'CONFIG_INVALID',
+      'links-unsupported',
+      'parent 维不可用：Taiga 同面父子链实测不可写（US↔US 无模型、epic 挂接端点 404、issue 生成链字段被静默丢弃；唯一可写从属链 US→task 发生在建 task 时）；证据=/Volumes/BigDisk/probe-evidence/taiga-links/',
+    )
   }
   const projectId = await ctx.project()
   const body: Record<string, unknown> = { project: projectId, subject: input.title }
@@ -207,8 +211,12 @@ export async function setIssueField(ctx: TaigaContext, id: TicketId, field: stri
     throw new TaigaPlatformError('CONFIG_INVALID', 'bad-field-value', 'assignee 必须是用户名（username）或 null')
   }
   if (field === 'parent') {
-    // 骨架面快速失败（不实现就不该产生任何 IO）
-    throw notImplemented('links', 'parent 维依赖单据关联（docs/32 §四待核项），links 面本切片留骨架')
+    // 不支持面快速失败（不该产生任何 IO）；证据=links 真机补测（见 links.ts 头注）
+    throw new TaigaPlatformError(
+      'CONFIG_INVALID',
+      'links-unsupported',
+      'parent 维不可用：Taiga 同面父子链实测不可写（US↔US 无模型、epic 挂接端点 404、issue 生成链字段被静默丢弃）；证据=/Volumes/BigDisk/probe-evidence/taiga-links/',
+    )
   }
   if (isCustom) {
     ctx.fieldMap.requirePlatform(field) // 未映射 → unmapped-field（IO 前报错）

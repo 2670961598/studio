@@ -1,17 +1,33 @@
 /**
- * 字段面（读）—— 状态集 + 自定义属性集的真实反射（docs/30 §6 ⑤⑥ 的读面）。
+ * 字段面（读+provision 写）—— 状态集 + 自定义属性集（docs/30 §6 ②⑥）。
  *
  * schema()：基础维（端口固有字段）+ state 枚举（真源=平台状态集，名字序稳定）+
  *   自定义属性（真源=平台属性集）。Taiga 属性类型 → 端口类型映射：
  *   text/url→string、number→int、date→date、multiline/richtext→text
  *
- * provision()：**本切片显式未实现**（写面本轮只做 issues+comments，任务书边界）。
- *   落地路径已定：docs/30 §6 ②⑥（POST /{entity}-statuses、POST /{entity}-
- *   custom-attributes，幂等基线=先 GET 按名找、找到即复用）——onboard 切片实施。
+ * provision()（onboard 写面三件之一，2026-10-19 落地）：
+ *   - 幂等基线 = docs/30 §6「全部资源先 GET 按名找、找到即 diff-复用，缺则建」；
+ *     重名直接 POST 是 400（真机证据 P81/P84：Duplicated name / Already exists one
+ *     with the same name）——判重必须在客户端做，不靠平台报错兜底
+ *   - 状态集：map.states 逐名比对现有集，缺则 POST /{statuses} {project, name}
+ *     （真机 201，P80；多余未知字段平台静默忽略）
+ *   - 自定义属性：map.fields 的**平台名**逐名比对，缺则 POST /{attributes}
+ *     {project, name, type}（type 参数生效，P83）；同名已存在则类型相容即复用
+ *     （enum 归一为 string 比对——Taiga 属性无枚举约束，落 text）；类型冲突显式报错
+ *     不静默（attribute-type-mismatch）
+ *   - **值写入与 provision 无关**：FieldProvisionMap 不携值；单据上的值写入走
+ *     issues.setField/create 的专用值端点（docs/32 §七修正正解：先 GET 值对象取其
+ *     自身 version，再 PATCH {attributes_values, version}——见 context.patchAttrValues）
+ *   - stateFlow **不落平台**：Taiga 无转换矩阵（docs/30 §3.1 C5），转换闸由框架
+ *     guard 全责（§6 守闸补偿——禁止平台侧手配，本就无处置）；map 里的 stateFlow
+ *     仅供框架侧消费，本面不校验不安装
+ *   - provision 完成后作废实例缓存（invalidateMeta），schema() 立即反映新档
  */
-import type { FieldSchema } from '@studio-next/contract'
+import type { FieldProvisionMap, FieldSchema } from '@studio-next/contract'
 import type { TaigaContext } from './context.ts'
-import { notImplemented } from './errors.ts'
+import { TaigaPlatformError } from './errors.ts'
+import type { PortFieldType } from './fieldmap.ts'
+import { PORT_TYPES } from './fieldmap.ts'
 
 const BASE_SCHEMA: readonly FieldSchema[] = [
   { name: 'title', type: 'string' },
@@ -25,6 +41,57 @@ function attrTypeToPort(t: string): FieldSchema['type'] {
   if (t === 'date') return 'date'
   if (t === 'multiline' || t === 'richtext') return 'text'
   return 'string' // text / url / 未知
+}
+
+/** 端口字段类型 → Taiga 属性建档类型（enum 无平台约束，落 text） */
+function portTypeToTaiga(t: PortFieldType): string {
+  if (t === 'int') return 'number'
+  if (t === 'date') return 'date'
+  if (t === 'text') return 'multiline'
+  return 'text' // string / enum
+}
+
+/** 类型相容比对口径：enum 归一为 string（保证 enum 重入 provision 幂等） */
+function canonicalType(t: PortFieldType): PortFieldType {
+  return t === 'enum' ? 'string' : t
+}
+
+function isPlainStringRecord(v: unknown): v is Record<string, string> {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false
+  return Object.values(v).every((x) => typeof x === 'string' && x.trim() !== '')
+}
+
+function isPortTypeRecord(v: unknown): v is Record<string, PortFieldType> {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false
+  return Object.values(v).every((x) => (PORT_TYPES as readonly string[]).includes(x as string))
+}
+
+function isStringArray(v: unknown): v is string[] {
+  return Array.isArray(v) && v.every((x) => typeof x === 'string' && x.trim() !== '')
+}
+
+function isStringArrayRecord(v: unknown): v is Record<string, string[]> {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false
+  return Object.values(v).every((x) => isStringArray(x))
+}
+
+/** provision 映射形状校验（与 localplatform isProvisionMap 同口径 + 类型枚举校验） */
+function validateProvisionMap(map: FieldProvisionMap): void {
+  if (typeof map !== 'object' || map === null) {
+    throw new TaigaPlatformError('CONFIG_INVALID', 'bad-provision-map', 'provision 映射必须是对象（fields/states/stateFlow）')
+  }
+  if (!isPlainStringRecord(map.fields)) {
+    throw new TaigaPlatformError('CONFIG_INVALID', 'bad-provision-map', 'provision.fields 必须是「业务字段名→平台属性名」且值非空')
+  }
+  if (map.types !== undefined && !isPortTypeRecord(map.types)) {
+    throw new TaigaPlatformError('CONFIG_INVALID', 'bad-provision-map', `provision.types 值必须属于 ${PORT_TYPES.join('|')}`)
+  }
+  if (!isStringArray(map.states)) {
+    throw new TaigaPlatformError('CONFIG_INVALID', 'bad-provision-map', 'provision.states 必须是非空字符串数组')
+  }
+  if (map.stateFlow !== undefined && !isStringArrayRecord(map.stateFlow)) {
+    throw new TaigaPlatformError('CONFIG_INVALID', 'bad-provision-map', 'provision.stateFlow 必须是「状态→string[]」')
+  }
 }
 
 export async function fieldSchema(ctx: TaigaContext): Promise<FieldSchema[]> {
@@ -44,9 +111,41 @@ export async function fieldSchema(ctx: TaigaContext): Promise<FieldSchema[]> {
   return out
 }
 
-export async function provisionFields(_map: unknown): Promise<void> {
-  throw notImplemented(
-    'provision',
-    '写面本切片只做 issues+comments；落地路径=docs/30 §6 ②⑥（状态集/自定义属性按名幂等建）',
-  )
+export async function provisionFields(ctx: TaigaContext, map: FieldProvisionMap): Promise<void> {
+  validateProvisionMap(map)
+  ctx.invalidateMeta() // 判重前作废缓存：以平台现值为准（上次 provision/他人改动都要看见）
+  const projectId = await ctx.project()
+
+  // —— 状态集：先 GET 按名找，缺则建（docs/30 §6 幂等基线）——
+  const haveStatus = new Set((await ctx.statuses()).map((s) => s.name))
+  for (const name of map.states) {
+    if (haveStatus.has(name)) continue
+    await ctx.client.request({ method: 'POST', path: `/${ctx.desc.statuses}`, body: { project: projectId, name } })
+    haveStatus.add(name)
+  }
+
+  // —— 自定义属性：平台名判重，缺则建；同名类型相容即复用 ——
+  const haveAttr = new Map((await ctx.attributes()).map((a) => [a.name, a] as const))
+  for (const [business, platform] of Object.entries(map.fields)) {
+    const wanted = map.types?.[business] ?? 'string'
+    const existing = haveAttr.get(platform)
+    if (existing !== undefined) {
+      if (attrTypeToPort(existing.type) !== canonicalType(wanted)) {
+        throw new TaigaPlatformError(
+          'CONFIG_INVALID',
+          'attribute-type-mismatch',
+          `自定义属性「${platform}」已存在但类型不符：平台 ${existing.type}（端口 ${attrTypeToPort(existing.type)}）≠ 声明 ${wanted}；值只增不删，请改映射名或先人工处置旧档`,
+        )
+      }
+      continue
+    }
+    await ctx.client.request({
+      method: 'POST',
+      path: `/${ctx.desc.attributes}`,
+      body: { project: projectId, name: platform, type: portTypeToTaiga(wanted) },
+    })
+    haveAttr.set(platform, { id: -1, name: platform, type: portTypeToTaiga(wanted) }) // 本轮判重（幂等：同名映射两业务字段只建一次）
+  }
+
+  ctx.invalidateMeta() // 建档后作废缓存：schema() 立即反映新档
 }
