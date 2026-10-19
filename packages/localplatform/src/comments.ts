@@ -98,5 +98,6 @@ export function addComment(root: string, now: () => string, id: TicketId, body: 
   const meta: CommentMeta = { id: cid, created: now(), author }
   const block = [HEADER_PREFIX + JSON.stringify(meta) + ' -->', body.body, body.signature, `${FOOTER_PREFIX}${cid} -->`].join('\n')
   appendLine(commentsPath(root, id), block)
+  // actor=工号（LocalFile 例外：无平台账号层，v1.6 选A 注记 docs/25-§3.2——其余平台=平台账号名）
   appendActivity(root, now, { issue: id, kind: 'commented', actor: author })
 }

@@ -204,4 +204,14 @@ describe('guards（v0 显式缺口）', () => {
     await expectYtReject(() => p.guards.uninstall('demo-co'), 'CONFIG_INVALID', 'yt-guards-not-implemented')
     expect(new FakeYouTrack().calls.length).toBe(0) // 零网络副作用
   })
+
+  it('read 读位（v1.6）：读方法已接线——合法 slug 明报 not-implemented（N6），坏 slug 先行拒收', async () => {
+    const fake = new FakeYouTrack()
+    const p = makePlatform(fake, { project: 'STUDIO' })
+    const read = p.guards.read
+    if (read === undefined) throw new Error('yt guards.read 应已接线（v1.6 修订刀）')
+    await expectYtReject(() => read('demo-co'), 'CONFIG_INVALID', 'yt-guards-not-implemented')
+    await expectYtReject(() => read(''), 'CONFIG_INVALID', 'bad-company-slug')
+    expect(fake.calls.length).toBe(0) // 零网络副作用（缺口在发请求前明报）
+  })
 })

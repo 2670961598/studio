@@ -13,11 +13,13 @@ import {
   EVENT_NAMES,
   EVENT_PREFIX_FAMILIES,
   EventRecordSchema,
+  PLATFORM_ACTIVITY_KINDS,
   SummarySidecarSchema,
   UlidSchema,
   evtSubject,
   extractReportSkeleton,
   isEventName,
+  isPlatformActivityKind,
   rptSubject,
   runCases,
   validateEventRecord,
@@ -90,6 +92,42 @@ describe('事件名双通道（17-§3 冻结清单）', () => {
   it('拒收：裸前缀、小写、无下划线续接、拼错的具体名、空串', () => {
     for (const name of ['GW_', 'REPORT_', 'gw_comment', 'Report_Daily', 'REPORTX', 'DISPATCHED', '']) {
       expect(isEventName(name)).toBe(false)
+    }
+  })
+})
+
+// —— PlatformActivity.kind 冻结词表（25-§3.2 v1.6 修订刀第 3 条）——————————
+
+describe('PlatformActivity.kind 冻结词表（三实现实际产出归并）', () => {
+  it('六词冻结：created/commented/transitioned/field-set/change/unknown，序即成员序', () => {
+    expect([...PLATFORM_ACTIVITY_KINDS]).toEqual([
+      'created',
+      'commented',
+      'transitioned',
+      'field-set',
+      'change',
+      'unknown',
+    ])
+  })
+
+  it('六词全部命中词表判定', () => {
+    for (const kind of PLATFORM_ACTIVITY_KINDS) expect(isPlatformActivityKind(kind)).toBe(true)
+  })
+
+  it('越界负测：yt 旧透传串（ArticlesCategory/IssueLinksCategory）、拼错形、大小写变体、空串一律拒收', () => {
+    for (const bad of [
+      'ArticlesCategory',
+      'IssueLinksCategory',
+      'IssueCreatedCategory',
+      'created2',
+      'fieldset',
+      'field_set',
+      'Created',
+      'FIELD-SET',
+      'TRANSITIONED',
+      '',
+    ]) {
+      expect(isPlatformActivityKind(bad)).toBe(false)
     }
   })
 })

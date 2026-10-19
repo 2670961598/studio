@@ -2,6 +2,11 @@
  * FlowPlatform 端口 —— 协作平台七能力协议（docs/25-§3.2，依据 23）
  * YouTrack=参考实现（packages/yt 改造）；LocalFile=第二实现（契约靶子）。
  * 写入面只被 gateway 调用；游标是不透明字符串（NA1 教训），核心不解释。
+ *
+ * v1.6（2026-10-19 制作人圈选定案，四项）：guards 补 read 读位（PlatformRole）；
+ * PlatformActivity.actor 语义定案（选A：平台侧可归因主体）；kind 词表冻结
+ * （PLATFORM_ACTIVITY_KINDS）；lane/level=onboard 统一约定的自定义属性映射（选B）。
+ * 详见 docs/25-§3.2「FlowPlatform 端口契约修订刀」裁决块。
  */
 import type { CompanySlug, PersonId, TicketId } from './kernel.ts'
 
@@ -22,6 +27,7 @@ export interface IssueRecord {
 export interface IssueQuery {
   stateIn?: string[]
   assignee?: PersonId
+  /** lane/level=onboard 统一约定的自定义属性映射（所有平台同形状；v1.6 选B，docs/25-§3.2）——适配器同形状翻译，未映射显式报错 */
   lane?: string
   updatedSince?: string
 }
@@ -79,8 +85,43 @@ export interface PlatformActivity {
   ts: string
   /** 单据类活动必填；kb/fields/guards 类平台级变更可无单 */
   issue?: TicketId
+  /**
+   * 冻结词表 PLATFORM_ACTIVITY_KINDS（v1.6）——词表外值=实现缺陷，契约校验拒收。
+   * 注记：created 类事件以 webhook 为主通道，轮询不保证（Taiga 建单不进 history 实测，docs/32-§七）。
+   */
   kind: string
+  /**
+   * 平台侧可归因主体（平台账号名：yt=author.login、taiga=username；LocalFile 例外=工号——
+   * 本就无平台账号层）。工号翻译归框架侧（公司目录账号映射表，docs/04-§五），
+   * 翻译机制归后续刀，端口不承载（v1.6 选A）。
+   */
   actor?: string
+}
+
+/**
+ * PlatformActivity.kind 冻结词表（v1.6，2026-10-19 制作人圈选定案）。
+ * 三家实现**实际产出**归并（不臆造）：
+ *   - created / commented / transitioned / field-set：localplatform 与 yt 的归一动词
+ *     （yt KIND_BY_CATEGORY：Created/Commented/Resolved+Reopened→transitioned/Updated→field-set）
+ *   - change：taiga history 兜底（无评论且无 diff 的条目）
+ *   - unknown：yt 退化档（活动缺类别 id）
+ * 词表只增不改，加词走批示。
+ */
+export const PLATFORM_ACTIVITY_KINDS = [
+  'created',
+  'commented',
+  'transitioned',
+  'field-set',
+  'change',
+  'unknown',
+] as const
+
+/** 冻结词表成员类型（PlatformActivity.kind 保持 string：平台喂回的运行时数据，靠本校验把关） */
+export type PlatformActivityKind = (typeof PLATFORM_ACTIVITY_KINDS)[number]
+
+/** kind 词表判定：越界=实现缺陷，契约校验据此拒收（负测见 contract 套） */
+export function isPlatformActivityKind(v: string): v is PlatformActivityKind {
+  return (PLATFORM_ACTIVITY_KINDS as readonly string[]).includes(v)
 }
 
 export interface ActivityPage {
@@ -95,6 +136,17 @@ export interface GuardRule {
   from: string
   to: string
   allowRoles?: string[]
+}
+
+/**
+ * 平台侧角色（v1.6 guards 读位）——形状锚=Taiga roles 快照（docs/32-§二⑤：
+ * slug/name/permissions 数组，成员类 33 枚/stakeholder 19 枚）。
+ * permissions 词表归平台（不冻结）；实现无角色真源时如实反映（如 LocalFile=guard 规则投影）。
+ */
+export interface PlatformRole {
+  slug: string
+  name: string
+  permissions: readonly string[]
 }
 
 export interface FlowPlatform {
@@ -128,5 +180,11 @@ export interface FlowPlatform {
   guards: {
     install(company: CompanySlug, rules: GuardRule[]): Promise<void>
     uninstall(company: CompanySlug): Promise<void>
+    /**
+     * 读位（v1.6）：平台侧角色×权限清单——onboard 守闸补偿（docs/30-§6）的审计/回读素材。
+     * **暂为可选位**：taiga 接线明确推迟（platform 泳道在飞刀，本刀不碰避冲突）——
+     * 三实现接线齐后**转必选**；缺位≠支持，调用方应视为实现缺口明报，不得静默当空清单。
+     */
+    read?(company: CompanySlug): Promise<PlatformRole[]>
   }
 }
