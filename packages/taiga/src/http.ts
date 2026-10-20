@@ -191,12 +191,7 @@ export class TaigaClient {
     }
     let json: unknown
     if (res.status === 204) {
-<<<<<<< ours
-      // 204 No Content：DELETE 端点惯例（出厂态退役 S0 定版，docs/32-§九）——无体合法
-      json = null
-=======
       json = null // 204 No Content（DELETE 族端点，如 memberships 移除）：无体即无 JSON，null 代空
->>>>>>> theirs
     } else {
       try {
         json = await res.json()

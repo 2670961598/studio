@@ -597,7 +597,6 @@ function realGateMode(config: ServeConfig): boolean {
 }
 
 /**
-<<<<<<< ours
  * Taiga 凭据供给（token 供给面）：daemon.yaml 只配形态（taigaAuth: password|token），
  * 值一律经进程 env——TAIGA_USERNAME+TAIGA_PASSWORD（密码态：JWT 自动登录，401 自动
  * 刷新/重登，http.ts）或 TAIGA_TOKEN+TAIGA_REFRESH（token 态：预换 token，有 refresh
@@ -684,8 +683,6 @@ export function wirePlatform(config: ServeConfig): FlowPlatform {
 }
 
 /**
-=======
->>>>>>> theirs
  * daemon 侧网关身份（控制面与 worker-key 签发共用的 secret/署名上下文/工号）。
  * 签名上下文取快照首部门+公司级（控制面无人员档案，拟稿待批）。
  * **L1 热重载活对象**（docs/38-§2）：gateway 逐调用读 ctx 字段——reload 时 mutate

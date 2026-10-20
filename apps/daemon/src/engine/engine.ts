@@ -386,7 +386,6 @@ export interface EngineDeps {
 }
 
 // ————————————————————————— TickReport（17-§2「tick 返回结构化 actions」） —————————————————————————
-<<<<<<< ours
 
 /** 采集相位汇报 */
 export interface TickPhaseCollect {
@@ -468,10 +467,6 @@ export interface TickReport {
   inflightAfter: number
   errors: readonly string[]
 }
-=======
-// 类型体在 ./tick-report/types.ts（BC-S2 先拆再增）；此处再出口保持消费面 import 路径不变
-export type { TickPhaseCollect, TickDecisionEntry, TickActionResult, TickPhaseHarvest, TickPhaseDispatchBudget, TickReport } from './tick-report/types.ts'
->>>>>>> theirs
 
 // ————————————————————————— 内部状态 —————————————————————————
 
