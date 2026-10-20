@@ -8,6 +8,11 @@
  *   company add <git-url> [名] [--dir|--work-root|--plugin-root|--platform-root|--aiws-root|--by]
  *       git 网址即公司（DEV-27；docs/43-§一+§十1-4）：clone → 剥 .git 重建本地仓 → schema
  *       校验 → provision+信任锚+.AIWS 建树+依赖清单安装（隔离根）；升级=同 url 再跑（幂等）
+ *   company create <slug> [名] [--name|--dir|--template|--platform|--work-root|--db|
+ *                     --plugin-root|--platform-root|--aiws-root|--by|--dry-run]
+ *       公司创建编排（DEV-15 / docs/36-§4 M-B 骨架刀）：init→provision→全员建号→jobs
+ *       装载→插件 provisioning→验收报告一条命令串完，幂等（已有同 slug 合法目录=adopt
+ *       收敛不重建）；--dry-run 全相位只出计划零落盘
  *   validate <目录>
  *       目录结构校验：不合法逐条打印「文件:行 [规则] 修法」到 stderr，exit 1（04-§九）
  *   ledger drill <库路径>
@@ -110,7 +115,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { initCompany, loadCompanyDirectory, readDirectoryFiles } from '@studio-next/company'
 import { companyAddGitUrl, deriveDirNameFromGitUrl } from '@studio-next/company'
-import type { InitOptions } from '@studio-next/company'
+import { CREATE_PLATFORMS, companyCreate } from '@studio-next/company'
+import type { CreatePlatform, InitOptions } from '@studio-next/company'
 import { createLocalPlatform } from '@studio-next/localplatform'
 import { servePanel } from '@studio-next/panel'
 import { serveOverview } from '@studio-next/panel/overview'
@@ -118,10 +124,10 @@ import type { OverviewCompanySource } from '@studio-next/panel/overview'
 import { serveExternal } from '@studio-next/panel/external'
 import type { ExternalCompanySource } from '@studio-next/panel/external'
 import { CANDIDATE_STATUS_VALUES, openLedger, rebuild, renderDrillReport, runLedgerDrill } from '@studio-next/store'
-import type { CompanySnapshot } from '@studio-next/contract'
+import type { CompanySnapshot, FlowPlatform } from '@studio-next/contract'
 import { CONTROL_TICKET, createGateway } from '@studio-next/gateway'
 import type { SignatureContext } from '@studio-next/gateway'
-import { DEV_GATEWAY_SECRET, parseDaemonConfig } from './serve.ts'
+import { DEV_GATEWAY_SECRET, parseDaemonConfig, seedJobs } from './serve.ts'
 import { createFakePlatform } from './fakes.ts'
 import { createGatedPlatform } from './gated-platform.ts'
 import { ENGINE_CONFIG_DEFAULTS } from './engine.ts'
@@ -147,6 +153,15 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
       员工工作区树+依赖清单自动安装到隔离插件根——绝不写 ~/.dsh）。升级=同 url 再跑
       （镜像同步+幂等——§十-2 四点）。布局：<work-root>/<名>=公司 git 目录；.AIWS/ 与
       var/platform|plugins 在 work-root 下
+  studio-next company create <slug> [名] [--name <公司名>] [--dir <目录>]
+                              [--template <模板目录>] [--platform localfile]
+                              [--work-root <根>] [--db <库路径>] [--plugin-root <目录>]
+                              [--platform-root <目录>] [--aiws-root <目录>] [--by <动作人>]
+                              [--dry-run]
+      公司创建编排（DEV-15 / docs/36-§4 M-B 骨架刀）：init→provision→全员建号→jobs 装载→
+      插件 provisioning→验收报告，一条命令串完（幂等——同命令再跑=adopt 收敛不重建；
+      --dry-run 全相位只出计划零落盘）。布局与 company add 同款：<work-root>/<slug>=公司
+      git 目录；.AIWS/ 与 var/platform|plugins|ledger 在 work-root 下
   studio-next validate <目录>
       校验公司目录结构：不合法逐条打印「文件:行 [规则] 修法」到 stderr 并 exit 1
   studio-next ledger drill <库路径>
@@ -385,17 +400,102 @@ async function cmdCompanyAdd(argv: string[]): Promise<number> {
   }
 }
 
+/**
+ * company create <slug> [名] —— 公司创建编排（DEV-15 / docs/36-§4 M-B 骨架刀）
+ *
+ * 链路（docs/36-§2⑤ 一条命令串完；幂等——同命令再跑=adopt 收敛）：init（模板→自检→git
+ * 首提+平台绑定行）→ localfile 字段 provision → 全员建号（.AIWS 工位树+账号锚点断言）
+ * → jobs 播种（seedJobs：新岗下槽不抢跑、既有行保序）→ 依赖清单安装（隔离插件根）→
+ * 验收报告（<work-root>/var/create-reports/<slug>.md 覆盖式）。--dry-run 全相位零落盘。
+ * 依赖组装在本壳：platform=localfile（M-B 唯一接线平台）、jobsSeeder=seedJobs 形状闭包
+ * （开台账→播种→关台账；库不存在则随创建建库——create 是引导写面，与只读命令的
+ * 「不代建库」闸不同向）。
+ */
+async function cmdCompanyCreate(argv: string[]): Promise<number> {
+  const parsed = parseArgv(
+    argv,
+    new Set(['name', 'dir', 'template', 'platform', 'work-root', 'db', 'plugin-root', 'platform-root', 'aiws-root', 'by']),
+    undefined,
+    new Set(['dry-run']),
+  )
+  if ('error' in parsed) {
+    console.error(`company create：${parsed.error}`)
+    console.error(USAGE)
+    return 1
+  }
+  const slug = parsed.positionals[0]
+  if (slug === undefined) {
+    console.error('company create：缺少 <slug>（例：studio-next company create demo-corp --platform localfile）')
+    console.error(USAGE)
+    return 1
+  }
+  const name = parsed.flags.name ?? parsed.positionals[1]
+  if (parsed.positionals.length > 2) {
+    console.error(`company create：多余的位置参数：${parsed.positionals.slice(2).join(' ')}`)
+    console.error(USAGE)
+    return 1
+  }
+  let platform: CreatePlatform | undefined
+  if (parsed.flags.platform !== undefined) {
+    if (!(CREATE_PLATFORMS as readonly string[]).includes(parsed.flags.platform)) {
+      console.error(`company create：--platform 只收 ${CREATE_PLATFORMS.join('、')}（M-B 骨架只接 localfile——taiga/youtrack 接线归后续单，docs/36-§2③）`)
+      return 1
+    }
+    platform = parsed.flags.platform as CreatePlatform
+  }
+
+  const targetDir = path.resolve(parsed.flags.dir ?? path.join(parsed.flags['work-root'] ?? process.cwd(), slug))
+  const workRoot = path.resolve(parsed.flags['work-root'] ?? path.dirname(targetDir))
+  const platformRoot = path.resolve(parsed.flags['platform-root'] ?? path.join(workRoot, 'var', 'platform'))
+  const pluginRoot = path.resolve(parsed.flags['plugin-root'] ?? path.join(workRoot, 'var', 'plugins'))
+  const dbPath = path.resolve(parsed.flags.db ?? path.join(workRoot, 'var', 'ledger.sqlite'))
+  const dryRun = parsed.booleans.has('dry-run')
+
+  try {
+    const result = await companyCreate({
+      slug,
+      ...(name !== undefined ? { name } : {}),
+      targetDir,
+      ...(parsed.flags.template !== undefined ? { templateDir: parsed.flags.template } : {}),
+      ...(platform !== undefined ? { platform } : {}),
+      // 惰性工厂：localplatform 构造即 ensureDir——dry-run 从不解析，零落盘契约不破
+      platformPort: (): FlowPlatform => createLocalPlatform(platformRoot),
+      pluginRoot,
+      dryRun,
+      ...(parsed.flags['aiws-root'] !== undefined ? { aiwsRoot: path.resolve(parsed.flags['aiws-root']) } : {}),
+      ...(parsed.flags.by !== undefined ? { createdBy: parsed.flags.by } : {}),
+      jobsSeeder: (jobs, now) => {
+        const ledger = openLedger(dbPath)
+        try {
+          return seedJobs(ledger, jobs, now)
+        } finally {
+          ledger.close()
+        }
+      },
+    })
+    for (const p of result.phases) console.log(`[${p.phase}] ${p.status}：${p.detail}`)
+    console.log(dryRun ? 'dry-run：零落盘（如上为全相位计划面）' : `验收报告：${result.reportFile}`)
+    return 0
+  } catch (err) {
+    // ClassifiedError(CONFIG_INVALID) 面向上报（P1 fresh 失败已撤除半成品；P2+ 失败目录保留、再跑收敛）
+    console.error(`company create 失败：${errText(err)}`)
+    return 1
+  }
+}
+
 async function cmdCompany(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv
   switch (sub) {
     case 'add':
       return cmdCompanyAdd(rest)
+    case 'create':
+      return cmdCompanyCreate(rest)
     case undefined:
-      console.error('company：缺少子命令（当前支持：add）')
+      console.error('company：缺少子命令（当前支持：add、create）')
       console.error(USAGE)
       return 1
     default:
-      console.error(`company：未知子命令：${sub}（当前支持：add）`)
+      console.error(`company：未知子命令：${sub}（当前支持：add、create）`)
       console.error(USAGE)
       return 1
   }
