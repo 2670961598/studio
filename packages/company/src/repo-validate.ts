@@ -112,7 +112,7 @@ export interface RepoViolation {
   fix: string
   /** 共享核内层规则号（org-config/missing-field:company.slug 等——DEV-27 既有断言面） */
   via?: string
-  /** DEV-27 结构闸别名（import/unknown-entry 等——新旧规则号共存，测试与运维双面可读） */
+  /** DEV-27 结构闸别名（import/unknown-entry、import/aiws-present、import/anchor-present 等——新旧规则号共存，测试与运维双面可读） */
   alias?: string
 }
 
@@ -246,13 +246,15 @@ function closedSetGate(
         rule: 'A-4', file: name, location: '顶层',
         problem: '.AIWS/ 员工工作区出现在公司仓内（工作区在仓外同级——docs/43-§五，仓内出现即结构污染）',
         fix: '移出 .AIWS/ 到公司目录同级（框架导入流自会建树），不得入仓',
-        alias: 'import/unknown-entry',
+        // 专名别名：.AIWS 是已知的 daemon 自管目录，不是「未知文件」——DEV-33 收口
+        // （与锚 import/anchor-present 对称；判定先于封闭集，不依赖清单成员关系）
+        alias: 'import/aiws-present',
       })
       violations.push({
         rule: 'E-3', file: name, location: '顶层',
         problem: '.AIWS/ 出现在公司仓内（E 组重申：两面同禁——员工工作区不是公司配置面）',
         fix: '同 A-4：移出仓外',
-        alias: 'import/unknown-entry',
+        alias: 'import/aiws-present',
       })
       continue
     }
