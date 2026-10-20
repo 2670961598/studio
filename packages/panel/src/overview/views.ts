@@ -5,6 +5,9 @@
  * 编辑中心归后续刀）、docs/04-§七（概览路由按公司目录名：/<slug>/... 直达、未知名 404、
  * 根路径列公司清单）、docs/17-§8（:8789 端面：tab=概览/组织/人事/财务/项目/报表/编辑中心——
  * 本刀落前五读面中的概览/组织/人事/进度/财务；项目/报表 tab 与编辑中心归后续刀，不臆造）。
+ * DEV-36 增量：财务页加「月报（reports 表）」段（store v6 reports type='monthly' 行 +
+ * json_ref 快照 headline——04-§三 {node}/{date}-{type} 渲染约定的读面落点；报表 tab 整面
+ * 归后续刀，此处只落月报最小闭环）。
  *
  * 分层纪律（与 :8787 views.ts 同款）：本文件零 IO、零 Hono 依赖——
  *   - 组织数据吃 CompanySnapshot（公司目录快照——组织事实源是公司 git 目录，docs/17-§1）；
@@ -27,7 +30,7 @@
  * 不可信输入对待，docs/17-§5/§11 的读面同款纪律）。
  */
 import type { CompanySnapshot, DeptNode, EventRecord, PersonRef } from '@studio-next/contract'
-import type { BudgetRecord, TicketMirrorRecord } from '@studio-next/store'
+import type { BudgetRecord, ReportRecord, TicketMirrorRecord } from '@studio-next/store'
 import { dayKeyOf } from '../views.ts'
 
 // —— HTML 基元 ——
@@ -103,7 +106,7 @@ ${OVERVIEW_CSS}
 <body>
 ${body}
 <footer>公司概览只读面（:8789，docs/04-§七 / 17-§8）：组织数据来自公司目录快照（git 目录=组织事实源）；
-运营数据来自 SQLite 台账镜像（可重建投影）；财务三口径分列不相加（docs/26 C1）；项目/报表/编辑中心 tab 归后续刀。</footer>
+运营数据来自 SQLite 台账镜像（可重建投影）；财务三口径分列不相加（docs/26 C1）；月报段来自 reports 表（04-§三，快照不可读如实标注）；项目/报表 tab 归后续刀。</footer>
 </body>
 </html>
 `
@@ -290,6 +293,39 @@ export interface FinanceLlmDay {
   events: number
 }
 
+/** 月报行（reports 表 type='monthly' 的视图行；metrics 缺失=快照文件不可读，如实标注） */
+export interface MonthlyReportViewRow {
+  id: string
+  /** 归属期锚日 YYYY-MM-DD（月报=当月末日 UTC） */
+  date: string
+  /** 口径版本戳（如 monthly/v1——口径变更是换代不是修订） */
+  caliber: string
+  /** 报表 JSON 快照的公司目录相对路径（审计线索：页面可见引用） */
+  jsonRef: string
+  /** headline 三指标（快照 metrics 头解析；undefined=快照不可读——零臆造） */
+  metrics?: { hoursMs: number; costUsd: number; delivered: number }
+}
+
+/**
+ * 月报快照 headline 防御性解析（panel 不 import company 的报表形状——分层纪律，快照形状
+ * 归 company reports.ts，此处只按「数值三字段」窄面读取）：坏 JSON / 坏形状 / 缺字段 →
+ * undefined（快照不可读，页面如实标注——不折算不猜测）。
+ */
+function parseMonthlyHeadline(raw: string | undefined): MonthlyReportViewRow['metrics'] {
+  if (raw === undefined) return undefined
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null) return undefined
+    const metrics = (parsed as { metrics?: unknown }).metrics
+    if (typeof metrics !== 'object' || metrics === null) return undefined
+    const { hours_ms, cost_usd, delivered } = metrics as Record<string, unknown>
+    if (typeof hours_ms !== 'number' || typeof cost_usd !== 'number' || typeof delivered !== 'number') return undefined
+    return { hoursMs: hours_ms, costUsd: cost_usd, delivered }
+  } catch {
+    return undefined
+  }
+}
+
 /** 财务快照（/finance 的数据形状） */
 export interface FinanceSnapshot {
   basis: 'budgets+events'
@@ -297,6 +333,8 @@ export interface FinanceSnapshot {
   budgets: FinanceBudgets
   /** LLM 成本按日（升序；只列有事件的日——v0 稀疏口径，零填充趋势窗归后续需要时加） */
   llmDaily: FinanceLlmDay[]
+  /** 月报行（reports 表 type='monthly'，date 升序；04-§三 {node}/{date}-{type} 渲染约定的财务页落点） */
+  monthly: MonthlyReportViewRow[]
 }
 
 /**
@@ -304,7 +342,9 @@ export interface FinanceSnapshot {
  *   - budgets：listBudgets 全量行按本司 scope 集过滤后三口径分列（estimated/actual 求和口径
  *     与 :8787 buildCostsSnapshot 逐字对齐：reserve+=estimated、settle+=actual、refusal+=estimated；
  *     未记金额的行计 0，如实不折算）；
- *   - events：本司事件（server 侧已按 company 维滤好）中 event='LLM' 者按 UTC 日聚合。
+ *   - events：本司事件（server 侧已按 company 维滤好）中 event='LLM' 者按 UTC 日聚合；
+ *   - monthly：reports 表 type='monthly' 行（server 侧已按 company 维滤好）+ json_ref 快照
+ *     headline 解析（readReportFile 注入缺省或快照不可读 → 行在、metrics=undefined 如实标注）。
  */
 export function buildFinanceSnapshot(input: {
   slug: string
@@ -314,6 +354,10 @@ export function buildFinanceSnapshot(input: {
   peopleIds: ReadonlySet<string>
   /** 本司事件行（queryEvents({company: slug}) 的回包；LLM 过滤在此做） */
   events: EventRecord[]
+  /** 月报行（listReports({company: slug, type: 'monthly'}) 的回包；缺省=空段（旧调用面兼容） */
+  reports?: readonly ReportRecord[]
+  /** 报表快照文件读取面（json_ref → JSON 正文；缺省=全部「快照不可读」） */
+  readReportFile?: (jsonRef: string) => string | undefined
 }): FinanceSnapshot {
   const scopes = new Set<string>()
   scopes.add(`company:${input.slug}`)
@@ -356,7 +400,14 @@ export function buildFinanceSnapshot(input: {
     days.set(key, slot)
   }
   const llmDaily = [...days.values()].sort((a, b) => a.date.localeCompare(b.date))
-  return { basis: 'budgets+events', note: FINANCE_NOTE, budgets, llmDaily }
+
+  const monthly: MonthlyReportViewRow[] = (input.reports ?? []).map((r) => {
+    const row: MonthlyReportViewRow = { id: r.id, date: r.date, caliber: r.caliber, jsonRef: r.json_ref }
+    const metrics = parseMonthlyHeadline(input.readReportFile?.(r.json_ref))
+    return metrics === undefined ? row : { ...row, metrics }
+  })
+
+  return { basis: 'budgets+events', note: FINANCE_NOTE, budgets, llmDaily, monthly }
 }
 
 // —— 各页 HTML 渲染 ——
@@ -533,6 +584,22 @@ export function renderFinancePage(slug: string, snapshot: CompanySnapshot, finan
   <tbody>
 ${finance.llmDaily.map((d) => `<tr><td>${escapeHtml(d.date)}</td><td>${String(d.events)}</td><td>${fmtUsd(d.costUsd)}</td></tr>`).join('\n')}
   </tbody></table>
+</section>
+<section>
+  <h2>月报（reports 表） <span class="caliber">04-§三 {node}/{date}-{type} 渲染约定</span></h2>
+  ${finance.monthly.length === 0 ? '<p class="empty">尚无月报行（reports 表无 type=monthly 行——月报最小闭环首刀，产报岗接线归后续刀）。</p>' : `<table><thead><tr><th>锚日</th><th>口径</th><th>工时（h）</th><th>成本 USD</th><th>交付（单）</th><th>快照引用</th></tr></thead>
+  <tbody>
+${finance.monthly
+  .map(
+    (m) =>
+      `<tr><td>${escapeHtml(m.date)}</td><td>${escapeHtml(m.caliber)}</td>` +
+      (m.metrics === undefined
+        ? '<td colspan="3" class="empty">快照不可读</td>'
+        : `<td>${(m.metrics.hoursMs / 3_600_000).toFixed(2)}</td><td>${fmtUsd(m.metrics.costUsd)}</td><td>${String(m.metrics.delivered)}</td>`) +
+      `<td>${escapeHtml(m.jsonRef)}</td></tr>`,
+  )
+  .join('\n')}
+  </tbody></table>`}
 </section>`
   return page(
     `${snapshot.name} · 财务`,

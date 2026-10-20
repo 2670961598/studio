@@ -1212,6 +1212,9 @@ async function cmdOverview(argv: string[]): Promise<number> {
       snapshotProvider: () => snapshot,
       ...(mission !== undefined ? { mission } : {}),
       readPersonFile: (personId) => personFiles.get(personId),
+      // 报表快照（reports/<…>.json）：目录读面已全量在手——files[ref] 直查（DEV-36 月报段；
+      // daemon 产报落盘后 overview 进程需重挂载才见新报——热更归 daemon 后续刀，同快照口径）
+      readReportFile: (jsonRef) => files[jsonRef],
     })
   }
 

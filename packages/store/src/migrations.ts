@@ -279,6 +279,76 @@ const MIGRATIONS: readonly Migration[] = [
       '',
     ].join('\n'),
   },
+  {
+    version: 6,
+    name: 'v0.11 报表三表：ledgers / reports / probes_runs（17-§3 / docs/50 断链6 收口）',
+    sql: [
+      // ledgers：单据派生（17-§3「issue, kind(task/progress), body(json), updated」；权威源=单据，
+      //   本表为派生镜像——可由单据重建，故 upsert 覆盖写，非 append-only）。拟稿点：
+      //   - 复合主键 (issue, kind)：同单双面（task 面/progress 面）各一行——17-§3 未言明主键，
+      //     此为最自然键（issue 单列不唯一，kind 亦然）；
+      //   - body：JSON 文本（读写面 JSON 往返——同 jobs.payload 口径，形状不猜，归上游单据）；
+      //   - updated：epoch ms（同 ticket_mirror.updated 口径）。
+      // 注：表名 ledgers 与库句柄类型 Ledger 同名异义——表名 17-§3 冻结，记录名取
+      //   LedgerEntryRecord 避撞（records.ts）。
+      'CREATE TABLE ledgers (',
+      '  issue TEXT NOT NULL,',
+      '  kind TEXT NOT NULL,',
+      '  body TEXT NOT NULL,',
+      '  updated INTEGER NOT NULL,',
+      '  PRIMARY KEY (issue, kind)',
+      ');',
+      // reports：报表快照（17-§3「id, company, node, type, date, 口径版本, json_ref」）。
+      //   拟稿点：
+      //   - 口径版本列名 caliber（17-§3 中文列名英文化；值如 monthly/v1——语义=指标口径
+      //     版本戳，聚合口径变更时换值，读面可辨新旧不可比）；
+      //   - json_ref：公司目录相对路径 → 报表 JSON 快照文件（F2-03 结果体分离：库行存引用，
+      //     大正文留文件——文件本身由定时岗产出到公司目录 reports/ 约定，04-§三）；
+      //   - 自然键 (company, node, type, date) 唯一——04-§三「网页按 {node}/{date}-{type}
+      //     约定直接渲染」的机制化；重算覆盖换代（最新快照胜，历史在文件与 REPORT_* 事件）；
+      //   - node：报表节点（公司级=公司 slug；部门级=部门 path；人级=工号——04-§三逐级聚合）；
+      //   - type 值域 daily/weekly/monthly（04-§三 front-matter type 同源；闸在 records.ts）；
+      //   - date：归属期锚日 YYYY-MM-DD（月报=当月末日 UTC——由期键派生，非生成时刻）。
+      'CREATE TABLE reports (',
+      '  id TEXT PRIMARY KEY,',
+      '  company TEXT NOT NULL,',
+      '  node TEXT NOT NULL,',
+      '  type TEXT NOT NULL,',
+      '  date TEXT NOT NULL,',
+      '  caliber TEXT NOT NULL,',
+      '  json_ref TEXT NOT NULL',
+      ');',
+      'CREATE UNIQUE INDEX idx_reports_natural ON reports (company, node, type, date);',
+      'CREATE INDEX idx_reports_company ON reports (company);',
+      // probes_runs：探针跑分（17-§3「executor, model, probe_id, pass, cost, duration, ts」）。
+      //   拟稿点：
+      //   - id 主键：17-§3 未列，库侧加入（append-only 幂等回填需要唯一键——events/work_records
+      //     同款非空串，不锁 ULID）；
+      //   - cost→cost_usd、duration→duration_ms 列名对齐库内货币/时延口径（events 先例）；
+      //   - pass 存 INTEGER 0/1（行↔记录布尔往返）；
+      //   - append-only 机制保证：行级触发器拦 UPDATE/DELETE（personnel_events 同款；跑分是
+      //     已发生的事实记录，改写即篡改证据）。
+      'CREATE TABLE probes_runs (',
+      '  id TEXT PRIMARY KEY,',
+      '  executor TEXT NOT NULL,',
+      '  model TEXT NOT NULL,',
+      '  probe_id TEXT NOT NULL,',
+      '  pass INTEGER NOT NULL,',
+      '  cost_usd REAL,',
+      '  duration_ms INTEGER,',
+      '  ts INTEGER NOT NULL',
+      ');',
+      'CREATE INDEX idx_probes_runs_executor ON probes_runs (executor);',
+      'CREATE INDEX idx_probes_runs_probe_ts ON probes_runs (probe_id, ts);',
+      "CREATE TRIGGER trg_probes_runs_no_update BEFORE UPDATE ON probes_runs BEGIN",
+      "  SELECT RAISE(ABORT, 'probes_runs 为 append-only（17-§3）：UPDATE 被拒');",
+      'END;',
+      "CREATE TRIGGER trg_probes_runs_no_delete BEFORE DELETE ON probes_runs BEGIN",
+      "  SELECT RAISE(ABORT, 'probes_runs 为 append-only（17-§3）：DELETE 被拒');",
+      'END;',
+      '',
+    ].join('\n'),
+  },
 ]
 
 /** 内置迁移的最高版本（0 = 无迁移可用，仅占位防呆） */

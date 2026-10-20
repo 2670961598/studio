@@ -26,7 +26,9 @@
  *   [x] 定时岗装载：org-config.yaml jobs 段 → snapshot.jobs（v0.1-M4，映射表冻结在
  *        validator.ts OrgJobSchema 头注；daemon seedJobs 消费快照播种 jobs 表——18-§三）
  *   [ ] 定时岗热更：目录改动重注册对应岗、不动其他岗（18-§三；daemon 侧收口）
- *   [ ] 报表聚合器：按 `<date>-<type>-<节点>-<一句话>.md` 约定归并
+ *   [x] 报表聚合器·月报最小闭环（DEV-36，src/reports.ts）：按 `<date>-<type>-<节点>-
+ *        <一句话>.md` 约定归并 + front-matter + 快照 JSON（人→部门→公司逐级聚合、零自评、
+ *        台账数字）；月窗/三指标口径拟稿待批；日报/周报产报岗与 daemon 定时接线归后续刀
  *   [x] init 脚手架：从 templates 生成新公司目录（v0.1-M3，src/init.ts）
  *   [ ] schema 版本迁移脚本（migrate，由 daemon 执行、挂单留痕、可 git revert）
  */
@@ -42,6 +44,10 @@ export * from './validator.ts'
 
 // 岗位运作规格解析面（v0.1-M5，docs/35-§3：档位展开/时长解析/ops 读视图——纯函数）
 export * from './cadence.ts'
+
+// 报表聚合管线·月报最小闭环（DEV-36，docs/04-§三 核心契约 / docs/50 断链6：人→部门→
+// 公司逐级聚合零自评；月窗/三指标口径/快照 JSON/md 渲染/材料化注入面 + MCP 接口位）
+export * from './reports.ts'
 
 // init 脚手架 + 目录读取壳（v0.1-M3，docs/16-§四 验收口径「init 出模板公司并通过自检」）
 export * from './init.ts'

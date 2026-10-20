@@ -437,7 +437,7 @@ describe('store v4 切换回归：daemon 全路径无自建 DDL', () => {
     expect(report.phases.account.heartbeat).toBe(true)
     expect(ledger.kvGet('tick.seq')).toBe('1')
     expect(schemaOf()).toBe(before)
-    expect(ledger.version()).toBe(5) // store migration v5（candidates 表）——版本随库迁移面走，daemon 仍零 DDL
+    expect(ledger.version()).toBe(6) // store migration v6（报表三表 ledgers/reports/probes_runs）——版本随库迁移面走，daemon 仍零 DDL
     ledger.close()
   })
 })
