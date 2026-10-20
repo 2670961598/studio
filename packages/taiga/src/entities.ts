@@ -1,10 +1,13 @@
 /**
- * 实体描述符 —— Taiga 四实体中取两类作端口「单据」承载（docs/23-§二映射层）。
+ * 实体描述符 —— Taiga 四实体中取三类作端口「单据」承载（docs/23-§二映射层）。
  *
  * 默认 userstory（docs/32 真机试点全部探针走的就是 userstory：onboard ⑨ 流转+history
- * 实测路径）；issue（Taiga 缺陷实体）同形状备用。epic/task 不接入（首刀边界）。
+ * 实测路径）；issue（Taiga 缺陷实体）同形状备用；task（DEV-43）：类型流 entity 映射
+ * 目标（探索单→task 等）——provision 档案面接入，运行时单实体 CRUD 绑定仍 userstory|issue
+ * （v1 边界：按类型路由建单归 v2，docs/18-§2.1.1）。epic 不接入（首刀边界）。
  *
- * URL 家族（真机 9000 端口逐条实测，2026-10-18）：
+ * URL 家族（真机 9000 端口逐条实测，2026-10-18；task 家族与同类同形——/tasks、
+ * /task-statuses、/task-custom-attributes、/history/task，Taiga API 同构）：
  *   列表/建单    /api/v1/{collection}?project=<id>
  *   按 ref 取单  /api/v1/{collection}/by_ref?ref=<ref>&project=<id>
  *   状态集       /api/v1/{statuses}?project=<id>
@@ -12,7 +15,7 @@
  *   字段值写入   /api/v1/{collection}/custom-attributes-values/<内部id>
  *   历史         /api/v1/history/{history}/<内部id>
  */
-export type TaigaEntity = 'userstory' | 'issue'
+export type TaigaEntity = 'userstory' | 'issue' | 'task'
 
 export interface EntityDescriptor {
   entity: TaigaEntity
@@ -42,9 +45,18 @@ const ISSUE: EntityDescriptor = {
   history: 'issue',
 }
 
+const TASK: EntityDescriptor = {
+  entity: 'task',
+  collection: 'tasks',
+  statuses: 'task-statuses',
+  attributes: 'task-custom-attributes',
+  history: 'task',
+}
+
 export const ENTITY_DESCRIPTORS: Readonly<Record<TaigaEntity, EntityDescriptor>> = {
   userstory: USERSTORY,
   issue: ISSUE,
+  task: TASK,
 }
 
 export function entityDescriptor(entity: TaigaEntity): EntityDescriptor {

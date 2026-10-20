@@ -54,6 +54,36 @@ flow_by_level:
   ...rollback_edges / type_edges（技术债 promote 等）
 ```
 
+### 2.1.1 类型流（flow_by_type，DEV-43 / docs/51 v1.1 workflows 段）
+
+等级流之外，单据可按**类型**声明状态流（同项目内长期单/短期单/需求单/bug单/探索单等
+各配完全不同的状态集与流转——公司 org-config `workflows:` 段声明，零代码注入引擎）：
+
+- **键形**：FlowTable 键域 `L<n>`（等级）∪ `T:<type>`（类型；类型 id 禁冒号——键命名
+  空间隔离，docs/51 W-1）。
+- **解析序（冻结）**：`resolveTicketFlow(table, type, level)`——①`T:<type>` 命中优先
+  →②回退 `L<level>`→③都未命中 NOOP_UNKNOWN_FLOW。类型流命中时不要求 level；type
+  undefined/空串不查 T 键（直落 L 回退）。decide 步2 与 engine flowOf 共用同一函数。
+- **终态截断**：类型流 states 可标 `final`（StateFlow.finalStates 携带）；`forwardStates`
+  推导主干前向边时左态为终态即截断（终态无主干后继）。状态全集（flowStates）仍含全部
+  声明态——多终态（已关闭/不予修复）并列于序表尾部，人类经声明边可达，decide 照常
+  识别（成员校验不缩水）。等级流无 finalStates=不截断=行为不变。
+- **声明边**：`edges` 映射 type_edges（补充流转：打回/promote/重开终态）。机器不主动走
+  声明边（forwardStates 不含——与 rollback_edges 同纪律）；from=final 允许（重开已关单
+  的修复路径，复活语义 DEV-42② 同源）。
+- **锚点**：五锚 inbox/dispatched/evidence/verified/delivered 必填且须构成主干相邻链
+  （approval 可选第六锚，只许插 inbox 后/verified 后两槽——docs/51 W-8）；approval
+  缺省以空串哨兵隔离（decide 5a/5b 构造性不命中）。
+- **保留词表**：`bug`（断路器自动开单——不定级、待人定级后派）与 `task`（定时岗单物化
+  type）为系统保留，workflows 不得声明同 id（docs/51 W-9）——防止公司流静默劫持引擎
+  写死行为。岗单/断路单恒走等级回退。
+- **合并序（冻结）**：注入表构造序=DEFAULT_FLOW_TABLE（L 键基底）→（后续刀：org-config
+  `yt.flows` 覆盖 L 键）→ `T:<type>` 键**永远最上**。与查表优先级（解析序）正交。
+- **平台面**：类型可声明 `entity`（userstory/issue/task）——provision 把该类状态建到
+  对应实体工作流（多实体档案面）；v1 运行时 CRUD 仍单实体绑定，按类型路由建单归 v2。
+  建单初态解析序（IssueCreate.initialState）：显式 > typeInbox[type]（provision 按单据
+  类型查收件态）> states[0] > 平台默认。
+
 ### 2.2 流转的两个闸（顺序固定）
 
 1. **daemon state-diff（第一道）**：只认机器事件（进程存在/REPORT 落盘/闸门 exit=0）；

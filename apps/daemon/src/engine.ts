@@ -160,11 +160,10 @@ import {
   decide,
   emptyBreakerState,
   flowAnchors,
-  flowLevelKey,
   intentKeyOf,
   onWorkerError,
   onSuccess,
-  resolveFlow,
+  resolveTicketFlow,
   type Action,
   type BreakerState,
   type ConcurrencyLimits,
@@ -522,6 +521,11 @@ export interface CompanyRuntimeUpdate {
   defaultPersonId: string
   deptFallback: string
   defaultLane: string
+  /**
+   * 流表热换（DEV-43 N1）：拍边界换表（T:<type> 叠缺省表——D13 构造序）。缺省=不换
+   * （保持现表）；serve 侧显式传 undefined 语义=回内置缺省表由调用方用条件展开表达。
+   */
+  flows?: FlowTable
 }
 
 const CURSOR_KEY = 'activity.cursor'
@@ -757,7 +761,10 @@ export function createEngine(deps: EngineDeps): Engine {
   }
 
   function flowOf(issue: IssueRecord) {
-    return resolveFlow(config.flows ?? DEFAULT_FLOW_TABLE, flowLevelKey(issue.level))
+    // DEV-43（docs/18-§2.1.1 解析序）：T:<type> 优先 → L:<level> 回退（与 decide 步2
+    // 同函数——两处定流永不漂移）。保留词 bug/task 判定器不收 T 键（W-9）——断路单
+    // 不定级回 NOOP_UNKNOWN_FLOW（待人定级后派）、岗单恒落 L0，现状语义保持。
+    return resolveTicketFlow(config.flows ?? DEFAULT_FLOW_TABLE, issue.type, issue.level)
   }
 
   // ————————————————— 相位执行体 —————————————————
@@ -1413,7 +1420,10 @@ export function createEngine(deps: EngineDeps): Engine {
         //     New 积压即此类）。L0 流缺失时不指定落位：单据落平台态，decide
         //     NOOP_UNKNOWN_FLOW 经 noop 观测面（serve noop 日志行）可见，不静默。
         const isPatrolArtifact = ((job.payload as { type?: unknown } | undefined)?.type) === 'patrol'
-        const l0Flow = resolveFlow(config.flows ?? DEFAULT_FLOW_TABLE, flowLevelKey(0))
+        // 岗单物化流：按 type='task' 走类型优先解析（DEV-43）——W-9 保留词表判定器不收
+        // T:task 声明，故解析恒落 L0 回退（现状语义原样）；换写法只为与 decide/flowOf
+        // 同一函数同一序（两处定流永不漂移）
+        const l0Flow = resolveTicketFlow(config.flows ?? DEFAULT_FLOW_TABLE, 'task', 0)
         const created = await platform.issues.create({
           title: `[定时岗] ${job.job_id} ${new Date(startedAt).toISOString()}`,
           type: 'task',
@@ -1787,6 +1797,9 @@ export function createEngine(deps: EngineDeps): Engine {
       config.defaultPersonId = update.defaultPersonId
       config.deptFallback = update.deptFallback
       config.defaultLane = update.defaultLane
+      // 流表热换（DEV-43 N1）：缺省不换（保持现表）；换表后下一拍 decide/flowOf 对
+      // 新表重解析（含在途单——跨边界未知态走既有 NOOP_UNKNOWN_STATE 纪律）
+      if (update.flows !== undefined) config.flows = update.flows
     },
     dispose,
     get config(): EngineConfig {

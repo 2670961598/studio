@@ -33,6 +33,15 @@ function isStringArray(v: unknown): v is string[] {
   return Array.isArray(v) && v.every((x) => typeof x === 'string')
 }
 
+function isStringArrayRecord(v: unknown): v is Record<string, string[]> {
+  return isPlainObject(v) && Object.values(v).every((x) => isStringArray(x))
+}
+
+/** 类型状态流形状：type id →「状态→string[]」（DEV-43） */
+function isTypeFlowsRecord(v: unknown): v is Record<string, Record<string, string[]>> {
+  return isPlainObject(v) && Object.values(v).every((x) => isStringArrayRecord(x))
+}
+
 export function isProvisionMap(v: unknown): v is FieldProvisionMap {
   if (!isPlainObject(v)) return false
   const fields = v['fields']
@@ -45,6 +54,22 @@ export function isProvisionMap(v: unknown): v is FieldProvisionMap {
   if (!isPlainObject(flow)) return false
   for (const value of Object.values(flow)) {
     if (!isStringArray(value)) return false
+  }
+  // DEV-43 可选段（docs/18-§2.1.1）：typeInbox/typeFlows/entities——在场才校形状
+  const typeInbox = v['typeInbox']
+  if (typeInbox !== undefined && typeInbox !== null) {
+    if (!isPlainObject(typeInbox)) return false
+    for (const value of Object.values(typeInbox)) {
+      if (typeof value !== 'string') return false
+    }
+  }
+  if (v['typeFlows'] !== undefined && v['typeFlows'] !== null && !isTypeFlowsRecord(v['typeFlows'])) return false
+  const entities = v['entities']
+  if (entities !== undefined && entities !== null) {
+    if (!isPlainObject(entities)) return false
+    for (const value of Object.values(entities)) {
+      if (!isPlainObject(value) || !isStringArray(value['states'])) return false
+    }
   }
   return true
 }

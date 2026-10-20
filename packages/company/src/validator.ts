@@ -33,7 +33,7 @@
  */
 import { LineCounter, parseDocument } from 'yaml'
 import { z } from 'zod'
-import type { CompanySnapshot, DeptNode, DirectoryIssue, MountResult, PersonRef, RoleName, ScheduledJob } from '@studio-next/contract'
+import type { CompanySnapshot, DeptNode, DirectoryIssue, MountResult, PersonRef, RoleName, ScheduledJob, TicketWorkflows } from '@studio-next/contract'
 import { expandCadence, parseJobDuration } from './cadence.ts'
 import { ORG_CONFIG_SCHEMA_LITERALS, lineOfPath, multifileRules, zodIssuesToDirectoryIssues } from './multifile.ts'
 
@@ -191,6 +191,37 @@ const OrgJobSchema = z
     message: 'cron 与 triggers.cadence 恰给其一（自定义 cron 或节奏档位，不双写不缺省——docs/35-§3 / M5-⓪）',
   })
 
+// ————————————————— workflows 段（DEV-43，docs/51 v1.1 B-1 + W-1..W-9；docs/18-§2.1.1） —————————————————
+
+/** 状态声明：YAML 裸串或对象形 {name, final?}（装载期归一为对象——W-2） */
+const WorkflowStateSchema = z.union([
+  z.string().min(1),
+  z.strictObject({ name: z.string().min(1), final: z.boolean().optional() }),
+])
+
+const WorkflowEdgeSchema = z.strictObject({ from: z.string().min(1), to: z.string().min(1) })
+
+const WorkflowAnchorsSchema = z.strictObject({
+  inbox: z.string().min(1),
+  dispatched: z.string().min(1),
+  evidence: z.string().min(1),
+  verified: z.string().min(1),
+  delivered: z.string().min(1),
+  approval: z.string().min(1).optional(),
+})
+
+const WorkflowTypeSchema = z.strictObject({
+  id: z.string().min(1),
+  entity: z.string().min(1).optional(),
+  states: z.array(WorkflowStateSchema).min(2),
+  edges: z.array(WorkflowEdgeSchema).optional(),
+  anchors: WorkflowAnchorsSchema,
+})
+
+const WorkflowsSchema = z.strictObject({
+  types: z.array(WorkflowTypeSchema).min(1),
+})
+
 const OrgConfigSchema = z.strictObject({
   // DEV-32（docs/51-§三 B-1）：canonical=studio-next/org@1；org-config/v1=迁移期兼容
   // （templates/DEV-27 夹具/契约 cases.json 语料仍在用——收口计划见 multifile.ts 头注）
@@ -240,6 +271,9 @@ const OrgConfigSchema = z.strictObject({
   jobs: z.array(OrgJobSchema).optional(),
   // 04-§二 账号映射（账号=等级锚点，与人档案解耦）
   accounts: z.array(z.record(z.string(), z.unknown())).optional(),
+  // DEV-43（docs/51 v1.1 B-1）：单据类型流声明（可选；不声明=现状行为）——
+  // 结构形状在本层，内容规则 W-1..W-9 在 workflowRules（逐条指认到行）
+  workflows: WorkflowsSchema.optional(),
   // 03/N1：YouTrack 项目与字段/状态流映射覆盖（公司可整体替换的默认模板）
   yt: z.record(z.string(), z.unknown()).optional(),
   // 06-§三：executor 偏好覆盖（缺省继承框架级 agent.yaml）
@@ -368,15 +402,171 @@ function hasOpsPayload(
   )
 }
 
-function toSnapshot(org: OrgConfig): CompanySnapshot {
-  const departments: DeptNode[] = org.departments.map((d) => ({
+/** workflows 段装载态（states 已归一为对象形） */
+interface WorkflowTypeLoaded {
+  id: string
+  entity?: string | undefined
+  states: Array<{ name: string; final?: boolean | undefined }>
+  edges?: Array<{ from: string; to: string }> | undefined
+  anchors: {
+    inbox: string; dispatched: string; evidence: string; verified: string; delivered: string
+    approval?: string | undefined
+  }
+}
+
+/** 裸串状态归一为对象形（装载期，W-2：final 缺省 false） */
+function normalizeWorkflowStates(
+  states: Array<string | { name: string; final?: boolean | undefined }>,
+): WorkflowTypeLoaded['states'] {
+  return states.map((s) => (typeof s === 'string' ? { name: s } : { name: s.name, ...(s.final === true ? { final: true } : {}) }))
+}
+
+/**
+ * 主干直接后继 fwd(s)（DEV-43 W-8 用）：序表相邻且左态非终态；线性序至多一个。
+ * 与 core/flows.ts forwardStates 同语义重演（company 包不依赖 core——包边界，两处
+ * 测试锁定同构；core 侧消费 finalStates，本侧消费声明 final 标记）。
+ */
+function mainlineFwd(t: WorkflowTypeLoaded): (s: string) => string | undefined {
+  const names = t.states.map((s) => s.name)
+  const finals = new Set(t.states.filter((s) => s.final === true).map((s) => s.name))
+  return (s: string): string | undefined => {
+    const i = names.indexOf(s)
+    if (i < 0 || i >= names.length - 1) return undefined
+    if (finals.has(names[i] as string)) return undefined // 左态终态：截断（W-5 推导语义）
+    return names[i + 1]
+  }
+}
+
+/**
+ * workflows 内容规则 W-1..W-9（DEV-43，docs/51 v1.1 B-1；逐条指认到文件:行）。
+ * 结构形状（states ≥2、五锚必填、edge 键形状）已由 zod 层拦下——本层管内容：
+ * 唯一性/成员关系/锚点链/保留词。
+ */
+function workflowRules(doc: ReturnType<typeof parseDocument>, lc: LineCounter, org: OrgConfig): DirectoryIssue[] {
+  if (org.workflows === undefined) return []
+  const out: DirectoryIssue[] = []
+  const push = (i: number, path: (string | number)[], rule: string, fix: string): void => {
+    out.push({ file: ORG_CONFIG_FILE, line: lineOfPath(doc, lc, ['workflows', 'types', i, ...path]), rule: `org-config/${rule}`, fix })
+  }
+  const seenIds = new Set<string>()
+  org.workflows.types.forEach((raw, i) => {
+    const t: WorkflowTypeLoaded = { ...raw, states: normalizeWorkflowStates(raw.states) }
+    const names = t.states.map((s) => s.name)
+    const namesSet = new Set(names)
+    const finals = new Set(t.states.filter((s) => s.final === true).map((s) => s.name))
+
+    // W-1 + W-9：id 语法/唯一/保留词表
+    if (!SLUG_RE.test(t.id) || t.id.includes(':')) {
+      push(i, ['id'], 'workflow-bad-type-id', `类型 id=${t.id} 须为 slug 段语法且禁冒号（FlowTable 键形 T:<type> 的命名空间隔离——docs/51 W-1）`)
+    } else if (t.id === 'bug' || t.id === 'task') {
+      push(i, ['id'], 'workflow-reserved-type-id', `类型 id=${t.id} 是系统保留词（bug=断路器自动开单·不定级待人定级后派；task=定时岗单物化 type——docs/51 W-9）。声明同 id 会劫持引擎写死行为；制作人可用别名 id（如 defect/缺陷）+ entity 映射满足同语义`)
+    } else if (seenIds.has(t.id)) {
+      push(i, ['id'], 'workflow-dup-type-id', `类型 id=${t.id} 重复（全司唯一——docs/51 W-1）`)
+    }
+    seenIds.add(t.id)
+
+    // W-2：状态名类内唯一（非空与 ≥2 已由 schema 拦）
+    const seenNames = new Set<string>()
+    names.forEach((n, j) => {
+      if (seenNames.has(n)) push(i, ['states', j], 'workflow-dup-state', `状态名 ${n} 类内重复（docs/51 W-2）`)
+      seenNames.add(n)
+    })
+
+    // W-3：五锚∈状态名；inbox=首态；approval∈状态名
+    const anchorEntries: Array<[keyof WorkflowTypeLoaded['anchors'], string]> = [
+      ['inbox', t.anchors.inbox],
+      ['dispatched', t.anchors.dispatched],
+      ['evidence', t.anchors.evidence],
+      ['verified', t.anchors.verified],
+      ['delivered', t.anchors.delivered],
+    ]
+    for (const [key, value] of anchorEntries) {
+      if (!namesSet.has(value)) {
+        push(i, ['anchors', key], 'workflow-anchor-not-in-states', `anchors.${String(key)}=${value} 不在 states 声明集 [${names.join(',')}] 内（docs/51 W-3）`)
+      }
+    }
+    if (names[0] !== undefined && t.anchors.inbox !== names[0]) {
+      push(i, ['anchors', 'inbox'], 'workflow-inbox-not-first', `anchors.inbox=${t.anchors.inbox} 必须=states 首态 ${names[0]}（docs/51 W-3）`)
+    }
+    if (t.anchors.approval !== undefined && !namesSet.has(t.anchors.approval)) {
+      push(i, ['anchors', 'approval'], 'workflow-anchor-not-in-states', `anchors.approval=${t.anchors.approval} 不在 states 声明集 [${names.join(',')}] 内（docs/51 W-3）`)
+    }
+
+    // W-4：delivered 落终态
+    if (namesSet.has(t.anchors.delivered) && !finals.has(t.anchors.delivered)) {
+      push(i, ['anchors', 'delivered'], 'workflow-delivered-not-final', `anchors.delivered=${t.anchors.delivered} 必须落在 final: true 状态（终态语义锚定——docs/51 W-4）`)
+    }
+
+    // W-6：edges 两端∈状态名；(from,to) 不重复
+    const seenPairs = new Set<string>()
+    t.edges?.forEach((e, j) => {
+      if (!namesSet.has(e.from) || !namesSet.has(e.to)) {
+        push(i, ['edges', j], 'workflow-edge-not-in-states', `edges[${j}] ${e.from}→${e.to} 两端须各自∈状态名 [${names.join(',')}]（docs/51 W-6）`)
+      }
+      const pair = `${e.from}\u0000${e.to}`
+      if (seenPairs.has(pair)) {
+        push(i, ['edges', j], 'workflow-dup-edge', `edges 重复边 ${e.from}→${e.to}（docs/51 W-6）`)
+      }
+      seenPairs.add(pair)
+    })
+
+    // W-7：entity slug 段语法（值域闸在平台侧 provision——判定器平台中立）
+    if (t.entity !== undefined && !SLUG_RE.test(t.entity)) {
+      push(i, ['entity'], 'workflow-bad-entity', `entity=${t.entity} 须为 slug 段语法（值域 userstory|issue|task 的枚举闸在平台侧 provision——docs/51 W-7）`)
+    }
+
+    // W-8：五锚主干相邻链（approval 只许插 inbox 后/verified 后两槽）
+    const fwd = mainlineFwd(t)
+    const a = t.anchors
+    const slot1ok = fwd(a.inbox) === a.dispatched || (fwd(a.inbox) === a.approval && a.approval !== undefined && fwd(a.approval) === a.dispatched)
+    const slot2ok = fwd(a.dispatched) === a.evidence
+    const slot3ok = fwd(a.evidence) === a.verified
+    const slot4ok = fwd(a.verified) === a.delivered || (fwd(a.verified) === a.approval && a.approval !== undefined && fwd(a.approval) === a.delivered)
+    if (!slot1ok) {
+      push(i, ['anchors'], 'workflow-anchor-chain', `锚点链断裂：inbox(${a.inbox}) 的主干直接后继须=dispatched(${a.dispatched})（或先=approval 再→dispatched——approval 只许插 inbox 后/verified 后两槽）。当前后继=${String(fwd(a.inbox)) ?? '（无/被终态截断）'}（docs/51 W-8；decide 5c 派发依赖此边）`)
+    }
+    if (!slot2ok) {
+      push(i, ['anchors'], 'workflow-anchor-chain', `锚点链断裂：dispatched(${a.dispatched}) 的主干直接后继须=evidence(${a.evidence})。当前后继=${String(fwd(a.dispatched)) ?? '（无/被终态截断）'}（docs/51 W-8）`)
+    }
+    if (!slot3ok) {
+      push(i, ['anchors'], 'workflow-anchor-chain', `锚点链断裂：evidence(${a.evidence}) 的主干直接后继须=verified(${a.verified})。当前后继=${String(fwd(a.evidence)) ?? '（无/被终态截断）'}（docs/51 W-8）`)
+    }
+    if (!slot4ok) {
+      push(i, ['anchors'], 'workflow-anchor-chain', `锚点链断裂：verified(${a.verified}) 的主干直接后继须=delivered(${a.delivered})（或先=approval 再→delivered）。当前后继=${String(fwd(a.verified)) ?? '（无/被终态截断）'}（docs/51 W-8；decide 5f/5b 合并依赖此边——断裂则 delivered 结构性不可达）`)
+    }
+  })
+  return out
+}
+
+/** workflows 装载（→ contract TicketWorkflows；states 归一为对象形进快照） */
+function toWorkflows(org: OrgConfig): TicketWorkflows | undefined {
+  if (org.workflows === undefined) return undefined
+  return {
+    types: org.workflows.types.map((t) => ({
+      id: t.id,
+      ...(t.entity !== undefined ? { entity: t.entity } : {}),
+      states: normalizeWorkflowStates(t.states).map((s) => ({ name: s.name, ...(s.final === true ? { final: true } : {}) })),
+      ...(t.edges !== undefined ? { edges: t.edges } : {}),
+      anchors: {
+        inbox: t.anchors.inbox,
+        dispatched: t.anchors.dispatched,
+        evidence: t.anchors.evidence,
+        verified: t.anchors.verified,
+        delivered: t.anchors.delivered,
+        ...(t.anchors.approval !== undefined ? { approval: t.anchors.approval } : {}),
+      },
+    })),
+  }
+}
+
+function toSnapshot(org: OrgConfig): CompanySnapshot {  const departments: DeptNode[] = org.departments.map((d) => ({
     name: d.name, path: d.path, parent: d.parent, leader: d.leader, level: d.level,
     lanes: d.lanes, functions: d.functions, relations: [],
   }))
   const people: PersonRef[] = org.people.map((p) => ({
     id: p.id, name: p.name, login: p.login, level: p.level, dept: p.dept,
   }))
-  return {
+  const snap: CompanySnapshot = {
     slug: org.company.slug,
     name: org.company.name,
     level: org.company.level,
@@ -386,6 +576,9 @@ function toSnapshot(org: OrgConfig): CompanySnapshot {
     people,
     jobs: toJobs(org),
   }
+  const wf = toWorkflows(org)
+  if (wf !== undefined) snap.workflows = wf
+  return snap
 }
 
 /**
@@ -434,6 +627,7 @@ export function loadCompanyDirectory(files: Record<string, string>, opts?: Mount
 
   const issues = [
     ...crossRules(doc, lc, parsed.data),
+    ...workflowRules(doc, lc, parsed.data),
     ...(opts?.strictFiles === false ? [] : multifileRules(files, parsed.data, doc, lc)),
   ]
   if (issues.length > 0) return { ok: false, issues }

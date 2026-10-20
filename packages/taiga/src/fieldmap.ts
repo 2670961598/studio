@@ -20,12 +20,15 @@ export class TaigaFieldMap {
   private readonly types: Record<string, PortFieldType>
   /** 流程状态全集（按流序；首元素=流程初态，建单落位依据，见 IssueCreate.initialState） */
   private readonly states: readonly string[]
+  /** 类型收件态（DEV-43）：type id → 该类流的 inbox 状态名（建单落位第二优先级） */
+  private readonly typeInbox: Record<string, string>
 
   constructor(map?: FieldProvisionMap) {
     if (map === undefined) {
       this.fields = {}
       this.types = {}
       this.states = []
+      this.typeInbox = {}
       return
     }
     if (typeof map !== 'object' || map === null || typeof map.fields !== 'object' || map.fields === null) {
@@ -45,10 +48,27 @@ export class TaigaFieldMap {
       this.types[business] = t
     }
     this.states = [...map.states]
+    this.typeInbox = {}
+    for (const [type, inbox] of Object.entries(map.typeInbox ?? {})) {
+      if (typeof inbox !== 'string' || inbox.trim() === '') {
+        throw new TaigaPlatformError('CONFIG_INVALID', 'bad-field-map', `类型 ${type} 的收件状态必须是非空字符串（typeInbox）`)
+      }
+      this.typeInbox[type] = inbox
+    }
   }
 
   /** 流程初态（provision states[0]；无 provision/空 states → undefined=无声明，建单保持平台默认态） */
   initialState(): string | undefined {
+    return this.states[0]
+  }
+
+  /**
+   * 建单落位解析（DEV-43，docs/18-§2.1.1 解析序）：typeInbox[type] > states[0] > undefined
+   * （undefined=无声明，保持平台默认态）。显式 initialState 优先级更高——由 issues.create
+   * 的调用方（`input.initialState ?? ctx.fieldMap.initialStateFor(type)`）合成。
+   */
+  initialStateFor(type: string | undefined): string | undefined {
+    if (type !== undefined && this.typeInbox[type] !== undefined) return this.typeInbox[type]
     return this.states[0]
   }
 

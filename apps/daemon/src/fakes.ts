@@ -79,6 +79,10 @@ export function createFakePlatform(opts?: FakePlatformOptions): FlowPlatform {
     activities.push({ id: String(actSeq), ts: now(), ...(issue !== undefined ? { issue } : {}), kind, ...(actor !== undefined ? { actor } : {}) })
   }
 
+  // 最近一次 provision 的映射（N2，DEV-43）：建单落位按 localplatform 同一解析序消费
+  // typeInbox——fake 平台与真实平台的建单语义必须同构（e2e 断言才有效力）
+  let provisioned: FieldProvisionMap | null = null
+
   const mustIssue = (id: TicketId): FakeIssue => {
     const found = issues.get(id)
     if (found === undefined) throw new Error(`fake-platform：单据不存在 ${id}`)
@@ -104,9 +108,14 @@ export function createFakePlatform(opts?: FakePlatformOptions): FlowPlatform {
         const rec: FakeIssue = {
           id,
           title: input.title,
-          // 建单落位（docs/25-§3.2 IssueCreate.initialState）：fake 平台无 provision，
-          // 解析序=显式入参 > 平台默认态（新单）
-          state: input.initialState ?? '新单',
+          // 建单落位（docs/25-§3.2 + DEV-43 docs/18-§2.1.1）：解析序=显式入参 >
+          // typeInbox[type]（provision 按单据类型查收件态）> states[0] > 平台默认态（新单）
+          // ——与 localplatform.createIssue 同序（N2）
+          state:
+            input.initialState
+            ?? (input.type !== undefined ? provisioned?.typeInbox?.[input.type] : undefined)
+            ?? provisioned?.states[0]
+            ?? '新单',
           updated: now(),
           created: now(),
           ...(input.description !== undefined ? { description: input.description } : {}),
@@ -158,8 +167,9 @@ export function createFakePlatform(opts?: FakePlatformOptions): FlowPlatform {
           { name: 'dept', type: 'string' },
         ]
       },
-      async provision(_map: FieldProvisionMap): Promise<void> {
-        // fake 平台无字段物化面（provision 记活动即视为受理）
+      async provision(map: FieldProvisionMap): Promise<void> {
+        // fake 平台无字段物化面（provision 记活动即视为受理；映射留存供建单落位消费——N2）
+        provisioned = map
         pushActivity(undefined, 'fields-provisioned')
       },
     },

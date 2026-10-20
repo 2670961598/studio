@@ -53,6 +53,55 @@ export interface ScheduledJob {
   payload?: unknown
 }
 
+/**
+ * 单据类型流声明（DEV-43，docs/51 v1.1 B-1 workflows 段；语义规范家 docs/18-§2.1.1）。
+ * 装载期归一：YAML 裸串状态装载为 {name}（final 缺省 false）。
+ */
+export interface WorkflowStateDecl {
+  /** 状态名（类内唯一、非空——docs/51 W-2） */
+  name: string
+  /** 终态标记：终态不产生主干前向边（截断推导，W-5）；delivered 锚必须落终态（W-4） */
+  final?: boolean
+}
+
+/** 补充流转边（打回/promote/重开终态——from 允许=final，与等级流 rollback_edges 同纪律） */
+export interface WorkflowEdgeDecl {
+  from: string
+  to: string
+}
+
+/** 语义相位锚点：把机器相位映射到具体状态名（docs/51 W-3/W-4/W-8） */
+export interface WorkflowAnchorsDecl {
+  /** 收件态（必须=states 首态——W-3） */
+  inbox: string
+  dispatched: string
+  evidence: string
+  verified: string
+  /** 交付态（必须落 final 状态——W-4） */
+  delivered: string
+  /** 可选待批位：该流带审批环（只许插 inbox 后/verified 后两槽——W-8）；缺省=无审批环 */
+  approval?: string
+}
+
+/** 一个单据类型的完整状态流声明（id 禁保留词 bug/task——W-9） */
+export interface WorkflowTypeDecl {
+  /** 类型 id：非空 slug 语法、禁冒号（FlowTable 键形 T:<type> 的命名空间隔离——W-1） */
+  id: string
+  /** 可选平台实体映射（userstory/issue/task）：provision 把本类状态建到对应实体工作流 */
+  entity?: string
+  /** 状态集（≥2，有序=主干：相邻即前向边；final 态截断） */
+  states: WorkflowStateDecl[]
+  /** 可选补充边 */
+  edges?: WorkflowEdgeDecl[]
+  /** 语义锚点 */
+  anchors: WorkflowAnchorsDecl
+}
+
+/** org-config workflows 段（types ≥1；不声明=现状行为，docs/51 v1.1） */
+export interface TicketWorkflows {
+  types: WorkflowTypeDecl[]
+}
+
 export interface CompanySnapshot {
   slug: CompanySlug
   name: string
@@ -62,6 +111,8 @@ export interface CompanySnapshot {
   departments: DeptNode[]
   people: PersonRef[]
   jobs: ScheduledJob[]
+  /** 单据类型流声明（DEV-43；不声明=undefined=等级流现状行为） */
+  workflows?: TicketWorkflows
 }
 
 /** 校验器输出：结构不合法给 文件:行 + 修法（04-§九） */

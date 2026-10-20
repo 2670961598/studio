@@ -165,6 +165,48 @@ describe('建单落流程初态（DEV-40，2026-10-20 哨查事故防复发；do
   })
 })
 
+describe('建单落类型收件态（DEV-43，docs/25-§3.2 IssueCreate.initialState 解析序扩展）', () => {
+  /** e2e/demo 同源：spike（typeInbox=待探索）+ defect（entity 桶=issue 态集） */
+  const TYPED_MAP = {
+    fields: {},
+    states: ['待探索', '探索中', '探索结论就绪'],
+    stateFlow: { 待探索: ['探索中'] },
+    typeInbox: { spike: '待探索', defect: '新建' },
+    typeFlows: { spike: { 待探索: ['探索中'] }, defect: { 新建: ['待批'] } },
+    entities: { issue: { states: ['新建', '待批', '修复中', '待复验', '已修复', '已关闭'] } },
+  }
+
+  it('解析序=显式入参 > typeInbox[type] > states[0] > 默认 open（全链四段各一例）', async () => {
+    const p = createLocalPlatform(root)
+    await p.fields.provision(TYPED_MAP)
+    // ① 显式入参最优先
+    expect((await p.issues.create({ title: '显式', type: 'spike', initialState: '探索结论就绪' })).state).toBe('探索结论就绪')
+    // ② typeInbox[type]（顶层声明类型）
+    expect((await p.issues.create({ title: '探索', type: 'spike' })).state).toBe('待探索')
+    // ②' entity 桶内类型态也合法收件（defect→新建）
+    expect((await p.issues.create({ title: '缺陷', type: 'defect' })).state).toBe('新建')
+    // ③ 未声明类型回退 states[0]
+    expect((await p.issues.create({ title: '未声明' })).state).toBe('待探索')
+  })
+
+  it('状态合法性真值源=三桶并集（states ∪ typeInbox 值 ∪ entities 态）', async () => {
+    const p = createLocalPlatform(root)
+    await p.fields.provision(TYPED_MAP)
+    // entities 桶的态（不在顶层 states）显式落位合法
+    expect((await p.issues.create({ title: '甲', initialState: '已关闭' })).state).toBe('已关闭')
+    // 三桶之外的态仍拒（负断言：零落盘）
+    await expectLocalReject(() => p.issues.create({ title: '乙', initialState: 'New' }), 'CONFIG_INVALID', 'bad-create-input')
+    expect(await p.issues.list({})).toHaveLength(1)
+  })
+
+  it('无 type 的建单不查 typeInbox（undefined type 不命中任何键——防空键伪造）', async () => {
+    const p = createLocalPlatform(root)
+    await p.fields.provision({ ...TYPED_MAP, typeInbox: { spike: '待探索' } })
+    const rec = await p.issues.create({ title: '无类型' })
+    expect(rec.state).toBe('待探索') // states[0]，而非任何 typeInbox 值
+  })
+})
+
 describe('issues.list 过滤维', () => {
   it('stateIn / assignee / lane / updatedSince 各维过滤；stateIn=[] 全不中；project 忽略', async () => {
     // 固定步进时钟：updatedSince 的严格大于语义不靠真实时钟的 ms 抖动

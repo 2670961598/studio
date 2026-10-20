@@ -31,6 +31,21 @@ const ISSUE_PREFIX = 'LOCAL-'
 /** 未 provision 时的初始状态 */
 export const DEFAULT_INITIAL_STATE = 'open'
 
+/**
+ * provision 声明状态全集（DEV-43）：states ∪ typeInbox 值 ∪ entities 实体状态集。
+ * 显式 initialState 的合法性集（null=未 provision，不闸）。派生面——调用点在
+ * createIssue 建单校验，读取每单一次（事件日志平台，无热缓存诉求）。
+ */
+function provisionStateSet(prov: ReturnType<typeof readProvision>): Set<string> | null {
+  if (prov === null) return null
+  const out = new Set<string>(prov.states)
+  for (const inbox of Object.values(prov.typeInbox ?? {})) out.add(inbox)
+  for (const profile of Object.values(prov.entities ?? {})) {
+    for (const s of profile.states) out.add(s)
+  }
+  return out
+}
+
 /** setField 可写的记录字段（string 族；level 另走数字校验） */
 const SETTABLE_STRING_FIELDS = ['title', 'description', 'type', 'dept', 'lane', 'assignee', 'parent'] as const
 
@@ -200,17 +215,24 @@ export function listIssues(root: string, q: IssueQuery): IssueRecord[] {
 
 export function createIssue(root: string, now: () => string, input: IssueCreate): IssueRecord {
   validateIssueCreate(input)
-  // 初始 state：显式入参 > provisioned states[0]（流程初态）> 默认 open（定格进 created 事件，派生自洽）
-  // 校验先于单据 IO：provision 存在时显式入参必须在 states 声明集内（不静默落错态）
+  // 初始 state（DEV-43 docs/18-§2.1.1 解析序）：显式入参 > typeInbox[type]（provision 按单据
+  // 类型查收件态）> states[0]（流程初态）> 默认 open（定格进 created 事件，派生自洽）。
+  // 校验先于单据 IO：provision 存在时显式入参必须在合法集内（states ∪ typeInbox 值 ∪
+  // entities 实体状态集——多实体档案面的任一声明的态都可显式落位，不静默落错态）。
   const prov = readProvision(root)
-  if (input.initialState !== undefined && prov !== null && !prov.states.includes(input.initialState)) {
+  const legalStates = provisionStateSet(prov)
+  if (input.initialState !== undefined && legalStates !== null && !legalStates.has(input.initialState)) {
     throw new LocalPlatformError(
       'CONFIG_INVALID',
       'bad-create-input',
-      `initialState=${input.initialState} 不在 provision states 声明集 [${prov.states.join(',')}] 内`,
+      `initialState=${input.initialState} 不在 provision 声明状态集内（states/typeInbox/entities 并集）`,
     )
   }
-  const firstState = input.initialState ?? prov?.states[0] ?? DEFAULT_INITIAL_STATE
+  const firstState =
+    input.initialState
+    ?? (input.type !== undefined ? prov?.typeInbox?.[input.type] : undefined)
+    ?? prov?.states[0]
+    ?? DEFAULT_INITIAL_STATE
   const ids = scanIssueIds(root)
   const last = ids[ids.length - 1]
   const nextNo = last === undefined ? 1 : (ticketNo(last) ?? 0) + 1

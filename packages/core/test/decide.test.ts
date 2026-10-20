@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest'
 import type { IssueRecord, InvokeIntent } from '@studio-next/contract'
 import { decide, intentKeyOf } from '../src/decide.ts'
-import { DEFAULT_FLOW_ANCHORS, DEFAULT_STATES } from '../src/flows.ts'
+import { DEFAULT_FLOW_ANCHORS, DEFAULT_FLOW_TABLE, DEFAULT_STATES } from '../src/flows.ts'
 import { makeInput, makeIntent, makeIssue, T0 } from './helpers.ts'
 
 const { fresh, approval, dispatched, evidenceReady, verified, delivered } = DEFAULT_STATES
@@ -266,5 +266,119 @@ describe('明报兜底（不猜不动）', () => {
   it('等级显式覆盖优先于镜像单字段（level 入参 2 覆盖 issue.level 0）', () => {
     const out = decide(makeInput({ level: 2, issue: makeIssue({ state: fresh, level: 0 }) }))
     expect(out.action).toMatchObject({ type: 'submit_approval', code: 'SUBMIT_APPROVAL' })
+  })
+})
+
+// ————————————————— 类型流（DEV-43，docs/18-§2.1.1——解析序 T 优先 / 终态截断 / 哨兵） —————————————————
+
+/** e2e/demo 同源夹具：探索单（无审批环·双终态·重开边） */
+const SPIKE = {
+  mainline: ['待探索', '探索中', '探索结论就绪', '复验通过', '已归档', '不予归档'],
+  finalStates: ['已归档', '不予归档'],
+  typeEdges: [{ from: '已归档', to: '待探索' }],
+  anchors: {
+    fresh: '待探索',
+    approval: '', // NO_APPROVAL_ANCHOR：无审批环（构造性安全）
+    dispatched: '探索中',
+    evidenceReady: '探索结论就绪',
+    verified: '复验通过',
+    delivered: '已归档',
+  },
+} as const
+
+/** 缺陷单（带审批环：inbox 后一槽——W-8 slot1 读法） */
+const DEFECT = {
+  mainline: ['新建', '待批', '修复中', '待复验', '已修复', '已关闭'],
+  finalStates: ['已修复', '已关闭'],
+  typeEdges: [
+    { from: '已关闭', to: '修复中' },
+    { from: '待复验', to: '修复中' },
+  ],
+  anchors: {
+    fresh: '新建',
+    approval: '待批',
+    dispatched: '修复中',
+    evidenceReady: '待复验',
+    verified: '已修复',
+    delivered: '已关闭',
+  },
+} as const
+
+const TYPE_FLOWS = {
+  L0: { ...DEFAULT_FLOW_TABLE.L0! },
+  L1: { ...DEFAULT_FLOW_TABLE.L1! },
+  'T:spike': SPIKE,
+  'T:defect': DEFECT,
+} as const
+
+describe('类型流金轨（spike：无审批环·双终态）', () => {
+  it('收件态 → dispatch（T 键命中；issue.level 缺失也照走——类型流不要求 level）', () => {
+    const unleveld: IssueRecord = { id: 'T-1', title: '探索', state: '待探索', type: 'spike', updated: '2026-10-16T00:00:00.000Z' }
+    const out = decide(makeInput({ flows: TYPE_FLOWS, issue: unleveld }))
+    expect(out.action).toMatchObject({ type: 'dispatch', code: 'DISPATCH', toState: '探索中' })
+  })
+
+  it('探索中（在工锚点）→ wait_evidence；探索结论就绪 → collect；复验通过 → merge→已归档', () => {
+    const wait = decide(makeInput({ flows: TYPE_FLOWS, issue: makeIssue({ state: '探索中', type: 'spike', level: 0 }) }))
+    expect(wait.action).toMatchObject({ type: 'wait_evidence', code: 'EVIDENCE_PENDING' })
+    const collect = decide(makeInput({ flows: TYPE_FLOWS, issue: makeIssue({ state: '探索结论就绪', type: 'spike', level: 0 }) }))
+    expect(collect.action).toMatchObject({ type: 'collect', code: 'EVIDENCE_READY' })
+    const merge = decide(makeInput({ flows: TYPE_FLOWS, issue: makeIssue({ state: '复验通过', type: 'spike', level: 0 }) }))
+    expect(merge.action).toMatchObject({ type: 'merge', code: 'MERGE_DUE', toState: '已归档' })
+  })
+
+  it('已归档（delivered 终态）→ recycle；截断后声明态（不予归档）在场合法但机器 NOOP_IDLE 永卡', () => {
+    const done = decide(makeInput({ flows: TYPE_FLOWS, issue: makeIssue({ state: '已归档', type: 'spike', level: 0 }) }))
+    expect(done.action).toMatchObject({ type: 'recycle', code: 'LANE_RELEASE' })
+    const stuck = decide(makeInput({ flows: TYPE_FLOWS, issue: makeIssue({ state: '不予归档', type: 'spike', level: 0 }) }))
+    expect(stuck.action).toMatchObject({ type: 'noop', code: 'NOOP_IDLE' })
+  })
+
+  it('无审批环不误入批位：approval="" 哨兵永不命中（同态在 L1 会 SUBMIT_APPROVAL）', () => {
+    // spike 流的 inbox 前向=探索中（非 approval）——直接 DISPATCH
+    const out = decide(makeInput({ flows: TYPE_FLOWS, issue: makeIssue({ state: '待探索', type: 'spike', level: 1 }) }))
+    expect(out.action).toMatchObject({ type: 'dispatch', code: 'DISPATCH' })
+  })
+})
+
+describe('类型流金轨（defect：带审批环）', () => {
+  it('新建 → submit_approval（inbox 后一槽=待批；不越级派发）', () => {
+    const out = decide(makeInput({ flows: TYPE_FLOWS, issue: makeIssue({ state: '新建', type: 'defect', level: 0 }) }))
+    expect(out.action).toMatchObject({ type: 'submit_approval', code: 'SUBMIT_APPROVAL' })
+  })
+
+  it('待批+未批 → noop WAIT_APPROVAL；已批 → dispatch→修复中', () => {
+    const held = decide(makeInput({ flows: TYPE_FLOWS, issue: makeIssue({ state: '待批', type: 'defect', level: 0 }) }))
+    expect(held.action).toMatchObject({ type: 'noop', code: 'WAIT_APPROVAL' })
+    const dispatch = decide(makeInput({ flows: TYPE_FLOWS, issue: makeIssue({ state: '待批', type: 'defect', level: 0 }), approved: true }))
+    expect(dispatch.action).toMatchObject({ type: 'dispatch', code: 'DISPATCH', toState: '修复中' })
+  })
+})
+
+describe('解析序与保留词（docs/18-§2.1.1 冻结）', () => {
+  it('类型未声明回退等级流：type=defect 未注入表 → 走 L0（现状语义）', () => {
+    const out = decide(makeInput({ flows: { L0: DEFAULT_FLOW_TABLE.L0! }, issue: makeIssue({ state: fresh, type: 'defect', level: 0 }) }))
+    expect(out.action).toMatchObject({ type: 'dispatch', code: 'DISPATCH' })
+  })
+
+  it('type 入参优先于镜像单字段（type 入参 spike 覆盖 issue.type task）', () => {
+    const out = decide(makeInput({ flows: TYPE_FLOWS, type: 'spike', issue: makeIssue({ state: '待探索', type: 'task', level: 0 }) }))
+    expect(out.action).toMatchObject({ type: 'dispatch', code: 'DISPATCH', toState: '探索中' })
+  })
+
+  it('保留词 bug 不查 T 键：断路单不定级 → NOOP_UNKNOWN_FLOW（待人定级语义保持）', () => {
+    const bug: IssueRecord = { id: 'T-1', title: '断路', state: fresh, type: 'bug', updated: '2026-10-16T00:00:00.000Z' }
+    const out = decide(makeInput({ flows: TYPE_FLOWS, issue: bug }))
+    expect(out.action).toMatchObject({ type: 'noop', code: 'NOOP_UNKNOWN_FLOW' })
+  })
+
+  it('保留词 task 恒落等级回退：岗单 L0 流照走（现状字节不变）', () => {
+    const out = decide(makeInput({ flows: TYPE_FLOWS, issue: makeIssue({ state: fresh, type: 'task', level: 0 }) }))
+    expect(out.action).toMatchObject({ type: 'dispatch', code: 'DISPATCH', toState: dispatched })
+  })
+
+  it('类型流状态集外的平台态 → NOOP_UNKNOWN_STATE（成员校验负例）', () => {
+    const out = decide(makeInput({ flows: TYPE_FLOWS, issue: makeIssue({ state: '新单', type: 'spike', level: 0 }) }))
+    expect(out.action).toMatchObject({ type: 'noop', code: 'NOOP_UNKNOWN_STATE' })
   })
 })

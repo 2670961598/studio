@@ -54,10 +54,11 @@ export interface TaigaRolesOptions {
   fetch?: FetchLike
 }
 
-/** 实体 ↔ 收窄闸权限键（枚举名照真机快照 roles-probe-co.json） */
+/** 实体 ↔ 收窄闸权限键（枚举名照真机快照 roles-probe-co.json；task=modify_task，Taiga 同族命名） */
 const ENTITY_GATE_PERMS: Readonly<Record<TaigaEntity, { modify: string }>> = {
   userstory: { modify: 'modify_us' },
   issue: { modify: 'modify_issue' },
+  task: { modify: 'modify_task' },
 }
 
 function parseRole(v: unknown): TaigaRoleInfo {
