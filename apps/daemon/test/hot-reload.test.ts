@@ -23,7 +23,7 @@
  *      受信位撤销（fail-closed）；篡改态连续空转不重复告警；显式 re-approve + 手动
  *      reload → 新内容应用；锚文件写动不触发重装载（自指隔离）
  */
-import { mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -628,6 +628,99 @@ describe('serve 接线：companyDir→hotReload 装配 / reloadWatch 解析 / �
       const report = await hot!.check()
       expect(report?.kind).toBe('reloaded') // 手动通道不受 reloadWatch 闸
       expect(reloadEvents(ledger).evolve).toBe(1)
+    } finally {
+      await runtime.stop()
+    }
+  })
+})
+
+// ————————————————————————— 6b. .AIWS 建树接线（DEV-28：serve 启动 ensure + 人事变树变） —————————————————————————
+
+describe('.AIWS 建树接线（serve）：启动 ensure + 人事热重载增量同步（docs/43-§五）', () => {
+  it('启动 ensure：树落根推导位 dirname(companyDir)/.AIWS、归属标记=slug、日志面自报', async () => {
+    const ledger = openLedger(path.join(root, 'serve-aiws-boot.sqlite'))
+    const logs: string[] = []
+    const runtime = buildServeRuntime(serveConfig('serve-aiws-boot', { companyDir }), ledger, await currentSnapshot(), {
+      log: (l) => logs.push(l),
+      clock: () => T0,
+    })
+    try {
+      const aiwsRoot = path.join(root, '.AIWS')
+      expect(logs.some((l) => l.includes('.AIWS 员工工作区树'))).toBe(true)
+      // 工位树同构（AGENT-1 在工程部下）+ per-company 归属标记（§十9 不并树）
+      expect(existsSync(path.join(aiwsRoot, 'departments', '工程部', 'AGENT-1'))).toBe(true)
+      expect(JSON.parse(readFileSync(path.join(aiwsRoot, '.studio-next.json'), 'utf8'))).toMatchObject({ slug: 'reload-corp' })
+    } finally {
+      await runtime.stop()
+    }
+  })
+
+  it('人事热重载增量同步：加人得家（apply 段先行）→ 离司归档不删、在编家不动', async () => {
+    // 独立公司 + 显式 aiwsRoot（根推导位已被上一例的归属标记占用——显式覆盖位同时
+    // 直证「per-company 不并树」：另一根、另一 slug，互不相扰）
+    const hrCompany = path.join(root, 'company-hr')
+    await initCompany({ slug: 'hr-sync-corp', targetDir: hrCompany })
+    const aiwsRoot = path.join(root, 'serve-hr', '.AIWS')
+    const ledger = openLedger(path.join(root, 'serve-hr.sqlite'))
+    let t = T0
+    const logs: string[] = []
+    const mounted = loadCompanyDirectory(await readDirectoryFiles(hrCompany))
+    if (!mounted.ok) throw new Error(`hr 公司挂载失败：${mounted.issues.map((i) => `${i.file}:${i.line}`).join('；')}`)
+    const runtime = buildServeRuntime(
+      serveConfig('serve-hr', { companyDir: hrCompany, aiwsRoot }),
+      ledger,
+      mounted.snapshot,
+      { log: (l) => logs.push(l), clock: () => t },
+    )
+    try {
+      const hot = runtime.hotReload
+      expect(hot).toBeDefined()
+      expect(existsSync(path.join(aiwsRoot, 'departments', '工程部', 'AGENT-1'))).toBe(true)
+
+      // —— 加人：AGENT-2 入职（索引+等级分布+档案三处同步） → reload → 家即建 ——
+      const personBlock = [
+        '  - id: AGENT-2',
+        '    name: 人事同步工程师',
+        '    login: agent-2',
+        '    level: 2',
+        '    dept: departments/工程部',
+        '    role: 工程师',
+        '    reports_to: AGENT-1',
+        '    skills: [typescript]',
+        '    status: active',
+        '    executor: dsh',
+        '    file: departments/工程部/people/AGENT-2.md',
+      ].join('\n')
+      const orgPath = path.join(hrCompany, 'org-config.yaml')
+      const base = readFileSync(orgPath, 'utf8')
+      writeFileSync(orgPath, base.replace('2: 1 #', '2: 2 #').replace(/\n# 定时岗清单/, `\n${personBlock}\n\n# 定时岗清单`), 'utf8')
+      writeFileSync(
+        path.join(hrCompany, 'departments/工程部/people/AGENT-2.md'),
+        readFileSync(path.join(hrCompany, 'departments/工程部/people/AGENT-1.md'), 'utf8').replaceAll('AGENT-1', 'AGENT-2').replaceAll('agent-1', 'agent-2'),
+        'utf8',
+      )
+      await hot!.check() // pending（首见）
+      t += 1000
+      expect((await hot!.check())?.kind).toBe('reloaded')
+      expect(existsSync(path.join(aiwsRoot, 'departments', '工程部', 'AGENT-2'))).toBe(true) // 人事变树变：家即建
+      expect(logs.some((l) => l.includes('.AIWS 增量同步（reload）：新建 1、归档 0'))).toBe(true)
+
+      // —— 离司：AGENT-2 家里留证据后撤编 → reload → 归档不删（内容保留） ——
+      const draft = path.join(aiwsRoot, 'departments', '工程部', 'AGENT-2', 'tickets', 'HR-1', 'att1', 'REPORT.md')
+      mkdirSync(path.dirname(draft), { recursive: true })
+      writeFileSync(draft, 'AGENT-2 的工位证据\n', 'utf8')
+      writeFileSync(orgPath, base, 'utf8')
+      rmSync(path.join(hrCompany, 'departments/工程部/people/AGENT-2.md'))
+      await hot!.check()
+      t += 1000
+      expect((await hot!.check())?.kind).toBe('reloaded')
+      expect(existsSync(path.join(aiwsRoot, 'departments', '工程部', 'AGENT-2'))).toBe(false)
+      const archived = readdirSync(path.join(aiwsRoot, 'departments', '工程部')).find((n) => n.startsWith('AGENT-2.archived-'))
+      expect(archived).toBeDefined()
+      expect(readFileSync(path.join(aiwsRoot, 'departments', '工程部', archived ?? '', 'tickets', 'HR-1', 'att1', 'REPORT.md'), 'utf8')).toContain('AGENT-2 的工位证据')
+      // 在编家不动（AGENT-1 原位）+ 归档面进日志（可观测）
+      expect(existsSync(path.join(aiwsRoot, 'departments', '工程部', 'AGENT-1'))).toBe(true)
+      expect(logs.some((l) => l.includes('.AIWS 增量同步（reload）') && l.includes('归档 1'))).toBe(true)
     } finally {
       await runtime.stop()
     }

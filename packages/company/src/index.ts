@@ -49,6 +49,10 @@ export * from './init.ts'
 // 信任锚（DEV-27 正式化：docs/44 v1 信任锚设计——git-url 导入流复用）
 export * from './trust.ts'
 
+// .AIWS 员工工作区树正式化（DEV-28：docs/43-§五+§十9——建树同构+per-company 根守卫不并树
+// +随人事增量同步（归档不删）+家内部不下探；排除表单源在 init.ts SCAN_EXCLUDED_NAMES）
+export * from './aiws.ts'
+
 // git-url 导入流（DEV-27 正式化：docs/43-§一「git 网址即公司」+ §十1-4 定稿增补——
 // 克隆→剥 .git 重建本地仓→schema 写盘前检→provision→锚 trust=false→.AIWS 建树→
 // 依赖清单安装挂点；直导通道同核；升级四点语义）

@@ -130,9 +130,10 @@ function sampleOf(ledger: Ledger, issue: string): Sample {
   }
 }
 
-/** 工位路径（rootDir/workspaces/<单号>/att<N>） */
+/** 工位路径：.AIWS 员工家 <rootDir>/.AIWS/<部门>/<工号>/tickets/<单号>/att<N>（DEV-28，
+ *  docs/43-§五——serve 无 companyDir 时根推导=<rootDir>/.AIWS；demo 快照 T-1→AGENT-1） */
 function workspaceOf(dir: string, attempt: number): string {
-  return path.join(dir, 'workspaces', 'T-1', `att${attempt}`)
+  return path.join(dir, '.AIWS', 'departments', '工程部', 'AGENT-1', 'tickets', 'T-1', `att${attempt}`)
 }
 
 /** 断言非优雅死：自杀 SIGKILL（code null + signal SIGKILL——不是优雅停的 exit 0） */

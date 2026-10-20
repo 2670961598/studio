@@ -169,8 +169,19 @@ import type { WorkerKeyDeps } from './worker-key.ts'
 export interface EngineConfig {
   /** 公司 slug（events.company / intents.company / ticket_mirror.company） */
   company: string
-  /** 工位根：workspace = <rootDir>/workspaces/<单号>/att<N> */
+  /**
+   * daemon 工位根（rootDir 属 daemon 自管面——tmp/instructions、platform、控制面等落此；
+   * 派发 workspace 缺省旧布局 `<rootDir>/workspaces/<单号>/att<N>`——aiwsRoot 未注入时
+   * 的引擎直连测试回退路径，正式链路 serve 恒注入 aiwsRoot）
+   */
   rootDir: string
+  /**
+   * .AIWS 员工工作区树根（DEV-28，docs/43-§五 派发权限圈①cwd——serve 推导注入：
+   * 显式配置 > dirname(companyDir)/.AIWS > <rootDir>/.AIWS）：给定 → 派发 workspace
+   * = `<aiwsRoot>/<部门路径>/<工号>/tickets/<单号>/att<N>`（收割四要件与 deliverables
+   * 收账经 dirname(briefPath) 全随迁）；缺省 → 上述旧布局。
+   */
+  aiwsRoot?: string
   /** events.actor（17-§3「工号+账号」编码归 store 层定——v0 'daemon' 拟稿） */
   actor: string
   /** 派工默认工号（issue.assignee 缺省时的人员索引回退位） */
@@ -257,6 +268,20 @@ export const ENGINE_CONFIG_DEFAULTS: EngineConfig = {
   maxActivityPages: 10,
   killGraceMs: 5_000,
   mirrorRescanEveryTicks: 30,
+}
+
+/**
+ * .AIWS 工位路径（docs/43-§五，DEV-28）：`<aiwsRoot>/<部门路径>/<工号>/tickets/<单号>/att<N>`
+ * ——部门路径逐段展开（person.dept 是 '/' 分隔路径串）；派工对象的家+tickets+attempt。
+ * 纯函数（serve 日志与测试断言同源；engine 内 executeDispatch 消费）。
+ */
+export function aiwsWorkspaceOf(
+  aiwsRoot: string,
+  person: { dept: string; id: string },
+  ticket: TicketId,
+  attempt: number,
+): string {
+  return path.join(aiwsRoot, ...person.dept.split('/'), person.id, 'tickets', ticket, `att${attempt}`)
 }
 
 // ————————————————————————— 依赖注入 —————————————————————————
@@ -714,7 +739,14 @@ export function createEngine(deps: EngineDeps): Engine {
       return fail('注册表无存活 executor（registry.pick 空）')
     }
     const attempt = index.attemptOf(ticket)
-    const workspace = path.join(config.rootDir, 'workspaces', ticket, `att${attempt}`)
+    // workspace 落点（DEV-28，docs/43-§五 派发权限圈①cwd）：aiwsRoot 给定 → 员工家
+    // .AIWS/<部门路径>/<工号>/tickets/<单号>/att<N>（收割四要件与 deliverables 收账经
+    // dirname(briefPath) 随迁——闸门/台账引用零改动）；缺省 → 旧一次性布局（引擎直连
+    // 测试回退面，serve 恒注入 aiwsRoot——正式链路一律员工家）
+    const workspace =
+      config.aiwsRoot !== undefined
+        ? aiwsWorkspaceOf(config.aiwsRoot, person, ticket, attempt)
+        : path.join(config.rootDir, 'workspaces', ticket, `att${attempt}`)
     const briefPath = path.join(workspace, 'brief.md')
     // AGENTS.md 落点按 adapter 通道能力路由（04-§六 B5 + docs/25-§3.1 v1.5#1，零 if executor——
     // 只读 capabilities）：native=workspace 根（原生发现，P-07）；user_level/append=bridge
@@ -1457,10 +1489,12 @@ export function createEngine(deps: EngineDeps): Engine {
         const lane = fresh.lane ?? config.defaultLane
         releaseLane(lane, action.ticket)
         // 17-§7「关单即吊销，杜绝归档后仍有效」：CLOSE 是 wkey 生命周期的收口点
-        // （GATE_PASS 后 key 存续到此处——验收/复验窗口内 worker 仍可署名回执）
+        // （GATE_PASS 后 key 存续到此处——验收/复验窗口内 worker 仍可署名回执）。
+        // 工位=**原位**归档（DEV-28，docs/43-§五）：tickets/<单号>/att<N> 证据不动（台账
+        // report_ref/summary_ref 引用不断链）、员工家永不删——回收只释放泳道+吊销凭据
         const wkeyRevoked = revokeWorkerKeyOf(action.ticket)
         makeEvent('CLOSE', fresh, index.attemptOf(action.ticket), tickEvents, {
-          note: `交付回收：泳道释放、工位归档（会话归档归后续刀）${wkeyRevoked ? '；wkey=关单吊销（17-§7）' : ''}`,
+          note: `交付回收：泳道释放、工位原位归档=.AIWS 家保留（docs/43-§五；会话归档归后续刀）${wkeyRevoked ? '；wkey=关单吊销（17-§7）' : ''}`,
         })
         recycled += 1
         mutations += 1

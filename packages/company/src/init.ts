@@ -104,9 +104,19 @@ function errText(err: unknown): string {
 }
 
 /**
+ * 目录扫描排除表（**单源**——DEV-28 三处消费共用，永不漂移）：
+ *   1. 本文件 readDirectoryFiles（内容读面——挂载/指纹/批准的输入）；
+ *   2. daemon statDirectory（热重载 stat 面）；
+ *   3. daemon 热重载指纹基线 walk。
+ * daemon 侧两消费在基表上扩展 TRUST_DIR（.studio-next/ 锚目录——docs/43-附录A-3），扩展处
+ * 不复制基表条目。语义：.git=版本库非契约、.DS_Store=系统杂音、.AIWS=员工工作区不是公司
+ * 配置面（写它不得触发热重载/批准指纹漂移，docs/43-§五）。
+ */
+export const SCAN_EXCLUDED_NAMES: readonly string[] = ['.git', '.DS_Store', AIWS_DIR]
+
+/**
  * 目录 → 内存文件映射（挂载壳：validator 零 IO 的补边，CLI / 后续 panel 共用）。
- * 键为相对根的 POSIX 风格路径；跳过 .git（版本库不是目录契约的一部分）、.DS_Store 与
- * .AIWS（员工工作区树——与 .git 同款排除：不是公司配置面，不进指纹/监听，docs/43-§五）。
+ * 键为相对根的 POSIX 风格路径；排除面=SCAN_EXCLUDED_NAMES 单源表（docs/43-§五）。
  */
 export async function readDirectoryFiles(root: string): Promise<Record<string, string>> {
   const files: Record<string, string> = {}
@@ -114,7 +124,7 @@ export async function readDirectoryFiles(root: string): Promise<Record<string, s
     const entries = await readdir(dir, { withFileTypes: true })
     entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
     for (const entry of entries) {
-      if (entry.name === '.git' || entry.name === '.DS_Store' || entry.name === AIWS_DIR) continue
+      if (SCAN_EXCLUDED_NAMES.includes(entry.name)) continue
       const abs = path.join(dir, entry.name)
       const rel = prefix === '' ? entry.name : `${prefix}/${entry.name}`
       if (entry.isDirectory()) await walk(abs, rel)
