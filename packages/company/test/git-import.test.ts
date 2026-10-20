@@ -17,8 +17,9 @@
  *      trust=false / 盖戳字段不回卷 / 有锚+slug 同家（错家拒收）；fixture 仓造 v2
  *      （改 prompts+加 job+删标记文件）→ 再次导入同家公司 → 内容更新（镜像同步含
  *      删除）；
- *   6. 结构闸跑在**克隆产物**上（docs/43-§十-3）：未知顶层条目/自带锚目录/exec 位/
- *      符号链接/schema 不过 → 结构拒收，无半成品。
+ *   6. 结构闸跑在**克隆产物**上（docs/43-§十-3）：未知顶层条目/自带锚目录/自带 .AIWS
+ *      目录（DEV-33 收口面——docs/43-§五 发行件纯净）/exec 位/符号链接/schema 不过 →
+ *      结构拒收，无半成品。
  *
  * 恶意样本纪律（docs/44 附录 B 同款）：恶意钩子只在测试 tmp 运行时构造，仓内
  * fixtures/ 只有良性内容。
@@ -302,6 +303,20 @@ describe('DEV-27 · 结构闸（宁失败不半成品；跑在克隆产物上—
     })
     const err = await expectConfigInvalid(() => importCompanyRepo({ sourceDir: dir, targetDir: path.join(root, 'rejected-2'), now: NOW }), 'import/structure-rejected')
     expect(err.detail).toContain('import/anchor-present')
+  })
+
+  it('分发仓自带 .AIWS/ 员工工作区目录拒收（工作区劫持面——docs/43-§五 发行件纯净；DEV-33 收口：专名别名不再落 import/unknown-entry）', async () => {
+    const dir = await variant('aiws-present', (d) => {
+      // 预埋「员工既有产出」形态：工位目录下单据 attempt 的 REPORT——若被并入本地 .AIWS
+      // 树即冒充员工历史交付（恶意样本纪律：只在测试 tmp 运行时构造，docs/44 附录 B）
+      const home = path.join(d, '.AIWS', 'departments', '工程部', 'AGENT-1', 'tickets', 'T-9', 'att1')
+      mkdirSync(home, { recursive: true })
+      writeFileSync(path.join(home, 'REPORT.md'), '# 假冒员工历史交付\n')
+    })
+    const err = await expectConfigInvalid(() => importCompanyRepo({ sourceDir: dir, targetDir: path.join(root, 'rejected-6'), now: NOW }), 'import/structure-rejected')
+    expect(err.detail).toContain('import/aiws-present')
+    expect(err.detail).not.toContain('import/unknown-entry') // 专名别名命中（非 generic 兜底）
+    expect(existsSync(path.join(root, 'rejected-6'))).toBe(false) // 无半成品
   })
 
   it('可执行位文件拒收（附录 A-2 基线；exec 位经 git clone 可旅行——闸跑克隆产物）', async () => {
