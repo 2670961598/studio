@@ -3,7 +3,9 @@
  *
  * 公司作用域构造期绑定（适配器实例=公司作用域）：
  *   - project：项目 slug（公司=项目，docs/30 §6 ③；必填——全部读写的落点）
- *   - entity：单据承载实体（默认 userstory=docs/32 真机试点全验路径；issue 备用）
+ *   - entity：单据承载实体（默认 userstory=docs/32 真机试点全验路径；issue 备用；
+ *     task 仅作 workflows 类型流 entity 映射的 provision 档案目标——DEV-43 v1 运行时
+ *     单实体 CRUD 绑定仍 userstory|issue，按类型路由建单归 v2，docs/18-§2.1.1）
  *   - fields：业务字段↔Taiga 自定义属性映射（可缺省：state/title/description/assignee
  *     原生；type/dept/level/lane 等自定义维不映射则读不见、写显式报错）
  *   - auth：密码态（自动登录+401 刷新/重登）或预换 token 态（有 refresh 才可续）
@@ -45,7 +47,7 @@ export interface TaigaPlatformOptions {
   project: string
   /** 认证：密码态或预换 token 态（docs/32 §二① JWT） */
   auth: TaigaAuth
-  /** 单据承载实体（默认 userstory；issue 备用） */
+  /** 单据承载实体（默认 userstory；issue 备用；task 仅 provision 档案面——运行时单实体 CRUD 绑定归 v2，docs/18-§2.1.1） */
   entity?: TaigaEntity
   /** 业务字段↔Taiga 自定义属性映射（可缺省，见头注） */
   fields?: FieldProvisionMap

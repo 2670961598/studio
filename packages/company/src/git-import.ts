@@ -42,7 +42,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import { parse as parseYaml } from 'yaml'
-import type { FieldProvisionMap, FlowPlatform } from '@studio-next/contract'
+import type { FieldProvisionMap, FlowPlatform, TicketWorkflows } from '@studio-next/contract'
 import { configInvalid } from '@studio-next/contract'
 import { validateCompanyRepo, type RepoValidateOptions, type RepoValidateResult } from './repo-validate.ts'
 import { AIWS_DIR, readDirectoryFiles } from './init.ts'
@@ -141,9 +141,18 @@ const DEFAULT_FIELD_MAP: Record<string, string> = { state: 'State', dept: '部�
 
 /**
  * 平台字段 provision 映射推导（docs/23-§二：字段/状态流映射=公司配置声明）：
- * 缺省 {state→State, dept→部门, level→等级} + 五态流；org-config yt.fields/yt.states/yt.flows 覆盖。
+ * 缺省 {state→State, dept→部门, level→等级} + 五态流；org-config yt.fields/yt.states/yt.flows 覆盖；
+ * workflows 类型声明折叠（DEV-43，docs/18-§2.1.1）——
+ *   - 无 entity 类型：状态并入顶层 states（绑定实体承载；首现序去重）
+ *   - entity 类型：状态进 entities.<entity>.states（provision 建到对应实体工作流档案）
+ *   - typeInbox[id]=anchors.inbox（建单落位第二优先级，IssueCreate.initialState 解析序）
+ *   - typeFlows[id]=该类「主干前向边+声明边」合并表（per-type 键化——顶层 stateFlow
+ *     保持 legacy-only 永不并集：跨类型同名状态后继不合并，guard 接线日按 type 取表）
  */
-export function deriveFieldProvision(orgYt: Record<string, unknown> | undefined): FieldProvisionMap {
+export function deriveFieldProvision(
+  orgYt: Record<string, unknown> | undefined,
+  workflows?: TicketWorkflows,
+): FieldProvisionMap {
   const fields = { ...DEFAULT_FIELD_MAP }
   const stateFlow: Record<string, string[]> = {}
   let states: string[] = [...DEFAULT_STATES]
@@ -161,6 +170,38 @@ export function deriveFieldProvision(orgYt: Record<string, unknown> | undefined)
         if (Array.isArray(v) && v.every((s) => typeof s === 'string')) stateFlow[k] = v as string[]
       }
     }
+  }
+  // workflows 折叠（DEV-43）：W-1..W-9 已过判定器（调用序=validate 先于 provision），
+  // 此处只做推导不做校验；不声明=三个可选键不落（旧 map 形状零变化）
+  if (workflows !== undefined && workflows.types.length > 0) {
+    const typeInbox: Record<string, string> = {}
+    const typeFlows: Record<string, Record<string, string[]>> = {}
+    const entities: Record<string, { states: string[] }> = {}
+    for (const t of workflows.types) {
+      const names = t.states.map((s) => s.name)
+      const finals = new Set(t.states.filter((s) => s.final === true).map((s) => s.name))
+      typeInbox[t.id] = t.anchors.inbox
+      // 主干前向边（终态截断——与 core forwardStates 同推导）+ 声明边合并（per-type）
+      const flow: Record<string, string[]> = {}
+      const push = (from: string, to: string): void => {
+        const list = flow[from] ?? (flow[from] = [])
+        if (!list.includes(to)) list.push(to)
+      }
+      for (let i = 0; i < names.length - 1; i++) {
+        const from = names[i] as string
+        if (!finals.has(from)) push(from, names[i + 1] as string)
+      }
+      for (const e of t.edges ?? []) push(e.from, e.to)
+      typeFlows[t.id] = flow
+      // 状态落位：entity 类型进实体档案；无 entity 并入顶层（首现序去重）
+      if (t.entity !== undefined) {
+        const bucket = entities[t.entity] ?? (entities[t.entity] = { states: [] })
+        for (const n of names) if (!bucket.states.includes(n)) bucket.states.push(n)
+      } else {
+        for (const n of names) if (!states.includes(n)) states.push(n)
+      }
+    }
+    return { fields, states, stateFlow, typeInbox, typeFlows, entities }
   }
   return { fields, states, stateFlow }
 }
@@ -385,7 +426,7 @@ export async function importCompanyRepo(opts: RepoImportOptions): Promise<RepoIm
   // 7. 平台字段 provision（端口注入；公司声明 platform: localfile 才走——docs/23-§二「换平台=改配置行」）
   let provisioned = false
   if (opts.platform !== undefined && snapshot.platform.platform === 'localfile') {
-    await opts.platform.fields.provision(deriveFieldProvision(extractOrgYt(sourceFiles['org-config.yaml'] ?? '')))
+    await opts.platform.fields.provision(deriveFieldProvision(extractOrgYt(sourceFiles['org-config.yaml'] ?? ''), snapshot.workflows))
     provisioned = true
   }
 

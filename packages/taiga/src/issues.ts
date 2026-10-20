@@ -164,13 +164,14 @@ export async function createIssue(ctx: TaigaContext, input: IssueCreate): Promis
   if (Object.keys(attributes).length > 0) {
     await ctx.patchAttrValues(created.id, attributes)
   }
-  // 建单落位（docs/25-§3.2 IssueCreate.initialState）：解析序=显式入参 > provision
-  // states[0]（流程初态）> 平台默认态。Taiga 建单恒落平台默认 status（New），若目标
-  // 落位不同则补一次 transition（幂等：已在目标态不重放写）。目标态平台不认识 →
-  // transition 内部显式报错（unknown-state），不静默回落默认态。
+  // 建单落位（docs/25-§3.2 IssueCreate.initialState + DEV-43 docs/18-§2.1.1）：解析序=
+  // 显式入参 > typeInbox[type]（provision 按单据类型查收件态）> states[0]（流程初态）
+  // > 平台默认态。Taiga 建单恒落平台默认 status（New），若目标落位不同则补一次
+  // transition（幂等：已在目标态不重放写）。目标态平台不认识 → transition 内部显式
+  // 报错（unknown-state），不静默回落默认态。
   const landed =
     Object.keys(attributes).length > 0 ? await getIssue(ctx, ctx.ticketId(created.ref)) : await toIssueRecord(ctx, created)
-  const target = input.initialState ?? ctx.fieldMap.initialState()
+  const target = input.initialState ?? ctx.fieldMap.initialStateFor(input.type)
   if (target !== undefined && landed.state !== target) {
     return transitionIssue(ctx, ctx.ticketId(created.ref), target)
   }

@@ -79,7 +79,7 @@
  */
 import { createRegistry, loadAgentConfig, wireRegistry, builtinResolver } from '@studio-next/adapters'
 import { AIWS_DIR, ensureAiwsTree } from '@studio-next/company'
-import { createModelCatalog, fingerprint, parseModelsYaml } from '@studio-next/core'
+import { createModelCatalog, fingerprint, parseModelsYaml, DEFAULT_FLOW_TABLE } from '@studio-next/core'
 import { createGateway, CONTROL_TICKET } from '@studio-next/gateway'
 import type { SignatureContext } from '@studio-next/gateway'
 import { createLocalPlatform } from '@studio-next/localplatform'
@@ -116,6 +116,7 @@ import { CADENCE_SOURCE_MANIFEST, createCadenceSource, createSlaSource, SLA_SOUR
 import { createDefaultAssembler } from './prompt-assembly.ts'
 import type { PromptAssembler } from './prompt-assembly.ts'
 import { nextRunAt, type Scheduler } from './scheduler.ts'
+import { flowsFromWorkflows } from './typeflows.ts'
 import { consumeStopRequest, readStopRequest, STOP_LAST_SEEN_KV_KEY, writeStopResult } from './stop-channel.ts'
 import type { WorkerKeyDeps } from './worker-key.ts'
 import {
@@ -244,8 +245,12 @@ export interface ServeConfig {
   taigaUrl?: string
   /** Taiga 项目 slug（platform: taiga 时必配；公司=项目，docs/30 §6 ③——单据 TicketId 前缀即它） */
   taigaProject?: string
-  /** Taiga 单据承载实体（platform: taiga 时可选；userstory（缺省，docs/32 试点路径）| issue） */
-  taigaEntity?: 'userstory' | 'issue'
+  /**
+   * Taiga 单据承载实体（platform: taiga 时可选；userstory（缺省，docs/32 试点路径）| issue；
+   * task 仅作 workflows 类型流 entity 映射的 provision 档案目标——DEV-43 v1 运行时单实体
+   * CRUD 绑定仍 userstory|issue，docs/18-§2.1.1）
+   */
+  taigaEntity?: 'userstory' | 'issue' | 'task'
   /**
    * Taiga 认证态（platform: taiga 时必配）：password=env TAIGA_USERNAME+TAIGA_PASSWORD
    * （JWT 自动登录+401 自动刷新/重登）；token=env TAIGA_TOKEN(+TAIGA_REFRESH 可续期；无
@@ -471,8 +476,8 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         break
       case 'taigaEntity': {
         const v = str(value, key)
-        if (v !== 'userstory' && v !== 'issue') {
-          throw new Error(`daemon.yaml：taigaEntity 须为 userstory|issue（实得 ${v}）`)
+        if (v !== 'userstory' && v !== 'issue' && v !== 'task') {
+          throw new Error(`daemon.yaml：taigaEntity 须为 userstory|issue|task（实得 ${v}）`)
         }
         cfg.taigaEntity = v
         break
@@ -856,6 +861,12 @@ export function buildServeRuntime(
   // —— 公司面活持有者（docs/38-§2 L1 热重载的替换点）：装配器/cadence 源/热重载 apply 段
   //    统一读此对象——快照整组换（companyState.snapshot = next），闭包零重建
   const companyState: { snapshot: CompanySnapshot } = { snapshot }
+
+  // 类型流表（DEV-43）：workflows 声明 → T:<type> 键（无声明=undefined=不注入，D9）
+  const typeFlows = flowsFromWorkflows(snapshot.workflows)
+  if (typeFlows !== undefined) {
+    log(`[serve] 类型流装载：${Object.keys(typeFlows).length} 类（${Object.keys(typeFlows).join('、')}）——T 键叠缺省表（docs/18-§2.1.1）`)
+  }
   // daemon 网关身份（共享活对象——reload 时 mutate ctx 三字段，署名跟随新组织）
   const identity = daemonIdentity(config, snapshot)
 
@@ -957,6 +968,9 @@ export function buildServeRuntime(
     //（单一事实源，不双源漂移；真单模式=acceptance 配置）；遇 Blind 派发而缺失 →
     // createView fail-closed 明报
     readBlindAcceptance: acceptance,
+    // 类型流注入（DEV-43，docs/18-§2.1.1 D13 合并序）：T 键叠在 DEFAULT_FLOW_TABLE 上；
+    // 无 workflows 声明=不注入（引擎走内置缺省表，现状行为字节不变——D9）
+    ...(typeFlows !== undefined ? { flows: { ...DEFAULT_FLOW_TABLE, ...typeFlows } } : {}),
     ...(config.budgetTicketCapUsd !== undefined ? { budgetTicketCapUsd: config.budgetTicketCapUsd } : {}),
     ...(config.budgetPersonCapUsd !== undefined ? { budgetPersonCapUsd: config.budgetPersonCapUsd } : {}),
   }
@@ -1100,12 +1114,17 @@ export function buildServeRuntime(
         }
         // 纯赋值段（不抛）：快照持有者 → 引擎整组换 → 署名上下文
         companyState.snapshot = next
+        // 类型流热换（N1，DEV-43）：拍边界换表——在途单下拍 decide 对新表重解析
+        //（resolveTicketFlow 同函数；跨边界遇未知态=既有 L1 热重载纪律 NOOP_UNKNOWN_STATE，
+        //  状态权威在平台侧、不猜不动）；无 workflows=flows:undefined=回内置缺省表
+        const nextTypeFlows = flowsFromWorkflows(next.workflows)
         engine.applyCompanyUpdate({
           people: next.people,
           assembler: makeAssembler(),
           defaultPersonId: (next.people[0] as PersonRef | undefined)?.id ?? '',
           deptFallback: next.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback,
           defaultLane: next.departments[0]?.lanes[0] ?? ENGINE_CONFIG_DEFAULTS.defaultLane,
+          ...(nextTypeFlows !== undefined ? { flows: { ...DEFAULT_FLOW_TABLE, ...nextTypeFlows } } : {}),
         })
         identity.ctx.company = next.name
         identity.ctx.dept = next.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback

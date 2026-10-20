@@ -110,6 +110,10 @@ export class FakeTaiga {
     { id: 3, name: 'In progress', slug: 'in-progress' },
     { id: 5, name: 'Done', slug: 'done' },
   ]
+  /** issue 实体状态集（DEV-43 多实体 provision：issue-statuses 端点独立于 userstory） */
+  readonly issueStatuses: Array<{ id: number; name: string; slug: string }> = [{ id: 21, name: 'New', slug: 'new' }]
+  /** task 实体状态集（DEV-43：task-statuses 端点——provision 物化面测试缝） */
+  readonly taskStatuses: Array<{ id: number; name: string; slug: string }> = [{ id: 31, name: 'New', slug: 'new' }]
   /** 自定义属性：四映射维 + 一个不映射的（工号）——证明未映射维读不见 */
   readonly attributes: Array<{ id: number; name: string; type: string }> = [
     { id: 11, name: '类型', type: 'text' },
@@ -289,6 +293,31 @@ export class FakeTaiga {
     // —— 状态集 / 属性集 / 角色（读 + onboard 写面路由）——
     if (method === 'GET' && path === '/api/v1/userstory-statuses') {
       return respond(200, this.statuses.map((s, i) => ({ id: s.id, name: s.name, slug: s.slug, order: i + 1, is_closed: s.id === 5, is_archived: false, color: '#70728F', wip_limit: null, project: 1 })))
+    }
+    // —— issue/task 状态集（DEV-43 多实体 provision；形状对齐 userstory 同族端点） ——
+    if (method === 'GET' && path === '/api/v1/issue-statuses') {
+      return respond(200, this.issueStatuses.map((s, i) => ({ id: s.id, name: s.name, slug: s.slug, order: i + 1, is_closed: false, is_archived: false, color: '#70728F', wip_limit: null, project: 1 })))
+    }
+    if (method === 'POST' && path === '/api/v1/issue-statuses') {
+      const b = (body ?? {}) as { project?: number; name?: string }
+      const name = typeof b.name === 'string' ? b.name : ''
+      if (b.project !== 1 || name.trim() === '') return respond(400, { project: 'This field is required.', name: 'This field is required.' })
+      if (this.issueStatuses.some((s) => s.name === name)) return respond(400, { name: ['Duplicated name'] })
+      const created = { id: this.statusSeq++, name, slug: `smoke-${String(this.statusSeq)}` }
+      this.issueStatuses.push(created)
+      return respond(201, { id: created.id, name, slug: created.slug, order: 10, is_closed: false, is_archived: false, color: '#999999', wip_limit: null, project: 1 })
+    }
+    if (method === 'GET' && path === '/api/v1/task-statuses') {
+      return respond(200, this.taskStatuses.map((s, i) => ({ id: s.id, name: s.name, slug: s.slug, order: i + 1, is_closed: false, is_archived: false, color: '#70728F', wip_limit: null, project: 1 })))
+    }
+    if (method === 'POST' && path === '/api/v1/task-statuses') {
+      const b = (body ?? {}) as { project?: number; name?: string }
+      const name = typeof b.name === 'string' ? b.name : ''
+      if (b.project !== 1 || name.trim() === '') return respond(400, { project: 'This field is required.', name: 'This field is required.' })
+      if (this.taskStatuses.some((s) => s.name === name)) return respond(400, { name: ['Duplicated name'] })
+      const created = { id: this.statusSeq++, name, slug: `smoke-${String(this.statusSeq)}` }
+      this.taskStatuses.push(created)
+      return respond(201, { id: created.id, name, slug: created.slug, order: 10, is_closed: false, is_archived: false, color: '#999999', wip_limit: null, project: 1 })
     }
     if (method === 'POST' && path === '/api/v1/userstory-statuses') {
       // 真机 P80/P81：POST {project, name} 201；重名 400 {"name": ["Duplicated name"]}
@@ -662,7 +691,7 @@ export const TEST_FIELDS: FieldProvisionMap = {
 
 export function makePlatform(
   fake: FakeTaiga,
-  opts?: { pageSize?: number; fields?: FieldProvisionMap; entity?: 'userstory' | 'issue' },
+  opts?: { pageSize?: number; fields?: FieldProvisionMap | undefined; entity?: 'userstory' | 'issue' },
 ): FlowPlatform {
   return createTaigaPlatform({
     baseUrl: TEST_BASE_URL,

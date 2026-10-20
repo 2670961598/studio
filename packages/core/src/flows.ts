@@ -52,6 +52,14 @@ export interface FlowAnchors {
 
 export const DEFAULT_FLOW_ANCHORS: FlowAnchors = { ...DEFAULT_STATES }
 
+/**
+ * 无审批环哨兵（DEV-43，docs/18-§2.1.1）：类型流未声明 approval 锚时的锚点值（空串）。
+ * 构造性安全：decide 5a 比 `successors.includes(approval)`——successors 只含声明状态名
+ * （非空），空串永不命中；5b 比 `issue.state === approval`——能到 5b 的单已过步3状态集
+ * 校验（状态名非空），空串永不相等。即「无待批位」无需改 decide 状态机即安全。
+ */
+export const NO_APPROVAL_ANCHOR = ''
+
 /** 一条显式迁移边（rollback_edges / type_edges 用；mainline 的边由相邻关系隐式给出） */
 export interface FlowEdge {
   from: string
@@ -62,6 +70,12 @@ export interface FlowEdge {
 export interface StateFlow {
   /** 线性主干：相邻状态两两构成前向边（允许重名状态，见文件头注） */
   mainline: readonly string[]
+  /**
+   * 终态集（DEV-43，docs/18-§2.1.1）：forwardStates 推导主干前向边时**左态∈终态集即截断**
+   * （终态无主干后继）。缺省（等级流现状）=不截断=行为不变。flowStates 仍取 mainline
+   * 全集——多终态并列于序表尾部，人类经声明边可达，decide 步3 成员校验不缩水。
+   */
+  finalStates?: readonly string[]
   /** 回退边（复验打回/断路回炉等）；仅两端都在 mainline 状态集内才生效 */
   rollbackEdges?: readonly FlowEdge[]
   /** 类型专属边（技术债 promote 等）；v0 空表占位 */
@@ -70,7 +84,10 @@ export interface StateFlow {
   anchors?: FlowAnchors
 }
 
-/** 等级→状态流表（键形如 'L0'/'L1'/'L2'；公司目录覆盖=整表传入替换） */
+/**
+ * 流表（DEV-43 键域扩展，docs/18-§2.1.1）：`L<n>`（等级流，现状）∪ `T:<type>`（类型流，
+ * 公司 org-config workflows 段声明注入）。公司目录覆盖=整表传入替换。
+ */
 export type FlowTable = Record<string, StateFlow>
 
 /**
@@ -136,6 +153,35 @@ export function flowLevelKey(level: number | undefined): string {
   return level === undefined ? '' : `L${level}`
 }
 
+/**
+ * 单据类型 → 流表键（DEV-43，docs/18-§2.1.1）：`T:<type>`。类型 id 禁冒号
+ * （docs/51 W-1 命名空间隔离）；undefined/空串不产键（直落等级回退）。
+ */
+export function typeFlowKey(type: string | undefined): string {
+  return type === undefined || type === '' ? '' : `T:${type}`
+}
+
+/**
+ * 定流定表（DEV-43 解析序冻结，docs/18-§2.1.1——decide 步2 与 engine flowOf 共用）：
+ *   ① `T:<type>` 命中优先（类型流；命中时不要求 level）
+ *   ② 回退 `L<level>`（等级流，现状语义原样）
+ *   ③ 都未命中 undefined（decide NOOP_UNKNOWN_FLOW / engine 不动，现状语义原样）
+ * type 为 undefined/空串不查 T 键。保留词 bug/task 恒查不到 T 键（docs/51 W-9：
+ * workflows 判定器拒收同 id 声明——断路单「待人定级后派」与岗单 L0 物化语义保持）。
+ */
+export function resolveTicketFlow(
+  table: FlowTable,
+  type: string | undefined,
+  level: number | undefined,
+): StateFlow | undefined {
+  const typeKey = typeFlowKey(type)
+  if (typeKey !== '') {
+    const byType = table[typeKey]
+    if (byType !== undefined) return byType
+  }
+  return resolveFlow(table, flowLevelKey(level))
+}
+
 /** 该流的状态全集（mainline 去重，保持首现顺序） */
 export function flowStates(flow: StateFlow): readonly string[] {
   const seen = new Set<string>()
@@ -184,11 +230,15 @@ export function nextStates(flow: StateFlow, state: string): readonly string[] {
  * 主干前向后继（仅 mainline 相邻边，不含 rollback/type）。
  * decide 的结构性推演（派发就绪/呈批/合并去向）只用它——回退边是"允许的修复路径"，
  * 不是"机器该走的下一步"（例：已交付 --rollback--> 已派发 不得触发再派发）。
+ * 终态截断（DEV-43，docs/18-§2.1.1）：左态∈finalStates 则不产生该前向边——多终态
+ * 并列于序表尾部时，首位终态之后的声明态不是机器主干可达（人类经声明边到达）。
  */
 export function forwardStates(flow: StateFlow, state: string): readonly string[] {
+  const finals = flow.finalStates === undefined ? undefined : new Set(flow.finalStates)
   const out: string[] = []
   for (let i = 0; i < flow.mainline.length - 1; i++) {
     if (flow.mainline[i] === state) {
+      if (finals?.has(flow.mainline[i] as string)) continue // 左态终态：截断
       const next = flow.mainline[i + 1]
       if (next !== undefined && !out.includes(next)) out.push(next)
     }

@@ -45,10 +45,9 @@ import type { IssueRecord, InvokeIntent, TicketId } from '@studio-next/contract'
 import {
   DEFAULT_FLOW_TABLE,
   flowAnchors,
-  flowLevelKey,
   flowStates,
   forwardStates,
-  resolveFlow,
+  resolveTicketFlow,
   type FlowTable,
 } from './flows.ts'
 
@@ -279,7 +278,7 @@ export function intentKeyOf(intent: InvokeIntent): string {
 /**
  * 决策顺序（固定，供 golden trace 与测试锁定；顺序即优先级）：
  *   1. 意图校验与幂等去重（malformed / mismatch / dedup）
- *   2. 定流定表：等级→FlowTable→StateFlow，缺流明报
+ *   2. 定流定表（DEV-43，docs/18-§2.1.1）：类型 T:<type> 优先→等级 L<n> 回退→StateFlow，缺流明报
  *   3. 状态合法性：不在流状态集内=平台自定义态，不动
  *   4. 停摆检查：已派发+静默超阈值 → stall_alarm
  *   5. 状态机推演（锚点+边）：
@@ -303,13 +302,12 @@ export function decide(input: DecisionInput): DecisionOutput {
     return { intentKey, action: noop(issue.id, 'DEDUP_NOOP') }
   }
 
-  // 2. 定流定表
+  // 2. 定流定表（DEV-43 解析序冻结，docs/18-§2.1.1：T:<type> 优先 → L<level> 回退 →
+  //    缺流明报；类型流命中不要求 level——两路都解析不到才 NOOP）
   const level = input.level ?? issue.level
-  if (level === undefined) {
-    return { intentKey, action: noop(issue.id, 'NOOP_UNKNOWN_FLOW') }
-  }
+  const type = input.type ?? issue.type
   const table = input.flows ?? DEFAULT_FLOW_TABLE
-  const flow = resolveFlow(table, flowLevelKey(level))
+  const flow = resolveTicketFlow(table, type, level)
   if (flow === undefined) {
     return { intentKey, action: noop(issue.id, 'NOOP_UNKNOWN_FLOW') }
   }

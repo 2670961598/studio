@@ -42,7 +42,8 @@ export interface IssueCreate {
   parent?: TicketId
   /**
    * 建单落位状态（可选，docs/25-§3.2）：建单时单据落在哪个状态。
-   * 解析序（适配器统一口径）：显式 initialState > FieldProvisionMap.states[0]
+   * 解析序（适配器统一口径）：显式 initialState > FieldProvisionMap.typeInbox[type]
+   * （provision 按单据类型查收件态，DEV-43/docs/18-§2.1.1）> FieldProvisionMap.states[0]
    * （states 按流序声明、首元素=流程初态）> 平台默认态（各平台自带，不猜）。
    * 显式给值服务「不参与派发」的建单方（如定时岗物化的留痕工件落终态）。
    * 这只是建单时的初始落位，不是状态迁移通道——状态推进仍只有 transition() 一条路
@@ -82,6 +83,22 @@ export interface FieldProvisionMap {
   /** 流程状态全集，按流序声明——**首元素=流程初态**（建单落位依据，见 IssueCreate.initialState） */
   states: string[]
   stateFlow: Record<string, string[]>
+  /**
+   * 类型收件态（DEV-43，docs/18-§2.1.1）：type id → 该类流的 inbox 状态名。
+   * 建单落位第二优先级（显式 initialState 之后、states[0] 之前）。
+   */
+  typeInbox?: Record<string, string>
+  /**
+   * 类型状态流（DEV-43）：type id → 该类「主干前向边+声明边」合并表。
+   * per-type 键化（顶层 stateFlow 保持 legacy-only 永不并集——跨类型同名状态的后继
+   * 不合并，guard 接线日按 type 取表）。
+   */
+  typeFlows?: Record<string, Record<string, string[]>>
+  /**
+   * 实体映射档案（DEV-43）：entity → 该实体承载的状态集（entity 声明类型的 states 并集）。
+   * provision 把这些状态建到对应实体工作流（多实体档案面）；运行时单实体路由归 v2。
+   */
+  entities?: Record<string, { states: string[] }>
 }
 
 export interface KbHit {

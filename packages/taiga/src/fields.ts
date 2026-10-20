@@ -25,7 +25,10 @@
  */
 import type { FieldProvisionMap, FieldSchema } from '@studio-next/contract'
 import type { TaigaContext } from './context.ts'
+import { ENTITY_DESCRIPTORS, entityDescriptor } from './entities.ts'
+import type { TaigaEntity } from './entities.ts'
 import { TaigaPlatformError } from './errors.ts'
+import { asArray, asObject, reqString } from './shape.ts'
 import type { PortFieldType } from './fieldmap.ts'
 import { PORT_TYPES } from './fieldmap.ts'
 
@@ -75,6 +78,22 @@ function isStringArrayRecord(v: unknown): v is Record<string, string[]> {
   return Object.values(v).every((x) => isStringArray(x))
 }
 
+/** 类型状态流形状：type id →「状态→string[]」（DEV-43） */
+function isTypeFlowsRecord(v: unknown): v is Record<string, Record<string, string[]>> {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false
+  return Object.values(v).every((x) => isStringArrayRecord(x))
+}
+
+/** 实体档案形状：entity → {states: string[]}（DEV-43） */
+function isEntitiesRecord(v: unknown): v is Record<string, { states: string[] }> {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false
+  return Object.entries(v).every(([k, x]) => {
+    if (typeof x !== 'object' || x === null || Array.isArray(x)) return false
+    if (!(k in ENTITY_DESCRIPTORS)) return false // 值域闸（docs/51 W-7：枚举在平台侧 provision）
+    return isStringArray((x as { states?: unknown }).states)
+  })
+}
+
 /** provision 映射形状校验（与 localplatform isProvisionMap 同口径 + 类型枚举校验） */
 function validateProvisionMap(map: FieldProvisionMap): void {
   if (typeof map !== 'object' || map === null) {
@@ -91,6 +110,15 @@ function validateProvisionMap(map: FieldProvisionMap): void {
   }
   if (map.stateFlow !== undefined && !isStringArrayRecord(map.stateFlow)) {
     throw new TaigaPlatformError('CONFIG_INVALID', 'bad-provision-map', 'provision.stateFlow 必须是「状态→string[]」')
+  }
+  if (map.typeInbox !== undefined && !isPlainStringRecord(map.typeInbox)) {
+    throw new TaigaPlatformError('CONFIG_INVALID', 'bad-provision-map', 'provision.typeInbox 必须是「类型 id→收件状态名」且值非空（DEV-43）')
+  }
+  if (map.typeFlows !== undefined && !isTypeFlowsRecord(map.typeFlows)) {
+    throw new TaigaPlatformError('CONFIG_INVALID', 'bad-provision-map', 'provision.typeFlows 必须是「类型 id→{状态→string[]}」（DEV-43）')
+  }
+  if (map.entities !== undefined && !isEntitiesRecord(map.entities)) {
+    throw new TaigaPlatformError('CONFIG_INVALID', 'bad-provision-map', `provision.entities 必须是「实体→{states}」且实体∈${(Object.keys(ENTITY_DESCRIPTORS) as TaigaEntity[]).join('|')}（DEV-43，docs/51 W-7 值域闸）`)
   }
 }
 
@@ -122,6 +150,24 @@ export async function provisionFields(ctx: TaigaContext, map: FieldProvisionMap)
     if (haveStatus.has(name)) continue
     await ctx.client.request({ method: 'POST', path: `/${ctx.desc.statuses}`, body: { project: projectId, name } })
     haveStatus.add(name)
+  }
+
+  // —— 实体档案状态集（DEV-43，docs/18-§2.1.1）：entity 映射类型的状态建到对应实体
+  //    工作流（多实体档案面；值域闸已在 validateProvisionMap——W-7）。判重同幂等基线：
+  //    GET /{statuses}?project 按名找，缺则 POST。绑定实体的档案走同一端点（缓存由
+  //    末尾 invalidateMeta 统一作废）。typeInbox/typeFlows 不落平台（Taiga 无转换矩阵，
+  //    与 stateFlow 同口径——框架 guard 消费）。
+  for (const [entity, profile] of Object.entries(map.entities ?? {})) {
+    const d = entityDescriptor(entity as TaigaEntity)
+    const res = await ctx.client.request({ method: 'GET', path: `/${d.statuses}`, query: { project: String(projectId) } })
+    const have = new Set(
+      asArray(res.json, d.statuses).map((x) => reqString(asObject(x, d.statuses), 'name', d.statuses)),
+    )
+    for (const name of profile.states) {
+      if (have.has(name)) continue
+      await ctx.client.request({ method: 'POST', path: `/${d.statuses}`, body: { project: projectId, name } })
+      have.add(name)
+    }
   }
 
   // —— 自定义属性：平台名判重，缺则建；同名类型相容即复用 ——
