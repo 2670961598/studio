@@ -1,0 +1,26 @@
+{
+  "vue": {
+    "version": "3.5.44",
+    "file": "vue.esm-browser.prod.js",
+    "bytes": 175436,
+    "sha256": "37d771e9e91c9c7f78d7db53b3e1f43bb7a48ca5f84d41b4aca95a7cebc8eb5b",
+    "license": "MIT",
+    "source": "https://unpkg.com/vue@3.5.44/dist/vue.esm-browser.prod.js"
+  },
+  "naive-ui": {
+    "version": "2.45.3",
+    "file": "naive-ui.prod.mjs",
+    "bytes": 2722579,
+    "sha256": "fae25dc007afac61d007800824a8cd2f9ca1d103696c9211b86f096f54a13d7f",
+    "license": "MIT",
+    "source": "https://unpkg.com/naive-ui@2.45.3/dist/index.prod.mjs"
+  },
+  "echarts": {
+    "version": "6.1.0",
+    "file": "echarts.esm.min.js",
+    "bytes": 1121654,
+    "sha256": "28515f26aa57f87eb1e4ed4eb446927eaf329b5f5e02b4bfd4b0264fea40d1da",
+    "license": "Apache-2.0",
+    "source": "https://unpkg.com/echarts@6.1.0/dist/echarts.esm.min.js"
+  }
+}
