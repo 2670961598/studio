@@ -60,7 +60,7 @@ import {
 import type { PostmortemInput, PostmortemTimelineEntry } from '../../src/evolve/postmortem.ts'
 import { makeUlid } from '../../src/engine/id.ts'
 
-const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/bin.ts')
+const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/cli/main.ts')
 
 let root = ''
 let clockMs = 0

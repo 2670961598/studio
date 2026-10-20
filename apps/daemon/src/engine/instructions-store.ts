@@ -68,8 +68,8 @@ export interface BridgeOverlay {
   bridgeSrc: string
 }
 
-/** dsh-bridge 包内插件源的仓内相对位（monorepo 布局：apps/daemon/src → 仓根） */
-const BRIDGE_SRC_REL = path.join('..', '..', '..', 'packages', 'dsh-bridge', 'src', 'index.ts')
+/** dsh-bridge 包内插件源的仓内相对位（monorepo 布局：apps/daemon/src/engine → 仓根） */
+const BRIDGE_SRC_REL = path.join('..', '..', '..', '..', 'packages', 'dsh-bridge', 'src', 'index.ts')
 
 /**
  * 生成 bridge 插件运行时 overlay：<rootDir>/tmp/dsh-bridge-overlay.yml。

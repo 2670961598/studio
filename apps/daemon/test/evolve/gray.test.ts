@@ -54,7 +54,7 @@ import {
   splitBackupPath,
 } from '../../src/evolve/gray.ts'
 
-const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/bin.ts')
+const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/cli/main.ts')
 
 let root = ''
 

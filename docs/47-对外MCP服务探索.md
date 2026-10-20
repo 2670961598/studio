@@ -145,7 +145,7 @@ makeplane/plane-mcp-server README（详见文末来源总目）。
   token**；TTL；nonce 单次有效；`revoke(ticket)` 关单即吊销（authority 在内存）。
   两个在案疑点与本单直接相关：①nonce 单次有效 vs MCP 会话复用相容性未批；②吊销集
   内存化——跨进程不可见（`worker-key.ts` 头注明示「teeth 依赖 authority 落 store」）。
-- **worker key 签发**（`apps/daemon/src/worker-key.ts`）：`mintWorkerKey` scope=六动词
+- **worker key 签发**（`apps/daemon/src/engine/worker-key.ts`）：`mintWorkerKey` scope=六动词
   **全集**（v0 不细分）——docs/43-条款7 已裁定「六动词全集从缺省降为显式选择」，即 scope
   细分化是既定方向。
 - **契约冻结的工具名**：`EXTERNAL_AI_TOOLS` 十名（25-§4.2）：
@@ -431,7 +431,7 @@ b 落地前的过渡。触发 c 的信号：出现第一个非局域网的外部
   agentcommunicationprotocol.dev/about/mcp-and-a2a（互补分工口径）
 - 本仓代码（亲读）：packages/panel/src/external/{index,server,views}.ts｜packages/api/src/
   index.ts｜packages/gateway/src/{gateway,wkey}.ts｜packages/studio-tools/src/server.ts｜
-  apps/daemon/src/worker-key.ts｜node_modules 内 @modelcontextprotocol/server 2.3.1 dist
+  apps/daemon/src/engine/worker-key.ts｜node_modules 内 @modelcontextprotocol/server 2.3.1 dist
   （server/discover、PerRequestHTTPServerTransport、ScopeChallenge 等导出实测存在）
 - 本仓文档：docs/45（§二三问原文与状态修订）｜docs/24（AI 接入面三层）｜docs/25（§4.1
   GATEWAY_ACTIONS/§4.2 EXTERNAL_AI_TOOLS）｜docs/02（F2 数据边界）｜docs/41（卡2 registry/

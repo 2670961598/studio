@@ -19,7 +19,7 @@
  * 形态对齐先例：
  *   - 端口形态对齐 src/engine/gate.ts（GateRunner 端口 + createDefaultGateRunner 默认实现）——
  *     本文件出 SandboxRunner 端口 + createSandboxRunner 默认实现（可注入替身）。
- *   - 子进程管理对齐 test/crash-injection.test.ts / crash-points.ts 的 spawn 面（真子进程、
+ *   - 子进程管理对齐 test/engine/crash-injection.test.ts / crash-points.ts 的 spawn 面（真子进程、
  *     退出面一次定局、不盲等定时）；超时杀用**进程组 SIGKILL**（adapters killpg 同精神：
  *     shell 包装下杀整组，不留孙进程悬挂；close 事件收口=exit+stdio 冲刷双到，杀后 2s
  *     宽限兜底 fd 被 escaped 进程持有的病态面）。

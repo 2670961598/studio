@@ -42,7 +42,7 @@ import type { ClassifiedError } from '@studio-next/contract'
 import { runCutover } from '../../src/evolve/cutover.ts'
 import type { CutoverOptions, CutoverProbes } from '../../src/evolve/cutover.ts'
 
-const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/bin.ts')
+const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/cli/main.ts')
 
 let root = ''
 

@@ -354,7 +354,7 @@ describe('DEV-27 · 结构闸（宁失败不半成品；跑在克隆产物上—
 
 describe('DEV-27 · CLI 冒烟（studio-next company add <git-url>）', () => {
   it('一条命令安装：exit 0 + 摘要输出 + 落地产物（Node 原生 type-stripping 直跑 bin.ts）', () => {
-    const binPath = fileURLToPath(new URL('../../../apps/daemon/src/bin.ts', import.meta.url))
+    const binPath = fileURLToPath(new URL('../../../apps/daemon/src/cli/main.ts', import.meta.url))
     const workRoot = path.join(root, 'cli-smoke')
     const target = path.join(workRoot, 'src-corp')
     const result = spawnSync(process.execPath, [binPath, 'company', 'add', fixtureRepo, 'src-corp', '--work-root', workRoot, '--by', '制作人-cli'], {

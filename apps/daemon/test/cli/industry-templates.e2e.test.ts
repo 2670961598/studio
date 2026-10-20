@@ -32,7 +32,7 @@ import { createDefaultGateRunner } from '../../src/engine/gate.ts'
 import { createDefaultAssembler } from '../../src/engine/prompt-assembly.ts'
 
 const templatesRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../templates')
-const BIN = fileURLToPath(new URL('../../src/bin.ts', import.meta.url))
+const BIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url))
 
 /** 行业示例包两套（DEV-30 打样面：互联网 + 游戏——docs/43-§三） */
 const CASES = [

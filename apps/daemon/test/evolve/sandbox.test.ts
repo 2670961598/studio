@@ -36,7 +36,7 @@ import type { ClassifiedError } from '@studio-next/contract'
 import { createSandboxRunner, runCandidateSandbox } from '../../src/evolve/sandbox.ts'
 import type { SandboxReport, SandboxRunner } from '../../src/evolve/sandbox.ts'
 
-const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/bin.ts')
+const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/cli/main.ts')
 const NODE = process.execPath // 绝对路径——命令不依赖 PATH
 
 let root = ''

@@ -75,7 +75,7 @@ cd packages/studio-tools && bun run typecheck && bun run test
   "mcpServers": {
     "studio-tools": {
       "command": "node",
-      "args": ["<repo>/apps/daemon/src/studio-tools-stdio.ts"], // stdio 入口：后续单（工厂已备）
+      "args": ["<repo>/apps/daemon/src/cli/studio-tools-stdio.ts"], // stdio 入口：后续单（工厂已备）
       "env": { "STUDIO_TOOLS_WKEY": "<daemon 派工时按单签发注入>" } // 【拟稿】宿主直注通道键名待批
     }
   }
@@ -90,7 +90,7 @@ cd packages/studio-tools && bun run typecheck && bun run test
   "mcpServers": {
     "studio-tools": {
       "command": "node",
-      "args": ["<repo>/apps/daemon/src/studio-tools-stdio.ts"], // 同上：stdio 入口后续单
+      "args": ["<repo>/apps/daemon/src/cli/studio-tools-stdio.ts"], // 同上：stdio 入口后续单
       "env": { "STUDIO_TOOLS_WKEY": "<按单 wkey>" }
     }
   }

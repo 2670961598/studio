@@ -71,7 +71,7 @@ import type { CandidateRow, Ledger } from '@studio-next/store'
 // ————————————————————————— 测试基建 —————————————————————————
 
 const T0 = Date.parse('2026-10-16T00:00:00.000Z')
-const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/bin.ts')
+const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/cli/main.ts')
 
 let root = ''
 let idSeq = 0

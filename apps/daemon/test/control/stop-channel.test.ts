@@ -108,7 +108,7 @@ describe('spawn 冒烟：studio-next stop（控制面优雅停，真 bin 进程�
   it('serve 起真进程 → stop 写请求 → daemon 拍边界优雅停（exit 0）→ 回执落盘 → CLI exit 0', async () => {
     const { spawn } = await import('node:child_process')
     const { mkdirSync } = await import('node:fs')
-    const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/bin.ts')
+    const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/cli/main.ts')
     const dir = path.join(root, 'stop-smoke')
     mkdirSync(dir, { recursive: true })
     const dbPath = path.join(dir, 'ledger.sqlite')
@@ -282,7 +282,7 @@ describe('DEV-41 停机通道重启失忆：残留 stop.request.json × daemon �
     '主复现面（②消费）：写请求→停→重启→新进程照常跑（≥3 拍不死、无停机请求日志）；新停机请求（新 id）仍可正常停',
     { timeout: 90_000 },
     async () => {
-      const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/bin.ts')
+      const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/cli/main.ts')
       const { dir, configPath, dbPath } = makeStation('dev41-consume')
 
       // —— 阶段一：daemon A 起跑 → 写停机请求（R1）→ 拍边界优雅停 ——
@@ -348,7 +348,7 @@ describe('DEV-41 停机通道重启失忆：残留 stop.request.json × daemon �
     '兜底面（①kv 去重）：残留请求文件在场（模拟②改名失败窗口/旧协议残留）→ 重启 → daemon_kv 读回去重，新进程照常跑',
     { timeout: 90_000 },
     async () => {
-      const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/bin.ts')
+      const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/cli/main.ts')
       const { dir, configPath } = makeStation('dev41-kv')
 
       // —— 阶段一：daemon A 起跑 → 停机请求（K1）→ 优雅停（去重位已落 kv） ——

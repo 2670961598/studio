@@ -24,7 +24,7 @@ import { openLedger } from '@studio-next/store'
 import type { CrashPoint } from '../../src/engine/crash-points.ts'
 
 /** daemon CLI 入口（scheduler.test 同款解析手法） */
-export const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/bin.ts')
+export const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/cli/main.ts')
 
 /** serve 配置形态（崩溃注入集用的最小面） */
 export interface ServeConfigSpec {

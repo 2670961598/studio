@@ -5,7 +5,7 @@
  *   - docs/22-§一 唤起源接口：**源是插件**——只产「唤起意图」，没有任何源能直接驱动
  *     worker；意图进主循环（engine.ingest 队列），由状态机决定是否唤起。新源=新注册项
  *     （register 声明 manifest），不动主循环一行；源的增删走进化管线（可配可灰度）。
- *   - docs/22-§三 解耦验收口径三条（本模块测试逐条钉死，test/sources.test.ts）：
+ *   - docs/22-§三 解耦验收口径三条（本模块测试逐条钉死，test/engine/sources.test.ts）：
  *       ① 新增自定义源（示例=watch-file 监听文件变化）注册即生效，零改 engine/ingest；
  *       ② 同一意图（同 dedupKey）投 100 次，主循环只唤起一次（复用 engine ingest 幂等面）；
  *       ③ 关掉（unregister）任一源，其他源与主循环零影响。
@@ -307,7 +307,7 @@ export interface FileWatchSourceOptions {
   /**
    * 启动盲窗补检延迟 ms（缺省 250）：fs.watch（macOS FSEvents）挂载期内文件变化会丢事件
    * ——挂上后 graceMs 再按手动泵路径补检一次（mtime 去抖使补检天然幂等；实测复现见
-   * test/sources.test.ts「真 fs.watch 事件路径」用例头注）。
+   * test/engine/sources.test.ts「真 fs.watch 事件路径」用例头注）。
    */
   graceMs?: number
   /** 日志面（缺省静默） */

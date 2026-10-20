@@ -47,7 +47,7 @@
  *     （packages/dsh-bridge）读文件注入系统提示 persona 前缀段；旧证伪变量 DSH_AGENTS_MD /
  *     DSH_APPEND_SYSTEM_PROMPT_FILE 已移除（docs/31-A1/§5-5，裁决 docs/25-§3.1 v1.5#1）；
  *     插件挂载=provisioning 面（agent.yaml cmd --patch overlay——serve 启动生成，
- *     apps/daemon/src/instructions-store.ts），未挂载时 env 无消费者（注入不发生）；
+ *     apps/daemon/src/engine/instructions-store.ts），未挂载时 env 无消费者（注入不发生）；
  *     原生发现通道（launch cwd 向上扫 AGENTS.md，P-07 实证）与本通道可并存不冲突
  *   - 续跑：resumeWithSession(task, executorSessionId) 已接线（--session-id 透传，P-05
  *     实证形态）；capabilities.session_resume 仍 false——端口开关待「cwd 一致性落调度

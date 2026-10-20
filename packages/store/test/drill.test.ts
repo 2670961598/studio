@@ -4,7 +4,7 @@
  * 两段：
  *   1. runLedgerDrill 进程内全链：全新路径四检查全绿 PASS、重建产物留在库路径；
  *      已存在路径拒演（防误删真实台账，store/drill:target-exists）
- *   2. spawn 冒烟（拟冻结验收命令）：node apps/daemon/src/bin.ts ledger drill <库路径>
+ *   2. spawn 冒烟（拟冻结验收命令）：node apps/daemon/src/cli/main.ts ledger drill <库路径>
  *      → exit 0 + stdout 含「演习 PASS」+ 比对报告；ledger dump / rebuild 往返；用法错误 exit 1
  * 沿 packages/company/test/init.test.ts 的 spawn 风格（process.execPath 直跑 bin.ts）。
  */
@@ -66,7 +66,7 @@ describe('runLedgerDrill（进程内全链）', () => {
 })
 
 describe('spawn 冒烟（拟冻结验收命令：studio-next ledger drill → exit 0 + PASS）', () => {
-  const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../apps/daemon/src/bin.ts')
+  const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../apps/daemon/src/cli/main.ts')
   const run = (args: string[]) => spawnSync(process.execPath, [bin, ...args], { encoding: 'utf8' })
 
   it('ledger drill → exit 0、stdout 含「演习 PASS」与四项比对报告', () => {

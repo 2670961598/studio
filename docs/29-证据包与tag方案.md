@@ -43,7 +43,7 @@
   「init 出模板公司并通过自检」固化成测试。该批 v0.1 提交当时直接落在 dev 线上（早于泳道
   编织；现经 fdcd4d7 编入现行 dev 首父链，祖先关系 `git merge-base --is-ancestor` 成立）。
 - **验收口径对照**（16-§四：「studio-next init 出模板公司并通过自检」）：
-  - 测试内固化冻结验收命令：`node apps/daemon/src/bin.ts init demo --dir <tmp> → exit 0`、
+  - 测试内固化冻结验收命令：`node apps/daemon/src/cli/main.ts init demo --dir <tmp> → exit 0`、
     `validate <tmp>/demo → exit 0`（进程内全链 + spawn 冒烟两段，坏目录 exit 1 带
     「文件:行 [规则] 修法」）。
 - **点位测试**：39 例 / 4 文件全绿（contract 2+23、company dir-cases 6 + init 8；现场跑
@@ -164,9 +164,9 @@
 | P-01 | packages/core/src/decide.ts | submit_approval 列第十动作（「新单→待批」由 daemon 经网关执行） | 认可 |
 | P-02 | packages/core/src/decide.ts | approved 批准信号=布尔入参（落点=平台动作词+daemon 归一） | 认可 |
 | P-03 | packages/core/src/flows.ts | 断路回首批位双读（已派发→新单/待批两读）；type 边 v0 空表待单型冻结 | 认可双收 |
-| P-04 | apps/daemon/src/engine.ts | events.level=max(1, level)（流等级 0 与人员 1..9 两口径，文档补笔） | 认可+补文档 |
-| P-05 | apps/daemon/src/engine.ts | ticket_mirror.created 以 updated 近似（镜像=可重建投影） | 认可 |
-| P-06 | apps/daemon/src/engine.ts + evolve-guard.ts | HEARTBEAT/ESCALATE 零单号语境哨兵单号取 '-'（契约必填） | 认可（或改专属哨兵） |
+| P-04 | apps/daemon/src/engine/engine.ts | events.level=max(1, level)（流等级 0 与人员 1..9 两口径，文档补笔） | 认可+补文档 |
+| P-05 | apps/daemon/src/engine/engine.ts | ticket_mirror.created 以 updated 近似（镜像=可重建投影） | 认可 |
+| P-06 | apps/daemon/src/engine/engine.ts + evolve-guard.ts | HEARTBEAT/ESCALATE 零单号语境哨兵单号取 '-'（契约必填） | 认可（或改专属哨兵） |
 | P-07 | packages/contract/src/schemas/events.ts | attempt 最小 1、level 1..9、零活动日事件挂哨兵单号 | 认可 |
 | P-08 | packages/contract/src/schemas/report.ts | REPORT 必填节=结论/改动/验证（额外节开放、节序不约束），批后冻结进 cases | 认可 |
 | P-09 | packages/contract/CASES.md | dir 域 v1 语义增补说明（M2.2-⑨） | 认可 |
@@ -174,9 +174,9 @@
 | P-11 | packages/yt/src/activity.ts | 游标双形态兼容（规范形优先）+「items 非空必给 nextCursor」自洽语义（docs/27 F3） | 冻结规范形 |
 | P-12 | packages/yt/src/activity.ts | PlatformActivity.kind 5 类归一+未知透传（F4 词表） | 真实例语料后冻结 |
 | P-13 | packages/yt/src/activity.ts | actor=平台侧可归因主体（localplatform=工号/YouTrack=login 并存注明）（F5） | 认可注明 |
-| P-14 | apps/daemon/src/read-tiers.ts | role→tier 映射（main_worker=Full/verifier=Blind/其余 Focused 保守档） | 认可 |
-| P-15 | apps/daemon/src/read-tiers.ts | Focused 评论摘要窗口缺省 5 | 认可 |
-| P-16 | apps/daemon/src/budget-gate.ts + 四家 estimate() | 估算折算系数 v0（chars/token≈4、地板 $0.05/天花板 $8、confidence 0.2） | 认可 v0，v0.6 前按探针样本回归细化 |
+| P-14 | apps/daemon/src/engine/read-tiers.ts | role→tier 映射（main_worker=Full/verifier=Blind/其余 Focused 保守档） | 认可 |
+| P-15 | apps/daemon/src/engine/read-tiers.ts | Focused 评论摘要窗口缺省 5 | 认可 |
+| P-16 | apps/daemon/src/engine/budget-gate.ts + 四家 estimate() | 估算折算系数 v0（chars/token≈4、地板 $0.05/天花板 $8、confidence 0.2） | 认可 v0，v0.6 前按探针样本回归细化 |
 | P-17 | packages/store/src/index.ts（v3 段） | budget_cap REAL(USD)；upsertJob 不清 last_run_at；jobs.status 值域不锁/dueJobs 不按 status 过滤 | 全认可 |
 | P-18 | packages/store/src/index.ts（v4 段） | endWorkRecord status 值域不锁、无此行 false；kv 键命名空间直用 'activity.cursor'/'tick.seq' | 全认可 |
 | P-19 | packages/store/src/index.ts（v5 段） | 列名取舍/值域复制非 import/幂等口径（非终态命中返回既有 id）/边合法性归 core——core↔store 一致性测试已钉死 | 全认可 |
@@ -194,11 +194,11 @@
 | P-26 | docs/27 §五-7（D2） | kimi wire 逐轮求和=turn 总账若证伪的换算预案 | 授权「取最后一条」为回退 |
 | P-27 | docs/27 §五-8（B3） | claude 2.1.277-rc.1 视同达标口径保留 vs 收紧 | 保留 |
 | P-28 | docs/27 §五-9（A6） | dsh --session-id 续跑 v0.6 是否顺带启用 | P-05 实测后定 |
-| P-29 | apps/daemon/src/worker-key.ts | 吊销粒度：ticket 级终局（GATE_FAIL 只删文件）vs 扩 per-key 吊销 API | 维持现实现 |
-| P-30 | apps/daemon/src/worker-key.ts | wkey 注入通道：workspace 文件 vs env 直传（后者动 contract） | 维持文件通道 |
-| P-31 | apps/daemon/src/gated-platform.ts | 控制面操作借道 'comment'+args.op vs 增 ctl-* 动词族（动 contract） | v0 借道，ctl-* 随契约批 |
-| P-32 | apps/daemon/src/sources.ts | watch-file 行内 kind 白名单收窄 webhook 专属 vs 从宽 | v0.8 全通刀收窄 |
-| P-33 | apps/daemon/src/sources.ts | registry manifest 可选（裸源允许） | 进化管线落地时升必填 |
+| P-29 | apps/daemon/src/engine/worker-key.ts | 吊销粒度：ticket 级终局（GATE_FAIL 只删文件）vs 扩 per-key 吊销 API | 维持现实现 |
+| P-30 | apps/daemon/src/engine/worker-key.ts | wkey 注入通道：workspace 文件 vs env 直传（后者动 contract） | 维持文件通道 |
+| P-31 | apps/daemon/src/engine/gated-platform.ts | 控制面操作借道 'comment'+args.op vs 增 ctl-* 动词族（动 contract） | v0 借道，ctl-* 随契约批 |
+| P-32 | apps/daemon/src/engine/sources.ts | watch-file 行内 kind 白名单收窄 webhook 专属 vs 从宽 | v0.8 全通刀收窄 |
+| P-33 | apps/daemon/src/engine/sources.ts | registry manifest 可选（裸源允许） | 进化管线落地时升必填 |
 | P-34 | packages/store/src/index.ts（v2） | people 表无 company 列（工号全局唯一前提） | 认可前提+04 补笔 |
 | P-35 | packages/store/src/index.ts（v2） | DeptNode.name/level/relations 与 PersonRef 扩列不镜像——是否补列 | 暂不扩，编辑中心单统一 |
 | P-36 | packages/store/src/index.ts（v2） | 镜像收敛策略（已删人/部门不剔除） | 维持 personnel_events 流程现状 |
@@ -215,15 +215,15 @@
 |---|---|---|---|
 | P-43 | docs/28 §七.2 | 编辑中心 EC-①..⑱ 全列（草稿存储/批示流/写回九步/API 面/安全面/验收口径冻结候选） | 逐条过目（呈批稿本体） |
 | P-44 | docs/27 §三/§五-6 | 探针集 v0 八单设计（P-01..P-08）+题目库冻结与写权限收制作人专户 | 过目冻结 |
-| P-45 | apps/daemon/src/evolve-guard.ts | 框架资产清单样例集=三件（AGENTS.md/cases.json/docs/20）；类型标注进清单归真单刀 | 认可三件起步 |
-| P-46 | apps/daemon/src/evolve-guard.ts | 空库首启跳过语义（empty-ledger 观察模式，首启不误报） | 认可 |
-| P-47 | apps/daemon/src/budget-gate.ts | duplicate=沿用（失败保留重派：一笔预留服务 N 次尝试至 settle） | 认可（否决失败释放案） |
-| P-48 | apps/daemon/src/budget-gate.ts | 双行落账顺序 issue 先 person 后（半行态恒 duplicate→绝不双派）+settle 桥降级 | 认可 |
-| P-49 | apps/daemon/src/budget-gate.ts | 态 B 自报估算 0 额时 reserve 照落（审计轨迹） | 认可 |
-| P-50 | apps/daemon/src/engine.ts | 断路器状态进程内（重启清零）、持久化拟走 events 派生 | 认可 v0，持久化列后续单 |
-| P-51 | apps/daemon/src/engine.ts | 呈批迁移 submit_approval v0 直迁平台不落事件（呈批事件名待批示） | 批事件名（建议 APPROVE_SUBMIT） |
-| P-52 | apps/daemon/src/engine.ts + scheduler.ts | 岗单据物化口径（type=task/level=0 走 L0 流/assignee=job.role） | 认可 |
-| P-53 | apps/daemon/src/gate.ts | REPORT/summary 约定文件名（workspace 约定）+sidecar 不存在不拦收 | 认可 |
+| P-45 | apps/daemon/src/evolve/evolve-guard.ts | 框架资产清单样例集=三件（AGENTS.md/cases.json/docs/20）；类型标注进清单归真单刀 | 认可三件起步 |
+| P-46 | apps/daemon/src/evolve/evolve-guard.ts | 空库首启跳过语义（empty-ledger 观察模式，首启不误报） | 认可 |
+| P-47 | apps/daemon/src/engine/budget-gate.ts | duplicate=沿用（失败保留重派：一笔预留服务 N 次尝试至 settle） | 认可（否决失败释放案） |
+| P-48 | apps/daemon/src/engine/budget-gate.ts | 双行落账顺序 issue 先 person 后（半行态恒 duplicate→绝不双派）+settle 桥降级 | 认可 |
+| P-49 | apps/daemon/src/engine/budget-gate.ts | 态 B 自报估算 0 额时 reserve 照落（审计轨迹） | 认可 |
+| P-50 | apps/daemon/src/engine/engine.ts | 断路器状态进程内（重启清零）、持久化拟走 events 派生 | 认可 v0，持久化列后续单 |
+| P-51 | apps/daemon/src/engine/engine.ts | 呈批迁移 submit_approval v0 直迁平台不落事件（呈批事件名待批示） | 批事件名（建议 APPROVE_SUBMIT） |
+| P-52 | apps/daemon/src/engine/engine.ts + scheduler.ts | 岗单据物化口径（type=task/level=0 走 L0 流/assignee=job.role） | 认可 |
+| P-53 | apps/daemon/src/engine/gate.ts | REPORT/summary 约定文件名（workspace 约定）+sidecar 不存在不拦收 | 认可 |
 | P-54 | apps/daemon/src/serve.ts | 网关签名上下文取快照首部门+公司级（控制面无人员档案） | 认可 |
 | P-55 | packages/studio-tools/README.md | CLI 挂载形态 P 系列待核（dsh 插件/claude --mcp-config） | 真机核实前不当实锤（无需现在批） |
 | P-56 | docs/25 §4.1 | wkey ttl 语义注记（时长输入/时刻入 token） | 认可注记 |

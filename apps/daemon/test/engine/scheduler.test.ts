@@ -709,7 +709,7 @@ describe('spawn 冒烟：studio-next serve（jobs: true，SIGINT 优雅停）', 
       const { spawn } = await import('node:child_process')
       const { writeFileSync, mkdirSync } = await import('node:fs')
       const { fileURLToPath } = await import('node:url')
-      const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/bin.ts')
+      const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/cli/main.ts')
       const dir = path.join(root, 'serve-smoke')
       mkdirSync(dir, { recursive: true })
       const dbPath = path.join(dir, 'ledger.sqlite')

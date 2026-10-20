@@ -2,7 +2,7 @@
  * crash-points —— 崩溃注入五点受控测试缝（F3-11，v0.10）
  *
  * 【受控测试缝声明——非生产行为】
- * 本文件是崩溃注入回归集（apps/daemon/test/crash-injection.test.ts）的注入机制：
+ * 本文件是崩溃注入回归集（apps/daemon/test/engine/crash-injection.test.ts）的注入机制：
  * `SN_CRASH_POINT=<点名>` 环境变量开启后，crashHook(point) 在命中点 process.kill(SIGKILL)
  * 自杀（硬杀——验证的是**非优雅死**后的恢复，不是优雅停机）。**未设环境变量=零行为**：
  * 五处调用点进入生产代码（engine.ts）但默认 no-op，对生产路径无任何影响。
@@ -32,7 +32,7 @@
  *
  * 落点疑点（上报）：docs/17-§10 将五点记为「contract 包测试集」，但真进程 SIGKILL 硬杀+
  * 重启只能由 daemon 侧 spawn 测试承载（contract runner 跑不了进程生命周期）——本套按实现单
- * 落 apps/daemon/test/crash-injection.test.ts，契约面（恢复判据的纯函数部分）已在
+ * 落 apps/daemon/test/engine/crash-injection.test.ts，契约面（恢复判据的纯函数部分）已在
  * core/store 既有测试覆盖。
  */
 /** 五点名（冻结表；as const——成员即类型） */

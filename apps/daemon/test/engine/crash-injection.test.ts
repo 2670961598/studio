@@ -18,7 +18,7 @@
  *
  * 诚实边界（如实降级与冻结，不上滤镜）：
  *   - fake 平台随进程失忆（单据/活动流在 serve 进程内存）——重启后的等价工作再驱动由
- *     「重挂欠账岗」承载（票号 T-1 重建=真实平台单据存续的模拟面；见 test/crash-points.ts
+ *     「重挂欠账岗」承载（票号 T-1 重建=真实平台单据存续的模拟面；见 test/engine/crash-points.ts
  *     头注）。重挂补偿的是 fake 的失忆，判重仍全以台账事件（receipt）为准。
  *   - ③ harvest-verdict：DISPATCH 有账、GATE_PASS 无账的孤儿在途——R-B 已转正（docs/38-§2
  *     「在途接管收口」：serve 启动例行接管 work_records running，崩溃注入测试语义转正为
