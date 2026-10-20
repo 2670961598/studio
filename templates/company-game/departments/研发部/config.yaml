@@ -1,0 +1,29 @@
+# 研发部 · 部门章程与规定（游戏公司示例包）
+#
+# 契约依据：docs/04-§二（部门领导配置 = 本文件；leader 指向工号）
+
+name: 研发部
+path: departments/研发部
+level: 3 # 部门层级 = 目录嵌套深度
+parent: null # 根部门
+leader: GAME-1 # 主管工号（指向 people/ 内人事档案）
+functions: # 部门职能
+  - 交付
+lanes: # 泳道 = 资源标签 + 并行开发单元（一泳道一 worker 一分支）
+  - core # 引擎主线一条道：构建可用性高于一切
+reports_to: null # 汇报线：根部门
+
+# 部门规定（部门内部规则；不得与 charter.md 的红线冲突）
+rules:
+  - 一切交付以落盘证据为准（REPORT + 闸门 exit=0，docs/17-§6）
+  - 引擎改动走 core 泳道一条道；内容创作并行走内容部 content 泳道，不阻塞主线（charter 第五条）
+  - 品质红线：崩溃率与关键阻断数是硬口径，超线的版本不发布（charter 第三条）
+  - 热更包改动与整包改动同规——可灰度、可回滚、留证据
+  - 在途单一律挂泳道租约，忙则顺延不抢锁
+
+# 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}
+relations: []
+
+# 本部门名下的定时岗（清单与 org-config.yaml 的 jobs 段保持一致）
+jobs:
+  - game-build-smoke # 构建冒烟：工作日早 9 点

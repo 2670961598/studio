@@ -1,0 +1,36 @@
+# 依赖清单 · 互联网公司示例（docs/43-§四「员工的行为面」）
+#
+# 属性值 → dsh 插件映射：员工档案属性命中 → 该插件对本员工启用 → 框架替他安装
+# （安装目标=隔离插件根，源=公司包内 plugins/ 目录优先；版本语义见 docs/43-§十-6）。
+#
+# 本示例三条绑定覆盖三种命中面：
+#   1. role 命中（NET-2 是前端工程师）→ dsh-web-test ^1.2（包内自带 → 导入即装）
+#   2. dept 命中（研发部成员，path 全量+末段名双候选——docs/43-§十-5）→ dsh-web-test
+#      1.2.0（精确版形态；与上一条构成约束并集，1.2.0 同时满足，无 conflict）
+#   3. skills 命中（GRO-1 的技能表含 analytics）→ dsh-metrics-board ^0.4（包内无源 →
+#      默认进安装报告 missing 面如实可见、不阻断导入——依赖清单同时是能力声明，
+#      docs/43-§十-7 / 51-D-3）
+#
+# attr 只收档案已知键封闭枚举：role/dept/level/skills/executor/status（51-C-7）。
+
+schema: studio-next/dependencies@1
+
+bindings:
+  - when:
+      attr: role
+      is: 前端工程师
+    plugins:
+      - name: dsh-web-test
+        version: "^1.2"
+  - when:
+      attr: dept
+      is: 研发部
+    plugins:
+      - name: dsh-web-test
+        version: "1.2.0"
+  - when:
+      attr: skills
+      is: analytics
+    plugins:
+      - name: dsh-metrics-board
+        version: "^0.4"

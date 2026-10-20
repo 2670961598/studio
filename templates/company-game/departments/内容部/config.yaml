@@ -1,0 +1,27 @@
+# 内容部 · 部门章程与规定（游戏公司示例包）
+#
+# 契约依据：docs/04-§二（部门领导配置 = 本文件；leader 指向工号）
+
+name: 内容部
+path: departments/内容部
+level: 2
+parent: null # 根部门（与研发部平级；游戏公司第二轴=内容创作）
+leader: GAME-2 # 主管工号（指向 people/ 内人事档案）
+functions: # 部门职能
+  - 内容创作
+lanes: # 泳道 = 资源标签 + 并行开发单元
+  - content # 内容泳道：关卡与文案并行位，不阻塞引擎主线
+reports_to: null
+
+# 部门规定（部门内部规则；不得与 charter.md 的红线冲突）
+rules:
+  - 赛季与版本节奏是契约：对外承诺的档期变更必须走批示并留痕（charter 第五条）
+  - 涉及玩家社区可见的文案与活动，先过本地化与合规检查，再动手（charter 第三条）
+  - 玩家反馈巡逻岗（game-feedback-patrol）的响应人：口碑异动首响 30 分钟内
+
+# 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}
+relations: []
+
+# 本部门名下的定时岗（清单与 org-config.yaml 的 jobs 段保持一致）
+jobs:
+  - game-feedback-patrol # 玩家反馈巡逻：每小时

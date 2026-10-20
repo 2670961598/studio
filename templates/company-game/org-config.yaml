@@ -1,0 +1,133 @@
+# Studio Next · 行业示例公司包 · 游戏公司（templates/company-game）
+#
+# 契约依据：docs/43-§三（行业模板包：同 schema、不同资产——「下载即可开一家游戏公司」）
+# 与 docs/43-§二（org-config schema 冻结契约）；目录契约见 docs/51-契约 A/B。
+#
+# 本文件与 templates/company-internet（互联网公司）共用**同一张 schema**（org-config/v1）：
+# 行业差异全部表达在资产——charter / prompts 战役 / jobs 定时岗 / dependencies 依赖清单，
+# 不动 schema（docs/43-§二末条）。
+#
+# 上手说明见 README.md；传播通道=git 网址即公司（docs/43-§一）：
+#   studio-next company add <本包的 git-url> [名] --work-root <目录>
+
+schema: org-config/v1
+
+company:
+  name: 星火游戏工作室 # 公司名（公司层提示词 L1 的内容源之一）
+  slug: game-corp # 概览路由 http://<host>:8789/<slug>/...；升级通道按此认家
+  mission: 把创意变成玩家愿意停留的世界，用版本节奏证明品质 # 使命（L1）
+  charter_ref: charter.md # 公司章程路径（相对公司目录根）
+  level: 3 # 公司等级 2-9；3 级=多部门协作的完整工作室
+  level_distribution: # 等级分布（人数必须与 people[].level 实数相等）
+    3: 1 # 主程 1 名
+    2: 2 # 测试工程师 / 关卡设计师 各 1 名
+  platform: localfile # 声明性平台绑定（docs/23-§二：换平台=改配置行；导入流据此走字段 provision）
+
+# 部门索引：游戏公司的两轴=引擎交付 + 内容创作
+departments:
+  - name: 研发部
+    path: departments/研发部
+    leader: GAME-1 # 主管工号（指向 people 索引与人事档案）
+    level: 3
+    parent: null # 根部门
+    lanes: [core] # 泳道 = 资源标签 + 并行开发单元（引擎主线一条道）
+    functions: [交付]
+    relations: [] # 跨部门关系（本模板最小面；扩展形见 docs/25 DeptRelation）
+  - name: 内容部
+    path: departments/内容部
+    leader: GAME-2
+    level: 2
+    parent: null
+    lanes: [content] # 内容泳道：关卡与文案并行位，不阻塞引擎主线
+    functions: [内容创作]
+    relations: []
+
+# 人员索引（只留派工索引；职责正文以 departments/**/people/<工号>.md 档案为准）
+people:
+  - id: GAME-1 # 工号 = 文件名 = 永不变主键
+    name: 主程
+    login: game-lead # YouTrack 账号锚点（账号=等级锚点，工号=人）
+    level: 3
+    dept: departments/研发部
+    role: 主程 # 依赖清单 role 命中位：主程 → dsh-asset-check（见 dependencies.yaml）
+    reports_to: null
+    skills: [unity, csharp] # 技能本体（内部工种映射表，不用自由文本）
+    status: active
+    executor: dsh # executor 偏好；v1 唯一保证面=dsh（docs/43-§六）
+    file: departments/研发部/people/GAME-1.md
+  - id: GAME-3
+    name: 测试工程师
+    login: game-qa
+    level: 2
+    dept: departments/研发部
+    role: 测试工程师
+    reports_to: GAME-1 # 汇报线（上级工号）
+    skills: [qa]
+    status: active
+    executor: dsh
+    file: departments/研发部/people/GAME-3.md
+  - id: GAME-2
+    name: 关卡设计师
+    login: game-design
+    level: 2
+    dept: departments/内容部
+    role: 关卡设计师
+    reports_to: null
+    skills: [leveldesign] # 技能本体；内容部成员 → dsh-loc-lint（缺源=能力声明面）
+    status: active
+    executor: dsh
+    file: departments/内容部/people/GAME-2.md
+
+# 定时岗清单（04-§三 D9 通用模型）：游戏公司的两岗=构建冒烟 + 玩家反馈巡逻
+jobs:
+  - id: game-build-smoke # 构建冒烟：工作日早 9 点跑一轮主线构建与冒烟检查
+    dept: departments/研发部
+    cron: "0 9 * * 1-5" # 本地时区（周一至周五）
+    role: 主程
+    level: 2
+    type: smoke # 冒烟岗：构建可用性检查，产出冒烟纪要（任务类型自由扩展，框架不写死）
+    model_tier: low
+    budget_cap: 1 # USD/次
+    output: reports/研发部/
+    sla: # 岗位运作规格（docs/35-§3）
+      first-ack: 30m
+  - id: game-feedback-patrol # 玩家反馈巡逻：每小时扫一次反馈面，异动首响 30 分钟内
+    dept: departments/内容部
+    triggers: # 节奏档位（与 cron 恰给其一——docs/35-§3；hourly 不收 at）
+      cadence: hourly
+    role: 关卡设计师
+    level: 2
+    type: patrol # 巡逻岗：反馈面/口碑异动巡检，产出巡逻纪要
+    model_tier: low
+    budget_cap: 1
+    output: reports/内容部/
+    sla:
+      first-ack: 30m
+    escalate: # 升级链档：30 分钟无人认领 → 值守面（docs/35-§3）
+      - after: 30m
+        unacked: game-lead
+
+# YouTrack 账号锚点映射（账号=等级锚点，不随新增公司而新增账号）
+accounts:
+  - login: game-lead
+    level: 3
+    note: 星火游戏：主程等级锚点
+  - login: game-qa
+    level: 2
+    note: 星火游戏：测试工程师等级锚点
+  - login: game-design
+    level: 2
+    note: 星火游戏：关卡设计师等级锚点
+
+# YouTrack 字段/状态流映射覆盖（公司可整体替换；fields 供导入流 provision——docs/23）
+yt:
+  project: GAME # 一公司一项目（N1：短名=公司代号）
+  starting_number: 1
+  fields:
+    state: State
+    dept: 部门
+    level: 等级
+  flows: {} # 空=走框架默认 flow_by_level 模板（docs/18-§二）
+
+# executor 偏好覆盖（缺省继承框架级 agent.yaml；people[].executor 已逐人声明）
+executors: {}

@@ -1,0 +1,5 @@
+# dsh-asset-check 的 dsh.bundle 补丁（docs/34-§3.1 insert 语法铁律：insert 键包完整条目）
+- insert:
+    - id: dsh-asset-check
+      name: ./src/index.mjs
+      config: {}
