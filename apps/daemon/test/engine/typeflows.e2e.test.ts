@@ -28,7 +28,7 @@ import type { CompanySnapshot, FlowPlatform, PersonRef } from '@studio-next/cont
 import { openLedger, type Ledger } from '@studio-next/store'
 import { ENGINE_CONFIG_DEFAULTS, createEngine, type Engine, type TickReport } from '../src/engine.ts'
 import { createFakeAdapter, createFakePlatform } from '../src/fakes.ts'
-import { flowsFromWorkflows } from '../src/typeflows.ts'
+import { flowsFromWorkflows } from '../src/engine/typeflows.ts'
 import { createDefaultGateRunner } from '../src/gate.ts'
 import { createDefaultAssembler } from '../src/prompt-assembly.ts'
 

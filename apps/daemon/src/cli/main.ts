@@ -89,7 +89,7 @@
  *   serve --config <daemon.yaml>
  *       常驻主循环（v0.5）：七相位引擎 + 心跳日志；SIGINT/SIGTERM 优雅停（等当前拍收口→
  *       在途 drain→关台账）。配置最小面 {db, platform: localfile|fake, company, rootDir,
- *       tickMs, …}（扁平 YAML 子集，见 src/serve.ts 头注）；demo 模式=fake 全家桶零外部依赖
+ *       tickMs, …}（扁平 YAML 子集，见 src/assembly/serve.ts 头注）；demo 模式=fake 全家桶零外部依赖
  *   reload [--company <slug>] [--root <工位根>] [--config <daemon.yaml>] [--timeout <ms>]
  *       L1 配置热重载手动触发（docs/38-§2 L1 / §4 R-A）：向运行中的 daemon 发重载请求
  *       （控制面文件通道 <rootDir>/control/）并等回执——daemon 在拍边界重走公司目录装载面
@@ -105,7 +105,7 @@
  *       DEV-41：daemon 消费请求后改名 .consume（去重位落 daemon_kv 跨重启）——残留
  *       请求不再使重启进程一拍自停；回执文件保留，本命令轮询按 id 匹配不受影响。
  *   （v0 诚实边界：真 dsh / 真 YouTrack / 网关 wkey / 审批流 / localfile 平台均未接线——
- *     逐项清单见 src/serve.ts 与 src/engine/engine.ts 头注）
+ *     逐项清单见 src/assembly/serve.ts 与 src/engine/engine.ts 头注）
  *
  * argv 解析零依赖手写（单命令薄壳不值得引库；16-§二 选型纪律：引新依赖须登记选型表）。
  * 退出码：0 成功（sandbox 判定 PASS/FAIL 均 0——红是档案面非命令错误；gray 判定面回滚/关窗/守夜均 0——回滚是合法判定结果非命令错误）｜1 用法错误 / 校验不通过 / init 失败 / 演习 FAIL / panel 失败 / overview 失败 / external 失败 / candidates 失败 / sandbox 链面失败（库/候选/状态/写入窗）/ cutover 链面失败（双闸/备份/写/复核/迁移/落账——失败已回滚）/ gray 链面失败（无窗候选/备份缺失/回滚面失败——窗保持 open 待处置）/ postmortem 失败 / serve 配置错｜

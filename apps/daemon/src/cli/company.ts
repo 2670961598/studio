@@ -8,7 +8,7 @@ import type { CreatePlatform } from '@studio-next/company'
 import { createLocalPlatform } from '@studio-next/localplatform'
 import { openLedger } from '@studio-next/store'
 import type { FlowPlatform } from '@studio-next/contract'
-import { seedJobs } from '../serve.ts'
+import { seedJobs } from '../assembly/serve.ts'
 import { USAGE } from './usage.ts'
 import { errText, parseArgv } from './argv.ts'
 

@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { openLedger, type Ledger } from '@studio-next/store'
-import { takeOverRunningWorkRecords } from '../../src/serve.ts'
+import { takeOverRunningWorkRecords } from '../../src/assembly/serve.ts'
 
 const dirs: string[] = []
 afterAll(async () => {

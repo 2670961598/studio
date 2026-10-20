@@ -51,7 +51,7 @@
 import type { EventRecord, InvokeIntent, InvokeSource, ScheduledJob, SourceManifest } from '@studio-next/contract'
 import { parseJobOps } from '@studio-next/company'
 import type { Ledger } from '@studio-next/store'
-import { makeUlid } from './id.ts'
+import { makeUlid } from './tools/id.ts'
 import { nextRunAt } from './scheduler.ts'
 
 // ————————————————————————— 源名与 manifest（22-§二 内置源表延伸行） —————————————————————————

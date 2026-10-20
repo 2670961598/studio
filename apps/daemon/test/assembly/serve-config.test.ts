@@ -11,7 +11,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { parseDaemonConfig, wirePlatform, type ServeConfig } from '../../src/serve.ts'
+import { parseDaemonConfig, wirePlatform, type ServeConfig } from '../../src/assembly/serve.ts'
 
 const TAIGA_YAML = [
   'db: ./var/ledger.sqlite',

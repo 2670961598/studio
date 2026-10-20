@@ -101,7 +101,7 @@ export const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
       models: <models.yaml> 装载价目表→派发前预算闸估算校准（态 A；缺省态 B=适配器自报），
       预算预留-结算不落即不派（20-§六.8）；companyDir 给定时接 L1 配置热重载（指纹自动+
       reload 手动，reloadWatch 缺省开）；demo 模式=fake 全家桶零外部依赖
-      （真 dsh/YouTrack/网关未接线，见 src/serve.ts 头注）
+      （真 dsh/YouTrack/网关未接线，见 src/assembly/serve.ts 头注）
   studio-next reload [--company <slug>] [--root <工位根>] [--config <daemon.yaml>] [--timeout <ms>]
       L1 配置热重载手动触发（docs/38-§2 L1 / §4 R-A）：向运行中的 daemon 发重载请求（控制面
       文件通道 <rootDir>/control/reload.request.json）并轮询回执（缺省 15s）——daemon 在拍边界

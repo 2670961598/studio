@@ -191,7 +191,7 @@ describe('spawn 冒烟：studio-next stop（控制面优雅停，真 bin 进程�
  * 读到残留 stop.request.json 当新请求消费，新进程起一拍即自我停机（实测：taiga6 起来 1 拍
  * 即优雅停；应急=清 control 目录重启）。
  *
- * 修复面（src/control/stop-channel.ts + src/serve.ts，docs/17-§2 拍边界纪律不变）：
+ * 修复面（src/control/stop-channel.ts + src/assembly/serve.ts，docs/17-§2 拍边界纪律不变）：
  *   ① 去重位落 daemon_kv（键 stop.lastSeenId）——重启读回，与请求 id 比对去重；
  *   ② 请求消费后原子改名 .consume——live 面清空，新进程见无请求即正常起；
  *      回执文件保留（CLI 轮询按 id 匹配，兼容面不动）。

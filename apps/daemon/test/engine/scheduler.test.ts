@@ -39,7 +39,7 @@ import {
   parseDaemonConfig,
   seedJobs,
   type ServeConfig,
-} from '../../src/serve.ts'
+} from '../../src/assembly/serve.ts'
 
 // ————————————————————————— 测试基建 —————————————————————————
 

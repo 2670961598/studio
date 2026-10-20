@@ -43,7 +43,7 @@ import {
   SCHEDULER_SOURCE_NAME,
   SCHEDULER_SOURCE_MANIFEST,
 } from '../../src/engine/sources.ts'
-import { buildServeRuntime, DEMO_SNAPSHOT, parseDaemonConfig, type ServeConfig } from '../../src/serve.ts'
+import { buildServeRuntime, DEMO_SNAPSHOT, parseDaemonConfig, type ServeConfig } from '../../src/assembly/serve.ts'
 
 // ————————————————————————— 测试基建 —————————————————————————
 

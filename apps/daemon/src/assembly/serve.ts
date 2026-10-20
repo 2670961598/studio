@@ -104,20 +104,20 @@ import {
   type EngineConfig,
   type TickDecisionEntry,
   type TickReport,
-} from './engine/engine.ts'
-import { runEvolveStartupSelfCheck, type EvolveSelfCheckReport, type FrozenAsset } from './evolve/evolve-guard.ts'
-import { createFakeAdapter, createFakePlatform } from './engine/fakes.ts'
-import { createGatedPlatform } from './engine/gated-platform.ts'
-import { createDefaultGateRunner, createAcceptanceGateRunner } from './engine/gate.ts'
-import { answerReloadNoCompanyDir, createHotReload, type HotReload } from './control/hot-reload.ts'
-import { makeUlid } from './engine/id.ts'
-import { provisionDshBridgeOverlay } from './engine/instructions-store.ts'
-import { CADENCE_SOURCE_MANIFEST, createCadenceSource, createSlaSource, SLA_SOURCE_MANIFEST } from './engine/jobs-sources.ts'
-import { createDefaultAssembler } from './engine/prompt-assembly.ts'
-import type { PromptAssembler } from './engine/prompt-assembly.ts'
-import { nextRunAt, type Scheduler } from './engine/scheduler.ts'
-import { consumeStopRequest, readStopRequest, STOP_LAST_SEEN_KV_KEY, writeStopResult } from './control/stop-channel.ts'
-import type { WorkerKeyDeps } from './engine/worker-key.ts'
+} from '../engine/engine.ts'
+import { runEvolveStartupSelfCheck, type EvolveSelfCheckReport, type FrozenAsset } from '../evolve/evolve-guard.ts'
+import { createFakeAdapter, createFakePlatform } from '../engine/fakes.ts'
+import { createGatedPlatform } from '../engine/gated-platform.ts'
+import { createDefaultGateRunner, createAcceptanceGateRunner } from '../engine/gate.ts'
+import { answerReloadNoCompanyDir, createHotReload, type HotReload } from '../control/hot-reload.ts'
+import { makeUlid } from '../engine/id.ts'
+import { provisionDshBridgeOverlay } from '../engine/instructions-store.ts'
+import { CADENCE_SOURCE_MANIFEST, createCadenceSource, createSlaSource, SLA_SOURCE_MANIFEST } from '../engine/jobs-sources.ts'
+import { createDefaultAssembler } from '../engine/prompt-assembly.ts'
+import type { PromptAssembler } from '../engine/prompt-assembly.ts'
+import { nextRunAt, type Scheduler } from '../engine/scheduler.ts'
+import { consumeStopRequest, readStopRequest, STOP_LAST_SEEN_KV_KEY, writeStopResult } from '../control/stop-channel.ts'
+import type { WorkerKeyDeps } from '../engine/worker-key.ts'
 import {
   createFileWatchSource,
   createSchedulerSource,
@@ -125,7 +125,7 @@ import {
   FILE_WATCH_MANIFEST,
   SCHEDULER_SOURCE_MANIFEST,
   type SourceRegistry,
-} from './engine/sources.ts'
+} from '../engine/sources.ts'
 
 // ————————————————————————— 配置 —————————————————————————
 
@@ -1338,7 +1338,7 @@ export async function runServe(configPath: string): Promise<ServeResult> {
         : 'fake 平台（demo）'
   const execMode = config.agentYaml !== undefined ? `真 executor（agent.yaml=${config.agentYaml}）` : 'fake executor（demo）'
   const gateMode = realGateMode(config) ? '真验收闸门（冻结验收命令真执行）' : '占位闸门（exit0 模拟）'
-  console.log(`[serve] 栈形态：${stackMode} + ${execMode} + ${gateMode}（边界见 src/serve.ts 头注）`)
+  console.log(`[serve] 栈形态：${stackMode} + ${execMode} + ${gateMode}（边界见 src/assembly/serve.ts 头注）`)
   // 唤起源统一启动（22-§一）：各源 start(emit)——emit 统一进引擎 ingest 队列，
   // 下一拍 state-diff 前消费；单源启动异常由注册表隔离（捕获+计数+继续，src/engine/sources.ts）
   sources.startAll((intent) => {

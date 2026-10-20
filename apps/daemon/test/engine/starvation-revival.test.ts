@@ -43,7 +43,7 @@ import {
 import { createFakeAdapter, createFakePlatform } from '../../src/engine/fakes.ts'
 import { createDefaultGateRunner } from '../../src/engine/gate.ts'
 import { createDefaultAssembler } from '../../src/engine/prompt-assembly.ts'
-import { DEMO_SNAPSHOT } from '../../src/serve.ts'
+import { DEMO_SNAPSHOT } from '../../src/assembly/serve.ts'
 
 /** 测试栈：每用例独立台账/平台/引擎（fake 全家桶 + tmp 库 + 假时钟） */
 interface TestStack {

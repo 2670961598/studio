@@ -37,7 +37,7 @@ import {
 import { createDefaultGateRunner } from '../../src/engine/gate.ts'
 import { createDefaultAssembler } from '../../src/engine/prompt-assembly.ts'
 import { createSchedulerSource, createSourceRegistry } from '../../src/engine/sources.ts'
-import { buildServeRuntime, DEMO_SNAPSHOT, parseDaemonConfig } from '../../src/serve.ts'
+import { buildServeRuntime, DEMO_SNAPSHOT, parseDaemonConfig } from '../../src/assembly/serve.ts'
 
 // ————————————————————————— 测试基建 —————————————————————————
 

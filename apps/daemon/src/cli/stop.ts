@@ -1,7 +1,7 @@
 // ✦ DEV-45 结构刀（studio-dev-78）：本文件自 apps/daemon/src/bin.ts L1452-L1516 逐字节拆出（纯移动零功能变更；核验=对 git 历史旧路径对应行区间字节一致，仅增本行头注、import 头与 export 关键字）。
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { parseDaemonConfig } from '../serve.ts'
+import { parseDaemonConfig } from '../assembly/serve.ts'
 import { awaitStopResult, writeStopRequest, type StopRequest } from '../control/stop-channel.ts'
 import { makeUlid } from '../engine/id.ts'
 import { USAGE } from './usage.ts'
@@ -71,4 +71,4 @@ export async function cmdStop(argv: string[]): Promise<number> {
   return 1
 }
 
-/** serve 子命令：薄壳转 runServe（配置装载/循环/优雅停语义全在 src/serve.ts） */
+/** serve 子命令：薄壳转 runServe（配置装载/循环/优雅停语义全在 src/assembly/serve.ts） */

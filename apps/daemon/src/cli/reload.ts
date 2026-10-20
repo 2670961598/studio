@@ -1,7 +1,7 @@
 // ✦ DEV-45 结构刀（studio-dev-78）：本文件自 apps/daemon/src/bin.ts L1382-L1451 逐字节拆出（纯移动零功能变更；核验=对 git 历史旧路径对应行区间字节一致，仅增本行头注、import 头与 export 关键字）。
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { parseDaemonConfig } from '../serve.ts'
+import { parseDaemonConfig } from '../assembly/serve.ts'
 import { awaitReloadResult, writeReloadRequest } from '../control/hot-reload.ts'
 import { makeUlid } from '../engine/id.ts'
 import { USAGE } from './usage.ts'
@@ -69,7 +69,7 @@ export async function cmdReload(argv: string[]): Promise<number> {
 
 /**
  * stop 子命令：控制面优雅停机薄壳（DEV-9 顺带项——孤儿进程问题的通道面；执行体全在
- * daemon 侧 src/serve.ts runServe + src/control/stop-channel.ts）。动机：`nohup sh -c "…"` 双层
+ * daemon 侧 src/assembly/serve.ts runServe + src/control/stop-channel.ts）。动机：`nohup sh -c "…"` 双层
  * 壳下 kill 外层 sh 不杀 node 孙进程——停机改走 daemon 自身优雅停（在途 worker 整树
  * 杀+台账落盘），回执为证。工位根发现序与 reload 同款：--root > --config（缺省
  * ./daemon.yaml，读其 rootDir）> 缺省 ./var。退出码：0=优雅停完成（回执 stopped=true）；

@@ -1,5 +1,5 @@
 // ✦ DEV-45 结构刀（studio-dev-78）：本文件自 apps/daemon/src/bin.ts L1517-L1548 逐字节拆出（纯移动零功能变更；核验=对 git 历史旧路径对应行区间字节一致，仅增本行头注、import 头与 export 关键字）。
-import { runServe } from '../serve.ts'
+import { runServe } from '../assembly/serve.ts'
 import { USAGE } from './usage.ts'
 import { errText, parseArgv } from './argv.ts'
 

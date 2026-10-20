@@ -528,7 +528,7 @@ describe('无价目表降级态（态 B）与 daemon.yaml 装载面', () => {
   })
 
   it('parseDaemonConfig：models/budgetTicketCapUsd/budgetPersonCapUsd 三键装载', async () => {
-    const { parseDaemonConfig } = await import('../../src/serve.ts')
+    const { parseDaemonConfig } = await import('../../src/assembly/serve.ts')
     const cfg = parseDaemonConfig(
       ['db: ./var/l.sqlite', 'platform: fake', 'company: demo', 'models: ./models.yaml', 'budgetTicketCapUsd: 5', 'budgetPersonCapUsd: 20'].join('\n'),
     )

@@ -1,5 +1,5 @@
 /**
- * flowsFromWorkflows 单测（DEV-43，apps/daemon/src/typeflows.ts）：
+ * flowsFromWorkflows 单测（DEV-43，apps/daemon/src/engine/typeflows.ts）：
  * workflows 声明 → T 键流表（供 engine.config.flows 与 decide 消费——serve 同源装配）。
  *
  * 断言面：
@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_FLOW_TABLE, resolveTicketFlow } from '@studio-next/core'
 import type { TicketWorkflows } from '@studio-next/contract'
-import { flowsFromWorkflows } from '../src/typeflows.ts'
+import { flowsFromWorkflows } from '../src/engine/typeflows.ts'
 
 const WF: TicketWorkflows = {
   types: [

@@ -56,7 +56,7 @@ import {
   type HotReload,
 } from '../../src/control/hot-reload.ts'
 import { createDefaultAssembler } from '../../src/engine/prompt-assembly.ts'
-import { buildServeRuntime, parseDaemonConfig, removeMissingJobs, seedJobs, type ServeConfig } from '../../src/serve.ts'
+import { buildServeRuntime, parseDaemonConfig, removeMissingJobs, seedJobs, type ServeConfig } from '../../src/assembly/serve.ts'
 
 /** initCompany 的 git 首提身份（e2e.test 同款注入——只作用于测试进程） */
 const GIT_ENV: Record<string, string> = {

@@ -224,7 +224,7 @@
 | P-51 | apps/daemon/src/engine/engine.ts | 呈批迁移 submit_approval v0 直迁平台不落事件（呈批事件名待批示） | 批事件名（建议 APPROVE_SUBMIT） |
 | P-52 | apps/daemon/src/engine/engine.ts + scheduler.ts | 岗单据物化口径（type=task/level=0 走 L0 流/assignee=job.role） | 认可 |
 | P-53 | apps/daemon/src/engine/gate.ts | REPORT/summary 约定文件名（workspace 约定）+sidecar 不存在不拦收 | 认可 |
-| P-54 | apps/daemon/src/serve.ts | 网关签名上下文取快照首部门+公司级（控制面无人员档案） | 认可 |
+| P-54 | apps/daemon/src/assembly/serve.ts | 网关签名上下文取快照首部门+公司级（控制面无人员档案） | 认可 |
 | P-55 | packages/studio-tools/README.md | CLI 挂载形态 P 系列待核（dsh 插件/claude --mcp-config） | 真机核实前不当实锤（无需现在批） |
 | P-56 | docs/25 §4.1 | wkey ttl 语义注记（时长输入/时刻入 token） | 认可注记 |
 

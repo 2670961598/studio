@@ -31,7 +31,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { ChangeRejectedError, GateEvidence, NearMiss } from '@studio-next/core'
 import { openLedger, type Ledger } from '@studio-next/store'
 import { createEvolveGuard, runEvolveStartupSelfCheck, type EvolveSelfCheckDeps } from '../../src/evolve/evolve-guard.ts'
-import { buildServeRuntime, DEMO_SNAPSHOT, type ServeConfig, type ServeRuntime } from '../../src/serve.ts'
+import { buildServeRuntime, DEMO_SNAPSHOT, type ServeConfig, type ServeRuntime } from '../../src/assembly/serve.ts'
 
 // ————————————————————————— 测试基建 —————————————————————————
 
