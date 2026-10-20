@@ -26,11 +26,11 @@ import { deriveFieldProvision, ensureAiwsTree, initCompany, loadCompanyDirectory
 import { DEFAULT_FLOW_TABLE, type FlowTable } from '@studio-next/core'
 import type { CompanySnapshot, FlowPlatform, PersonRef } from '@studio-next/contract'
 import { openLedger, type Ledger } from '@studio-next/store'
-import { ENGINE_CONFIG_DEFAULTS, createEngine, type Engine, type TickReport } from '../src/engine.ts'
-import { createFakeAdapter, createFakePlatform } from '../src/fakes.ts'
-import { flowsFromWorkflows } from '../src/engine/typeflows.ts'
-import { createDefaultGateRunner } from '../src/gate.ts'
-import { createDefaultAssembler } from '../src/prompt-assembly.ts'
+import { ENGINE_CONFIG_DEFAULTS, createEngine, type Engine, type TickReport } from '../../src/engine/engine.ts'
+import { createFakeAdapter, createFakePlatform } from '../../src/engine/fakes.ts'
+import { flowsFromWorkflows } from '../../src/engine/typeflows.ts'
+import { createDefaultGateRunner } from '../../src/engine/gate.ts'
+import { createDefaultAssembler } from '../../src/engine/prompt-assembly.ts'
 
 /** initCompany 的 git 首提身份（e2e.test.ts 同款注入——只作用于测试进程） */
 const GIT_ENV: Record<string, string> = {

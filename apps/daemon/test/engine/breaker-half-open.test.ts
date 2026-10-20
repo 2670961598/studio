@@ -33,10 +33,10 @@ import {
   ENGINE_CONFIG_DEFAULTS,
   type Engine,
   type TickReport,
-} from '../src/engine.ts'
-import { createFakeAdapter, createFakePlatform, type FakeAdapterMode } from '../src/fakes.ts'
-import { createDefaultGateRunner } from '../src/gate.ts'
-import { createDefaultAssembler } from '../src/prompt-assembly.ts'
+} from '../../src/engine/engine.ts'
+import { createFakeAdapter, createFakePlatform, type FakeAdapterMode } from '../../src/engine/fakes.ts'
+import { createDefaultGateRunner } from '../../src/engine/gate.ts'
+import { createDefaultAssembler } from '../../src/engine/prompt-assembly.ts'
 
 const T0 = Date.parse('2026-10-16T00:00:00.000Z')
 /** 测试用短冷却窗（5min——语义同产线 30min 缺省，只缩时长；DEV-46 拟稿可配面） */

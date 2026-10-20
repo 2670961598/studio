@@ -38,11 +38,11 @@ import {
   ENGINE_CONFIG_DEFAULTS,
   type Engine,
   type TickReport,
-} from '../src/engine.ts'
-import { createFakeAdapter, createFakePlatform, type FakeAdapterMode } from '../src/fakes.ts'
-import { createDefaultGateRunner } from '../src/gate.ts'
-import { createDefaultAssembler } from '../src/prompt-assembly.ts'
-import { DEMO_SNAPSHOT } from '../src/assembly/serve.ts'
+} from '../../src/engine/engine.ts'
+import { createFakeAdapter, createFakePlatform, type FakeAdapterMode } from '../../src/engine/fakes.ts'
+import { createDefaultGateRunner } from '../../src/engine/gate.ts'
+import { createDefaultAssembler } from '../../src/engine/prompt-assembly.ts'
+import { DEMO_SNAPSHOT } from '../../src/assembly/serve.ts'
 
 /** 测试栈：每用例独立台账/平台/引擎（fake 全家桶 + tmp 库 + 假时钟 + 可注形态适配器） */
 interface TestStack {

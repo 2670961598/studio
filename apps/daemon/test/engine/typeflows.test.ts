@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_FLOW_TABLE, resolveTicketFlow } from '@studio-next/core'
 import type { TicketWorkflows } from '@studio-next/contract'
-import { flowsFromWorkflows } from '../src/engine/typeflows.ts'
+import { flowsFromWorkflows } from '../../src/engine/typeflows.ts'
 
 const WF: TicketWorkflows = {
   types: [
