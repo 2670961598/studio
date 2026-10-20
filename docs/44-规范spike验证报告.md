@@ -1,7 +1,7 @@
 # 44 · 公司规范 v1 · ⑤验证 spike 报告（提案流第⑤步）
 
 > 位置：40-提案 → ②③探索（41/42）→ ④定稿（43）→ **本文=⑤验证 spike** → ⑥制作人过审 → v1 冻结。
-> workspace：`/Volumes/BigDisk/StudioNext-spike`（分支 `spike/spec-v1`，throwaway 原型仓，不回并主仓）。
+> workspace：spike 原型仓 `<spike-仓根>`（分支 `spike/spec-v1`，throwaway 不回并主仓；克隆位置见本地探针档案）。
 > 验证对象：docs/43 §二核心层条款（本刀收任务书点名的条款 1/2/3/4/5）；条款 6/10 的导入侧
 > 执行面（manifest strictObject）随 import 管线一并落地验证。
 >
@@ -143,7 +143,7 @@
 ## 七、复现口径（冻结验收命令）
 
 ```bash
-cd /Volumes/BigDisk/StudioNext-spike
+cd <spike-仓根>
 bun install
 bun run typecheck                          # 绿
 bunx vitest run packages/adapters/test/dsh-env-whitelist.test.ts \
@@ -240,7 +240,7 @@ mise 注入）。判定：**两机制+增补均过，建议随 v1 结论一并�
 ## 四、复现口径（v1.1 增量冻结验收命令）
 
 ```bash
-cd /Volumes/BigDisk/StudioNext-spike && git checkout spike/spec-v1.1
+cd <spike-仓根> && git checkout spike/spec-v1.1
 bun install
 bun run typecheck                                                       # 绿
 bunx vitest run packages/company/test/git-import.test.ts \

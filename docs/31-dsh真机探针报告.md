@@ -4,7 +4,7 @@
 > 方法：全部结论来自本机实测（`/opt/homebrew/bin/dsh`，0.2.0-rc.2，→ `/opt/homebrew/lib/node_modules/@deepseek-ai/dsh`）与**装机自带的插件源码**（dsh 以明文 JS 发行，源码即真机事实）。原始输出全部落盘 `/tmp/dsh-probe2/`（索引见其 `INDEX.md`），本文每条事实标注证据文件。
 > 对照物：`docs/27-探针与真机核实清单.md` A1-A6 拟稿、`packages/adapters/src/dsh.ts`、`packages/adapters/src/streams.ts`。**本单未改任何 packages/ 代码**——修正走 §5 清单，过审后另派实现单。
 > 凭证缺口声明：本机 env / macOS keychain / ~/.dsh 三处均无 DEEPSEEK_API_KEY（证据 `B0-env-scan.txt`），**B 段真成功流（原案 7/8/9）未执行**；事件形态学降级取证自装机源码（`dsh-headless/lib/json-stream-*.js` 等），待凭证到位后以 P-01 真流复核回填 golden fixture。
-> **【2026-10-18 补充轮——缺口已闭合】**制作人定向「用本机 kimi 配置、以跑通为主」：实测发现 dsh 自带**休眠多 provider 适配器 `llm-pi-ai`**（含 `kimi-coding` 目录 provider，api.kimi.com/coding），经 profile patch 激活 + `KIMI_API_KEY` env 引用即可绕开 DeepSeek 凭证依赖。**B 段五探针（P-01/04/05/07/08）全部以真 LLM 流执行完毕**，结果与 §3 源码形态学逐条吻合，新增两条硬事实见 §6。证据：`/Volumes/BigDisk/probe-evidence/dsh/`（外置盘，制作人指令：实验数据一律外置盘）。
+> **【2026-10-18 补充轮——缺口已闭合】**制作人定向「用本机 kimi 配置、以跑通为主」：实测发现 dsh 自带**休眠多 provider 适配器 `llm-pi-ai`**（含 `kimi-coding` 目录 provider，api.kimi.com/coding），经 profile patch 激活 + `KIMI_API_KEY` env 引用即可绕开 DeepSeek 凭证依赖。**B 段五探针（P-01/04/05/07/08）全部以真 LLM 流执行完毕**，结果与 §3 源码形态学逐条吻合，新增两条硬事实见 §6。证据：见本地探针档案（`probe-evidence/dsh/`，外置盘——制作人指令：实验数据一律外置盘）。
 
 ---
 
@@ -211,7 +211,7 @@ streams.ts dsh 解析器细目对照（全部实测/源码级）：
 4. 事件八类中 `thinking/tool_call/tool_result` 是否值得进 contract StreamEvent（现为 log 透传）——收割粒度需求方（core）拍板。
 
 > 原始证据目录 `/tmp/dsh-probe2/` 保留供审查（含 INDEX.md 索引与副作用记录）；
-> 补充轮证据在 `/Volumes/BigDisk/probe-evidence/dsh/`（外置盘），旧探针集已同步迁移至 `…/dsh-旧探针/`。
+> 补充轮证据见本地探针档案（`probe-evidence/dsh/`，外置盘），旧探针集已同步迁移至 `…/dsh-旧探针/`。
 
 ---
 

@@ -5,7 +5,7 @@
 > `docs/04-§四`（账号=等级锚点）、`packages/matrix` v0.1 现状。
 >
 > **性质与纪律**：本文件是部署前的侦察与设计，**未安装任何软件、未起任何容器、未碰任何网络端口**。
-> 仓内旧系统（`/Volumes/BigDisk/Studio`）与旧 YouTrack 一概未动——§〇 的旧容器信息为只读观察所得，
+> 仓内旧系统（`<旧根>`——沿 26 号文档记法，绝对路径见本地探针档案）与旧 YouTrack 一概未动——§〇 的旧容器信息为只读观察所得，
 > 凭证值一律脱敏不入库（纪律六：密钥永不入库）。不确定处标「待验证」。
 
 ---
@@ -20,7 +20,7 @@
 |---|---|
 | 容器名 / 镜像 | `matrix-synapse` / `ghcr.io/element-hq/synapse:latest` |
 | 端口 | `127.0.0.1:8008->8008`（21-§五 拟定的端口**已被占用**） |
-| 数据目录 | `/Volumes/BigDisk/matrix/synapse-data`（挂载到容器 `/data`）——与 21-§五「数据在外置盘」定调一致 |
+| 数据目录 | `<外置盘>/matrix/synapse-data`（挂载到容器 `/data`；`<外置盘>`＝外置数据盘挂载点，由部署环境自定，下同）——与 21-§五「数据在外置盘」定调一致 |
 | server_name | `localhost`——与 21-§五「@<工号>:localhost」约定一致 |
 | 数据库 | **SQLite**（`/data/homeserver.db`，含 WAL 文件） |
 | 注册 | `enable_registration: false` + 已配 `registration_shared_secret`（值已脱敏） |
@@ -76,7 +76,7 @@
 | 方案 | 描述 | 代价 | 建议 |
 |---|---|---|---|
 | **A. 复用旧实例（8008）** | 新框架网关 bot 直连既有 `matrix-synapse` | 零部署；但新旧共用一个事实源，账号/频道混杂，旧系统纪律上「一概不碰」被侵蚀 | 谨慎——仅制作人明示接受共用时选 |
-| **B. 新实例独享（推荐）** | 新容器绑 **127.0.0.1:18008**（备选 8009），数据目录 `/Volumes/BigDisk/matrix/sn/`（与旧 `synapse-data` 并列隔离）；**不监听 8448**（纯内网无联邦，§5.2） | 一次部署成本 + 一份常驻内存 | **推荐** |
+| **B. 新实例独享（推荐）** | 新容器绑 **127.0.0.1:18008**（备选 8009），数据目录 `<外置盘>/matrix/sn/`（与旧 `synapse-data` 并列隔离）；**不监听 8448**（纯内网无联邦，§5.2） | 一次部署成本 + 一份常驻内存 | **推荐** |
 
 端口避让核对：18008/8009 均空闲；避开 8080（旧 YouTrack）、4399 系（游戏）、8787-8789（新框架面板/api/公司概览）、8008（旧 synapse）、5432（本机 postgres）。8448 保持不监听。
 
@@ -156,7 +156,7 @@
 ### 4.1 docker-compose.yml 样例（B 方案：新实例 18008）
 
 ```yaml
-# /Volumes/BigDisk/matrix/sn/docker-compose.yml（草案）
+# <外置盘>/matrix/sn/docker-compose.yml（草案）
 services:
   synapse:
     image: ghcr.io/element-hq/synapse:v1.157.x   # 锁 tag，禁 latest（升级走批示）
@@ -165,7 +165,7 @@ services:
     ports:
       - "127.0.0.1:18008:8008"                   # 仅本机回环；8448 不发布（无联邦）
     volumes:
-      - /Volumes/BigDisk/matrix/sn/data:/data    # 21-§五：数据在外置盘，与旧 synapse-data 隔离
+      - <外置盘>/matrix/sn/data:/data    # 21-§五：数据在外置盘，与旧 synapse-data 隔离
     environment:
       - SYNAPSE_SERVER_NAME=localhost
       - SYNAPSE_REPORT_STATS=no
@@ -174,14 +174,14 @@ services:
   #   image: postgres:16
   #   restart: unless-stopped
   #   environment: { POSTGRES_USER: synapse, POSTGRES_DB: synapse, POSTGRES_PASSWORD: "<密钥注入，不入库>" }
-  #   volumes: [ "/Volumes/BigDisk/matrix/sn/pg:/var/lib/postgresql/data" ]
+  #   volumes: [ "<外置盘>/matrix/sn/pg:/var/lib/postgresql/data" ]
   #   # 不发布端口：仅容器网络内可达，避开本机 :5432
 ```
 
 ### 4.2 homeserver.yaml 最小配置注解（对齐 21-§五 各要点）
 
 ```yaml
-# /Volumes/BigDisk/matrix/sn/data/homeserver.yaml（草案；由 generate 生成后手改，注解=21-§五 依据）
+# <外置盘>/matrix/sn/data/homeserver.yaml（草案；由 generate 生成后手改，注解=21-§五 依据）
 server_name: "localhost"            # 21-§五：@<工号>:localhost
 pid_file: /data/homeserver.pid
 listeners:
@@ -219,7 +219,7 @@ form_secret: "<generate 产出，不入库>"
 
 ### 4.3 首次引导步骤（顺序即脚本骨架）
 
-1. `mkdir -p /Volumes/BigDisk/matrix/sn/data && docker compose run --rm synapse generate`
+1. `mkdir -p <外置盘>/matrix/sn/data && docker compose run --rm synapse generate`
    ——生成 homeserver.yaml / 签名密钥 / 日志配置；
 2. 按 §4.2 注解改配置、生成并填入 `registration_shared_secret`；
 3. `docker compose up -d`；
