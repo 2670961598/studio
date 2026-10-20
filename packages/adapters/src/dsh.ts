@@ -75,9 +75,19 @@
  *   - stream() 一会话只许消费一次（一单一命、一流一收）；resultStats() 只汇总已消费
  *     的事件（收割流程固定先收流后收账）
  *   - estimate()：预算估算模型 v0 拟稿——任务书字符量粗估 + confidence 低值，v0.6 前细化
+ *   - seatbelt 写域圈定（DEV-29 原型 attempt3，docs/43-§五 派发权限圈②——先行接线）：
+ *     构造项 opts.seatbelt（缺省不圈定，既有行为/测试零改动）；mode='auto' 时 detect 追加
+ *     后端可用性探测（不可用/非 darwin=ok:false fail-closed 不派），launch 侧 profile 随
+ *     派发参数化生成（写域=task.workspace+DSH_HOME 重定向+追加产出位）并以 sandbox-exec
+ *     包装 argv——生成器与包装见 seatbelt.ts（正交模块，纯函数可独测；attempt3 处置 (a)
+ *     =删 strictRead 读收口形态——该构造类在本机未沙箱 apply 面 SIGABRT 崩溃，详见该
+ *     文件头注与 deliverables/plan.md）
  */
 import { randomUUID } from 'node:crypto'
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { execa } from 'execa'
 import type { Subprocess } from 'execa'
 import type {
@@ -93,6 +103,13 @@ import type {
 } from '@studio-next/contract'
 import { configInvalid } from '@studio-next/contract'
 import { parseLine, extractDshSessionId } from './streams.ts'
+import {
+  SEATBELT_BIN,
+  buildWorkerSeatbeltProfile,
+  seatbeltArgv,
+  seatbeltProfileFileName,
+} from './seatbelt.ts'
+import type { SeatbeltEndpoint } from './seatbelt.ts'
 
 /** 缺省命令（docs/17-§6 dsh 行）：`dsh --profile headless --json` */
 export const DSH_DEFAULT_CMD: readonly string[] = ['dsh', '--profile', 'headless', '--json']
@@ -102,6 +119,67 @@ const LOCKED_VERSION = '0.2.0-rc.2'
 
 /** detect() 版本探测超时（毫秒）：挂死的 CLI 不许挡调度 */
 const DETECT_TIMEOUT_MS = 5_000
+
+// ---------------------------------------------------------------------------
+// seatbelt 写域圈定（DEV-29 原型 attempt3 接线，docs/43-§五 派发权限圈 ②）
+// ---------------------------------------------------------------------------
+
+/**
+ * dsh 适配器的 seatbelt 启用面（原型档，DEV-29——先行接线：生成器与包装见 seatbelt.ts，
+ * 本面只决定「派发时怎么参数化」；daemon 侧常驻接线随 .AIWS cwd 迁移单落位）：
+ *   - mode：'auto'=darwin 且后端可用才圈定（detect 前置探测，不可用=明报 gap 不派）；
+ *     'off'=不圈定（缺省——不影响既有行为与测试）
+ *   - dshHomeRedirect：per-attempt DSH_HOME 重定向目标（**须在写域内**，如
+ *     <workspace>/.dsh-home——dsh boot 必写 $DSH_HOME/profiles/<name>/{cordis.yml,
+ *     package.json,pnpm-workspace.yaml,…}+node_modules pnpm 状态+plugin-manager 日志，
+ *     真机实测见验证记录；不重定向则 DSH_HOME 须由 extraWriteRoots 显式入白名单）
+ *   - extraWriteRoots：写域追加根（指定产出位在 workspace 内则无需；跨目录产出位/
+ *     pnpm store 等运行面由派发方点名）
+ *   - rpcEndpoints：回环宿主 RPC 白名单（缺省=DSH_HOST_RPC_DEFAULT 127.0.0.1:13800；
+ *     空数组=禁回环——dsh 无回环依赖的部署面用）
+ *   - outboundTcp：模型 API 出口白名单（缺省空=禁远程出口；macOS remote 过滤器 host
+ *     仅认 localhost/*，域名出口=daemon 侧本地代理——见 seatbelt.ts 头注局限与 RPC 评估）
+ *   - （attempt3 处置 (a)：无读域参数——strictRead 形态已删，读域宽放；背景与再引入
+ *     红线见 seatbelt.ts 头注）
+ */
+export interface DshSeatbeltOptions {
+  mode: 'auto' | 'off'
+  dshHomeRedirect?: string
+  extraWriteRoots?: readonly string[]
+  rpcEndpoints?: readonly SeatbeltEndpoint[]
+  outboundTcp?: readonly SeatbeltEndpoint[]
+}
+
+/** DshAdapter 构造选项（v0 仅 seatbelt 面；cmd 仍第一位保持既有调用点零改动） */
+export interface DshAdapterOptions {
+  seatbelt?: DshSeatbeltOptions
+}
+
+/**
+ * seatbelt 后端可用性探测（detect 前置面）：以最小 profile 跑 `sandbox-exec -p … true`。
+ * macOS 拒绝嵌套 sandbox_apply——**本会话自身已在 seatbelt 内时探测必败**（实测
+ * EPERM exit 71），据此 fail-closed：mode='auto' 但后端不可用 = 明报 gap 不派
+ * （写域圈定是安全面，「圈不住就照跑」不是选项）。应用点正确形态=未沙箱的派发方
+ * （daemon）持 profile 应用到 worker 子进程——适配器 spawn 在 daemon 进程内，天然满足。
+ * 嵌套环境（如本仓测试会话）预期=ok:false + gap 'seatbelt-nested-sandbox'——测试
+ * 按环境自适应断言，两种环境都证 fail-closed 语义（不伪造绿）。
+ */
+function detectSeatbeltBackend(): DetectResult {
+  const probe = `(version 1)(allow default)(deny network*)` // 最小可用面：无网+全放行基线
+  const r = spawnSyncProbe(SEATBELT_BIN, ['-p', probe, '/usr/bin/true'])
+  if (r.status === 0) return { name: 'seatbelt', version: '', ok: true, gaps: [] }
+  const detail =
+    r.status === 71
+      ? 'seatbelt-nested-sandbox' // 编译过但 apply 被拒（EPERM）=本进程已在沙箱内
+      : `seatbelt-backend-failed:exit=${String(r.status ?? r.signal ?? 'null')}`
+  return { name: 'seatbelt', version: '', ok: false, gaps: [detail] }
+}
+
+/** detectSeatbeltBackend 的 spawn 面（独立小函数：测试不可注入也不必注入——真机面） */
+function spawnSyncProbe(bin: string, argv: readonly string[]): { status: number | null; signal: string | null } {
+  const r = spawnSync(bin, argv, { timeout: DETECT_TIMEOUT_MS })
+  return { status: r.status, signal: r.signal ?? null }
+}
 
 // ---------------------------------------------------------------------------
 // worker env 白名单（docs/43-附录A-1 安全基线；spike 验证 docs/44-§二 条款1）
@@ -227,10 +305,27 @@ export class DshAdapter implements ExecutorAdapter {
   }
 
   private readonly cmd: readonly string[]
+  private readonly seatbelt: DshSeatbeltOptions | undefined
 
-  /** cmd 可注入（测试用假 CLI）；缺省 `dsh --profile headless --json`（17-§6） */
-  constructor(cmd: readonly string[] = DSH_DEFAULT_CMD) {
+  /**
+   * cmd 可注入（测试用假 CLI）；缺省 `dsh --profile headless --json`（17-§6）。
+   * opts.seatbelt（DEV-29 原型 attempt3）：缺省不圈定（既有调用点零改动）；
+   * mode='off' 同缺省。构造期校验 mode 形状（非法档位=结构拒收，不静默当 off）。
+   */
+  constructor(cmd: readonly string[] = DSH_DEFAULT_CMD, opts?: DshAdapterOptions) {
     this.cmd = cmd.length > 0 ? cmd : DSH_DEFAULT_CMD
+    if (opts?.seatbelt !== undefined && opts.seatbelt.mode !== 'auto' && opts.seatbelt.mode !== 'off') {
+      configInvalid(
+        'dsh/seatbelt-mode-invalid',
+        `seatbelt.mode 仅接受 'auto' | 'off'，得到 ${JSON.stringify(opts.seatbelt.mode)}——结构拒收（不静默当 off）`,
+      )
+    }
+    this.seatbelt = opts?.seatbelt
+  }
+
+  /** seatbelt 圈定是否实际生效（mode='auto' 且构造在案） */
+  private seatbeltEnabled(): boolean {
+    return this.seatbelt?.mode === 'auto'
   }
 
   /**
@@ -269,6 +364,13 @@ export class DshAdapter implements ExecutorAdapter {
       version === LOCKED_VERSION
         ? []
         : [`dsh-version-unlocked:expected ${LOCKED_VERSION},got ${version}`]
+    // seatbelt 后端前置探测（DEV-29 attempt3，mode='auto' 才走）：不可用（非 darwin/
+    // 嵌套沙箱/sandbox-exec 缺失）→ ok:false + gap 明报 fail-closed 不派——圈定是
+    // 安全面，「圈不住就照跑」不是选项。探测实现与语义见 detectSeatbeltBackend 注。
+    if (this.seatbeltEnabled()) {
+      const seatbelt = detectSeatbeltBackend()
+      if (!seatbelt.ok) return { name: this.name, version, ok: false, gaps: [...gaps, ...seatbelt.gaps] }
+    }
     return { name: this.name, version, ok: true, gaps }
   }
 
@@ -327,15 +429,48 @@ export class DshAdapter implements ExecutorAdapter {
   private async spawnHeadless(task: TaskBrief, extraArgs: string[]): Promise<Handle> {
     const [binary = DSH_DEFAULT_CMD[0] ?? 'dsh', ...args] = this.cmd
     const taskText = await readTaskText(task.briefPath)
-    const subprocess = execa(binary, [...args, ...extraArgs, '--', taskText], {
+    // seatbelt 写域圈定（DEV-29 原型 attempt3，docs/43-§五②）：profile 随派发参数化生成
+    // ——写域=task.workspace（员工 tickets 单据子目录，指定产出位在其内）+ dshHomeRedirect
+    // + extraWriteRoots；网域=rpcEndpoints（缺省回环 13800）+outboundTcp。profile 落
+    // workspace/.seatbelt/（证据随单走——收割四要件查证面可见，docs/17-§6）；argv 以
+    // sandbox-exec 包装（应用点=未沙箱派发方，嵌套 apply 被拒——detect 前置已闸，spawn
+    // 层失败由 stream 如实收）。
+    let wrappedArgv: string[] = [binary, ...args, ...extraArgs, '--', taskText]
+    let dshHomeEnv: Record<string, string> = {}
+    if (this.seatbeltEnabled()) {
+      const opts = this.seatbelt
+      if (opts !== undefined) {
+        const writeRoots: string[] = [task.workspace, ...(opts.extraWriteRoots ?? [])]
+        if (opts.dshHomeRedirect !== undefined) {
+          writeRoots.push(opts.dshHomeRedirect)
+          dshHomeEnv = { DSH_HOME: opts.dshHomeRedirect }
+          mkdirSync(opts.dshHomeRedirect, { recursive: true })
+        }
+        const profileText = buildWorkerSeatbeltProfile({
+          writeRoots,
+          ...(opts.rpcEndpoints !== undefined ? { localRpcEndpoints: opts.rpcEndpoints } : {}),
+          ...(opts.outboundTcp !== undefined ? { outboundTcp: opts.outboundTcp } : {}),
+          label: `${task.ticket}/att${String(task.attempt)}`,
+        })
+        const profileDir = join(task.workspace, '.seatbelt')
+        mkdirSync(profileDir, { recursive: true })
+        const profilePath = join(profileDir, seatbeltProfileFileName())
+        writeFileSync(profilePath, profileText, 'utf8')
+        wrappedArgv = seatbeltArgv(profilePath, [binary, ...args, ...extraArgs, '--', taskText])
+      }
+    }
+    const subprocess = execa(wrappedArgv[0] ?? binary, wrappedArgv.slice(1), {
       cwd: task.workspace,
       // env 白名单（docs/43-附录A-1，deny-by-default）：白名单允许集（PATH/HOME/LANG/
       // LC_*/TZ/TMPDIR/DSH_*）+ 框架注入键（AGENTS.md 通道变量）+ TaskBrief.credentials
-      // （键域封闭枚举闸——枚举外键结构拒收 CONFIG_INVALID）+ 遥测红线覆盖（置末，优先级最高）
+      // （键域封闭枚举闸——枚举外键结构拒收 CONFIG_INVALID）+ seatbelt DSH_HOME 重定向
+      // （DEV-29：DSH_ 前缀在允许集内，此处显式覆盖为写域内 per-attempt 落点）+ 遥测
+      // 红线覆盖（置末，优先级最高）
       env: {
         ...filterWorkerEnv(process.env),
         ...agentsMdEnv(task.AGENTS_MD),
         ...checkedCredentials(task.credentials),
+        ...dshHomeEnv,
         // 遥测红线（docs/31-§5-8）：dsh 默认 FEEDBACK_ONLY 外发 deepseeksvc.com——一律禁外发
         DSH_TELEMETRY_MODE: 'DISABLED',
       },
