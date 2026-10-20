@@ -58,6 +58,11 @@ export * from './aiws.ts'
 // 依赖清单安装挂点；直导通道同核；升级四点语义）
 export * from './git-import.ts'
 
+// 公司仓库判定器（DEV-32：docs/51 规范正文的实现面——五契约规则集 A/B/C/D/E 全量；
+// `company validate` 与 DEV-27 导入流两遍（源面+产物面）共用同一实现；CLI 物化面
+// （路径/git-url/tarball）+ 渲染面（人读/JSON）+ RepoInputError（判定器自身错误，exit 2 面））
+export * from './repo-validate.ts'
+
 // 依赖清单与插件绑定引擎（DEV-26 正式化：docs/43-§四「员工的行为面」+ §十5-8 定稿增补；
 // 判定 normative 标尺 docs/51-契约 D——纯决策面 planPluginInstalls + 隔离根安装执行面 +
 // 契约 subject depsSubject）

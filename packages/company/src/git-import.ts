@@ -10,8 +10,11 @@
  *      复制才是钩子开口的主通道），产物 `git init` + 首提（干净 git 目录+首次 commit；
  *      钩子/配置不随行——源仓预埋 .git/hooks/post-merge 之类不存活，负断言进测试）；
  *      本地路径通道与 git-url 通道共用同一导入核（同构支持，docs/43-§一）；
- *   3. **schema 校验**：org-config/departments/people 全目录面（loadCompanyDirectory，
- *      写盘前先检——源不合法不产半成品；docs/43-§二 冻结 schema）；
+ *   3. **判定器（DEV-32 单一共用核）**：docs/51 五契约全量判定（repo-validate.ts——
+ *      `company validate` 同一实现）。导入流内嵌**两遍**（docs/51-§七）：源仓面（克隆
+ *      产物即源面，写盘前先检——源不合法不产半成品）+ 产物面（镜像+git 重建后、落锚前
+ *      ——E 组闸跑产物）。违规映射：A/E 组→import/structure-rejected（别名 import/*
+ *      沿用）；B/C/D 组→import/self-check-failed（内层规则号 via 随行）；
  *   4. **初始化**：挂载元信息盖戳 + 平台字段 provision（FlowPlatform 端口注入——
  *      localfile 实现由调用方给，docs/23；本包不依赖任何平台实现）+ 信任锚
  *      .studio-next/trust.json trust=false（docs/44 v1 信任锚设计，trust.ts）+
@@ -34,87 +37,46 @@
  * （同 init.ts 宁失败不半成品）。
  */
 import { existsSync } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import { parse as parseYaml } from 'yaml'
 import type { FieldProvisionMap, FlowPlatform } from '@studio-next/contract'
 import { configInvalid } from '@studio-next/contract'
-import { loadCompanyDirectory } from './validator.ts'
+import { validateCompanyRepo, type RepoValidateOptions, type RepoValidateResult } from './repo-validate.ts'
 import { AIWS_DIR, readDirectoryFiles } from './init.ts'
 import { ensureAiwsTree, type AiwsTreeResult } from './aiws.ts'
 import { contentFingerprint, excludeAnchorFiles, readTrustAnchor, reseedTrustAnchorOnUpgrade, seedTrustAnchor } from './trust.ts'
 import { extractPersonAttrs, installCompanyPlugins, type PluginInstallItem, type PluginInstallReport } from './dependencies.ts'
 
-// ————————————————————————— 结构闸 —————————————————————————
+// ————————————————————————— 判定器注入（DEV-32 两遍共用核） —————————————————————————
 
-/**
- * 顶层封闭内容集（v1 允许集 + v1.1 两员：dependencies.yaml、plugins/——docs/43-§四）。
- * `.studio-next/` 目录**不在集内**：锚是 daemon 自管目录，分发仓自带=信任态劫持面（显式拒）。
- */
-const TOP_LEVEL_CONTENT_ALLOWLIST: readonly string[] = [
-  '.studio-next.yaml',
-  'org-config.yaml',
-  'dependencies.yaml',
-  'README.md',
-  'charter.md',
-  'charter',
-  'departments',
-  'prompts',
-  'docs',
-  'reports',
-  'plugins',
-]
-
-/** 锚目录名（分发仓自带即拒——见 TOP_LEVEL_CONTENT_ALLOWLIST 注） */
+/** 锚目录名（产物面判定器豁免——daemon 自管；git info/exclude 本地排除） */
 const ANCHOR_DIR = '.studio-next'
 
-interface ScanViolation {
-  rule: string
-  detail: string
+/**
+ * 判定器函数形状（=validateCompanyRepo 签名）。RepoImportOptions.validator 可注入替身，
+ * 测试据此取证「两遍跑过」（源仓面+产物面各一次——docs/51-§七 导入流内嵌同一判定器）；
+ * 缺省=本包 validateCompanyRepo（单一实现，不另起炉灶）。
+ */
+export type RepoValidator = (dir: string, opts?: RepoValidateOptions) => Promise<RepoValidateResult>
+
+/** 违规 → 导入流分类错误（A/E=structure-rejected 带 import/* 别名；B/C/D=self-check-failed 带 via） */
+function rejectByValidation(result: RepoValidateResult, faceLabel: string): never {
+  const structural = result.violations.some((v) => /^[AE]-/.test(v.rule))
+  const lines = result.violations.map((v) => {
+    const tag = /^[AE]-/.test(v.rule) ? (v.alias ?? v.rule) : (v.via ?? v.rule)
+    return `  [${tag}]（docs/51 ${v.rule}）${v.file} @ ${v.location}：${v.problem}；修法：${v.fix}`
+  })
+  const head = `公司仓未过 docs/51 五契约判定（${faceLabel}${result.violations.length} 条违规——DEV-32 判定器）：`
+  if (structural) {
+    configInvalid('import/structure-rejected', `${head}\n${lines.join('\n')}`)
+  }
+  configInvalid('import/self-check-failed', `${head}\n${lines.join('\n')}`)
 }
 
-/**
- * 克隆产物内容扫描（.git 除外——传输层元数据，复制时剥离，不是内容违规）：
- * 顶层封闭集外条目 / 自带锚目录 / 可执行位文件 / 符号链接 → 违规清单（空=过关）。
- */
-async function scanPackageContent(sourceDir: string): Promise<ScanViolation[]> {
-  const violations: ScanViolation[] = []
-  const top = await readdir(sourceDir, { withFileTypes: true })
-  for (const entry of top) {
-    // .git/.DS_Store=传输层/本地噪音（复制时剥离，walk 同款跳过）——不进内容集判定
-    if (entry.name === '.git' || entry.name === '.DS_Store') continue
-    if (!TOP_LEVEL_CONTENT_ALLOWLIST.includes(entry.name)) {
-      if (entry.name === ANCHOR_DIR) {
-        violations.push({ rule: 'import/anchor-present', detail: `分发仓自带 ${ANCHOR_DIR}/ 锚目录——锚是 daemon 自管目录（trust.json 是制作人侧信任态），自带锚=信任态劫持面（docs/43-§十-3 / docs/44 v1 信任锚设计）` })
-        continue
-      }
-      violations.push({ rule: 'import/unknown-entry', detail: `顶层条目 ${entry.name} 不在公司包封闭内容集内（${TOP_LEVEL_CONTENT_ALLOWLIST.join('、')}）——未知文件拒收（附录 A-4 基线）` })
-    }
-  }
-  const walk = async (dir: string, prefix: string): Promise<void> => {
-    for (const entry of await readdir(dir, { withFileTypes: true })) {
-      if (entry.name === '.git' || entry.name === '.DS_Store') continue // 传输层/本地噪音：复制时剥离
-      const rel = prefix === '' ? entry.name : `${prefix}/${entry.name}`
-      const abs = path.join(dir, entry.name)
-      if (entry.isSymbolicLink()) {
-        violations.push({ rule: 'import/symlink-entry', detail: `${rel}——分发仓禁符号链接（路径逃逸载体）` })
-        continue
-      }
-      if (entry.isDirectory()) {
-        await walk(abs, rel)
-      } else if (entry.isFile()) {
-        const st = await stat(abs)
-        if ((st.mode & 0o111) !== 0) {
-          violations.push({ rule: 'import/exec-bit', detail: `${rel}（mode ${st.mode.toString(8)}）——分发仓禁可执行位文件（附录 A-2 基线；插件代码不需要 exec 位）` })
-        }
-      }
-    }
-  }
-  await walk(sourceDir, '')
-  return violations
-}
+// ————————————————————————— 挂载元信息盖戳 + 平台 provision —————————————————————————
 
 /**
  * 内容树枚举（剥离 .git/.DS_Store 后的相对路径集——镜像同步的源面）。
@@ -142,6 +104,35 @@ function stampMeta(meta: string, iso: string): string {
     .replace(/^created_at: null$/m, `created_at: ${JSON.stringify(iso)}`)
     .replace(/^last_validated_at: null$/m, `last_validated_at: ${JSON.stringify(iso)}`)
     .replace(/^last_validation: null$/m, 'last_validation: pass')
+}
+
+/**
+ * 缺省元信息桩（DEV-32 R2）：源仓缺 .studio-next.yaml 合法（docs/51-§二 A-2 未列必备），
+ * 导入产物面由框架补写——schema 字面量与 org-config 同源（multifile 同源检），盖戳字段
+ * null 待 stampMeta 盖值（与 templates 随行形态同构）。
+ */
+function defaultMetaStub(orgConfigSrc: string): string {
+  let schema = 'studio-next/org@1'
+  try {
+    const doc = parseYaml(orgConfigSrc) as { schema?: unknown } | null
+    if (doc !== null && typeof doc === 'object' && typeof doc['schema'] === 'string' && doc['schema'] !== '') {
+      schema = doc['schema']
+    }
+  } catch {
+    // 判定器已过——org-config 必可解析；防御性兜底用 canonical 字面量
+  }
+  return [
+    '# Studio Next 挂载元信息（.studio-next.yaml）—— 导入流补写缺省桩（DEV-32 R2）',
+    '# 源仓缺本文件合法（docs/51-§二 A-2 未列必备）；产物面由框架补齐，盖戳字段随导入流盖值。',
+    '',
+    `schema: ${schema}`,
+    'template: git-import',
+    'created_at: null',
+    'last_validated_at: null',
+    'last_validation: null',
+    'framework_version: null',
+    '',
+  ].join('\n')
 }
 
 /** provision 缺省态流表（五态；公司可经 yt.states/yt.flows 覆盖） */
@@ -208,6 +199,8 @@ export interface RepoImportOptions {
   aiwsRoot?: string
   /** 插件安装确认位（透传 dependencies.ts confirm；缺省自动装） */
   confirmInstall?: (view: { company: string; planned: PluginInstallItem[] }) => boolean | Promise<boolean>
+  /** 判定器注入（DEV-32：缺省=validateCompanyRepo；测试取证两遍跑过） */
+  validator?: RepoValidator
 }
 
 export interface RepoImportResult {
@@ -292,19 +285,16 @@ export async function importCompanyRepo(opts: RepoImportOptions): Promise<RepoIm
 
   if (!existsSync(sourceDir)) configInvalid('import/source-missing', `源目录不存在：${sourceDir}`)
 
-  // 1. 内容扫描（封闭集/锚劫持/exec 位/符号链接——.git 除外，复制时剥离）
-  const violations = await scanPackageContent(sourceDir)
-  if (violations.length > 0) {
-    configInvalid('import/structure-rejected', `公司包结构拒收（${violations.length} 项违规）：\n${violations.map((v) => `  [${v.rule}] ${v.detail}`).join('\n')}`)
-  }
-
-  // 2. 源侧全量校验（写盘前先检——org-config/departments/people 结构，docs/43-§二冻结契约）
+  // 1+2. 判定器·源仓面（DEV-32：docs/51 五契约全量，A 目录封闭集/B 逐文件/C 交叉引用/
+  //     D 依赖/E 卫生——克隆产物即源面；写盘前先检，源不合法不产半成品）
+  const validator = opts.validator ?? validateCompanyRepo
+  const sourceResult = await validator(sourceDir, { face: 'source' })
+  if (!sourceResult.ok) rejectByValidation(sourceResult, '源仓面，')
+  const snapshot = sourceResult.snapshot
+  if (snapshot === undefined) configInvalid('import/self-check-failed', '判定器未给出快照（org 面未过——内部一致性问题）')
+  const slug = snapshot.slug
   const sourceFiles = await readDirectoryFiles(sourceDir)
-  const mounted = loadCompanyDirectory(sourceFiles)
-  if (!mounted.ok) {
-    configInvalid('import/self-check-failed', `源未过目录校验（docs/04-§二 目录契约；schema 冻结见 docs/43-§二）：\n${mounted.issues.map((i) => `  ${i.file}:${i.line} [${i.rule}] ${i.fix}`).join('\n')}`)
-  }
-  const slug = mounted.snapshot.slug
+  const sourceHasMeta = sourceFiles[META_FILE] !== undefined
 
   // 3. 通道分流：目标不存在/空=fresh；非空=须是本框架导入过的公司（锚为证）且 slug 同家（docs/43-§十-2）
   const targetExisted = existsSync(targetDir)
@@ -327,6 +317,9 @@ export async function importCompanyRepo(opts: RepoImportOptions): Promise<RepoIm
     if (!upgraded) {
       if (!targetExisted) await mkdir(targetDir, { recursive: true })
       await copyContentFiles(sourceDir, targetDir, contentRels)
+      // R2 缺省桩：源仓缺 .studio-next.yaml 合法（docs/51 A-2 未列）——产物面由框架补写
+      // 缺省桩（schema 与 org 同源；盖戳字段 null 待盖），挂载元信息自齐
+      if (!sourceHasMeta) await writeFile(path.join(targetDir, META_FILE), defaultMetaStub(sourceFiles['org-config.yaml'] ?? ''), 'utf8')
       const metaPath = path.join(targetDir, META_FILE)
       if (existsSync(metaPath)) await writeFile(metaPath, stampMeta(await readFile(metaPath, 'utf8'), iso), 'utf8')
     } else {
@@ -363,6 +356,14 @@ export async function importCompanyRepo(opts: RepoImportOptions): Promise<RepoIm
   }
   const contentChanged = !upgraded || gitCommit !== headBefore
 
+  // 5b. 判定器·产物面（DEV-32 第二遍：镜像+git 重建后、落锚前——docs/51-§七「E 组闸跑
+  //     产物」；锚=daemon 自管在此豁免。源面已过而产物不过=镜像/重建引入，宁失败撤除）
+  const productResult = await validator(targetDir, { face: 'product' })
+  if (!productResult.ok) {
+    if (!upgraded) await cleanupFresh(targetDir, targetExisted)
+    rejectByValidation(productResult, '产物面，')
+  }
+
   // 6. 锚（fresh=落锚 trust=false；upgrade=重落 trust=false——新内容=未批准面，fail-closed）
   const targetFiles = await readDirectoryFiles(targetDir)
   if (!upgraded) {
@@ -376,14 +377,14 @@ export async function importCompanyRepo(opts: RepoImportOptions): Promise<RepoIm
   //     增量同步=扩编建目录/缩编归档不删。落点缺省=公司根目录（targetDir 同级），不进
   //     公司 git 目录——docs/43-§五；slug=仓库真 slug——per-company 根守卫不并树，§十9）
   const aiwsRoot = opts.aiwsRoot ?? path.join(path.dirname(targetDir), AIWS_DIR)
-  const aiws = ensureAiwsTree(aiwsRoot, mounted.snapshot.departments, mounted.snapshot.people, {
-    slug: mounted.snapshot.slug,
+  const aiws = ensureAiwsTree(aiwsRoot, snapshot.departments, snapshot.people, {
+    slug: snapshot.slug,
     ...(opts.now !== undefined ? { now: opts.now } : {}),
   })
 
   // 7. 平台字段 provision（端口注入；公司声明 platform: localfile 才走——docs/23-§二「换平台=改配置行」）
   let provisioned = false
-  if (opts.platform !== undefined && mounted.snapshot.platform.platform === 'localfile') {
+  if (opts.platform !== undefined && snapshot.platform.platform === 'localfile') {
     await opts.platform.fields.provision(deriveFieldProvision(extractOrgYt(sourceFiles['org-config.yaml'] ?? '')))
     provisioned = true
   }
