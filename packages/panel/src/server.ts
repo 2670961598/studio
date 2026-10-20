@@ -7,7 +7,11 @@
  * （Web 选型 Hono + streamSSE，已登记）。
  *
  * 端面（全部 GET、全部只读，无任何写路径）：
- *   GET /                    极简 HTML 单页（零前端依赖、内联 CSS；六区块卡片+SSE 事件流）
+ *   GET /                    Vue 页壳（importmap + /ui/main.js；Naive UI + ECharts 换装壳，
+ *                            docs/37-§5.1 路线 I / DEV-1 方案 §3.4——旧单页迁 /legacy 保回滚）
+ *   GET /legacy              旧版内联单页（零前端依赖；换装期回滚/无 JS 兜底，退役归刀二评估）
+ *   GET /vendor/:file        vendor 白名单三件（Vue/Naive UI/ECharts dist，immutable 年缓存）
+ *   GET /ui/*                前端模块（packages/panel/ui/ 下 .js/.mjs/.css，no-cache + ETag）
  *   GET /api/health          {ok, schema_version}
  *   GET /api/jobs            listJobs 投影（含 due 标记，判据同 store.dueJobs）
  *   GET /api/runs?limit=     work_records 近况（在途优先，started_at 降序）
@@ -39,10 +43,13 @@ import { existsSync } from 'node:fs'
 import { Readable } from 'node:stream'
 import type { ReadableStream as NodeWebReadableStream } from 'node:stream/web'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { configInvalid, isEventName, type EventRecord } from '@studio-next/contract'
 import { openLedger, type Ledger } from '@studio-next/store'
+import { PANEL_LEGACY_ROUTE, renderDashboardShell } from './shell.ts'
+import { VENDOR_FILES, mountPanelStatic } from './static.ts'
 import {
   DEFAULT_BREAKER_DAYS,
   DEFAULT_COSTS_DAYS,
@@ -146,6 +153,13 @@ export function createPanelApp(opts: PanelAppOptions): PanelApp {
   const app: PanelApp = new Hono()
 
   app.onError((err, c) => c.json({ ok: false, error: errText(err) }, 500))
+
+  // 静态面（/vendor/:file、/ui/*）先挂：与 /api/* 无路径交叠，位置只表达「业务路由之前」
+  mountPanelStatic(app)
+
+  app.get('/', (c) => c.html(renderDashboardShell()))
+
+  app.get(PANEL_LEGACY_ROUTE, (c) => c.html(renderDashboardPage()))
 
   app.get('/api/health', (c) => {
     const ledger = getLedger()
@@ -252,8 +266,6 @@ export function createPanelApp(opts: PanelAppOptions): PanelApp {
       }
     }),
   )
-
-  app.get('/', (c) => c.html(renderDashboardPage()))
 
   return app
 }
@@ -389,11 +401,21 @@ export async function listenHono(app: Hono, port: number, opts?: ListenHonoOptio
 /**
  * 真监听壳：打开库文件（不存在即拒——零写纪律不代建库）→ createPanelApp → 监听。
  * 句柄 close() 依次：断全部连接（含 SSE 长连）→ 关 server → 关 ledger。
+ * 启动时 vendor 三件存在性检查：缺失只 console.warn 一行不崩溃（页面走 boot-error
+ * 提示 + /legacy 兜底；修复=跑 scripts/vendor-pull.mjs——DEV-1 方案 §3.3/§11）。
  */
 export async function servePanel(port: number, dbPath: string, opts?: ServePanelOptions): Promise<PanelHandle> {
   const resolved = path.resolve(dbPath)
   if (!existsSync(resolved)) {
     configInvalid(`panel/db-not-found:${resolved}`, `台账库不存在：${resolved}（panel 只读不代建库——先由 daemon/回填侧建库）`)
+  }
+  const packageRoot = fileURLToPath(new URL('..', import.meta.url))
+  const missing = VENDOR_FILES.filter((file) => !existsSync(path.join(packageRoot, 'vendor', file)))
+  if (missing.length > 0) {
+    console.warn(
+      `[panel] 警告：vendor 文件缺失（${missing.join('、')}）——监控页将停 boot-error，` +
+        '可访问 /legacy 旧版只读页；修复：node packages/panel/scripts/vendor-pull.mjs',
+    )
   }
   const ledger = openLedger(resolved)
   const app = createPanelApp({ ...opts, openLedger: () => ledger })

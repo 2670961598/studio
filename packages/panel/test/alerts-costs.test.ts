@@ -404,9 +404,9 @@ describe('GET /api/events 增强（order/event 维）', () => {
 
 // —— HTML 单页：两新卡接线 ——
 
-describe('GET /（HTML 单页：断路器/成本新卡）', () => {
+describe('GET /legacy（旧版单页：断路器/成本新卡——换装刀一后旧页迁 /legacy）', () => {
   it('含断路器卡与成本卡区块、红点样式、初始倒序 50 条拉取、分列不相加口径文案', async () => {
-    const res = await app.request('/')
+    const res = await app.request('/legacy')
     expect(res.status).toBe(200)
     const html = await res.text()
     for (const marker of [

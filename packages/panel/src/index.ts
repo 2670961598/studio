@@ -9,7 +9,8 @@
  *     order=desc/event= 四维）、/api/events/stream（SSE 轮询新事件，Last-Event-ID 续传）、
  *     /api/snapshot、/api/breakers（断路器告警：CIRCUIT_BREAK 族事件 (单号,签名) 聚合）、
  *     /api/costs（成本趋势：LLM 岛/收割/预算三类按 UTC 日分列——docs/26 C1 展示面）、
- *     /（HTML 单页：六区块卡片 + fetch 轮询 + SSE）。
+ *     /（Vue 页壳：importmap + /ui/main.js——Naive UI + ECharts 换装，docs/37-§5.1 路线 I；
+ *     旧单页迁 /legacy 保回滚）、/vendor/:file 与 /ui/*（静态面，static.ts）。
  *     数据全部读 SQLite 台账（WAL 单写多读，panel 零写）；漂移告警待 daemon 侧判据冻结。
  *
  *   :8789 公司概览（老板的公司，制作人/内部）—— v0.7 首刀（读面，独立入口 ./overview——
@@ -32,6 +33,8 @@
  *   [x] daemon bin 子命令 `studio-next panel --db <路径> [--port 8787]`
  *   [x] 断路器告警卡 + 成本趋势卡（17-§8 全量口径——store queryEvents order:'desc'
  *       与 budgets 数据源已备；事件流增强 order=desc + event= 维）
+ *   [x] :8787 换装刀一（DEV-11，按 DEV-1 方案/docs/37-§5.1 路线 I）：vendor 三件进仓 +
+ *       /vendor/*、/ui/* 静态路由 + Vue/Naive UI/ECharts 页壳；旧单页保留 /legacy
  *   [x] :8789 slug 路由 + 公司清单页（v0.7 首刀，./overview）
  *   [x] 组织/人事/进度/财务读面 tab（服务端聚合，不整树前端渲染；v0.7 首刀）
  *   [x] daemon bin 子命令 `studio-next overview --company <目录>… [--db <库路径>] [--port 8789]`
@@ -95,6 +98,13 @@ export type {
   SnapshotRuns,
   SnapshotWorkers,
 } from './views.ts'
+
+// 页壳层：Vue 壳 + importmap（shell.ts——纯函数零 IO）
+export { PANEL_IMPORTMAP, PANEL_LEGACY_ROUTE, PANEL_UI_ENTRY, renderDashboardShell } from './shell.ts'
+
+// 静态层：/vendor/* 与 /ui/* 路由（static.ts——本刀唯一新增 IO 文件）
+export { VENDOR_FILES, mountPanelStatic } from './static.ts'
+export type { PanelStaticOptions } from './static.ts'
 
 // 服务器层：Hono app 工厂 + 真监听壳（server.ts）
 export {

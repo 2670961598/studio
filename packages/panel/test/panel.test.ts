@@ -169,9 +169,20 @@ describe('GET /api/snapshot（buildDashboardSnapshot 一次收集）', () => {
   })
 })
 
-describe('GET /（HTML 单页）', () => {
-  it('内联样式单页：四区块 + snapshot 轮询 + EventSource 接 SSE', async () => {
+describe('GET /（Vue 页壳——换装刀一）与 GET /legacy（旧版单页）', () => {
+  it('/：importmap 页壳 + #app 挂载点 + /ui/main.js 入口 + 兜底指向 /legacy', async () => {
     const res = await app.request('/')
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('text/html')
+    const html = await res.text()
+    expect(html).toContain('Studio Next')
+    for (const marker of ['<script type="importmap">', '/vendor/vue.esm-browser.prod.js', '/vendor/naive-ui.prod.mjs', '/vendor/echarts.esm.min.js', '<div id="app">', '/ui/main.js', '/legacy']) {
+      expect(html).toContain(marker)
+    }
+  })
+
+  it('/legacy：旧版内联单页保留（四区块 + snapshot 轮询 + EventSource 接 SSE——回滚兜底）', async () => {
+    const res = await app.request('/legacy')
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toContain('text/html')
     const html = await res.text()
