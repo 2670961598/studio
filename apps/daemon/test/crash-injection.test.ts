@@ -20,10 +20,11 @@
  *   - fake 平台随进程失忆（单据/活动流在 serve 进程内存）——重启后的等价工作再驱动由
  *     「重挂欠账岗」承载（票号 T-1 重建=真实平台单据存续的模拟面；见 test/crash-points.ts
  *     头注）。重挂补偿的是 fake 的失忆，判重仍全以台账事件（receipt）为准。
- *   - ③ harvest-verdict：DISPATCH 有账、GATE_PASS 无账的孤儿在途，v0 **无 WORKER_DEAD
- *     接管面**（engine.ts 头注冻结边界「重启后在途接管归后续刀」）——本套冻结现状断言：
- *     孤儿 work_records 留 running、不双派发（attempt 派生+意图键去重）、新 attempt 可走完
- *     终态；接管语义归后续刀，不在本套伪造。
+ *   - ③ harvest-verdict：DISPATCH 有账、GATE_PASS 无账的孤儿在途——R-B 已转正（docs/38-§2
+ *     「在途接管收口」：serve 启动例行接管 work_records running，崩溃注入测试语义转正为
+ *     生产面）：重启即收口 interrupted（接管≠收割——四要件无据不判 GATE_FAIL）、不双派发
+ *     （attempt 派生+意图键去重）、新 attempt 走完终态、预算沿用 adopt 不双落。活体
+ *     WORKER_DEAD 检测（wall/budget/心跳/僵尸）仍归后续刀（R-C 面）。
  *   - ④ heartbeat-write：「tick 汇总事件」v0 形态=零动作拍 HEARTBEAT（事件随动作即时
  *     append，无批量汇总落账面）——如实降级为「重启后无害」断言：心跳不重、拍序/游标
  *     续用、库完整。
@@ -276,7 +277,7 @@ describe('崩溃注入五点回归集（F3-11：五点各 kill 一次，重启�
   )
 
   it(
-    '③ harvest-verdict：收割判定后 GATE_PASS 落账前硬杀 → 不双派发、孤儿在途如实留 running、新 attempt 走完终态',
+    '③ harvest-verdict：收割判定后 GATE_PASS 落账前硬杀 → 不双派发、孤儿在途启动例行接管收口、新 attempt 走完终态',
     async () => {
       const dir = await newCaseRoot('k3')
       caseDirs.push(dir)
@@ -304,6 +305,7 @@ describe('崩溃注入五点回归集（F3-11：五点各 kill 一次，重启�
       // —— 恢复：重启 + 新触发驱动（新意图键≠旧键——崩溃拍的意图已消费，PATROL 留痕不重放）——
       seedDueJob(dir)
       const p2 = spawnServe(config)
+      await p2.waitFor(/在途接管（R-B）：1 条/, { what: '启动例行接管（R-B）：前命孤儿 running 工位收口' })
       await p2.waitFor(/dispatched=1/, { what: '崩溃单重派（新 attempt）' })
       await p2.waitFor(/recycled=1/, { what: '恢复链走完（CLOSE）' })
       await p2.waitFor(/\[heartbeat\]/, { what: 'CLOSE 后空拍' })
@@ -320,8 +322,8 @@ describe('崩溃注入五点回归集（F3-11：五点各 kill 一次，重启�
       expect(countOf(ledger, 'T-1', 'CLOSE')).toBe(1) // 该单经新 attempt 走完终态
       const work = ledger.listWorkRecords({ issue: 'T-1' }).sort(byOrder)
       expect(work).toHaveLength(2)
-      expect(work[0]?.status).toBe('running') // 【冻结边界】孤儿在途无接管面（WORKER_DEAD 归后续刀）——如实留 running
-      expect(work[0]?.ended_at).toBeUndefined()
+      expect(work[0]?.status).toBe('interrupted') // 【R-B 转正】serve 启动例行接管：前命孤儿收口 interrupted（接管≠收割——四要件无据不判）
+      expect(work[0]?.ended_at).not.toBeUndefined()
       expect(work[1]?.status).toBe('done')
       expect(work[1]?.attempt).toBe(2)
       const budgets = ledger.queryBudgets({ scope_kind: 'issue', scope_id: 'T-1' })

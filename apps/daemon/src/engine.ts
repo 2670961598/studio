@@ -76,9 +76,11 @@
  *   - wkey：env 通道下无在途文件索引面（凭据离场=子进程终结，结构性撤离；daemon 不留
  *     token 副本）；重启后 CLOSE 相位照常吊销（revoke 按 ticket，不依赖索引）；吊销集在
  *     gateway 内存 authority（跨进程可见性疑点见 src/worker-key.ts 头注）；dispose 不吊销
- *     在途 key（work_records 留 running 的接管语义同款边界——接管单重签）；
- *   - 重启后在途接管：work_records 留 'running' 但 handle 已失（WORKER_DEAD 检测归后续刀）；
- *     dispose() 仅对内存 handle 优雅 kill；
+ *     在途 key（work_records 留 running——重启 R-B 例行接管收口，接管单重签一 attempt 一 key）；
+ *   - 重启后在途接管【R-B 已收口——serve 启动例行接管（serve.ts takeOverRunningWorkRecords，
+ *     docs/38-§2）：前命孤儿 running 工位收口 interrupted，重派走新 attempt+adopt】；活体
+ *     WORKER_DEAD 检测（wall/budget/心跳/僵尸，17-§9）仍归后续刀（R-C 面）；dispose() 仅对
+ *     内存 handle 优雅 kill；
  *   - 合并相位：v0 无真 git 合并（MERGE 事件 + 状态迁移的**模拟**，note 如实标注）；
  *   - 任务书只出首版（续跑版=上次 summary.json 前情注入，17-§5，归真单刀）；
  *   - 呈批迁移（submit_approval）：v0 直迁平台，不落事件（呈批事件名待批示；真路径=网关
@@ -1527,7 +1529,8 @@ export function createEngine(deps: EngineDeps): Engine {
         const adapter = registry.resolve(entry.executor)
         await adapter.kill(entry.handle, config.killGraceMs)
       } catch {
-        // kill 失败如实吞记（v0：dispose 不抛——停机路径保序）；work_records 留 running（接管归后续刀）
+        // kill 失败如实吞记（v0：dispose 不抛——停机路径保序）；work_records 留 running
+        //（重启由 serve 启动例行接管收口——R-B，serve.ts takeOverRunningWorkRecords）
       }
     }
     crashHook('shutdown-drain') // 崩溃注入⑤（F3-11）：SIGINT 停机 drain 中途（kill 已跑、在途注销前）——受控测试缝，默认零行为
