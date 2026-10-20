@@ -34,6 +34,21 @@
  *     冻结）也无平台动作——静默 noop=观察黑洞（14 张 P0/P1 单卡 2 小时无处可见）。
  *     TickDecisionEntry 携决策时平台态 state，serve 每拍为每个 noop 决策落一行日志
  *     （单号+原因码+态，见 serve.ts renderNoopDecision）。
+ *   - 镜像对账重决策 + 复活一等语义（DEV-42，2026-10-20 哨查：队列大片开放却长时间零派发）：
+ *     ① 候选积压饿死——决策候选是活动驱动的（采集相位 affected），被三闸顺延
+ *     （HOLD_TICK_LIMIT/HOLD_INFLIGHT_LIMIT）且活动已被游标消费的单下一拍不再是候选
+ *     =永久搁置（实测 studio-dev-45..53 零事件滞留数小时）；修法=相位 2 每节流拍把
+ *     非闭环（未 CLOSE）mirror 单补进候选重决策（issues.list 全量每拍已取——零额外
+ *     平台 IO；意图源名 'mirror' 与活动源区分，救回派发可归因；节流闸
+ *     config.mirrorRescanEveryTicks，0=关）。
+ *     ② CLOSE 单复活封锁——closed-set 由 CLOSE 事件派生且不释放，平台侧复活（态改回
+ *     流程态+评论，docs/49 复活令口径「复活均评论即可」）被闭集永拦在决策外
+ *     （实测 studio-dev-51/57 复活无效）；修法=复活一等语义：closed 单平台态离开终态
+ *     （交付锚点）→ 落 RESUME 事件（17-§3 冻结词表内的复活锚点——REOPEN 不在词表，
+ *     加名走 SCHEMA_EVOLVE 批示流不擅改契约）+ 闭集释放（CLOSE 后有 RESUME 即出闭集
+ *     ——事件派生可重放，无第二份可变状态）。复活判定=离开终态，不是「有评论」
+ *     （closed 单仅评论不复活——负断言钉死）；等级未登记流者终态锚点不可知，不复活
+ *     （诚实边界，plan 登记）。
  *   - docs/18-§三 状态归位：调度器不是控制面——岗单据与普通单走同一状态机同一收割链。
  *   - docs/16-§三 预算 / docs/20-§六.8：派发前预算闸（reserve→双行落账→才 launch——
  *     预算预留-结算**不落即不派**的机制化收口）+ 收割成功 settle 冲销（actual=每成功
@@ -188,6 +203,15 @@ export interface EngineConfig {
   /** dispose() 优雅杀宽限（ms） */
   killGraceMs: number
   /**
+   * 镜像对账重决策节流（DEV-42 ①，2026-10-20 哨查）：每 N 拍把非闭环（未 CLOSE）
+   * mirror 单全量补进决策候选——活动驱动候选只看「有新活动」的单，被三闸顺延且活动
+   * 已被游标消费的单会永久搁置（实测 studio-dev-45..53 零事件滞留数小时）。issues.list
+   * 全量每拍已取（镜像 upsert 用），补进候选零额外平台 IO；N=节流闸（防 noop 决策
+   * 日志面无界放大——serve 每拍为每个 noop 决策落一行）。0=关（负对照/测试隔离用）；
+   * 缺省 30（tickMs=1s 时最坏 30 秒救回延迟）。
+   */
+  mirrorRescanEveryTicks?: number
+  /**
    * 票级预算帽缺省（USD；docs/16-§三 reserve 票帽面）：TaskBrief.budgetCap（单票面）
    * 优先，缺省回退本帽；两者皆无=不设限。超帽=refusal 行落账且不派（20-§六.8）。
    */
@@ -230,6 +254,7 @@ export const ENGINE_CONFIG_DEFAULTS: EngineConfig = {
   heartbeatIssue: '-',
   maxActivityPages: 10,
   killGraceMs: 5_000,
+  mirrorRescanEveryTicks: 30,
 }
 
 // ————————————————————————— 依赖注入 —————————————————————————
@@ -315,7 +340,14 @@ export interface TickReport {
   ts: { start: number; end: number }
   phases: {
     collect: TickPhaseCollect
-    stateDiff: { candidates: number; decisions: readonly TickDecisionEntry[] }
+    stateDiff: {
+      candidates: number
+      decisions: readonly TickDecisionEntry[]
+      /** 本拍复活对账释放的 closed 单数（DEV-42②：RESUME 落账数） */
+      reopened: number
+      /** 本拍镜像对账扫描补进候选的单数（DEV-42①：非节流拍恒 0） */
+      rescanned: number
+    }
     dispatch: { dispatched: number; approvals: number; results: readonly TickActionResult[] } & TickPhaseDispatchBudget
     harvest: TickPhaseHarvest
     merge: { merged: number }
@@ -380,7 +412,7 @@ interface EventIndex {
   attemptOf(ticket: TicketId): number
   /** 在工意图键集（DISPATCH 已消费且无收割结论——重复活动 noop） */
   seenKeys: readonly string[]
-  /** 已 CLOSE 单（不再进 state-diff 候选） */
+  /** 已 CLOSE 单（不再进 state-diff 候选；CLOSE 后有 RESUME 即释放——复活一等语义 DEV-42②） */
   closed: ReadonlySet<TicketId>
   /** schedule 意图已物化键集（PATROL 留痕派生，append-only 不释放——重投不重跑） */
   patrolKeys: ReadonlySet<string>
@@ -592,6 +624,12 @@ export function createEngine(deps: EngineDeps): Engine {
         lastOutcome.set(e.issue, Math.max(lastOutcome.get(e.issue) ?? 0, e.ts))
       } else if (e.event === 'CLOSE') {
         closed.add(e.issue)
+      } else if (e.event === 'RESUME') {
+        // 复活一等语义（DEV-42②）：RESUME=复活锚点——CLOSE 后落 RESUME 即出闭集
+        // （事件流序 last-write-wins：复活→再走单→再 CLOSE→再入闭集，循环可重放）。
+        // 原口径 closed 不释放：平台侧复活（态改回流程态+评论，docs/49 复活令）被
+        // 闭集永拦在决策外（实测 studio-dev-51/57 复活无效）。
+        closed.delete(e.issue)
       } else if (e.event === 'PATROL') {
         // schedule 意图物化留痕（append-only 不释放）：同键意图恒只物化一次——
         // 与 DISPATCH 键的「结论后释放」语义相反（定时触发=markRan 已记账，重投不得重跑）
@@ -1178,8 +1216,33 @@ export function createEngine(deps: EngineDeps): Engine {
       }
     }
 
+    // —— 相位 2 前置②：复活对账（DEV-42②，2026-10-20 哨查 studio-dev-51/57 复活无效）——
+    // closed-set 是 CLOSE 事件派生的闭集；平台侧复活（态改回流程态+评论，docs/49 复活令
+    // 口径「复活均评论即可」）若无引擎侧一等语义，单据被闭集永拦——改态+评论也不进决策。
+    // 复活判定=closed 单的平台态离开其流终态（交付锚点）：评论不动终态不算复活（负断言
+    // 钉死）；等级未登记流者终态锚点不可知，不复活（诚实边界）。落 RESUME 事件
+    // （17-§3 冻结词表内的复活锚点；REOPEN 不在词表，加名走 SCHEMA_EVOLVE 批示流）
+    // → 下一拍 indexEvents 派生即出闭集（事件流序 last-write-wins，可重放）；本拍以
+    // 局部闭集即时放行进决策（RESUME 也计 mutations——有账面动作的拍不落心跳）。
+    const closedSet = new Set<TicketId>(index.closed)
+    let reopened = 0
+    for (const ticket of [...index.closed].sort()) {
+      const issue = issueById.get(ticket)
+      if (issue === undefined) continue // 平台已不可见（删除面归平台侧）——无从判定复活
+      const flow = flowOf(issue)
+      if (flow === undefined) continue // 等级未登记流：终态锚点不可知，不复活（plan 登记边界）
+      const delivered = flowAnchors(flow).delivered
+      if (issue.state === delivered) continue // 仍在终态=未复活（仅评论不触发）
+      makeEvent('RESUME', issue, index.attemptOf(ticket), tickEvents, {
+        note: `复活：closed 单离开终态 ${delivered} → ${issue.state}（平台侧复活；closed-set 释放，重进决策）`,
+      })
+      closedSet.delete(ticket)
+      reopened += 1
+      mutations += 1
+    }
+
     for (const ticket of [...affected].sort()) {
-      if (index.closed.has(ticket)) continue // 已 CLOSE 单不再进决策
+      if (closedSet.has(ticket)) continue // 已 CLOSE 单不再进决策（复活经 RESUME 释放——见上）
       candidates.push({
         ticket,
         intent: {
@@ -1190,6 +1253,28 @@ export function createEngine(deps: EngineDeps): Engine {
           priority: 1,
         },
       })
+    }
+
+    // —— 相位 2 前置③：镜像对账重决策（DEV-42①，2026-10-20 哨查 studio-dev-45..53 零事件滞留）——
+    // 活动驱动候选只看「有新活动」的单：被三闸顺延（HOLD_TICK_LIMIT/HOLD_INFLIGHT_LIMIT）
+    // 且活动已被游标消费的单，下一拍不再是候选=永久搁置（队列大片开放却长时间零派发）。
+    // 兜底=每 N 拍把非闭环（未 CLOSE）mirror 单补进候选（issues.list 全量每拍已取——镜像
+    // upsert 用，零额外平台 IO）；N=节流闸（防 noop 决策日志面无界放大）。候选去重：本拍
+    // 已是候选（活动/岗单物化）的单不重复（同拍一单至多一动作）；意图源名 'mirror'——
+    // 与活动源 'activity' 区分，救回派发的 DISPATCH note/决策条目可观测归因。
+    const candidateSeen = new Set<TicketId>(candidates.map((c) => c.ticket))
+    let rescanned = 0
+    const rescanEvery = config.mirrorRescanEveryTicks ?? 0
+    if (rescanEvery > 0 && seq % rescanEvery === 0) {
+      for (const issue of [...issues].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
+        if (closedSet.has(issue.id) || candidateSeen.has(issue.id)) continue
+        candidates.push({
+          ticket: issue.id,
+          intent: { kind: 'ticket', company: config.company, ticket: issue.id, source: 'mirror', priority: 0 },
+        })
+        candidateSeen.add(issue.id)
+        rescanned += 1
+      }
     }
     for (const cand of candidates) {
       const ticket = cand.ticket
@@ -1413,7 +1498,7 @@ export function createEngine(deps: EngineDeps): Engine {
           cursorBefore,
           cursorAfter: cursor,
         },
-        stateDiff: { candidates: candidates.length, decisions },
+        stateDiff: { candidates: candidates.length, decisions, reopened, rescanned },
         dispatch: {
           dispatched,
           approvals,

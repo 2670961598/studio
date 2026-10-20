@@ -7,6 +7,8 @@
  *   db: <台账库路径>            platform: localfile|fake      company: <slug>
  *   rootDir: <工位根>           tickMs: <拍间隔>              maxActionsPerTick / maxInflight
  *   stallAfterMs / laneTtlMs / breakerThreshold / autoApprove …（缺省见 DEFAULT_SERVE_CONFIG）
+ *   mirrorRescanEveryTicks: <镜像对账重决策节流>（DEV-42①，缺省 30；0=关——每 N 拍把
+ *     非闭环 mirror 单补进决策候选，兜底活动驱动候选漏单的永久搁置）
  *   jobs: true|false（定时岗调度开关，v0.4）   jobPollMs: <调度轮询间隔>（缺省 15000）
  *   models: <models.yaml 路径>（可选价目表，17-§4：装载→catalog 注入引擎——注入=估算
  *     态 A「estimateCost 校准+双帽」；缺省=态 B 降级「估算=适配器自报、仅票级帽」，
@@ -148,6 +150,12 @@ export interface ServeConfig {
   laneTtlMs: number
   /** 断路阈值 N */
   breakerThreshold: number
+  /**
+   * 镜像对账重决策节流（DEV-42①，2026-10-20 哨查）：每 N 拍把非闭环（未 CLOSE）
+   * mirror 单补进决策候选——活动驱动候选只看「有新活动」的单，被三闸顺延且活动已被
+   * 游标消费的单会永久搁置（实测 9 单零事件滞留数小时）。0=关；缺省 30。
+   */
+  mirrorRescanEveryTicks: number
   /** demo 自动批（真制作人批准信号经网关动作词归一） */
   autoApprove: boolean
   /** 定时岗调度开关（v0.4，16-§四）：true=scheduler + engine 同栈起（demo 样例岗见 DEMO_SNAPSHOT）。
@@ -261,6 +269,7 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   harvestSliceMs: ENGINE_CONFIG_DEFAULTS.harvestSliceMs,
   laneTtlMs: ENGINE_CONFIG_DEFAULTS.laneTtlMs,
   breakerThreshold: ENGINE_CONFIG_DEFAULTS.breakerThreshold,
+  mirrorRescanEveryTicks: ENGINE_CONFIG_DEFAULTS.mirrorRescanEveryTicks ?? 30,
   autoApprove: false,
   jobs: false,
   jobPollMs: 15_000,
@@ -386,6 +395,9 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         break
       case 'breakerThreshold':
         cfg.breakerThreshold = num(value, key)
+        break
+      case 'mirrorRescanEveryTicks':
+        cfg.mirrorRescanEveryTicks = num(value, key)
         break
       case 'autoApprove':
         cfg.autoApprove = bool(value, key)
@@ -885,6 +897,7 @@ export function buildServeRuntime(
     harvestSliceMs: config.harvestSliceMs,
     laneTtlMs: config.laneTtlMs,
     breakerThreshold: config.breakerThreshold,
+    mirrorRescanEveryTicks: config.mirrorRescanEveryTicks,
     autoApprove: config.autoApprove,
     // 读面分级（17-§7）：Blind 档冻结验收命令来源——与装配器 acceptance **同一事实源**
     //（单一事实源，不双源漂移；真单模式=acceptance 配置）；遇 Blind 派发而缺失 →
@@ -1080,7 +1093,9 @@ function renderTick(report: TickReport): string {
     `tick#${report.seq} actions=${report.actions.length} dispatched=${p.dispatch.dispatched} ` +
     `budget=${p.dispatch.budgetReserved}reserved/${p.dispatch.budgetRefused}refused ` +
     `harvest=${p.harvest.completed}/${p.harvest.checked}/p${p.harvest.pending} merged=${p.merge.merged} recycled=${p.recycle.recycled} ` +
-    `events=${p.account.eventsAppended} inflight=${report.inflightAfter} cursor=${p.collect.cursorAfter ?? '-'}${p.account.heartbeat ? ' [heartbeat]' : ''}`
+    `events=${p.account.eventsAppended} inflight=${report.inflightAfter} cursor=${p.collect.cursorAfter ?? '-'}${
+      p.stateDiff.reopened > 0 ? ` reopened=${p.stateDiff.reopened}` : ''
+    }${p.stateDiff.rescanned > 0 ? ` rescan=+${p.stateDiff.rescanned}` : ''}${p.account.heartbeat ? ' [heartbeat]' : ''}`
   )
 }
 
@@ -1090,7 +1105,8 @@ function renderTick(report: TickReport): string {
  * 不落台账事件（事件词表冻结）也不改平台——若再无日志行即成观察黑洞：单据静默卡死
  * 无处可见（2026-10-20 哨查事故：14 张 P0/P1 单落 New 态被 NOOP_UNKNOWN_STATE
  * 静默跳过 2 小时，靠台账缺席+镜像态反推才定位）。故 serve 运行面每拍为每个 noop
- * 决策落一行：单号+原因码+决策时平台态。候选集是活动驱动的，行量有界。
+ * 决策落一行：单号+原因码+决策时平台态。行量有界：候选=活动驱动 + 镜像对账扫描拍
+ * （每 mirrorRescanEveryTicks 拍一轮，DEV-42①——节流闸即 noop 行量闸）。
  */
 export function renderNoopDecision(seq: number, entry: TickDecisionEntry): string {
   return `[serve] tick#${seq} noop：${entry.ticket} code=${entry.code} state=${entry.state}（noop 无台账事件，此行=唯一观测面）`
