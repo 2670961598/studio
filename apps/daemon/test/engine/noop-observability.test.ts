@@ -14,7 +14,9 @@
  *      携 state='New'；noopLinesOf 产出含单号+原因码+态的日志行
  *   2. 流缺失（未定级单）：level 缺失 → NOOP_UNKNOWN_FLOW 同样可见（「等 noop 决策」
  *      全类经同一观测面）
- *   3. 负断言：noop 单零台账事件、零动作、零派发（日志行是唯一观测面）
+ *   3. 事故单账面（DEV-49 A4 升级，2026-10-22：日志行不再是唯一观测面）：流外态单
+ *      额外落**恰好一条** ESCALATE 事件（UNKNOWN_STATE 哨——每单每态一次，事件派生
+ *      键去重；词表既有名不扩词）+ 零动作零派发
  *   4. renderNoopDecision 纯函数行格式（单号+原因码+态+拍号）
  */
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -82,7 +84,7 @@ afterAll(async () => {
 })
 
 describe('noop 决策观测面（DEV-40 ②：静默 noop=观察黑洞）', () => {
-  it('事故复现：流外态单（New）→ NOOP_UNKNOWN_STATE 决策携 state；noop 日志行含单号+原因码+态（负断言：零台账事件/零动作/零派发）', async () => {
+  it('事故复现：流外态单（New）→ NOOP_UNKNOWN_STATE 决策携 state + 恰好一条 ESCALATE 哨（DEV-49 A4：日志行+台账双观测；零动作/零派发/平台态不动）', async () => {
     const stack = buildStack('out-of-flow')
     // 外部建单（放单脚本口径）：直接平台 create 落平台默认态 New（fake 经 initialState 模拟
     // Taiga 默认态——流外态进 decide）
@@ -105,13 +107,26 @@ describe('noop 决策观测面（DEV-40 ②：静默 noop=观察黑洞）', () =
     expect(lines).toHaveLength(1)
     expect(lines[0]).toContain(`noop：${created.id} code=NOOP_UNKNOWN_STATE state=New`)
 
-    // 负断言：noop 无账面/平台动作——日志行是唯一观测面
+    // 负断言：noop 无平台动作——零动作/零派发
     expect(report.actions.filter((a) => a.ticket === created.id)).toEqual([
       { type: 'noop', code: 'NOOP_UNKNOWN_STATE', ticket: created.id },
     ])
     expect(report.phases.dispatch.dispatched).toBe(0)
-    expect(stack.ledger.queryEvents({ issue: created.id })).toHaveLength(0)
-    expect((await stack.platform.issues.get(created.id)).state).toBe('New') // 平台态不动
+    // DEV-49 A4 升级（docs/52-§十）：流外态单不再只靠日志行——恰好一条 ESCALATE
+    // UNKNOWN_STATE 哨（词表既有名；每单每态一次）落台账=账面可查、面板可见
+    expect(report.phases.collect.unknownStateAlarmed).toBe(1)
+    const events = stack.ledger.queryEvents({ issue: created.id })
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ event: 'ESCALATE', issue: created.id })
+    expect(events[0]?.note).toContain('UNKNOWN_STATE;state=New')
+    // 平台态不动（哨=观测非驱动；根治动作在 onboard factory 三步）
+    expect((await stack.platform.issues.get(created.id)).state).toBe('New')
+
+    // 洪泛控制：下一拍同单同态不重告（事件派生键去重——14 单事故级回流也不刷屏）
+    stack.clock.advance(1000)
+    const report2: TickReport = await stack.engine.tick()
+    expect(report2.phases.collect.unknownStateAlarmed).toBe(0)
+    expect(stack.ledger.queryEvents({ issue: created.id })).toHaveLength(1)
     await stack.engine.dispose()
     stack.ledger.close()
   })

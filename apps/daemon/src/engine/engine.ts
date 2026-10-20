@@ -179,12 +179,14 @@ import type { ExecutorRegistry } from '@studio-next/adapters'
 import type { Ledger } from '@studio-next/store'
 import { gateDispatch, settleDispatch, type BudgetGateDeps } from './budget-gate.ts'
 import { crashHook } from './crash-points.ts'
+import { buildEventIndex, type EventIndex } from './sentinel/events-index.ts'
 import type { GateRunner } from './gate.ts'
 import { makeUlid } from './tools/id.ts'
 import { instructionsTarget, removeInstructions, writeInstructions } from './instructions-store.ts'
 import type { PromptAssembler } from './prompt-assembly.ts'
 import { blindArtifactPaths, createView, resolveReadTier, roleOfAssignee } from './read-tiers.ts'
 import type { ReadTier } from './read-tiers.ts'
+import { heartbeatSentinelRecord, runDev49Sentinels } from './sentinel/sentinels.ts'
 import { mintWorkerKey, workerKeyCredentials, workerKeyGuidance, WORKER_WKEY_ENV_KEY } from './worker-key.ts'
 import type { WorkerKeyDeps } from './worker-key.ts'
 
@@ -268,6 +270,14 @@ export interface EngineConfig {
    */
   mirrorRescanEveryTicks?: number
   /**
+   * 状态集巡逻核节流（DEV-49 A4，2026-10-20 出厂态根治，docs/52-§十）：每 N 拍核对
+   * 「平台状态集 − 有效流表声明集 = ∅」（C1-08 看门狗口径）——出厂态回流/新模板重拷
+   * 的回归哨；不成立即对心跳哨兵单 ESCALATE（每状态名一次，事件派生键去重）。
+   * 节流原因=platform.fields.schema() 不是免单（每拍拉=平台读放大）；0=关（负对照/
+   * 测试隔离用）；缺省 30（tickMs=1s 时最坏 30 秒回归发现延迟）。
+   */
+  statusSetPatrolEveryTicks?: number
+  /**
    * 票级预算帽缺省（USD；docs/16-§三 reserve 票帽面）：TaskBrief.budgetCap（单票面）
    * 优先，缺省回退本帽；两者皆无=不设限。超帽=refusal 行落账且不派（20-§六.8）。
    */
@@ -313,6 +323,7 @@ export const ENGINE_CONFIG_DEFAULTS: EngineConfig = {
   maxActivityPages: 10,
   killGraceMs: 5_000,
   mirrorRescanEveryTicks: 30,
+  statusSetPatrolEveryTicks: 30,
 }
 
 /**
@@ -370,6 +381,16 @@ export interface TickPhaseCollect {
   mirrorSynced: number
   cursorBefore: string | null
   cursorAfter: string | null
+  /**
+   * 未知态哨告警数（DEV-49 A4，docs/52-§十）：流可解析而 state∉声明集的单本拍
+   * 新落账的 ESCALATE 条数（每单每态一次——去重后增量）。
+   */
+  unknownStateAlarmed: number
+  /**
+   * 状态集巡逻核告警数（DEV-49 A4）：本拍新发现「平台有而公司声明集无」的状态名数
+   * （每状态名一次；非巡逻拍恒 0）。
+   */
+  statusSetDrift: number
 }
 
 /** state-diff 相位：每候选一决（含 hold/noop——落账口径全量留痕） */
@@ -476,28 +497,6 @@ interface Inflight {
 interface LaneLease {
   holder: TicketId
   expiresAt: number
-}
-
-/** events 派生索引（幂等依据；每拍重建，可重放） */
-interface EventIndex {
-  /** DISPATCH 计数（attempt=计数+1） */
-  attemptOf(ticket: TicketId): number
-  /** 在工意图键集（DISPATCH 已消费且无收割结论——重复活动 noop） */
-  seenKeys: readonly string[]
-  /** 已 CLOSE 单（不再进 state-diff 候选；CLOSE 后有 RESUME 即释放——复活一等语义 DEV-42②） */
-  closed: ReadonlySet<TicketId>
-  /**
-   * 同 attempt 内 STALL 告警计数（DEV-44 咬合阈依据）：最近一次 DISPATCH 之后的 STALL
-   * 事件数（事件派生可重放；重派新 DISPATCH 落账即归零——attempt 作用域，不跨誓累计）。
-   */
-  stallStrikesOf(ticket: TicketId): number
-  /**
-   * 本单未释放的消费键（最近一次 DISPATCH 的 intent 键，结论事件未落=未释放；DEV-44）：
-   * 在工喂数豁免用——见相位 2 decide 输入装配处的看门狗喂数豁免注记。
-   */
-  seenKeyOf(ticket: TicketId): string | null
-  /** schedule 意图已物化键集（PATROL 留痕派生，append-only 不释放——重投不重跑） */
-  patrolKeys: ReadonlySet<string>
 }
 
 // ————————————————————————— 引擎本体 —————————————————————————
@@ -694,60 +693,6 @@ export function createEngine(deps: EngineDeps): Engine {
       ...(issue.parent !== undefined ? { parent: issue.parent } : {}),
       ...(issue.lane !== undefined ? { lane: issue.lane } : {}),
     })
-  }
-
-  /** events 派生索引（幂等件：attempt/seen/closed + schedule 意图键 + STALL 连击；见文件头注拟稿） */
-  function indexEvents(): EventIndex {
-    const dispatchCount = new Map<TicketId, number>()
-    const lastDispatch = new Map<TicketId, { ts: number; key: string | null }>()
-    const lastOutcome = new Map<TicketId, number>()
-    const closed = new Set<TicketId>()
-    const patrolKeys = new Set<string>()
-    const stallStrikes = new Map<TicketId, number>()
-    for (const e of ledger.queryEvents()) {
-      if (e.event === 'DISPATCH') {
-        dispatchCount.set(e.issue, (dispatchCount.get(e.issue) ?? 0) + 1)
-        const key = e.note?.split(';').find((s) => s.startsWith('intent='))?.slice('intent='.length) ?? null
-        lastDispatch.set(e.issue, { ts: e.ts, key })
-        // 新 attempt 开工：STALL 连击归零（attempt 作用域计数——DEV-44 咬合阈）
-        stallStrikes.set(e.issue, 0)
-      } else if (e.event === 'GATE_PASS' || e.event === 'GATE_FAIL') {
-        lastOutcome.set(e.issue, Math.max(lastOutcome.get(e.issue) ?? 0, e.ts))
-      } else if (e.event === 'CLOSE') {
-        closed.add(e.issue)
-      } else if (e.event === 'RESUME') {
-        // 复活一等语义（DEV-42②）：RESUME=复活锚点——CLOSE 后落 RESUME 即出闭集
-        // （事件流序 last-write-wins：复活→再走单→再 CLOSE→再入闭集，循环可重放）。
-        // 原口径 closed 不释放：平台侧复活（态改回流程态+评论，docs/49 复活令）被
-        // 闭集永拦在决策外（实测 studio-dev-51/57 复活无效）。
-        closed.delete(e.issue)
-      } else if (e.event === 'PATROL') {
-        // schedule 意图物化留痕（append-only 不释放）：同键意图恒只物化一次——
-        // 与 DISPATCH 键的「结论后释放」语义相反（定时触发=markRan 已记账，重投不得重跑）
-        const key = e.note?.split(';').find((s) => s.startsWith('intent='))?.slice('intent='.length)
-        if (key !== undefined) patrolKeys.add(key)
-      } else if (e.event === 'STALL' && (lastDispatch.get(e.issue) ?? { ts: 0 }).ts < e.ts) {
-        // DEV-44 咬合阈计数：在工期（最近 DISPATCH 后）STALL 告警逐次累计——
-        // 重派后新 DISPATCH 归零（attempt 作用域），事件派生可重放
-        stallStrikes.set(e.issue, (stallStrikes.get(e.issue) ?? 0) + 1)
-      }
-    }
-    const seen: string[] = []
-    for (const [ticket, last] of lastDispatch) {
-      if (last.key !== null && (lastOutcome.get(ticket) ?? 0) <= last.ts) seen.push(last.key)
-    }
-    return {
-      attemptOf: (ticket: TicketId): number => (dispatchCount.get(ticket) ?? 0) + 1,
-      seenKeys: seen,
-      closed,
-      stallStrikesOf: (ticket: TicketId): number => stallStrikes.get(ticket) ?? 0,
-      seenKeyOf: (ticket: TicketId): string | null => {
-        const last = lastDispatch.get(ticket)
-        if (last === undefined || last.key === null) return null
-        return (lastOutcome.get(ticket) ?? 0) <= last.ts ? last.key : null
-      },
-      patrolKeys,
-    }
   }
 
   /** 泳道租约状态（过期=死主视同无主——decide laneFree 同语义；过期判定归 decide 入参时钟） */
@@ -1388,8 +1333,35 @@ export function createEngine(deps: EngineDeps): Engine {
     const issueById = new Map<TicketId, IssueRecord>(issues.map((i) => [i.id, i]))
     for (const issue of issues) syncMirror(issue)
 
+    // —— 相位 1 尾：DEV-49 A4 双哨（未知态哨+状态集巡逻核，docs/52-§十；体=sentinels.ts，
+    // 键派生=events-index.ts）——流外态单/出厂态回流不再只走 NOOP 静默观测链：ESCALATE
+    // 落账（词表既有名）；哨计 mutations（RESUME 同口径）——有哨账的拍不落心跳。
+    const index = buildEventIndex(ledger.queryEvents())
+    const { alarmed: unknownStateAlarmed, drift: statusSetDrift } = await runDev49Sentinels({
+      issues,
+      flowOf,
+      alarmedKeys: index.unknownStateAlarmed,
+      driftKeys: index.statusSetDriftAlarmed,
+      attemptOf: index.attemptOf,
+      emit: (issue, attempt, note) => {
+        makeEvent('ESCALATE', issue, attempt, tickEvents, { note })
+      },
+      patrol: {
+        seq,
+        every: config.statusSetPatrolEveryTicks ?? 30,
+        schema: () => platform.fields.schema(),
+        ...(config.flows === undefined ? {} : { flows: config.flows }),
+        heartbeatIssue: config.heartbeatIssue,
+        deptFallback: config.deptFallback,
+        at: startedAt,
+      },
+      onError: (msg) => {
+        errors.push(msg)
+      },
+    })
+    mutations += unknownStateAlarmed + statusSetDrift
+
     // —— 相位 2 state-diff：受影响单逐个 decide（每单至多一动作；provisionalActions 供三闸） ——
-    const index = indexEvents()
     const dispatchQ: Array<{ action: Extract<Action, { type: 'dispatch' }>; intentKey: string }> = []
     const approvalQ: Array<Extract<Action, { type: 'submit_approval' }>> = []
     const collectQ: Array<Extract<Action, { type: 'collect' }>> = []
@@ -1751,15 +1723,13 @@ export function createEngine(deps: EngineDeps): Engine {
     let heartbeat = false
     if (mutations === 0) {
       crashHook('heartbeat-write') // 崩溃注入④（F3-11）：零动作拍心跳事件写入前（落账/心跳相位缝）——受控测试缝，默认零行为
-      const sentinel: IssueRecord = {
-        id: config.heartbeatIssue,
-        title: '心跳哨兵',
-        state: '-',
-        dept: config.deptFallback,
-        level: 1,
-        updated: new Date(startedAt).toISOString(),
-      }
-      makeEvent('HEARTBEAT', sentinel, 1, tickEvents, { note: `tick#${seq} 无机器动作（activities=${activityCount}）` })
+      makeEvent(
+        'HEARTBEAT',
+        heartbeatSentinelRecord(config.heartbeatIssue, config.deptFallback, startedAt),
+        1,
+        tickEvents,
+        { note: `tick#${seq} 无机器动作（activities=${activityCount}）` },
+      )
       heartbeat = true
     }
 
@@ -1774,6 +1744,8 @@ export function createEngine(deps: EngineDeps): Engine {
           mirrorSynced: issues.length,
           cursorBefore,
           cursorAfter: cursor,
+          unknownStateAlarmed,
+          statusSetDrift,
         },
         stateDiff: { candidates: candidates.length, decisions, reopened, rescanned },
         dispatch: {

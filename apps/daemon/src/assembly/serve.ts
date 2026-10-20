@@ -582,7 +582,7 @@ function realGateMode(config: ServeConfig): boolean {
  * 文件，docs/32 冒烟惯例）归部署面装载（systemd EnvironmentFile / docker secrets
  * → env），daemon 只认 env。
  */
-function resolveTaigaAuth(mode: 'password' | 'token'): TaigaAuth {
+export function resolveTaigaAuth(mode: 'password' | 'token'): TaigaAuth {
   if (mode === 'password') {
     const username = process.env['TAIGA_USERNAME']
     const password = process.env['TAIGA_PASSWORD']
@@ -611,7 +611,7 @@ function resolveTaigaAuth(mode: 'password' | 'token'): TaigaAuth {
  * 深层形状（值非空、类型枚举）归 TaigaFieldMap/validateProvisionMap 二道校验。同一份
  * 文件在迁移期也是 fields.provision 的输入（单一事实源，见 deliverables/migration.md）。
  */
-function loadTaigaFieldMap(file: string): FieldProvisionMap {
+export function loadTaigaFieldMap(file: string): FieldProvisionMap {
   let raw: unknown
   try {
     raw = JSON.parse(readFileSync(path.resolve(file), 'utf8'))

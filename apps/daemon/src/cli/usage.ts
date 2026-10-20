@@ -102,6 +102,12 @@ export const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
       预算预留-结算不落即不派（20-§六.8）；companyDir 给定时接 L1 配置热重载（指纹自动+
       reload 手动，reloadWatch 缺省开）；demo 模式=fake 全家桶零外部依赖
       （真 dsh/YouTrack/网关未接线，见 src/assembly/serve.ts 头注）
+  studio-next taiga-cure --config <daemon.yaml>
+      Taiga 出厂态根治三步一次性运营命令（DEV-49，docs/52-§十 A1→A2→A3；幂等重跑零写零删）：
+      A1 项目默认态重指声明集收件态 + A2 存量出厂态单归化 + A3 出厂状态退役（先落全实体
+      状态集快照进 <rootDir>/var/ 再 DELETE——删除不可逆，入档后行）。前置 platform: taiga +
+      taigaFieldsFile（声明集事实源，缺=拒不猜）；A4 未知态哨在引擎采集相位（非本命令面）。
+      daemon 不代写 provision——根治同属 onboard 一次性运营动作（serve.ts wirePlatform 同口径）。
   studio-next reload [--company <slug>] [--root <工位根>] [--config <daemon.yaml>] [--timeout <ms>]
       L1 配置热重载手动触发（docs/38-§2 L1 / §4 R-A）：向运行中的 daemon 发重载请求（控制面
       文件通道 <rootDir>/control/reload.request.json）并轮询回执（缺省 15s）——daemon 在拍边界

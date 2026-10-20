@@ -13,9 +13,8 @@
  * 适配器自动 refresh/重登 → 重试一次的通路可测）。凭据全部假值（永不入仓真凭据）。
  * 时间：内部 tick 固定步进 1s（起点 2026-10-18T00:00:00Z），确定性回放。
  */
-import { expect } from 'vitest'
-import type { ErrorCategory, FieldProvisionMap, FlowPlatform } from '@studio-next/contract'
-import { createTaigaPlatform, TaigaPlatformError, type FetchLike } from './index.ts'
+import type { FetchLike } from './index.ts'
+import { factoryCureRoute, projectDefaultsEcho } from './factory/fake-faces.ts'
 
 export interface FakeEntity {
   id: number
@@ -114,6 +113,12 @@ export class FakeTaiga {
   readonly issueStatuses: Array<{ id: number; name: string; slug: string }> = [{ id: 21, name: 'New', slug: 'new' }]
   /** task 实体状态集（DEV-43：task-statuses 端点——provision 物化面测试缝） */
   readonly taskStatuses: Array<{ id: number; name: string; slug: string }> = [{ id: 31, name: 'New', slug: 'new' }]
+  /**
+   * 项目默认态（DEV-49 S0，docs/32-§九）：by_slug 回显 default_us_status/
+   * default_task_status/default_issue_status（值=状态 id）；PATCH /projects/{id} 可写。
+   * 出厂值=各实体 New（出厂模板根因的可测化身——建单不带 status 即落此态）。
+   */
+  defaultStatuses: { userstory: number | null; task: number | null; issue: number | null } = { userstory: 1, task: 31, issue: 21 }
   /** 自定义属性：四映射维 + 一个不映射的（工号）——证明未映射维读不见 */
   readonly attributes: Array<{ id: number; name: string; type: string }> = [
     { id: 11, name: '类型', type: 'text' },
@@ -134,6 +139,8 @@ export class FakeTaiga {
   issues: FakeIssue[] = []
   /** 测试旋钮：下一次 PATCH 强制 409（模拟 GET 与 PATCH 之间的并发写） */
   conflictNextPatch = false
+  /** 测试旋钮：状态档 DELETE 对这些 id 强制 500（A3 跳过面注入——平台侧拒删不中断） */
+  failStatusDeletes = new Set<number>()
 
   private tickMs = TICK_BASE
   private seq = 1
@@ -287,8 +294,13 @@ export class FakeTaiga {
         modified_date: '2026-10-18T00:00:01.000Z',
         members: this.members.map((m) => ({ id: m.id, username: m.username, full_name_display: m.username, role: 1, role_name: 'UX', is_active: true })),
         owner: { id: 5, username: 'admin', full_name_display: 'admin' },
+        // DEV-49 S0（docs/32-§九）：ProjectSerializer 回显四默认态（值=状态 id）
+        ...projectDefaultsEcho(this),
       })
     }
+    // —— DEV-49 出厂态根治路由面（PATCH /projects + DELETE statuses；体=factory/fake-faces.ts，S0=docs/32-§九）——
+    const cured = factoryCureRoute(this, method, path, body, query, respond)
+    if (cured !== undefined) return cured
 
     // —— 状态集 / 属性集 / 角色（读 + onboard 写面路由）——
     if (method === 'GET' && path === '/api/v1/userstory-statuses') {
@@ -385,7 +397,8 @@ export class FakeTaiga {
         ref: ++this.refSeq,
         subject: b.subject,
         description: b.description ?? null,
-        status: b.status ?? this.statuses[0]?.id ?? 1,
+        // 落位=S0 语义（docs/32-§九）：不带 status 即落项目默认态（出厂=New——DEV-49 红面根因）
+        status: b.status ?? this.defaultStatuses.userstory ?? this.statuses[0]?.id ?? 1,
         version: 1,
         assignedTo: b.assigned_to ?? null,
         createdDate: now,
@@ -676,48 +689,5 @@ export class FakeTaiga {
   }
 }
 
-// —— 平台工厂与断言（口径对齐 localplatform/yt testutil） ——
-
-export const TEST_BASE_URL = 'http://taiga.test'
-export const TEST_PASSWORD_AUTH = { type: 'password' as const, username: USERNAME, password: PASSWORD }
-
-/** 默认测试映射（公司目录声明样例；state/assignee 原生不需要映射） */
-export const TEST_FIELDS: FieldProvisionMap = {
-  fields: { type: '类型', dept: '部门', level: '等级', lane: '泳道' },
-  types: { level: 'int' as const },
-  states: ['New', 'In progress', 'Done'],
-  stateFlow: { New: ['In progress'], 'In progress': ['Done'] },
-}
-
-export function makePlatform(
-  fake: FakeTaiga,
-  opts?: { pageSize?: number; fields?: FieldProvisionMap | undefined; entity?: 'userstory' | 'issue' },
-): FlowPlatform {
-  return createTaigaPlatform({
-    baseUrl: TEST_BASE_URL,
-    project: 'probe-co',
-    auth: TEST_PASSWORD_AUTH,
-    fields: opts?.fields ?? TEST_FIELDS,
-    ...(opts?.entity === undefined ? {} : { entity: opts.entity }),
-    ...(opts?.pageSize === undefined ? {} : { pageSize: opts.pageSize }),
-    fetch: fake.fetch,
-  })
-}
-
-/** 异步断言：reject TaigaPlatformError 且 category/subcause 匹配 */
-export async function expectTaigaReject(
-  fn: () => Promise<unknown>,
-  category: ErrorCategory,
-  subcause: string,
-): Promise<void> {
-  let caught: unknown = null
-  try {
-    await fn()
-  } catch (err) {
-    caught = err
-  }
-  expect(caught, '应当抛出 TaigaPlatformError').toBeInstanceOf(TaigaPlatformError)
-  const err = caught as TaigaPlatformError
-  expect(err.category).toBe(category)
-  expect(err.subcause).toBe(subcause)
-}
+// —— 平台工厂与断言：上移 platform-fixture.ts（尺寸基线清偿，docs/20-§十五.三）——
+export { TEST_BASE_URL, TEST_PASSWORD_AUTH, TEST_FIELDS, makePlatform, expectTaigaReject } from './platform-fixture.ts'
