@@ -220,10 +220,15 @@ export type FakeAdapterMode =
   | 'empty_output' // 要件 2 缺：completed 但无非空 log 文本
   | 'incomplete' // 要件 1 缺：turn_end.completed=false
   | 'no_report' // 要件 3 缺：不落 REPORT/summary（闸门侧报）
+  | 'stalled' // 静默工人（DEV-44 注入面）：流驻留永不收尾、零事件零产物——收割恒 streaming，单卡已派发等看门狗
 
-/** fake 适配器选项 */
+/**
+ * fake 适配器选项。
+ * mode 支持函数形态（每次 launch 现取）：测试运行期切换形态——如「首誓僵死（stalled）→
+ * STALL 咬合杀掉 → 重派完成（ok）」的崩溃注入剧本（DEV-44 红证）。
+ */
 export interface FakeAdapterOptions {
-  mode?: FakeAdapterMode
+  mode?: FakeAdapterMode | (() => FakeAdapterMode)
   name?: string
   /**
    * launch 捕获钩子（测试断言注入面用）：收到 daemon 传入的 TaskBrief 原体——
@@ -231,11 +236,21 @@ export interface FakeAdapterOptions {
    * 凭据红名单不破——fake 流文本永不含凭据值）。
    */
   onLaunch?: (task: TaskBrief) => void
+  /**
+   * kill 捕获钩子（DEV-44 测试断言面）：fake 无真进程（pid=0），kill 的可观测面只有
+   * 本钩子——断言「整树杀」被调（handle 归属 + graceMs 与 killGraceMs 同链）。
+   */
+  onKill?: (h: Handle, graceMs: number) => void
 }
 
 interface FakeSession {
   events: StreamEvent[]
   consumed: boolean
+  /**
+   * stalled 形态的驻留放行器：kill() 调用即放行（模拟整树杀后流收尾——真适配器里
+   * SIGKILL 后 read 返回 EOF，同构）。未驻留/未 kill = 永不收尾（静默工人本体）。
+   */
+  release?: () => void
 }
 
 const FAKE_CAPABILITIES: ExecutorCapabilities = {
@@ -274,12 +289,15 @@ export const FAKE_SUMMARY_JSON = JSON.stringify(
 
 /**
  * 内存 fake adapter：launch 即「worker 已完成」——按 mode 落产物并备好一次性完成流。
- * stream 一会话只许消费一次（dsh 同款纪律）；resultStats 固定账目。
+ * stream 一会话只许消费一次（dsh 同款纪律）；resultStats 固定账目。stalled 形态例外：
+ * 流驻留永不收尾（kill 放行收尾）——DEV-44 STALL 响置刀的静默工人注入面。
  */
 export function createFakeAdapter(opts?: FakeAdapterOptions): ExecutorAdapter {
-  const mode = opts?.mode ?? 'ok'
+  const modeOpt = opts?.mode
+  const modeOf: () => FakeAdapterMode = typeof modeOpt === 'function' ? modeOpt : () => modeOpt ?? 'ok'
   const name = opts?.name ?? 'fake'
   const onLaunch = opts?.onLaunch
+  const onKill = opts?.onKill
   const sessions = new Map<string, FakeSession>()
   let sessionSeq = 0
 
@@ -298,13 +316,20 @@ export function createFakeAdapter(opts?: FakeAdapterOptions): ExecutorAdapter {
       onLaunch?.(task) // 回显替身：真实 executor 在此把 credentials 透传进子进程 env（v1.4）
       sessionSeq += 1
       const sessionId = `${name}-${sessionSeq}`
-      // worker 落产物（REPORT/summary 是 worker 侧产物，非闸门侧）；no_report 形态=worker 没交报告
-      if (mode !== 'no_report') {
+      const mode = modeOf() // 每誓现取（函数形态=运行期切换——DEV-44 崩溃注入剧本）
+      // worker 落产物（REPORT/summary 是 worker 侧产物，非闸门侧）；no_report/stalled
+      // 形态=worker 没交报告（静默工人零产物）
+      if (mode !== 'no_report' && mode !== 'stalled') {
         mkdirSync(task.workspace, { recursive: true })
         writeFileSync(path.join(task.workspace, 'REPORT.md'), FAKE_REPORT_MD, 'utf8')
         writeFileSync(path.join(task.workspace, 'summary.json'), FAKE_SUMMARY_JSON, 'utf8')
       }
       const events: StreamEvent[] = []
+      if (mode === 'stalled') {
+        // 静默工人（DEV-44）：零事件流（无 log/无 step/无 turn_end）——收割增量泵恒驻留
+        sessions.set(sessionId, { events, consumed: false })
+        return { executor: name, sessionId, pid: 0 }
+      }
       if (mode !== 'empty_output') events.push({ type: 'log', text: `[${name}] 工作产出文本（非空输出——四要件之一）` })
       events.push({ type: 'step_start', step: 'work' })
       events.push({ type: 'step_end', step: 'work', usage: { input: 100, output: 50 } })
@@ -321,6 +346,14 @@ export function createFakeAdapter(opts?: FakeAdapterOptions): ExecutorAdapter {
       if (session === undefined) throw new Error(`fake-adapter：未知会话 ${h.sessionId}`)
       if (session.consumed) throw new Error(`fake-adapter：会话 ${h.sessionId} 流已消费（一单一命、一流一收）`)
       session.consumed = true
+      if (session.events.length === 0) {
+        // stalled 形态（DEV-44）：驻留等 kill 放行（真适配器同构——整树杀后流收尾 EOF）；
+        // 未 kill=永不收尾（静默工人本体，看门狗判据面）。零事件=stalled 判形（恒零事件）。
+        await new Promise<void>((resolve) => {
+          session.release = resolve
+        })
+        return
+      }
       for (const ev of session.events) yield ev
     },
     async resultStats(h: Handle): Promise<ResultStats> {
@@ -334,8 +367,11 @@ export function createFakeAdapter(opts?: FakeAdapterOptions): ExecutorAdapter {
         turns: 1,
       }
     },
-    async kill(_h: Handle, _graceMs: number): Promise<void> {
-      // fake 无进程可杀（pid=0）
+    async kill(h: Handle, graceMs: number): Promise<void> {
+      // fake 无进程可杀（pid=0）——可观测面=onKill 钩子 + 驻留流放行（stalled 会话）
+      const session = sessions.get(h.sessionId)
+      session?.release?.()
+      onKill?.(h, graceMs)
     },
   }
 }

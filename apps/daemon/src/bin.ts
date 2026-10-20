@@ -236,7 +236,8 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
   studio-next serve --config <daemon.yaml>
       常驻主循环（v0.5，docs/16-§四）：七相位引擎 + 心跳日志 + SIGINT/SIGTERM 优雅停。
       配置最小面（扁平 YAML 子集）：db / platform(fake|localfile) / company / rootDir / tickMs /
-      maxActionsPerTick / maxInflight / stallAfterMs / laneTtlMs / breakerThreshold / autoApprove /
+      maxActionsPerTick / maxInflight / stallAfterMs / stallKillAfterAlarms / laneTtlMs / breakerThreshold /
+      autoApprove /
       companyDir / jobs / jobPollMs / models / budgetTicketCapUsd / budgetPersonCapUsd / reloadWatch；
       jobs: true 起定时岗调度器（v0.4：cron 到点→schedule 意图→主循环，结果落台账）；
       models: <models.yaml> 装载价目表→派发前预算闸估算校准（态 A；缺省态 B=适配器自报），

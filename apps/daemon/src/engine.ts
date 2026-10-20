@@ -49,6 +49,27 @@
  *     ——事件派生可重放，无第二份可变状态）。复活判定=离开终态，不是「有评论」
  *     （closed 单仅评论不复活——负断言钉死）；等级未登记流者终态锚点不可知，不复活
  *     （诚实边界，plan 登记）。
+ *   - STALL 响置闭环（DEV-44，2026-10-20 三例实证 studio-dev-20/25/71：看门狗只叫不咬——
+ *     工静默超阈、工人消亡、单卡已派发态，STALL 告警反复落账而无 kill+重派）：同 attempt 内
+ *     STALL 告警达阈 config.stallKillAfterAlarms（缺省 2，0=关）→ executeStallResponse 咬合：
+ *     ① kill 面（在途句柄存活）——`await adapter.kill(handle, killGraceMs)` 整树杀（与
+ *     dispose()/stop 通道同一条 kill 链：SIGTERM 进程组→宽限→SIGKILL；await 即 02-F1-08
+ *     「kill 后等死再重派」的等死）→ 工位收口 interrupted（**R-B 接管同款在途语义**：
+ *     接管≠收割——四要件对被杀工人不可判，不落 GATE_FAIL 不结算预算）→ 回滚首批位，
+ *     重派 attempt+1 经 rescan 兜底（activity 意图键未释放——22-§三.2 在工键经
+ *     GATE_PASS/GATE_FAIL 才释放，kill 面两皆无；与 R-B 接管后重派同款路径，DEV-42①）；
+ *     ② 消亡面（无在途句柄——工人已死/重启后在途丢失，三例实况面）——GATE_FAIL 收口
+ *     （note 前缀 WORKER_DEAD：，与 failHarvest 流异常面同法）+ 遗留 running 工位收口
+ *     failed + activity 键释放 → 重派 attempt+1 活动驱动。两面均入断路器（dispositions：
+ *     STALL countsTowardBreaker=true——僵死反复须熔断收敛，防「挂死-杀-重派」无限循环；
+ *     签名分型 stall:watchdog-kill / stall:worker-dead）。事件词表零新增（STALL/GATE_FAIL
+ *     均在 17-§3 冻结表内）。
+ *   - 看门狗喂数豁免（DEV-44 红证 ④ 发现的深层机制）：在工单的本单消费键不注入
+ *     seenIntentKeys（相位 2 装配处）——镜像键被 mirror 源重派消费后，kill 面无结论
+ *     事件、键不释放（22-§三.2），STALL_SILENT 候选会被 dedup step1 挡成 DEDUP_NOOP
+ *     = 看门狗对第二誓起失明（告警断流，「只叫不咬」的第二层）。豁免后健康探针每拍
+ *     可达（mirror 候选+rescan 兜底），重派安全由状态机守（已派发态无前向 dispatch
+ *     后继）；回滚后的新单态去重照常生效。
  *   - docs/18-§三 状态归位：调度器不是控制面——岗单据与普通单走同一状态机同一收割链。
  *   - docs/16-§三 预算 / docs/20-§六.8：派发前预算闸（reserve→双行落账→才 launch——
  *     预算预留-结算**不落即不派**的机制化收口）+ 收割成功 settle 冲销（actual=每成功
@@ -199,6 +220,17 @@ export interface EngineConfig {
   /** 在工静默告警阈值（ms；只盯已派发态，decide 4 号判定） */
   stallAfterMs: number
   /**
+   * STALL 响置咬合阈（DEV-44，2026-10-20 三例实证 studio-dev-20/25/71：看门狗只叫不咬）：
+   * 同 attempt 内 STALL 告警达 N 次（计数=最近一次 DISPATCH 起的事件派生，可重放）→
+   * 响置闭环（executeStallResponse）：有在途句柄=整树杀（stop 通道同款 kill 链，02-F1-08
+   * 「kill 后等死再重派」——await adapter.kill 即等死）→ 工位收口 interrupted（R-B 在途
+   * 语义）→ 回首批位重派 attempt+1（activity 键未释放，重派靠 rescan 兜底，DEV-42①）；
+   * 无在途句柄（工人消亡面）=GATE_FAIL（WORKER_DEAD 分类）收口+断路连击。两面均入断路器
+   * （dispositions：STALL countsTowardBreaker——防「挂死-杀-重派」无限循环）。
+   * 0=关（只叫不咬——负对照/缺陷存档用）；缺省 2（拟稿待批）。
+   */
+  stallKillAfterAlarms?: number
+  /**
    * 收割相位增量泵流的每工位每拍时间片（ms；DEV-9 P1 冻结修复，docs/17-§2 拍有界）：
    * 事件就绪即折算（microtask 先于计时器——完成流仍同拍收口，fake 全家桶行为不变）；
    * 无事件即驻留让出拍界（心跳/热重载/看门狗回拍边界）。墙钟（非注入时钟）——
@@ -261,6 +293,7 @@ export const ENGINE_CONFIG_DEFAULTS: EngineConfig = {
   limits: { maxActionsPerTick: 4, maxInflight: 2 },
   laneTtlMs: 30 * 60_000,
   stallAfterMs: 60 * 60_000,
+  stallKillAfterAlarms: 2,
   harvestSliceMs: 50,
   breakerThreshold: 3,
   autoApprove: false,
@@ -441,6 +474,16 @@ interface EventIndex {
   seenKeys: readonly string[]
   /** 已 CLOSE 单（不再进 state-diff 候选；CLOSE 后有 RESUME 即释放——复活一等语义 DEV-42②） */
   closed: ReadonlySet<TicketId>
+  /**
+   * 同 attempt 内 STALL 告警计数（DEV-44 咬合阈依据）：最近一次 DISPATCH 之后的 STALL
+   * 事件数（事件派生可重放；重派新 DISPATCH 落账即归零——attempt 作用域，不跨誓累计）。
+   */
+  stallStrikesOf(ticket: TicketId): number
+  /**
+   * 本单未释放的消费键（最近一次 DISPATCH 的 intent 键，结论事件未落=未释放；DEV-44）：
+   * 在工喂数豁免用——见相位 2 decide 输入装配处的看门狗喂数豁免注记。
+   */
+  seenKeyOf(ticket: TicketId): string | null
   /** schedule 意图已物化键集（PATROL 留痕派生，append-only 不释放——重投不重跑） */
   patrolKeys: ReadonlySet<string>
 }
@@ -635,18 +678,21 @@ export function createEngine(deps: EngineDeps): Engine {
     })
   }
 
-  /** events 派生索引（幂等件：attempt/seen/closed + schedule 意图键；见文件头注拟稿） */
+  /** events 派生索引（幂等件：attempt/seen/closed + schedule 意图键 + STALL 连击；见文件头注拟稿） */
   function indexEvents(): EventIndex {
     const dispatchCount = new Map<TicketId, number>()
     const lastDispatch = new Map<TicketId, { ts: number; key: string | null }>()
     const lastOutcome = new Map<TicketId, number>()
     const closed = new Set<TicketId>()
     const patrolKeys = new Set<string>()
+    const stallStrikes = new Map<TicketId, number>()
     for (const e of ledger.queryEvents()) {
       if (e.event === 'DISPATCH') {
         dispatchCount.set(e.issue, (dispatchCount.get(e.issue) ?? 0) + 1)
         const key = e.note?.split(';').find((s) => s.startsWith('intent='))?.slice('intent='.length) ?? null
         lastDispatch.set(e.issue, { ts: e.ts, key })
+        // 新 attempt 开工：STALL 连击归零（attempt 作用域计数——DEV-44 咬合阈）
+        stallStrikes.set(e.issue, 0)
       } else if (e.event === 'GATE_PASS' || e.event === 'GATE_FAIL') {
         lastOutcome.set(e.issue, Math.max(lastOutcome.get(e.issue) ?? 0, e.ts))
       } else if (e.event === 'CLOSE') {
@@ -662,6 +708,10 @@ export function createEngine(deps: EngineDeps): Engine {
         // 与 DISPATCH 键的「结论后释放」语义相反（定时触发=markRan 已记账，重投不得重跑）
         const key = e.note?.split(';').find((s) => s.startsWith('intent='))?.slice('intent='.length)
         if (key !== undefined) patrolKeys.add(key)
+      } else if (e.event === 'STALL' && (lastDispatch.get(e.issue) ?? { ts: 0 }).ts < e.ts) {
+        // DEV-44 咬合阈计数：在工期（最近 DISPATCH 后）STALL 告警逐次累计——
+        // 重派后新 DISPATCH 归零（attempt 作用域），事件派生可重放
+        stallStrikes.set(e.issue, (stallStrikes.get(e.issue) ?? 0) + 1)
       }
     }
     const seen: string[] = []
@@ -672,6 +722,12 @@ export function createEngine(deps: EngineDeps): Engine {
       attemptOf: (ticket: TicketId): number => (dispatchCount.get(ticket) ?? 0) + 1,
       seenKeys: seen,
       closed,
+      stallStrikesOf: (ticket: TicketId): number => stallStrikes.get(ticket) ?? 0,
+      seenKeyOf: (ticket: TicketId): string | null => {
+        const last = lastDispatch.get(ticket)
+        if (last === undefined || last.key === null) return null
+        return (lastOutcome.get(ticket) ?? 0) <= last.ts ? last.key : null
+      },
       patrolKeys,
     }
   }
@@ -1098,29 +1154,157 @@ export function createEngine(deps: EngineDeps): Engine {
         note: `${detail};rollback=跳过（等级未登记流）${wkeyDiscarded ? ';wkey=env-离场（凭据随子进程终结；重派重签新 credentials）' : ''}`,
       })
     }
-    // 断路器：worker 错误入账（同单同签名连击；达阈值熔断→open_bug）
-    const result = onWorkerError(breaker, ticket, signature, { threshold: config.breakerThreshold })
-    breaker = result.newState
-    if (result.action !== null) {
-      // 熔断=终局（decide HOLD_BREAKER_OPEN 压制一切重派）——此时吊销 ticket 安全
-      //（不再有同 ticket 重签面），凭据彻底死亡（17-§7 fail-closed）
-      revokeWorkerKeyOf(ticket)
-      const bug = await platform.issues.create({
-        title: `[bug] ${ticket} 断路熔断（同签名 ${result.action.strikes} 连击：${signature}）`,
-        description: detail,
-        type: 'bug',
-        dept: evtDept(fresh),
-        // 不定级：未定级单无状态流（decide NOOP_UNKNOWN_FLOW 明报不动），bug 单待人定级后派
-      })
-      await platform.links.link(bug.id, ticket, 'relates-to').catch(() => undefined)
-      makeEvent('ESCALATE', fresh, entry.attempt, tickEvents, {
-        note: `CIRCUIT_BREAK：${ticket} 连击 ${result.action.strikes} 达阈值 ${config.breakerThreshold}（签名 ${signature}）→ 自动开 bug 单 ${bug.id}${workerKeys !== undefined ? '；wkey=revoked（终局吊销）' : ''}`,
-      })
-      syncMirror(bug)
-    }
+    // 断路器：worker 错误入账（同单同签名连击；达阈值熔断→open_bug）——共享件见
+    // strikeBreakerAndMaybeTrip（DEV-44 起 STALL 响置体同链，防双源漂移）
+    await strikeBreakerAndMaybeTrip(ticket, fresh, entry.attempt, signature, detail, tickEvents)
     // bridge 通道指令临时文件：收割失败面同样「收割完成即删」（回首批位重派会重写）
     if (entry.instructionsPath !== undefined) removeInstructions(entry.instructionsPath)
     return 'failed'
+  }
+
+  /**
+   * 断路器入账+熔断终局链（17-§6：worker 错误→onWorkerError 同单同签名连击；达阈→
+   * ESCALATE 落账+自动开 bug 单+wkey ticket 级终局吊销——HOLD_BREAKER_OPEN 压制一切重派，
+   * 不再有同 ticket 重签面，吊销安全）。failHarvest（收割失败）与 executeStallResponse
+   * （STALL 咬合，DEV-44）共用——单一实现，防两面终局链漂移。
+   */
+  async function strikeBreakerAndMaybeTrip(
+    ticket: TicketId,
+    fresh: IssueRecord,
+    attempt: number,
+    signature: string,
+    detail: string,
+    tickEvents: EventRecord[],
+  ): Promise<void> {
+    const result = onWorkerError(breaker, ticket, signature, { threshold: config.breakerThreshold })
+    breaker = result.newState
+    if (result.action === null) return
+    // 熔断=终局（decide HOLD_BREAKER_OPEN 压制一切重派）——此时吊销 ticket 安全
+    //（不再有同 ticket 重签面），凭据彻底死亡（17-§7 fail-closed）
+    revokeWorkerKeyOf(ticket)
+    const bug = await platform.issues.create({
+      title: `[bug] ${ticket} 断路熔断（同签名 ${result.action.strikes} 连击：${signature}）`,
+      description: detail,
+      type: 'bug',
+      dept: evtDept(fresh),
+      // 不定级：未定级单无状态流（decide NOOP_UNKNOWN_FLOW 明报不动），bug 单待人定级后派
+    })
+    await platform.links.link(bug.id, ticket, 'relates-to').catch(() => undefined)
+    makeEvent('ESCALATE', fresh, attempt, tickEvents, {
+      note: `CIRCUIT_BREAK：${ticket} 连击 ${result.action.strikes} 达阈值 ${config.breakerThreshold}（签名 ${signature}）→ 自动开 bug 单 ${bug.id}${workerKeys !== undefined ? '；wkey=revoked（终局吊销）' : ''}`,
+    })
+    syncMirror(bug)
+  }
+
+  /**
+   * STALL 响置体（DEV-44 咬合——2026-10-20 三例实证「只叫不咬」的收口）：stall_alarm 动作
+   * 执行面。同 attempt 内告警计数（index.stallStrikesOf+本拍）达 config.stallKillAfterAlarms
+   * 即咬合，分两面（规格见文件头注 DEV-44 段）：
+   *
+   * A · kill 面（inflight 有句柄——工人僵死树活）：await adapter.kill（stop 通道同款链：
+   * SIGTERM 进程组→killGraceMs→SIGKILL 整树；await 即 02-F1-08「kill 后等死」）→ 工位收口
+   * interrupted（R-B 接管同款在途语义：接管≠收割——我们杀的、不是它交的，四要件不可判，
+   * 不落 GATE_FAIL 不结算预算）→ 回滚首批位 → 重派 attempt+1 经 rescan 兜底（activity 意图
+   * 键未释放——22-§三.2 键经 GATE_PASS/GATE_FAIL 才释放，kill 面两皆无；与 R-B 接管后
+   * 重派同款路径，DEV-42①）。断路入账（dispositions：STALL countsTowardBreaker——防
+   * 「挂死-杀-重派」无限循环），签名 stall:watchdog-kill。
+   *
+   * B · 消亡面（inflight 无句柄——工人已死/重启后在途丢失，三例实况）：GATE_FAIL 收口
+   * （note 前缀 WORKER_DEAD：，与 failHarvest 流异常面同法）+ 遗留 running 工位收口 failed
+   * + activity 键释放 → 重派 attempt+1 活动驱动。断路入账，签名 stall:worker-dead。
+   *
+   * 未达阈/刀关/本拍刚派发=只叫：STALL 告警事件照落（note 携第 N 次/阈计数），零处置。
+   */
+  async function executeStallResponse(
+    action: Extract<Action, { type: 'stall_alarm' }>,
+    index: EventIndex,
+    tickEvents: EventRecord[],
+  ): Promise<TickActionResult> {
+    const ticket = action.ticket
+    const fresh = await platform.issues.get(ticket).catch(() => undefined)
+    if (fresh === undefined) {
+      return { ticket, actionType: action.type, ok: false, detail: '平台取不到单据（告警无处落——下拍再看）' }
+    }
+    const threshold = config.stallKillAfterAlarms ?? 0
+    // 在工 attempt 口径：告警/收口事件记「正在跑的这一誓」（与 GATE_PASS/GATE_FAIL 同族）；
+    // attemptOf=DISPATCH 计数+1=下一誓，在工期减一（无 DISPATCH 的防御面=1）
+    const workAttempt = Math.max(1, index.attemptOf(ticket) - 1)
+    const nth = index.stallStrikesOf(ticket) + 1 // 索引建于拍首（不含本拍）——本拍告警是第 N 次
+    const silent = `在工静默 ${action.silentMs}ms 超阈值 ${config.stallAfterMs}ms`
+    const entry = inflight.get(ticket)
+    if (threshold <= 0 || nth < threshold || (entry !== undefined && entry.dispatchedAtSeq === seq)) {
+      // 只叫：告警事件照落（观测面不变——decide 4 号判定的台账留痕）
+      makeEvent('STALL', fresh, workAttempt, tickEvents, {
+        note: `${silent}（看门狗告警第 ${nth}${threshold > 0 ? `/${threshold}` : ''} 次；${
+          threshold <= 0 ? '刀关 stallKillAfterAlarms=0' : nth < threshold ? '未达咬合阈' : '本拍刚派发让一拍'
+        }——02-F1-08 daemon 侧兜底）`,
+      })
+      return { ticket, actionType: action.type, ok: true, detail: `silentMs=${action.silentMs};告警第${nth}次（只叫）` }
+    }
+    // —— 咬合（达阈）——
+    const flow = flowOf(fresh)
+    const freshAnchor = flow !== undefined ? flowAnchors(flow).fresh : undefined
+    if (entry !== undefined) {
+      // A 面：整树杀（await=等死——SIGTERM→宽限→SIGKILL；与 dispose()/stop 通道同一条链）
+      let killNote: string
+      try {
+        const adapter = registry.resolve(entry.executor)
+        await adapter.kill(entry.handle, config.killGraceMs)
+        killNote = `整树杀 worker=${entry.executor} session=${entry.handle.sessionId} pid=${entry.handle.pid}（SIGTERM→${config.killGraceMs}ms→SIGKILL，stop 通道同款 kill 链，02-F1-08 kill 后等死）`
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        killNote = `整树杀异常（executor=${entry.executor}：${msg}）——工位仍收口（句柄不可信即不可收割，如实留痕不冒认杀死）`
+      }
+      ledger.endWorkRecord(entry.workRecordId, { status: 'interrupted', ended_at: now() })
+      inflight.delete(ticket)
+      releaseLane(entry.lane, ticket)
+      let rolled: IssueRecord | undefined
+      if (freshAnchor !== undefined) {
+        rolled = await platform.issues.transition(ticket, freshAnchor)
+        syncMirror(rolled)
+      }
+      makeEvent('STALL', rolled ?? fresh, workAttempt, tickEvents, {
+        note:
+          `${silent}（第 ${nth}/${threshold} 次达阈——咬合）：${killNote}；工位收口 interrupted（R-B 在途语义：接管≠收割，四要件不可判）；` +
+          `rollback=${rolled !== undefined ? freshAnchor : '跳过（等级未登记流）'}；重派=attempt+1 经 rescan 兜底（activity 键未释放——22-§三.2，R-B 同款路径 DEV-42①；预算沿用 adopt 不结算）` +
+          `${workerKeys !== undefined ? '；wkey=env-离场（凭据随被杀子进程终结；重派重签新 key——不吊销 ticket）' : ''}`,
+      })
+      // 断路入账（dispositions：STALL countsTowardBreaker=true）
+      await strikeBreakerAndMaybeTrip(
+        ticket,
+        fresh,
+        workAttempt,
+        'stall:watchdog-kill',
+        `STALL 咬合（kill 面）：${silent} 第 ${nth}/${threshold} 次（${killNote}）`,
+        tickEvents,
+      )
+      // bridge 通道指令临时文件：响置收口即删（重派会重写同路径）
+      if (entry.instructionsPath !== undefined) removeInstructions(entry.instructionsPath)
+      return { ticket, actionType: action.type, ok: true, detail: `咬合（kill 面）第${nth}/${threshold}次：${killNote}` }
+    }
+    // B 面：消亡（无可杀——三例实况：句柄不知，判定面 WORKER_DEAD 成立）
+    const detail = `WORKER_DEAD：${silent}（第 ${nth}/${threshold} 次达阈——咬合）且无在途句柄（工人消亡面：2026-10-20 三例 studio-dev-20/25/71 同型）`
+    let rolled: IssueRecord | undefined
+    if (freshAnchor !== undefined) {
+      rolled = await platform.issues.transition(ticket, freshAnchor)
+      syncMirror(rolled)
+    }
+    makeEvent('STALL', rolled ?? fresh, workAttempt, tickEvents, {
+      note: `${silent}（第 ${nth}/${threshold} 次达阈——咬合）：无在途句柄（工人消亡面）→ GATE_FAIL 收口；rollback=${rolled !== undefined ? freshAnchor : '跳过（等级未登记流）'}；重派=attempt+1（activity 键已释放——活动驱动+rescan 双兜底）`,
+    })
+    makeEvent('GATE_FAIL', rolled ?? fresh, workAttempt, tickEvents, {
+      note: `${detail};rollback=${rolled !== undefined ? freshAnchor : '跳过（等级未登记流）'}${workerKeys !== undefined ? ';wkey=env-离场（无活进程；重派重签新 credentials）' : ''}`,
+    })
+    // 遗留 running 工位收口（进程内正常链路不产生 running 无 inflight——此面来自 dispose 后
+    // 继续推拍等；R-B 启动接管已收口过的查无即跳过。判定面收口=failed，与 failHarvest 同款）
+    for (const rec of ledger.listWorkRecords({ issue: ticket })) {
+      if (rec.status === 'running') {
+        ledger.endWorkRecord(rec.id, { status: 'failed', ended_at: now() })
+      }
+    }
+    releaseLane(fresh.lane ?? config.defaultLane, ticket)
+    await strikeBreakerAndMaybeTrip(ticket, fresh, workAttempt, 'stall:worker-dead', detail, tickEvents)
+    return { ticket, actionType: action.type, ok: true, detail: `咬合（消亡面）第${nth}/${threshold}次：GATE_FAIL WORKER_DEAD 收口` }
   }
 
   // ————————————————— tick：七相位 —————————————————
@@ -1319,6 +1503,15 @@ export function createEngine(deps: EngineDeps): Engine {
       }
       const lane = issue.lane ?? config.defaultLane
       const intent = cand.intent
+      // 看门狗喂数豁免（DEV-44）：在工（已派发态）单的本单消费键不注入 seenIntentKeys——
+      // dedup 防 replay 不防健康探针；镜像键被上一誓消费后（kill 面无结论事件、键不释放），
+      // STALL_SILENT 会被 step1 挡成 DEDUP_NOOP，看门狗对第二誓起失明（mirror 派发后告警
+      // 断流=「只叫不咬」的深层机制，红证 ④ 复现）。豁免只影响在工单 noop 决策码面
+      // （DEDUP_NOOP→EVIDENCE_PENDING/STALL_SILENT）：重派安全由状态机守（已派发态无
+      // 前向 dispatch 后继），回滚后的新单态去重照常生效（红证 ② t4 回滚回声仍 DEDUP）。
+      const candFlow = flowOf(issue)
+      const ownSeenKey = candFlow === undefined ? null : index.seenKeyOf(ticket)
+      const inWork = candFlow !== undefined && issue.state === flowAnchors(candFlow).dispatched
       const out = decide({
         issue,
         laneLease: laneState(lane),
@@ -1327,7 +1520,7 @@ export function createEngine(deps: EngineDeps): Engine {
         tickActionCount: provisionalActions,
         limits: config.limits,
         intent,
-        seenIntentKeys: index.seenKeys,
+        seenIntentKeys: inWork && ownSeenKey !== null ? index.seenKeys.filter((k) => k !== ownSeenKey) : index.seenKeys,
         breaker: { strikes: breakerStrikes(breaker, ticket), threshold: config.breakerThreshold },
         ...(config.autoApprove ? { approved: true } : {}),
         ...(config.flows !== undefined ? { flows: config.flows } : {}),
@@ -1406,7 +1599,7 @@ export function createEngine(deps: EngineDeps): Engine {
       }
     }
 
-    // —— 相位 4 收割：在途 handle 检查（本拍派发的下一拍才收）→ collect 动作 → stall 告警 ——
+    // —— 相位 4 收割：在途 handle 检查（本拍派发的下一拍才收）→ collect 动作 → STALL 响置（DEV-44） ——
     const harvest = { checked: 0, completed: 0, failed: 0, pending: 0 }
     for (const entry of [...inflight.values()]) {
       if (entry.dispatchedAtSeq === seq) {
@@ -1451,14 +1644,21 @@ export function createEngine(deps: EngineDeps): Engine {
         actionResults.push({ ticket: action.ticket, actionType: action.type, ok: false, detail: msg })
       }
     }
+    // —— 相位 4 收割末段：STALL 响置（DEV-44——告警达阈咬合：kill 面/消亡面，executeStallResponse） ——
     for (const action of stallQ) {
-      const fresh = await platform.issues.get(action.ticket).catch(() => undefined)
-      if (fresh !== undefined) {
-        makeEvent('STALL', fresh, index.attemptOf(action.ticket), tickEvents, {
-          note: `在工静默 ${action.silentMs}ms 超阈值 ${config.stallAfterMs}ms（看门狗告警；kill 重派归后续刀）`,
-        })
+      const result = await executeStallResponse(action, index, tickEvents).catch(
+        (err): TickActionResult => ({
+          ticket: action.ticket,
+          actionType: action.type,
+          ok: false,
+          detail: `响置异常：${err instanceof Error ? err.message : String(err)}`,
+        }),
+      )
+      actionResults.push(result)
+      if (result.ok) {
         mutations += 1
-        actionResults.push({ ticket: action.ticket, actionType: action.type, ok: true, detail: `silentMs=${action.silentMs}` })
+      } else {
+        errors.push(`STALL 响置失败 ${action.ticket}：${result.detail ?? ''}`)
       }
     }
 

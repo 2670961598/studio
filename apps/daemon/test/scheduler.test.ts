@@ -663,7 +663,7 @@ describe('serve 接线：配置面与播种', () => {
 
   it('buildServeRuntime jobs=false：不起调度器；stop 后台账关闭', async () => {
     const s = openStack('runtime-off')
-    const cfg: ServeConfig = { db: 'x', platform: 'fake', company: 'demo', rootDir: path.join(root, 'rt-off'), tickMs: 10, maxActionsPerTick: 4, maxInflight: 2, stallAfterMs: 1, laneTtlMs: 1, breakerThreshold: 3, autoApprove: true, jobs: false, jobPollMs: 10 }
+    const cfg: ServeConfig = { db: 'x', platform: 'fake', company: 'demo', rootDir: path.join(root, 'rt-off'), tickMs: 10, maxActionsPerTick: 4, maxInflight: 2, stallAfterMs: 1, stallKillAfterAlarms: 0, laneTtlMs: 1, breakerThreshold: 3, autoApprove: true, jobs: false, jobPollMs: 10 }
     const rt = buildServeRuntime(cfg, s.ledger, DEMO_SNAPSHOT, { log: () => undefined })
     expect(rt.scheduler).toBeNull()
     await rt.stop()
@@ -672,7 +672,7 @@ describe('serve 接线：配置面与播种', () => {
 
   it('buildServeRuntime jobs=true：播种+调度器起；调度到点→意图→引擎派发；stop 干净（SIGINT 同收口）', async () => {
     const s = openStack('runtime-on')
-    const cfg: ServeConfig = { db: 'x', platform: 'fake', company: 'demo', rootDir: path.join(root, 'rt-on'), tickMs: 10, maxActionsPerTick: 4, maxInflight: 2, stallAfterMs: 1, laneTtlMs: 1, breakerThreshold: 3, autoApprove: true, jobs: true, jobPollMs: 10 }
+    const cfg: ServeConfig = { db: 'x', platform: 'fake', company: 'demo', rootDir: path.join(root, 'rt-on'), tickMs: 10, maxActionsPerTick: 4, maxInflight: 2, stallAfterMs: 1, stallKillAfterAlarms: 0, laneTtlMs: 1, breakerThreshold: 3, autoApprove: true, jobs: true, jobPollMs: 10 }
     const rt = buildServeRuntime(cfg, s.ledger, DEMO_SNAPSHOT, { log: () => undefined, clock: s.clock.now })
     expect(rt.scheduler).not.toBeNull()
     expect(rt.scheduler?.running).toBe(false)

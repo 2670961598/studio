@@ -116,9 +116,11 @@
      模式，b2247b1；13 测）+ updateVerification 单一口径源（72d708b）。
 - **点位测试**：1123 例 / 69 文件全绿（dev@16202e4 全量套件，2026-10-17 现场跑）。
 - **宰相亲证**：崩溃注入五点（出处：宰相会话记录；仓内对应物=crash-injection.test.ts）。
-- **诚实注记**：v0.10 交付物栏的「漂移看门狗」现有形态=在工静默停摆告警（engine.ts，
-  kill 重派归后续刀如实注记）；断路升级（core F1-10 + engine 熔断吊销）已接。待批残留：
-  P-45 / P-46。
+- **诚实注记**：v0.10 交付物栏的「漂移看门狗」现有形态=在工静默停摆告警 + STALL 响置
+  闭环（engine.ts；告警达阈 `stallKillAfterAlarms` → kill 面/消亡面咬合：整树杀或
+  WORKER_DEAD 收口 → 回首批位 attempt+1 重派，2026-10-20 三例 studio-dev-20/25/71 的
+  「只叫不咬」由 DEV-44 收口，红证=apps/daemon/test/stall-response.test.ts 四例）；
+  断路升级（core F1-10 + engine 熔断吊销）已接。待批残留：P-45 / P-46。
 
 ## 三、不建议现在 tag 的里程碑（诚实清单）
 
