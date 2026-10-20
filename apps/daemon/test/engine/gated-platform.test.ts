@@ -21,7 +21,7 @@ import type { CompanySnapshot, FlowPlatform, PersonRef, SignedBody } from '@stud
 import { CONTROL_TICKET, createGateway } from '@studio-next/gateway'
 import type { Gateway } from '@studio-next/gateway'
 import { openLedger, type Ledger } from '@studio-next/store'
-import { createGatedPlatform, GATED_WRITE_METHODS, PASSTHROUGH_READ_METHODS } from '../../src/engine/gated-platform.ts'
+import { createGatedPlatform, GATED_WRITE_METHODS, PASSTHROUGH_READ_METHODS } from '../../src/engine/tools/gated-platform.ts'
 import { ENGINE_CONFIG_DEFAULTS, createEngine, type Engine } from '../../src/engine/engine.ts'
 import { createFakeAdapter, createFakePlatform } from '../../src/engine/fakes.ts'
 import { createDefaultGateRunner } from '../../src/engine/gate.ts'

@@ -65,7 +65,7 @@ import path from 'node:path'
 import { configInvalid } from '@studio-next/contract'
 import type { EventRecord } from '@studio-next/contract'
 import type { Ledger } from '@studio-next/store'
-import { makeUlid } from '../engine/id.ts'
+import { makeUlid } from '../engine/tools/id.ts'
 
 // ————————————————————————— 输入形状（拟升 contract，头注拟稿点） —————————————————————————
 

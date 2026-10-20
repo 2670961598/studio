@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { parseDaemonConfig } from '../assembly/serve.ts'
 import { awaitReloadResult, writeReloadRequest } from '../control/hot-reload.ts'
-import { makeUlid } from '../engine/id.ts'
+import { makeUlid } from '../engine/tools/id.ts'
 import { USAGE } from './usage.ts'
 import { errText, parseArgv } from './argv.ts'
 

@@ -95,7 +95,7 @@ import type { CandidateRecord } from '@studio-next/core'
 import type { CandidateRow, Ledger } from '@studio-next/store'
 import { createEvolveGuard } from './evolve-guard.ts'
 import type { EvolveGuard } from './evolve-guard.ts'
-import { makeUlid } from '../engine/id.ts'
+import { makeUlid } from '../engine/tools/id.ts'
 import { openGrayWindow } from './gray.ts'
 
 // ————————————————————————— 形状面 —————————————————————————

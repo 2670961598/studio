@@ -25,7 +25,7 @@ import type { EventRecord, InvokeIntent, ScheduledJob } from '@studio-next/contr
 import { openLedger, type JobRecord, type Ledger } from '@studio-next/store'
 import { createEngine, ENGINE_CONFIG_DEFAULTS, type Engine } from '../../src/engine/engine.ts'
 import { createFakeAdapter, createFakePlatform } from '../../src/engine/fakes.ts'
-import { makeUlid } from '../../src/engine/id.ts'
+import { makeUlid } from '../../src/engine/tools/id.ts'
 import {
   CADENCE_SOURCE_MANIFEST,
   CADENCE_SOURCE_NAME,

@@ -58,7 +58,7 @@ import {
   runPostmortemChain,
 } from '../../src/evolve/postmortem.ts'
 import type { PostmortemInput, PostmortemTimelineEntry } from '../../src/evolve/postmortem.ts'
-import { makeUlid } from '../../src/engine/id.ts'
+import { makeUlid } from '../../src/engine/tools/id.ts'
 
 const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/cli/main.ts')
 

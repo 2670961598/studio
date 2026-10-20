@@ -82,7 +82,7 @@ import type { EventRecord } from '@studio-next/contract'
 import { transitionCandidate as coreTransition } from '@studio-next/core'
 import type { CandidateRecord } from '@studio-next/core'
 import type { CandidateRow, Ledger } from '@studio-next/store'
-import { makeUlid } from '../engine/id.ts'
+import { makeUlid } from '../engine/tools/id.ts'
 
 // ————————————————————————— 常量面 —————————————————————————
 
