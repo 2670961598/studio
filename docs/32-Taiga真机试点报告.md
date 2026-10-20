@@ -102,3 +102,34 @@ children(issue)=生成链客户端过滤（恒空）；link() 三型显式 `link
 **onboard 两跑幂等冒烟**（WRITE_SMOKE=1，test/smoke/taiga-onboard-smoke.ts）：
 第一跑 5 写（1 wiki + 4 roles 收窄）→ 第二跑 **0 写**、两跑指纹一致 → 全绿。
 单测面：FakeTaiga 按真机响应形状扩写面桩，包内 8 套 77 用例全绿。
+
+## 九、补记：出厂态根治 S0 真机源码复核（2026-10-20，DEV-49 / docs/52-§十）
+
+docs/52-§十 A1/A3 两处「形状待 S0 真机复核」的答卷。取证方式：**只读**检视
+localhost:9000 实例背后的 taiga-back 容器内 Django 源码（读 `taiga/projects/
+{models,serializers,api,validators}.py` 与 `taiga/projects/mixins/on_destroy.py`）
+——零写操作、零凭据（API 匿名面 401，源码即形状真源）。
+
+**A1 形状确认：项目默认态可 PATCH**（docs/52-§十 A1 的端点形状）：
+
+| 面 | 源码证据 |
+|---|---|
+| 读位 | `ProjectSerializer` 暴露 `default_epic_status`/`default_us_status`/`default_task_status`/`default_issue_status`，值=状态内部 id（`Field(attr="default_us_status_id")`）——`GET /projects/by_slug` 即回显四字段 |
+| 写位 | `ProjectValidator`= ModelValidator(model=Project)，read_only 仅 created_date/modified_date/slug/blocked_code/owner——四默认态字段可写，`PATCH /api/v1/projects/{id}` 生效（taiga-front ADMIN>Default Values 同路） |
+
+**A3 形状定版：DELETE 出厂态必须带 `?moveTo=<状态id>`，引用**不阻塞**而是自动迁移**
+（docs/52-§十 A3「前置条件待 S0：无引用才可删」的答案=**无此前置条件**）：
+
+`MoveOnDestroyMixin.destroy` 逐实体挂接（api.py UserStoryStatusViewSet 等，
+`move_on_destroy_related_field="status"`）：
+
+1. `moveTo` 查询参数**必填**——缺失即 400（`Query param 'moveTo' is required`）；
+2. 引用单据**先行迁移**：被删状态上的单全部改挂 moveTo 目标（不是拒删、
+   不是级联删）；
+3. 项目默认值联动：被删状态若正是 `default_us_status` 等 → 默认值**改指 moveTo**；
+4. 全程事务包裹——删除失败（非 204）则迁移与默认值改指**原样回滚**。
+
+对 DEV-49 的含义：A2 归化在前、A3 删除在后时，`moveTo=收件态` 恰与 A2 目标同值
+——扫描与删除之间的竞态新建单（仍落旧默认态）被 moveTo 兜底迁进声明集，语义
+与 A2 完全同构（「任何路径建单都落公司声明集内」）。快照先行（roles 快照同款
+先例）仍保留：删除不可逆，入档后行。

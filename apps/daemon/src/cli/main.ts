@@ -90,6 +90,12 @@
  *       常驻主循环（v0.5）：七相位引擎 + 心跳日志；SIGINT/SIGTERM 优雅停（等当前拍收口→
  *       在途 drain→关台账）。配置最小面 {db, platform: localfile|fake, company, rootDir,
  *       tickMs, …}（扁平 YAML 子集，见 src/assembly/serve.ts 头注）；demo 模式=fake 全家桶零外部依赖
+ *   taiga-cure --config <daemon.yaml>
+ *       Taiga 出厂态根治三步一次性运营命令（DEV-49，docs/52-§十 A1→A2→A3；幂等重跑
+ *       零写零删）：A1 项目默认态重指声明集收件态 + A2 存量出厂态单归化 + A3 出厂状态
+ *       退役（先落状态集快照进 <rootDir>/var/ 再 DELETE）。前置 platform: taiga +
+ *       taigaFieldsFile；A4 未知态哨在引擎内（非本命令面）。daemon 不代写 provision——
+ *       根治同属 onboard 一次性运营动作（serve.ts wirePlatform 头注同口径）
  *   reload [--company <slug>] [--root <工位根>] [--config <daemon.yaml>] [--timeout <ms>]
  *       L1 配置热重载手动触发（docs/38-§2 L1 / §4 R-A）：向运行中的 daemon 发重载请求
  *       （控制面文件通道 <rootDir>/control/）并等回执——daemon 在拍边界重走公司目录装载面
@@ -129,6 +135,7 @@ import { cmdExternal } from './external.ts'
 import { cmdReload } from './reload.ts'
 import { cmdStop } from './stop.ts'
 import { cmdServe } from './serve.ts'
+import { cmdTaigaCure } from './taiga-cure.ts'
 async function main(): Promise<number> {
   const [command, ...rest] = process.argv.slice(2)
   switch (command) {
@@ -158,6 +165,8 @@ async function main(): Promise<number> {
       return cmdExternal(rest)
     case 'serve':
       return cmdServe(rest)
+    case 'taiga-cure':
+      return cmdTaigaCure(rest)
     case 'reload':
       return cmdReload(rest)
     case 'stop':

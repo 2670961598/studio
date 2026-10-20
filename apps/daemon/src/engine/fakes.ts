@@ -51,6 +51,12 @@ export interface FakePlatformOptions {
   now?: () => string
   /** 活动流分页大小（缺省 100；测试注入小值可验翻页） */
   pageSize?: number
+  /**
+   * fields.schema() 的 state 枚举覆盖（DEV-49 A4 状态集巡逻核注入面）：缺省五态
+   * （与 fake 流表口径一致=零漂移）；注入含流外语（如出厂 New）即造「平台状态集−
+   * 声明集≠∅」漂移——巡逻核测试唯一入口。
+   */
+  schemaStates?: string[]
 }
 
 interface FakeIssue extends IssueRecord {
@@ -162,7 +168,7 @@ export function createFakePlatform(opts?: FakePlatformOptions): FlowPlatform {
     fields: {
       async schema(): Promise<FieldSchema[]> {
         return [
-          { name: 'state', type: 'enum', values: ['新单', '已派发', '证据就绪', '复验通过', '已交付'] },
+          { name: 'state', type: 'enum', values: opts?.schemaStates ?? ['新单', '已派发', '证据就绪', '复验通过', '已交付'] },
           { name: 'level', type: 'int' },
           { name: 'dept', type: 'string' },
         ]

@@ -94,8 +94,8 @@ function isEntitiesRecord(v: unknown): v is Record<string, { states: string[] }>
   })
 }
 
-/** provision 映射形状校验（与 localplatform isProvisionMap 同口径 + 类型枚举校验） */
-function validateProvisionMap(map: FieldProvisionMap): void {
+/** provision 映射形状校验（与 localplatform isProvisionMap 同口径 + 类型枚举校验；factory.ts 出厂态根治三步共用=单一来源） */
+export function validateProvisionMap(map: FieldProvisionMap): void {
   if (typeof map !== 'object' || map === null) {
     throw new TaigaPlatformError('CONFIG_INVALID', 'bad-provision-map', 'provision 映射必须是对象（fields/states/stateFlow）')
   }

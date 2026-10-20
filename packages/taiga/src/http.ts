@@ -190,10 +190,15 @@ export class TaigaClient {
       throw mapStatusToError(res.status, detail, req.path)
     }
     let json: unknown
-    try {
-      json = await res.json()
-    } catch (err) {
-      throw new TaigaPlatformError('CONFIG_INVALID', 'unexpected-response', `响应不是合法 JSON（${req.path}）：${String(err)}`)
+    if (res.status === 204) {
+      // 204 No Content：DELETE 端点惯例（出厂态退役 S0 定版，docs/32-§九）——无体合法
+      json = null
+    } else {
+      try {
+        json = await res.json()
+      } catch (err) {
+        throw new TaigaPlatformError('CONFIG_INVALID', 'unexpected-response', `响应不是合法 JSON（${req.path}）：${String(err)}`)
+      }
     }
     return { status: res.status, json, header: (name: string) => res.headers.get(name) }
   }

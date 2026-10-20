@@ -52,6 +52,20 @@ export { TaigaClient, type FetchLike, type TaigaAuth, type TaigaRequest } from '
 export { TaigaPlatformError } from './errors.ts'
 export { DEFAULT_PAGE_SIZE, encodeCursor, decodeCursor } from './activity.ts'
 export { readTaigaRoles, type TaigaRoleInfo } from './guards.ts'
+export {
+  cureFactoryStatuses,
+  declaredStatesFor,
+  normalizeFactoryTickets,
+  repointProjectDefaults,
+  retireFactoryStatuses,
+  type DefaultRepoint,
+  type FactoryCureReport,
+  type FactoryStatusSnapshot,
+  type RetireOptions,
+  type RetireSkipped,
+  type StatusRetired,
+  type TicketNormalized,
+} from './factory/factory.ts'
 export type { TaigaEntity } from './entities.ts'
 
 /** 包名常量 */
