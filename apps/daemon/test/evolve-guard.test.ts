@@ -143,6 +143,8 @@ function serveConfig(db: string): ServeConfig {
     maxActionsPerTick: 4,
     maxInflight: 2,
     stallAfterMs: 3_600_000,
+    // DEV-44：本套测 schema 进化面非响置面——刀关（0）保持改动前告警-only 语义
+    stallKillAfterAlarms: 0,
     laneTtlMs: 1_800_000,
     breakerThreshold: 3,
     autoApprove: false,

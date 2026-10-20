@@ -491,6 +491,8 @@ function baseServeConfig(over: Partial<ServeConfig> = {}): ServeConfig {
     maxActionsPerTick: 4,
     maxInflight: 2,
     stallAfterMs: 1,
+    // DEV-44：本套测三源装配面非响置面——刀关（0）保持改动前告警-only 语义
+    stallKillAfterAlarms: 0,
     laneTtlMs: 1,
     breakerThreshold: 3,
     autoApprove: true,

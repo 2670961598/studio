@@ -155,6 +155,12 @@ export interface ServeConfig {
   maxInflight: number
   /** 在工静默告警阈值 ms */
   stallAfterMs: number
+  /**
+   * STALL 响置咬合阈（DEV-44，2026-10-20 三例实证：看门狗只叫不咬）：同 attempt 内告警
+   * 达 N 次 → 整树杀在途 worker（stop 通道同款 kill 链）+ 工位收口 + 回首批位重派
+   * attempt+1（rescan 兜底）；无在途句柄=GATE_FAIL（WORKER_DEAD）收口。0=关；缺省 2。
+   */
+  stallKillAfterAlarms: number
   /** 收割相位每工位每拍泵流时间片 ms（DEV-9 P1 冻结修复，docs/17-§2 拍有界；须 ≪ tickMs） */
   harvestSliceMs: number
   /** 泳道租约 TTL ms */
@@ -277,6 +283,7 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   maxActionsPerTick: ENGINE_CONFIG_DEFAULTS.limits.maxActionsPerTick,
   maxInflight: ENGINE_CONFIG_DEFAULTS.limits.maxInflight,
   stallAfterMs: ENGINE_CONFIG_DEFAULTS.stallAfterMs,
+  stallKillAfterAlarms: ENGINE_CONFIG_DEFAULTS.stallKillAfterAlarms ?? 2,
   harvestSliceMs: ENGINE_CONFIG_DEFAULTS.harvestSliceMs,
   laneTtlMs: ENGINE_CONFIG_DEFAULTS.laneTtlMs,
   breakerThreshold: ENGINE_CONFIG_DEFAULTS.breakerThreshold,
@@ -401,6 +408,13 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'stallAfterMs':
         cfg.stallAfterMs = num(value, key)
         break
+      case 'stallKillAfterAlarms': {
+        // DEV-44 咬合阈：非负整数（0=关）——非整数明报不静默取整
+        const v = num(value, key)
+        if (!Number.isInteger(v)) throw new Error(`daemon.yaml：stallKillAfterAlarms 须为非负整数（实得 ${v}）`)
+        cfg.stallKillAfterAlarms = v
+        break
+      }
       case 'harvestSliceMs':
         cfg.harvestSliceMs = num(value, key)
         break
@@ -933,6 +947,7 @@ export function buildServeRuntime(
     defaultLane: snapshot.departments[0]?.lanes[0] ?? ENGINE_CONFIG_DEFAULTS.defaultLane,
     limits: { maxActionsPerTick: config.maxActionsPerTick, maxInflight: config.maxInflight },
     stallAfterMs: config.stallAfterMs,
+    stallKillAfterAlarms: config.stallKillAfterAlarms,
     harvestSliceMs: config.harvestSliceMs,
     laneTtlMs: config.laneTtlMs,
     breakerThreshold: config.breakerThreshold,

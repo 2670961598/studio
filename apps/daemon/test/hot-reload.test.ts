@@ -539,6 +539,8 @@ function serveConfig(id: string, over?: Partial<ServeConfig>): ServeConfig {
     maxActionsPerTick: 4,
     maxInflight: 2,
     stallAfterMs: 60_000,
+    // DEV-44：本套测热重载面非响置面——刀关（0）保持改动前告警-only 语义
+    stallKillAfterAlarms: 0,
     laneTtlMs: 30 * 60_000,
     breakerThreshold: 3,
     autoApprove: false,
