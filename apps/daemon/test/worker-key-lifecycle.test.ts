@@ -86,6 +86,10 @@ interface StackOptions {
   /** worker key 签发实例（缺省不注入=关闭面；verify 断言走 gateway.authority.verify） */
   workerGateway?: Gateway
   budgetTicketCapUsd?: number
+  /** 断路半开冷却窗 ms（DEV-46；缺省 ENGINE_CONFIG_DEFAULTS 30min 拟稿） */
+  breakerCooldownMs?: number
+  /** mirror 重扫描节流（DEV-42①；断路压制的单无新活动——半开试探候选靠重扫描回补） */
+  mirrorRescanEveryTicks?: number
 }
 
 function buildStack(id: string, opts?: StackOptions): Stack {
@@ -121,6 +125,8 @@ function buildStack(id: string, opts?: StackOptions): Stack {
       deptFallback: SNAPSHOT.departments[0]?.path ?? 'departments/工程部',
       defaultLane: SNAPSHOT.departments[0]?.lanes[0] ?? 'core',
       ...(opts?.budgetTicketCapUsd !== undefined ? { budgetTicketCapUsd: opts.budgetTicketCapUsd } : {}),
+      ...(opts?.breakerCooldownMs !== undefined ? { breakerCooldownMs: opts.breakerCooldownMs } : {}),
+      ...(opts?.mirrorRescanEveryTicks !== undefined ? { mirrorRescanEveryTicks: opts.mirrorRescanEveryTicks } : {}),
     },
     people: SNAPSHOT.people,
     makeId: deterministicIds(),
@@ -271,11 +277,15 @@ describe('GATE_FAIL：凭据离场+重派重签（一 attempt 一 key，nonce �
   })
 })
 
-describe('断路熔断：3 连击 ESCALATE 后终局吊销、停重派不再签新 key', () => {
-  it('前两轮不吊销；第三轮熔断（终局）吊销该时刻 key；HOLD_BREAKER_OPEN 无 att4 签发', async () => {
+describe('断路熔断（DEV-46 半开修订）：3 连击 ESCALATE 后**不吊销**、冷却后半开试探重签新 key', () => {
+  const COOLDOWN = 5 * 60_000
+
+  it('前两轮不吊销；第三轮熔断（非终局）第三轮 key env-离场仍可验（nonce 未烧）；冷却窗内 HOLD 无 att4；窗过半开试探重签 att4——新 key 出生即活', async () => {
     const stack = buildStack('breaker', {
       gateRunner: RED_GATE,
       workerGateway: createGateway({ secret: SECRET, clock: (): number => T0, ticket: CONTROL_TICKET, ctx: { company: SNAPSHOT.name, dept: 'departments/工程部', role: 'daemon', level: 2 }, author: 'daemon' }),
+      breakerCooldownMs: COOLDOWN,
+      mirrorRescanEveryTicks: 1,
     })
     await stack.platform.issues.create({ title: '会熔断的单', type: 'task', level: 0 })
 
@@ -293,18 +303,37 @@ describe('断路熔断：3 连击 ESCALATE 后终局吊销、停重派不再签�
       expect(harvestTick.phases.harvest.failed).toBe(1)
     }
 
-    // 熔断已开（ESCALATE + bug 单 + 终局吊销记账）：第三轮 key 死亡
+    // 熔断已开（ESCALATE + bug 单恰一次）：DEV-46 修订——熔断非终局，**不吊销 ticket**
+    //（吊销会令半开试探重签的 key 出生即死）；记账锚从「终局吊销」改为「env-离场」
     const escalate = stack.ledger.queryEvents({ issue: 'T-1' }).find((e) => e.event === 'ESCALATE')
     expect(escalate).toBeDefined()
-    expect(escalate?.note).toContain('wkey=revoked（终局吊销）')
-    expect(verify(stack, tokens[2] as string, 'T-1')).toEqual({ ok: false, reason: 'revoked' })
+    expect(escalate?.note).toContain('wkey=env-离场（熔断非终局——冷却后半开试探重签，DEV-46）')
+    // 第三轮 key 未被吊销（verify 面走真 authority：ok=true——nonce 未烧即活）
+    expect(verify(stack, tokens[2] as string, 'T-1').ok).toBe(true)
 
-    // 停重派：无第 4 次签发（无 att4 workspace、无第 4 次 launch）
+    // 冷却窗内停重派：无第 4 次签发（无 att4 workspace、无第 4 次 launch）
     stack.clock.advance(1000)
     const held = await stack.engine.tick()
     expect(held.phases.stateDiff.decisions.find((d) => d.ticket === 'T-1')?.code).toBe('HOLD_BREAKER_OPEN')
     expect(existsSync(ws(stack, 'T-1', 4))).toBe(false)
     expect(stack.launches).toHaveLength(3)
+
+    // 冷却窗过：半开试探——att4 重签新 key，出生即活（终局吊销已让位 CLOSE 唯一收口）
+    stack.clock.advance(COOLDOWN + 1000)
+    const probeTick = await stack.engine.tick()
+    expect(probeTick.phases.dispatch.dispatched).toBe(1)
+    expect(existsSync(ws(stack, 'T-1', 4))).toBe(true)
+    expect(stack.launches).toHaveLength(4)
+    const token4 = credentialsOf(stack, 4)[WORKER_WKEY_ENV_KEY]
+    expect(token4).toBeDefined()
+    expect(token4).not.toBe(tokens[2])
+    expect(verify(stack, token4 as string, 'T-1').ok).toBe(true)
+    // DISPATCH note：半开试探锚 + wkey 审计锚（nonce），凭据值红名单
+    const dispatch4 = stack.ledger.queryEvents({ issue: 'T-1' }).filter((e) => e.event === 'DISPATCH')[3]
+    expect(dispatch4?.note).toContain('breaker=half-open-probe')
+    expect(dispatch4?.note).toContain(`;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=`)
+    expect(dispatch4?.note).not.toContain(token4 as string)
+    expectLedgerNotesClean(stack.ledger, token4 as string)
     stack.ledger.close()
   })
 })

@@ -1,0 +1,86 @@
+{
+  "name": "breaker-half-open-chain",
+  "description": "断路器半开链（DEV-46 · T-203）：熔断（trippedAt 在册）后冷却窗内停重派（hold BREAKER_OPEN）——窗过放行一次半开试探派发（DISPATCH 携 breakerProbe 锚，判据仍 (type,code)=DISPATCH）；试探失败回全开续冷却（trippedAt 刷新后窗内再压制），再窗过再试探；成功信号复位后正常派发。旧快照无时刻面（trippedAt 缺）恒 hold——fail-closed 兼容面见 breaker-trip-chain（第 4 拍无 trippedAt 即恒压制）。本链 seen 恒空：聚焦半开，意图键记账语义见 dedup 链。",
+  "inputs": [
+    {
+      "issue": { "id": "T-203", "title": "外部限速自愈单", "state": "新单", "type": "bug", "dept": "eng", "level": 0, "assignee": "P-3", "lane": "main", "updated": "2026-10-16T01:00:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "ticket", "company": "acme", "ticket": "T-203", "source": "poll", "priority": 1 },
+      "seenIntentKeys": [],
+      "breaker": { "strikes": 3, "threshold": 3, "trippedAt": 1792108860000, "cooldownMs": 1800000 },
+      "now": 1792108860000,
+      "stallAfterMs": 3600000
+    },
+    {
+      "issue": { "id": "T-203", "title": "外部限速自愈单", "state": "新单", "type": "bug", "dept": "eng", "level": 0, "assignee": "P-3", "lane": "main", "updated": "2026-10-16T01:10:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "ticket", "company": "acme", "ticket": "T-203", "source": "poll", "priority": 1 },
+      "seenIntentKeys": [],
+      "breaker": { "strikes": 3, "threshold": 3, "trippedAt": 1792108860000, "cooldownMs": 1800000 },
+      "now": 1792109460000,
+      "stallAfterMs": 3600000
+    },
+    {
+      "issue": { "id": "T-203", "title": "外部限速自愈单", "state": "新单", "type": "bug", "dept": "eng", "level": 0, "assignee": "P-3", "lane": "main", "updated": "2026-10-16T01:31:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "ticket", "company": "acme", "ticket": "T-203", "source": "poll", "priority": 1 },
+      "seenIntentKeys": [],
+      "breaker": { "strikes": 3, "threshold": 3, "trippedAt": 1792108860000, "cooldownMs": 1800000 },
+      "now": 1792110720001,
+      "stallAfterMs": 3600000
+    },
+    {
+      "issue": { "id": "T-203", "title": "外部限速自愈单", "state": "新单", "type": "bug", "dept": "eng", "level": 0, "assignee": "P-3", "lane": "main", "updated": "2026-10-16T01:40:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "ticket", "company": "acme", "ticket": "T-203", "source": "poll", "priority": 1 },
+      "seenIntentKeys": [],
+      "breaker": { "strikes": 4, "threshold": 3, "trippedAt": 1792110780000, "cooldownMs": 1800000 },
+      "now": 1792111200000,
+      "stallAfterMs": 3600000
+    },
+    {
+      "issue": { "id": "T-203", "title": "外部限速自愈单", "state": "新单", "type": "bug", "dept": "eng", "level": 0, "assignee": "P-3", "lane": "main", "updated": "2026-10-16T02:10:01.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "ticket", "company": "acme", "ticket": "T-203", "source": "poll", "priority": 1 },
+      "seenIntentKeys": [],
+      "breaker": { "strikes": 4, "threshold": 3, "trippedAt": 1792110780000, "cooldownMs": 1800000 },
+      "now": 1792112980001,
+      "stallAfterMs": 3600000
+    },
+    {
+      "issue": { "id": "T-203", "title": "外部限速自愈单", "state": "新单", "type": "bug", "dept": "eng", "level": 0, "assignee": "P-3", "lane": "main", "updated": "2026-10-16T02:20:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "intent": { "kind": "ticket", "company": "acme", "ticket": "T-203", "source": "poll", "priority": 1 },
+      "seenIntentKeys": [],
+      "breaker": { "strikes": 0, "threshold": 3 },
+      "now": 1792113600000,
+      "stallAfterMs": 3600000
+    }
+  ],
+  "expected": [
+    { "type": "hold", "code": "HOLD_BREAKER_OPEN" },
+    { "type": "hold", "code": "HOLD_BREAKER_OPEN" },
+    { "type": "dispatch", "code": "DISPATCH" },
+    { "type": "hold", "code": "HOLD_BREAKER_OPEN" },
+    { "type": "dispatch", "code": "DISPATCH" },
+    { "type": "dispatch", "code": "DISPATCH" }
+  ]
+}

@@ -8,8 +8,9 @@
  *   - 注入（launch 前）：TaskBrief.credentials（contract v1.4）——
  *     workerKeyCredentials(token) 构造 `{ STUDIO_TOOLS_WKEY: token }` 随任务书进
  *     适配器，四家 executor 无条件透传进子进程 env（packages/adapters launch env 尾项）。
- *   - 吊销（终局面才吊销）：CLOSE / 断路熔断 = gateway.revoke(ticket)（同单全部 key
- *     立即失效，先于过期/重放判定）。
+ *   - 吊销（终局面才吊销）：CLOSE = gateway.revoke(ticket)（同单全部 key
+ *     立即失效，先于过期/重放判定）。【DEV-46 修订】断路熔断**不再吊销**——半开
+ *     试探（冷却窗过后的单次重派）要重签新 key，ticket 级吊销会令试探 key 出生即死。
  *
  * 【通道选型——制作人已定调（2026-10-18，docs/25 头注）】凭据经子进程环境变量注入，
  *   永不入提示词/档案/任务书：wkey 投递走 env 通道（本文件现行形态）。旧文件通道
@@ -28,7 +29,10 @@
  *     - GATE_FAIL / 派发失败（非终局，会重派重试）：**不吊销**——旧 key 的凭据已随
  *       子进程 env 离场（进程终结即撤离），失效兜底 = TTL + nonce 单次有效；重派重签
  *       = 新 TaskBrief 新 credentials（一 attempt 一 key，nonce 链干净）。
- *     - CLOSE / 断路熔断（终局，不再有同 ticket 重签面）：吊销。
+ *     - 断路熔断（DEV-46 起**非终局**）：**不吊销**——冷却窗过后半开试探重派要重签新
+ *       key（同 GATE_FAIL 语义：env-离场 + TTL/nonce 兜底）；熔断期间凭据无重签面，
+ *       压制由 decide HOLD_BREAKER_OPEN 保证。
+ *     - CLOSE（终局，交付归档后不再有同 ticket 重签面）：吊销。
  *   per-key（nonce 级）吊销需 gateway 包扩 authority API（走批示，非本单可动）；该
  *   偏差作为疑点上报。
  *
