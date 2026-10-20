@@ -433,8 +433,9 @@ export async function importCompanyRepo(opts: RepoImportOptions): Promise<RepoIm
   }
 }
 
-/** 轻取 org-config yt 段（provision 推导输入；全量校验已在 loadCompanyDirectory 过） */
-function extractOrgYt(orgSrc: string): Record<string, unknown> | undefined {
+/** 轻取 org-config yt 段（provision 推导输入；全量校验已在 loadCompanyDirectory 过。
+ *  DEV-15 起导出：company create 编排核（create.ts）与导入流共用同一推导——单一实现） */
+export function extractOrgYt(orgSrc: string): Record<string, unknown> | undefined {
   if (orgSrc === '') return undefined
   try {
     const doc = parseYaml(orgSrc) as unknown

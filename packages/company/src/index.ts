@@ -58,3 +58,7 @@ export * from './git-import.ts'
 // 判定 normative 标尺 docs/51-契约 D——纯决策面 planPluginInstalls + 隔离根安装执行面 +
 // 契约 subject depsSubject）
 export * from './dependencies.ts'
+
+// 公司创建编排内核（DEV-15 / docs/36-§4 M-B 骨架刀：init→provision→全员建号→jobs→
+// 插件 provisioning→验收报告，一条命令、幂等、--dry-run；端口注入面——daemon/CLI 组装依赖）
+export * from './create.ts'
