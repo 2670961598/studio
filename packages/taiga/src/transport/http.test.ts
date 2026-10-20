@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest'
 import { TaigaClient, type FetchLike } from './http.ts'
 import { createTaigaPlatform } from '../platform.ts'
 import { TaigaPlatformError } from './errors.ts'
-import { expectTaigaReject } from './testutil.ts'
+import { expectTaigaReject } from '../testutil.ts'
 
 interface Scripted {
   status?: number

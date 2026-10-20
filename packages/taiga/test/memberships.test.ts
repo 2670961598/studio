@@ -7,8 +7,8 @@
  */
 import { describe, expect, it } from 'vitest'
 import { buildContext } from '../src/platform.ts'
-import { TaigaPlatformError } from '../src/errors.ts'
-import type { FetchLike } from '../src/http.ts'
+import { TaigaPlatformError } from '../src/transport/errors.ts'
+import type { FetchLike } from '../src/transport/http.ts'
 import {
   findInviteToken,
   findMembershipByUsername,

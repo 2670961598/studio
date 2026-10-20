@@ -15,6 +15,10 @@ export interface TickPhaseCollect {
   activities: number
   pages: number
   affectedTickets: number
+  /** DEV-49 A4 未知态哨：本拍进入哨键的单数（docs/52-§十） */
+  unknownStateAlarmed: number
+  /** DEV-49 A4 状态集巡逻核漂移态名数 */
+  statusSetDrift: number
   mirrorSynced: number
   cursorBefore: string | null
   cursorAfter: string | null

@@ -191,6 +191,7 @@ import { mintWorkerKey, workerKeyCredentials, workerKeyGuidance, WORKER_WKEY_ENV
 import type { WorkerKeyDeps } from './worker-key.ts'
 import type { HrSyncTickReport } from './hrsync/hrsync.ts'
 import type { TickActionResult, TickDecisionEntry, TickPhaseDispatchBudget, TickReport } from './tick-report/types.ts'
+export type { TickDecisionEntry, TickReport } from './tick-report/types.ts'
 
 // ————————————————————————— 配置 —————————————————————————
 
@@ -388,85 +389,16 @@ export interface EngineDeps {
 // ————————————————————————— TickReport（17-§2「tick 返回结构化 actions」） —————————————————————————
 
 /** 采集相位汇报 */
-export interface TickPhaseCollect {
-  activities: number
-  pages: number
-  affectedTickets: number
-  mirrorSynced: number
-  cursorBefore: string | null
-  cursorAfter: string | null
-  /**
-   * 未知态哨告警数（DEV-49 A4，docs/52-§十）：流可解析而 state∉声明集的单本拍
-   * 新落账的 ESCALATE 条数（每单每态一次——去重后增量）。
-   */
-  unknownStateAlarmed: number
-  /**
-   * 状态集巡逻核告警数（DEV-49 A4）：本拍新发现「平台有而公司声明集无」的状态名数
-   * （每状态名一次；非巡逻拍恒 0）。
-   */
-  statusSetDrift: number
-}
 
 /** state-diff 相位：每候选一决（含 hold/noop——落账口径全量留痕） */
-export interface TickDecisionEntry {
-  ticket: TicketId
-  intentKey: string
-  code: DecisionCode
-  actionType: Action['type']
-  /** 决策时单据平台态（noop 观测面载荷：NOOP_UNKNOWN_STATE 等原因码须配单号+态可见） */
-  state: string
-}
 
 /** 动作执行结果（派发/呈批/collect/merge/recycle/stall 面） */
-export interface TickActionResult {
-  ticket: TicketId
-  actionType: Action['type']
-  ok: boolean
-  detail?: string
-}
 
 /** 收割相位汇报 */
-export interface TickPhaseHarvest {
-  checked: number
-  completed: number
-  failed: number
-  pending: number
-}
 
 /** 派发相位预算闸汇报（docs/16-§三 reserve→refusal；20-§六.8） */
-export interface TickPhaseDispatchBudget {
-  /** 新落预留次数（双行落账成功的派发；adopt 沿用不计数） */
-  budgetReserved: number
-  /** 超帽拒派次数（refusal 行已落账；含票级+岗级） */
-  budgetRefused: number
-}
 
 /** 一拍全量汇报（JSON 可序列化；actions=结构化动作原体，actionResults=执行面，events=本拍新账） */
-export interface TickReport {
-  seq: number
-  ts: { start: number; end: number }
-  phases: {
-    collect: TickPhaseCollect
-    stateDiff: {
-      candidates: number
-      decisions: readonly TickDecisionEntry[]
-      /** 本拍复活对账释放的 closed 单数（DEV-42②：RESUME 落账数） */
-      reopened: number
-      /** 本拍镜像对账扫描补进候选的单数（DEV-42①：非节流拍恒 0） */
-      rescanned: number
-    }
-    dispatch: { dispatched: number; approvals: number; results: readonly TickActionResult[] } & TickPhaseDispatchBudget
-    harvest: TickPhaseHarvest
-    merge: { merged: number }
-    recycle: { recycled: number }
-    account: { eventsAppended: number; heartbeat: boolean }
-  }
-  actions: readonly Action[]
-  actionResults: readonly TickActionResult[]
-  events: readonly EventRecord[]
-  inflightAfter: number
-  errors: readonly string[]
-}
 
 // ————————————————————————— 内部状态 —————————————————————————
 

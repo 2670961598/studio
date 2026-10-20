@@ -120,8 +120,8 @@ import type { MatrixHrFace } from '../engine/hrsync/hrsync.ts'
 // 人事同步器装配（DEV-48，docs/52-§九）——hr 配置面/装配体/平台接线件（BC-S2 先拆再增）
 import { assembleHrSync, hrApplySegment } from './hrsync/assemble.ts'
 import { coerceHrServeKey, HR_SERVE_DEFAULTS, validateHrServeCross, type HrServeConfig } from './hrsync/config.ts'
-import { wirePlatform } from './platform/wire.ts'
-export { wirePlatform } from './platform/wire.ts'
+import { loadTaigaFieldMap, resolveTaigaAuth, wirePlatform } from './platform/wire.ts'
+export { resolveTaigaAuth, loadTaigaFieldMap, wirePlatform }
 import {
   createFileWatchSource,
   createSchedulerSource,
@@ -605,28 +605,6 @@ function realGateMode(config: ServeConfig): boolean {
  * 文件，docs/32 冒烟惯例）归部署面装载（systemd EnvironmentFile / docker secrets
  * → env），daemon 只认 env。
  */
-export function resolveTaigaAuth(mode: 'password' | 'token'): TaigaAuth {
-  if (mode === 'password') {
-    const username = process.env['TAIGA_USERNAME']
-    const password = process.env['TAIGA_PASSWORD']
-    if (username === undefined || username === '' || password === undefined || password === '') {
-      throw new Error(
-        'CONFIG_INVALID：taigaAuth: password 需 env TAIGA_USERNAME + TAIGA_PASSWORD' +
-          '（值不入配置/日志；部署面经 EnvironmentFile/secrets 注入进程 env）',
-      )
-    }
-    return { type: 'password', username, password }
-  }
-  const token = process.env['TAIGA_TOKEN']
-  if (token === undefined || token === '') {
-    throw new Error(
-      'CONFIG_INVALID：taigaAuth: token 需 env TAIGA_TOKEN（可选 TAIGA_REFRESH 供续期；' +
-        '无 refresh 且 token 失效须重启换新——token 态无密码可重登）',
-    )
-  }
-  const refresh = process.env['TAIGA_REFRESH']
-  return { type: 'token', token, ...(refresh !== undefined && refresh !== '' ? { refresh } : {}) }
-}
 
 /**
  * Taiga 字段映射装载（taigaFieldsFile）：扁平 YAML 子集不收嵌套，FieldProvisionMap
@@ -634,21 +612,6 @@ export function resolveTaigaAuth(mode: 'password' | 'token'): TaigaAuth {
  * 深层形状（值非空、类型枚举）归 TaigaFieldMap/validateProvisionMap 二道校验。同一份
  * 文件在迁移期也是 fields.provision 的输入（单一事实源，见 deliverables/migration.md）。
  */
-export function loadTaigaFieldMap(file: string): FieldProvisionMap {
-  let raw: unknown
-  try {
-    raw = JSON.parse(readFileSync(path.resolve(file), 'utf8'))
-  } catch (err) {
-    throw new Error(
-      `CONFIG_INVALID：taigaFieldsFile 不是合法 JSON（${file}）：${err instanceof Error ? err.message : String(err)}`,
-    )
-  }
-  const fields = (raw as Record<string, unknown> | null)?.['fields']
-  if (typeof raw !== 'object' || raw === null || typeof fields !== 'object' || fields === null) {
-    throw new Error(`CONFIG_INVALID：taigaFieldsFile 须是 FieldProvisionMap 形状（{fields,types?,states,stateFlow}，缺 fields 段）：${file}`)
-  }
-  return raw as FieldProvisionMap
-}
 
 /**
  * 平台接线：localfile=@studio-next/localplatform（docs/23 LocalFile 协作平台——真单首跑
@@ -661,26 +624,6 @@ export function loadTaigaFieldMap(file: string): FieldProvisionMap {
  * daemon 不代写——建单初始态定格在 created 事件（packages/localplatform/issues.ts 头注）。
  * taiga 同理：provision 归迁移/onboard 脚本（deliverables/migration.md），daemon 只消费。
  */
-export function wirePlatform(config: ServeConfig): FlowPlatform {
-  if (config.platform === 'localfile') {
-    const root = path.resolve(config.platformDir ?? path.join(config.rootDir, 'platform'))
-    return createLocalPlatform(root)
-  }
-  if (config.platform === 'taiga') {
-    if (config.taigaAuth === undefined) {
-      // parse 面已交叉校验；直接构造 ServeConfig 的测试面在此兜底（明报不猜）
-      throw new Error('CONFIG_INVALID：platform: taiga 需配 taigaAuth（password|token）——凭据值经 env TAIGA_* 供给')
-    }
-    return createTaigaPlatform({
-      baseUrl: config.taigaUrl ?? '',
-      project: config.taigaProject ?? '',
-      auth: resolveTaigaAuth(config.taigaAuth),
-      ...(config.taigaEntity !== undefined ? { entity: config.taigaEntity } : {}),
-      ...(config.taigaFieldsFile !== undefined ? { fields: loadTaigaFieldMap(config.taigaFieldsFile) } : {}),
-    })
-  }
-  return createFakePlatform()
-}
 
 /**
  * daemon 侧网关身份（控制面与 worker-key 签发共用的 secret/署名上下文/工号）。

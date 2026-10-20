@@ -22,7 +22,7 @@
 import { describe, expect, it } from 'vitest'
 import type { FieldProvisionMap } from '@studio-next/contract'
 import { buildContext } from '../platform.ts'
-import { TaigaPlatformError } from '../errors.ts'
+import { TaigaPlatformError } from '../transport/errors.ts'
 import { getIssue, listIssues } from '../issues.ts'
 import { provisionFields } from '../fields.ts'
 import {
@@ -178,8 +178,8 @@ describe('A3 出厂态退役（快照先行 + DELETE ?moveTo=）', () => {
     // 快照=删除前原貌（含出厂三态+各实体默认值）
     expect(snapshots).toHaveLength(1)
     expect(snapshots[0]?.at).toBe(Date.parse('2026-10-20T00:00:00.000Z'))
-    expect(snapshots[0]?.entities.userstory.statuses.map((s) => s.name)).toContain('New')
-    expect(snapshots[0]?.entities.userstory.defaultStatus).toBe(1)
+    expect(snapshots[0]?.entities.userstory?.statuses?.map((s) => s.name)).toContain('New')
+    expect(snapshots[0]?.entities.userstory?.defaultStatus).toBe(1)
 
     // 幂等重入：出厂态已不在状态集 → 零 DELETE（快照仍取证=删除面幂等观测）
     const writes1 = fake.countWriteCalls()
