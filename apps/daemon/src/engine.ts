@@ -12,8 +12,11 @@
  *   - docs/17-§6 末 收割成功契约四要件：终态事件 completed + 输出非空 + REPORT 落盘 + 闸门 exit=0。
  *     前两要件由引擎消费 adapter.stream() 判定；后两要件由**可注入 gateRunner**（src/gate.ts，
  *     v0 占位实现，诚实标注）执行。
- *   - docs/17-§6 末 断路器：worker 错误 → core.onWorkerError；open_bug 瞬间 events 落 ESCALATE +
- *     platform.issues.create 建 bug 单。
+ *   - docs/17-§6 末 断路器（DEV-46 半开修订）：worker 错误 → core.onWorkerError；首次熔断
+ *     events 落 ESCALATE + platform.issues.create 建 bug 单（恰一次）+ trippedAt 入账——
+ *     冷却窗（config.breakerCooldownMs，拟稿 30min）内 HOLD_BREAKER_OPEN 压制重派，窗过
+ *     放行一次半开试探派发（成功=GATE_PASS 复位、失败=回全开续冷却）——熔断不再是
+ *     死锁终态（2026-10-20 studio-dev-78 实证：复位唯一路径=被压制的成功信号=永不可达）。
  *   - docs/22-§三.2 意图幂等：同 (source, kind, company, ticket) 重复意图只唤起一次——
  *     seenIntentKeys 由 **events 派生**（DISPATCH 事件 note 携 intentKey；见 indexEvents），
  *     同 tick 重放 / 重启重放均不双写。
@@ -82,8 +85,9 @@
  *     相位预算过闸后、launch 前 mint+credentials 注入（超帽拒派不签发）；GATE_FAIL/
  *     派发失败（非终局）=凭据随子进程 env 离场（结构性撤离）+重派重签（一 attempt
  *     一 key——**不吊销 ticket**：冻结的 revoke 是 ticket 级终局动作，会杀死重签新 key，
- *     per-key 吊销拟稿待批见该文件头注）；断路熔断（failHarvest 达阈值）与 CLOSE
- *     （recycle 相位）=终局吊销（17-§7「关单即吊销，杜绝归档后仍有效」）；GATE_PASS
+ *     per-key 吊销拟稿待批见该文件头注）；断路熔断（DEV-46 起**非终局**——冷却后半开
+ *     试探要重签，同 GATE_FAIL 语义 env-离场）；CLOSE（recycle 相位）=终局吊销（17-§7
+ *     「关单即吊销，杜绝归档后仍有效」）；GATE_PASS
  *     后 key 存续到 CLOSE（frozen 口径）。DISPATCH note 携 wkey 审计锚=nonce（凭据值
  *     红名单——note/日志/brief 永不含 token）。
  *   - docs/17-§7 末行 读面分级：dispatch 装配时按岗选档（main_worker=Full/verifier=Blind/
@@ -156,6 +160,7 @@ import type {
 } from '@studio-next/contract'
 import {
   breakerStrikes,
+  breakerTrippedAt,
   DEFAULT_FLOW_TABLE,
   decide,
   emptyBreakerState,
@@ -238,6 +243,13 @@ export interface EngineConfig {
   harvestSliceMs: number
   /** 断路阈值 N（17-§6 默认 3） */
   breakerThreshold: number
+  /**
+   * 断路半开冷却窗 ms（DEV-46，2026-10-20 studio-dev-78 实证后的修法）：熔断后停重派
+   * 至冷却窗过 → 放行一次半开试探派发（DISPATCH note 携 half-open-probe 锚）——成功
+   * =GATE_PASS 断路复位，失败=回全开续冷却（trippedAt 刷新）。0=熔断即试探（负对照/
+   * 测试隔离用）；缺省 30min（拟稿待批——外部服务限速类自愈等待面）。
+   */
+  breakerCooldownMs?: number
   /** demo 模式自动批（真制作人批准信号经网关动作词归一，v0 布尔拟稿） */
   autoApprove: boolean
   /** 零动作拍 HEARTBEAT 的哨兵单号（contract events.issue 必填——拟稿待批） */
@@ -295,6 +307,7 @@ export const ENGINE_CONFIG_DEFAULTS: EngineConfig = {
   stallKillAfterAlarms: 2,
   harvestSliceMs: 50,
   breakerThreshold: 3,
+  breakerCooldownMs: 30 * 60_000,
   autoApprove: false,
   heartbeatIssue: '-',
   maxActivityPages: 10,
@@ -341,8 +354,8 @@ export interface EngineDeps {
   catalog?: ModelCatalog
   /**
    * worker 级 wkey 生命周期（可选注入；缺省不注入=关闭，行为零变更）：
-   * dispatch 相位按单签发+workspace 文件注入，GATE_FAIL/断路/CLOSE 吊销+删文件——
-   * 17-§7；接线件与通道选型裁决见 src/worker-key.ts。
+   * dispatch 相位按单签发+env 通道注入；GATE_FAIL/断路（DEV-46 非终局）=env-离场不吊销，
+   * CLOSE=终局吊销——17-§7；接线件与通道选型裁决见 src/worker-key.ts。
    */
   workerKeys?: WorkerKeyDeps
 }
@@ -587,7 +600,8 @@ export function createEngine(deps: EngineDeps): Engine {
   const workerKeys = deps.workerKeys
 
   /**
-   * 吊销一单的 worker key（终局面：CLOSE / 断路熔断——此后不再重派，吊销安全）。
+   * 吊销一单的 worker key（终局面：CLOSE——交付归档后不再重派，吊销安全；DEV-46 起
+   * 熔断**不**再吊销：冷却后半开试探要重签新 key，ticket 级吊销会令试探 key 出生即死）。
    * env 通道下凭据本体已随子进程终结离场——吊销封死的是 TTL 兜底面（nonce 单次有效）。
    */
   function revokeWorkerKeyOf(ticket: TicketId): boolean {
@@ -940,7 +954,7 @@ export function createEngine(deps: EngineDeps): Engine {
       makeEvent('DISPATCH', transitioned, attempt, tickEvents, {
         size: Buffer.byteLength(assembled.agentsMd.text, 'utf8'),
         payload_hash: `sha256:${createHash('sha256').update(assembled.agentsMd.text, 'utf8').digest('hex')}`,
-        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${minted !== undefined ? `;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=${minted.nonce}` : ''}`,
+        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${minted !== undefined ? `;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=${minted.nonce}` : ''}${action.breakerProbe === true ? `;breaker=half-open-probe（冷却窗过——单次试探：成功即复位，失败回全开续冷却，DEV-46）` : ''}`,
       })
       return {
         ticket,
@@ -1142,7 +1156,8 @@ export function createEngine(deps: EngineDeps): Engine {
     // worker wkey 撤离（17-§7）：GATE_FAIL 重派=凭据随子进程 env 离场（结构性撤离——
     // 进程终结即离场，无文件面）+重签（一 attempt 一 key，新 TaskBrief 新 credentials）
     // ——**不吊销 ticket**（ticket 级吊销是终局动作，会杀死重签的新 key；per-key 吊销
-    // 拟稿待批，见 worker-key.ts 头注）；断路熔断（下方达阈值）才是终局=吊销
+    // 拟稿待批，见 worker-key.ts 头注）；断路熔断（下方达阈值）DEV-46 起同样不吊销
+    // （冷却后半开试探要重签新 key——终局吊销唯一收口=CLOSE）
     const wkeyDiscarded = workerKeys !== undefined
     // 断路签名：四要件失败形态（同形态连击才熔断——breaker streak 语义）
     const signature = `harvest:${verdict.completed ? 'c' : '-'}${verdict.nonEmptyOutput ? 'o' : '-'}${verdict.reportExists ? 'r' : '-'}${verdict.exit0 ? 'g' : '-'}`
@@ -1170,10 +1185,11 @@ export function createEngine(deps: EngineDeps): Engine {
   }
 
   /**
-   * 断路器入账+熔断终局链（17-§6：worker 错误→onWorkerError 同单同签名连击；达阈→
-   * ESCALATE 落账+自动开 bug 单+wkey ticket 级终局吊销——HOLD_BREAKER_OPEN 压制一切重派，
-   * 不再有同 ticket 重签面，吊销安全）。failHarvest（收割失败）与 executeStallResponse
-   * （STALL 咬合，DEV-44）共用——单一实现，防两面终局链漂移。
+   * 断路器入账+熔断链（17-§6：worker 错误→onWorkerError 同单同签名连击；达阈→ESCALATE
+   * 落账+自动开 bug 单（恰一次）——冷却窗内 HOLD_BREAKER_OPEN 压制重派，窗过放行一次
+   * 半开试探（DEV-46：熔断不再是死锁终态——复位不再只靠被压制的成功信号）。
+   * failHarvest（收割失败）与 executeStallResponse（STALL 咬合，DEV-44）共用——单一
+   * 实现，防两面熔断链漂移。
    */
   async function strikeBreakerAndMaybeTrip(
     ticket: TicketId,
@@ -1183,12 +1199,13 @@ export function createEngine(deps: EngineDeps): Engine {
     detail: string,
     tickEvents: EventRecord[],
   ): Promise<void> {
-    const result = onWorkerError(breaker, ticket, signature, { threshold: config.breakerThreshold })
+    const result = onWorkerError(breaker, ticket, signature, now(), { threshold: config.breakerThreshold })
     breaker = result.newState
     if (result.action === null) return
-    // 熔断=终局（decide HOLD_BREAKER_OPEN 压制一切重派）——此时吊销 ticket 安全
-    //（不再有同 ticket 重签面），凭据彻底死亡（17-§7 fail-closed）
-    revokeWorkerKeyOf(ticket)
+    // 首次熔断：开 bug 单（恰一次；trippedAt 已入账——冷却窗由此起算，窗过 decide 放
+    // 半开试探）。DEV-46 wkey 修订：熔断**不再吊销** ticket——半开试探要重签新 key，
+    // ticket 级吊销会令试探 key 出生即死（revokedTickets 按单杀全 key，无解吊面）；
+    // 凭据撤离走 env-离场（同 GATE_FAIL 语义），终局吊销唯一收口=CLOSE（worker-key.ts 头注）
     const bug = await platform.issues.create({
       title: `[bug] ${ticket} 断路熔断（同签名 ${result.action.strikes} 连击：${signature}）`,
       description: detail,
@@ -1197,8 +1214,11 @@ export function createEngine(deps: EngineDeps): Engine {
       // 不定级：未定级单无状态流（decide NOOP_UNKNOWN_FLOW 明报不动），bug 单待人定级后派
     })
     await platform.links.link(bug.id, ticket, 'relates-to').catch(() => undefined)
+    // note 形状冻结（panel BREAKER_NOTE_PATTERN 全锚定解析）：CIRCUIT_BREAK：单号 连击 N
+    // 达阈值 M（签名 S）→ 自动开 bug 单 B——DEV-46 半开语义不进本 note（试探观测面=
+    // DISPATCH half-open-probe 锚）；wkey 段无空格，随 bug 单号入 (\S+) 捕获，与旧一致
     makeEvent('ESCALATE', fresh, attempt, tickEvents, {
-      note: `CIRCUIT_BREAK：${ticket} 连击 ${result.action.strikes} 达阈值 ${config.breakerThreshold}（签名 ${signature}）→ 自动开 bug 单 ${bug.id}${workerKeys !== undefined ? '；wkey=revoked（终局吊销）' : ''}`,
+      note: `CIRCUIT_BREAK：${ticket} 连击 ${result.action.strikes} 达阈值 ${config.breakerThreshold}（签名 ${signature}）→ 自动开 bug 单 ${bug.id}${workerKeys !== undefined ? '；wkey=env-离场（熔断非终局——冷却后半开试探重签，DEV-46）' : ''}`,
     })
     syncMirror(bug)
   }
@@ -1531,7 +1551,18 @@ export function createEngine(deps: EngineDeps): Engine {
         limits: config.limits,
         intent,
         seenIntentKeys: inWork && ownSeenKey !== null ? index.seenKeys.filter((k) => k !== ownSeenKey) : index.seenKeys,
-        breaker: { strikes: breakerStrikes(breaker, ticket), threshold: config.breakerThreshold },
+        // 断路快照（DEV-46 半开面）：trippedAt 在册=熔断中；冷却窗进快照（缺省回退
+        // decide 侧 DEFAULT_BREAKER_COOLDOWN_MS=30min 拟稿）——无 trippedAt 的旧形快照
+        // decide 按 fail-closed 恒 hold（golden 旧迹兼容）
+        breaker: (() => {
+          const trippedAt = breakerTrippedAt(breaker, ticket)
+          return {
+            strikes: breakerStrikes(breaker, ticket),
+            threshold: config.breakerThreshold,
+            ...(trippedAt !== undefined ? { trippedAt } : {}),
+            ...(config.breakerCooldownMs !== undefined ? { cooldownMs: config.breakerCooldownMs } : {}),
+          }
+        })(),
         ...(config.autoApprove ? { approved: true } : {}),
         ...(config.flows !== undefined ? { flows: config.flows } : {}),
         now: startedAt,

@@ -168,6 +168,8 @@ export interface ServeConfig {
   laneTtlMs: number
   /** 断路阈值 N */
   breakerThreshold: number
+  /** 断路半开冷却窗 ms（DEV-46：熔断后停重派至窗过→放行一次半开试探；0=即试探） */
+  breakerCooldownMs: number
   /**
    * 镜像对账重决策节流（DEV-42①，2026-10-20 哨查）：每 N 拍把非闭环（未 CLOSE）
    * mirror 单补进决策候选——活动驱动候选只看「有新活动」的单，被三闸顺延且活动已被
@@ -292,6 +294,7 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   harvestSliceMs: ENGINE_CONFIG_DEFAULTS.harvestSliceMs,
   laneTtlMs: ENGINE_CONFIG_DEFAULTS.laneTtlMs,
   breakerThreshold: ENGINE_CONFIG_DEFAULTS.breakerThreshold,
+  breakerCooldownMs: ENGINE_CONFIG_DEFAULTS.breakerCooldownMs ?? 30 * 60_000,
   mirrorRescanEveryTicks: ENGINE_CONFIG_DEFAULTS.mirrorRescanEveryTicks ?? 30,
   autoApprove: false,
   jobs: false,
@@ -428,6 +431,9 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         break
       case 'breakerThreshold':
         cfg.breakerThreshold = num(value, key)
+        break
+      case 'breakerCooldownMs':
+        cfg.breakerCooldownMs = num(value, key)
         break
       case 'mirrorRescanEveryTicks':
         cfg.mirrorRescanEveryTicks = num(value, key)
@@ -962,6 +968,7 @@ export function buildServeRuntime(
     harvestSliceMs: config.harvestSliceMs,
     laneTtlMs: config.laneTtlMs,
     breakerThreshold: config.breakerThreshold,
+    breakerCooldownMs: config.breakerCooldownMs,
     mirrorRescanEveryTicks: config.mirrorRescanEveryTicks,
     autoApprove: config.autoApprove,
     // 读面分级（17-§7）：Blind 档冻结验收命令来源——与装配器 acceptance **同一事实源**

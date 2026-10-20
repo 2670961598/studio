@@ -42,6 +42,7 @@
  */
 
 import type { IssueRecord, InvokeIntent, TicketId } from '@studio-next/contract'
+import { DEFAULT_BREAKER_COOLDOWN_MS } from './breaker.ts'
 import {
   DEFAULT_FLOW_TABLE,
   flowAnchors,
@@ -60,7 +61,7 @@ import {
  *   HOLD_LANE_BUSY         泳道租约有主且未过期
  *   HOLD_TICK_LIMIT        本拍动作上限已满（顺延不丢）
  *   HOLD_INFLIGHT_LIMIT    全局在途上限已满（顺延不丢）
- *   HOLD_BREAKER_OPEN      断路器已熔断，停重派（F1-10 断路后零新 DISPATCH）
+ *   HOLD_BREAKER_OPEN      断路器熔断且冷却窗未过，停重派（F1-10；DEV-46：窗过放半开试探）
  *   HOLD_INTENT_MALFORMED  意图缺 ticket 且缺 dedupKey（违反 docs/25-§3.4 契约）
  *   HOLD_INTENT_MISMATCH   意图单号与本单不符（调用方装配错误，防御性拦下）
  *   DEDUP_NOOP             幂等去重命中（docs/22-§三.2）
@@ -114,6 +115,13 @@ export interface DispatchAction extends ActionBase {
   toState: string
   /** 派发占用泳道（租约名不含 pid，docs/17-§2） */
   lane: string
+  /**
+   * 半开试探派发（DEV-46）：断路开且冷却窗已过时放行的试探誓——成功=复位
+   * （onSuccess）、失败=回全开续冷却（trippedAt 刷新）。判据面见 breakerCooled；
+   * 观测面=daemon 在 DISPATCH 事件 note 携 half-open-probe 锚（golden 判据只看
+   * (type, code)，本字段不进冻结判据）。
+   */
+  breakerProbe?: true
 }
 
 export interface SubmitApprovalAction extends ActionBase {
@@ -211,12 +219,19 @@ export interface ConcurrencyLimits {
   maxInflight: number
 }
 
-/** 断路器快照（decide 只读连击数与阈值；状态本体在 src/breaker.ts） */
+/** 断路器快照（decide 只读连击数/阈值/熔断时刻；状态本体在 src/breaker.ts） */
 export interface BreakerSnapshot {
   /** 同(单号,错误签名)当前连击数（0=无记录） */
   strikes: number
   /** 熔断阈值 N（参数化，默认 3，docs/17-§6） */
   threshold: number
+  /**
+   * 熔断时刻 epoch-ms（DEV-46 半开面；undefined=未熔断或**无时刻面**的旧快照——
+   * 后者 strikes≥阈时按未冷却处理，fail-closed：不可证冷却已过即不放试探）
+   */
+  trippedAt?: number
+  /** 冷却窗 ms（缺省 DEFAULT_BREAKER_COOLDOWN_MS=30min 拟稿，DEV-46） */
+  cooldownMs?: number
 }
 
 /** decide 输入（拟升 contract；一切外部世界经参数传入，core 零 IO） */
@@ -406,12 +421,36 @@ function laneFree(lease: LaneLeaseState, now: number): boolean {
   return lease.expiresAt !== undefined && now >= lease.expiresAt
 }
 
-/** 三闸（断路 > 泳道 > 每拍 > 在途）：全过=dispatch；任一未过=hold 带理由（顺延不丢） */
+/**
+ * 断路开否（DEV-46 半开）：trippedAt 在册=熔断中（连击数不计——熔断后换签名连击归 1，
+ * 熔断态仍保持）；无时刻面的旧快照退回 strikes≥阈判（fail-closed）。
+ */
+export function breakerTripped(b: BreakerSnapshot): boolean {
+  return b.trippedAt !== undefined || b.strikes >= b.threshold
+}
+
+/**
+ * 冷却窗过否（半开试探前置，DEV-46）：熔断时刻+冷却窗 ≤ now 才放试探。
+ * 无 trippedAt（未熔断/旧快照）恒 false——不可证冷却已过即不放（fail-closed，
+ * golden 旧迹兼容：breaker-trip-chain 无时刻面 → 恒 hold，语义与旧代码一致）。
+ */
+export function breakerCooled(b: BreakerSnapshot, now: number): boolean {
+  if (b.trippedAt === undefined) return false
+  return now >= b.trippedAt + (b.cooldownMs ?? DEFAULT_BREAKER_COOLDOWN_MS)
+}
+
+/**
+ * 三闸（断路 > 泳道 > 每拍 > 在途）：全过=dispatch；任一未过=hold 带理由（顺延不丢）。
+ * 断路面（DEV-46 半开）：熔断开且冷却窗未过=HOLD_BREAKER_OPEN；窗过=放行**一次**
+ * 试探派发（dispatch 携 breakerProbe 锚——同拍单只一动作结构性保证「一次」；试探在工
+ * 期间该单不重决策派发，试探失败回全开续冷却再压制）。
+ */
 function passGates(input: DecisionInput, dispatched: string): Action {
   const { issue, laneLease, limits, breaker, now } = input
-  if (breaker.strikes >= breaker.threshold) {
+  if (breakerTripped(breaker) && !breakerCooled(breaker, now)) {
     return hold(issue.id, 'HOLD_BREAKER_OPEN')
   }
+  const probe = breakerTripped(breaker)
   if (!laneFree(laneLease, now)) {
     return hold(issue.id, 'HOLD_LANE_BUSY')
   }
@@ -421,5 +460,12 @@ function passGates(input: DecisionInput, dispatched: string): Action {
   if (input.inflightCount >= limits.maxInflight) {
     return hold(issue.id, 'HOLD_INFLIGHT_LIMIT')
   }
-  return { type: 'dispatch', code: 'DISPATCH', ticket: issue.id, toState: dispatched, lane: laneLease.lane }
+  return {
+    type: 'dispatch',
+    code: 'DISPATCH',
+    ticket: issue.id,
+    toState: dispatched,
+    lane: laneLease.lane,
+    ...(probe ? { breakerProbe: true } : {}),
+  }
 }

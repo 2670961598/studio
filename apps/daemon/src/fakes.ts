@@ -231,6 +231,7 @@ export type FakeAdapterMode =
   | 'incomplete' // 要件 1 缺：turn_end.completed=false
   | 'no_report' // 要件 3 缺：不落 REPORT/summary（闸门侧报）
   | 'stalled' // 静默工人（DEV-44 注入面）：流驻留永不收尾、零事件零产物——收割恒 streaming，单卡已派发等看门狗
+  | 'external_error' // 外部服务错误（DEV-46 注入面）：产物照落（REPORT/summary/log 全真）、流照收尾，但 turn_end.completed=false + error/errorCode（GLM 外部限速 429 同型，studio-dev-78 实况）——四要件缺「终态 completed」，错误文本经 turn_end.error 进 GATE_FAIL note 断路面
 
 /**
  * fake 适配器选项。
@@ -345,8 +346,13 @@ export function createFakeAdapter(opts?: FakeAdapterOptions): ExecutorAdapter {
       events.push({ type: 'step_end', step: 'work', usage: { input: 100, output: 50 } })
       events.push({
         type: 'turn_end',
-        completed: mode !== 'incomplete',
+        completed: mode !== 'incomplete' && mode !== 'external_error',
         usage: { input: 100, output: 50 },
+        // DEV-46 外部服务错误注入：错误码走 contract errorCode 位（v1.5），原文走 error——
+        // daemon 收割面折进 GATE_FAIL note（turn_end.error=…），断路签名仍按四要件形态计
+        ...(mode === 'external_error'
+          ? { error: '上游模型服务限速（HTTP 429 Too Many Requests——GLM 外部服务）', errorCode: 'EXTERNAL_RATE_LIMIT' }
+          : {}),
       })
       sessions.set(sessionId, { events, consumed: false })
       return { executor: name, sessionId, pid: 0 }

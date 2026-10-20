@@ -118,7 +118,7 @@ describe('并发三闸（17-§2；F1-05 触顶顺延不丢）', () => {
   })
 })
 
-describe('断路器压制（F1-10 断路后零新 DISPATCH）', () => {
+describe('断路器压制与半开（F1-10；DEV-46：冷却窗内零新 DISPATCH、窗过单次试探）', () => {
   it('连击达阈值：派发就绪态 → hold BREAKER_OPEN', () => {
     const out = decide(makeInput({ breaker: { strikes: 3, threshold: 3 } }))
     expect(out.action).toMatchObject({ type: 'hold', code: 'HOLD_BREAKER_OPEN' })
@@ -127,6 +127,74 @@ describe('断路器压制（F1-10 断路后零新 DISPATCH）', () => {
   it('阈值差一击不熔断：照常派发', () => {
     const out = decide(makeInput({ breaker: { strikes: 2, threshold: 3 } }))
     expect(out.action).toMatchObject({ type: 'dispatch', code: 'DISPATCH' })
+    expect(out.action).not.toHaveProperty('breakerProbe')
+  })
+
+  it('熔断时刻在册（连击归 1）：冷却窗内 → hold BREAKER_OPEN（熔断态不随换签名静默解除）', () => {
+    const out = decide(
+      makeInput({
+        breaker: { strikes: 1, threshold: 3, trippedAt: T0 - 60_000, cooldownMs: 30 * 60_000 },
+      }),
+    )
+    expect(out.action).toMatchObject({ type: 'hold', code: 'HOLD_BREAKER_OPEN' })
+  })
+
+  it('冷却窗过：放行半开试探派发（DISPATCH 携 breakerProbe 锚，DEV-46）', () => {
+    const out = decide(
+      makeInput({
+        breaker: { strikes: 3, threshold: 3, trippedAt: T0 - (30 * 60_000 + 1), cooldownMs: 30 * 60_000 },
+      }),
+    )
+    expect(out.action).toMatchObject({ type: 'dispatch', code: 'DISPATCH', breakerProbe: true })
+  })
+
+  it('冷却窗恰过（边界=≥）：试探放行', () => {
+    const out = decide(
+      makeInput({
+        breaker: { strikes: 3, threshold: 3, trippedAt: T0 - 30 * 60_000, cooldownMs: 30 * 60_000 },
+      }),
+    )
+    expect(out.action).toMatchObject({ type: 'dispatch', code: 'DISPATCH', breakerProbe: true })
+  })
+
+  it('无时刻面旧快照（strikes≥阈、无 trippedAt）：恒 hold（fail-closed——不可证冷却已过即不放试探，golden 旧迹兼容）', () => {
+    const out = decide(
+      makeInput({
+        breaker: { strikes: 3, threshold: 3 },
+        now: T0 + 365 * 24 * 60 * 60_000, // 一年后也放不了：缺熔断时刻即缺冷却起算点
+      }),
+    )
+    expect(out.action).toMatchObject({ type: 'hold', code: 'HOLD_BREAKER_OPEN' })
+  })
+
+  it('cooldownMs=0（负对照）：熔断即半开试探', () => {
+    const out = decide(
+      makeInput({ breaker: { strikes: 3, threshold: 3, trippedAt: T0, cooldownMs: 0 } }),
+    )
+    expect(out.action).toMatchObject({ type: 'dispatch', code: 'DISPATCH', breakerProbe: true })
+  })
+
+  it('闸序不破：熔断开且未冷却时，泳道/上限同触多发仍取断路首因', () => {
+    const out = decide(
+      makeInput({
+        breaker: { strikes: 3, threshold: 3, trippedAt: T0 - 60_000, cooldownMs: 30 * 60_000 },
+        laneLease: { lane: 'main', holder: 'P-9', expiresAt: T0 + 600_000 },
+        tickActionCount: 5,
+        limits: { maxActionsPerTick: 5, maxInflight: 10 },
+        inflightCount: 10,
+      }),
+    )
+    expect(out.action).toMatchObject({ type: 'hold', code: 'HOLD_BREAKER_OPEN' })
+  })
+
+  it('半开试探照走三闸：窗过但泳道有主 → hold LANE_BUSY（试探不越闸）', () => {
+    const out = decide(
+      makeInput({
+        breaker: { strikes: 3, threshold: 3, trippedAt: T0 - (30 * 60_000 + 1), cooldownMs: 30 * 60_000 },
+        laneLease: { lane: 'main', holder: 'P-9', expiresAt: T0 + 600_000 },
+      }),
+    )
+    expect(out.action).toMatchObject({ type: 'hold', code: 'HOLD_LANE_BUSY' })
   })
 })
 
