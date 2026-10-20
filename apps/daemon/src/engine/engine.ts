@@ -179,8 +179,13 @@ import type { ExecutorRegistry } from '@studio-next/adapters'
 import type { Ledger } from '@studio-next/store'
 import { gateDispatch, settleDispatch, type BudgetGateDeps } from './budget-gate.ts'
 import { crashHook } from './crash-points.ts'
+<<<<<<< ours
 import { buildEventIndex, type EventIndex } from './sentinel/events-index.ts'
+=======
+import { indexEvents, type EventIndex } from './events/index.ts'
+>>>>>>> theirs
 import type { GateRunner } from './gate.ts'
+import { accountJobOutput } from './jobs/output-account.ts'
 import { makeUlid } from './tools/id.ts'
 import { instructionsTarget, removeInstructions, writeInstructions } from './instructions-store.ts'
 import type { PromptAssembler } from './prompt-assembly.ts'
@@ -209,6 +214,12 @@ export interface EngineConfig {
    * 收账经 dirname(briefPath) 全随迁）；缺省 → 上述旧布局。
    */
   aiwsRoot?: string
+  /**
+   * 公司目录根（DEV-50 岗产物落位收账锚）：收割 GATE_PASS 后按 jobs[].output 声明
+   * 落点把工位 REPORT 收账进公司目录 reports/ 位（docs/04-§三 / 17-§6 后置收账步）。
+   * 缺省不注入=面关闭（既有链路零行为变化）。
+   */
+  companyDir?: string
   /** events.actor（17-§3「工号+账号」编码归 store 层定——v0 'daemon' 拟稿） */
   actor: string
   /** 派工默认工号（issue.assignee 缺省时的人员索引回退位） */
@@ -1067,11 +1078,21 @@ export function createEngine(deps: EngineDeps): Engine {
         errors.push(`预算结算异常 ${ticket}：${msg}`)
         budgetNote = `;budget=settle 失败（${msg}）`
       }
+      // 岗产物落位收账（DEV-50，docs/04-§三）：GATE_PASS 后置步——jobs[].output 声明
+      // 落点收账工位 REPORT（四要件冻结口径不动；收账失败不回滚收割，如实留痕上报）
+      const outputNote = accountJobOutput({
+        ledger,
+        ticket,
+        reportPath: gate.reportPath,
+        companyDir: config.companyDir,
+        now,
+        onProblem: (message) => errors.push(message),
+      }).noteSuffix
       makeEvent('GATE_PASS', transitioned, entry.attempt, tickEvents, {
         tokens: tokenBuckets(stats),
         cost_usd: stats.cost.usd,
         duration_ms: stats.duration,
-        note: `四要件齐（completed/非空/REPORT/exit0）；report=${gate.reportPath}${gate.summaryPath !== undefined ? `;summary=${gate.summaryPath}` : ''}${budgetNote}`,
+        note: `四要件齐（completed/非空/REPORT/exit0）；report=${gate.reportPath}${gate.summaryPath !== undefined ? `;summary=${gate.summaryPath}` : ''}${budgetNote}${outputNote}`,
       })
       // bridge 通道指令临时文件：保留至收割完成→此刻删（v1.5#1 清理策略；内容指纹已在
       // DISPATCH note/payload_hash 落账——证据不依赖文件存活）
@@ -1362,6 +1383,10 @@ export function createEngine(deps: EngineDeps): Engine {
     mutations += unknownStateAlarmed + statusSetDrift
 
     // —— 相位 2 state-diff：受影响单逐个 decide（每单至多一动作；provisionalActions 供三闸） ——
+<<<<<<< ours
+=======
+    const index = indexEvents(ledger)
+>>>>>>> theirs
     const dispatchQ: Array<{ action: Extract<Action, { type: 'dispatch' }>; intentKey: string }> = []
     const approvalQ: Array<Extract<Action, { type: 'submit_approval' }>> = []
     const collectQ: Array<Extract<Action, { type: 'collect' }>> = []

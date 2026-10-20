@@ -132,10 +132,15 @@ export interface JobOpsEscalateTier {
   unacked: string
 }
 
-/** 岗位运作规格装载视图（triggers/outputs/sla/escalate 四段全 riding payload，M5-③..⑥） */
+/**
+ * 岗位运作规格装载视图（triggers/outputs/sla/escalate 四段 + output 落点，M5-③..⑥/DEV-50）。
+ * output（单数）=产物落点相对路径（jobs[].output 装载自 M4-④；收割侧按落点收账，
+ * DEV-50）——与 outputs（复数，报表模板清单 M5-⑤）语义互不相干。
+ */
 export interface JobOps {
   cadence?: JobOpsCadence
   outputs?: string[]
+  output?: string
   sla?: JobOpsSla
   escalate?: JobOpsEscalateTier[]
 }
@@ -159,6 +164,7 @@ export function parseJobOps(payload: unknown): JobOps {
   if (Array.isArray(p.outputs) && p.outputs.every((o) => typeof o === 'string' && o !== '')) {
     out.outputs = p.outputs as string[]
   }
+  if (typeof p.output === 'string' && p.output !== '') out.output = p.output
   const sla = p.sla
   if (typeof sla === 'object' && sla !== null && !Array.isArray(sla)) {
     const s = sla as Record<string, unknown>
