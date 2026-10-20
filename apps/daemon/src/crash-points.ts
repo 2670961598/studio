@@ -26,7 +26,8 @@
  * 恢复语义（F3-11「恢复先查 receipt」）＝重启后一切判定以台账事件（receipt）为据：
  *   - ①②（无 DISPATCH 回执）→ 单可重派 attempt 不漂（事件派生计数）、预算沿用未结预留（adopt 不双落）；
  *   - ③（DISPATCH 有、GATE_PASS 无）→ 意图键仍占用（seenKeys 不释放）→ 新意图重派 attempt+1，
- *     孤儿 work_record 留 running（v0 无 WORKER_DEAD 接管——engine.ts 头注冻结边界，如实断言）；
+ *     孤儿 work_record 由 serve 启动例行接管收口 interrupted（R-B 转正，docs/38-§2——崩溃
+ *     注入测试语义转正为生产面；接管≠收割：四要件无据不判，预算沿用 adopt 不双落）；
  *   - ④⑤ → 重启后无害：心跳不重、拍序/游标续用、库完整（WAL 硬杀后 integrity ok）。
  *
  * 落点疑点（上报）：docs/17-§10 将五点记为「contract 包测试集」，但真进程 SIGKILL 硬杀+

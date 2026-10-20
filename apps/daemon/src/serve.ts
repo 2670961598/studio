@@ -62,7 +62,8 @@
  *     意图消费门在引擎：v0.4 面只物化 schedule 意图，webhook/mention 等明报不支持
  *     （六源全通归 v0.8 后续刀）——注册面先行，消费面按刀推进。
  *   - SIGINT/SIGTERM 优雅停：等当前拍收口 → **先 stopAll 唤起源**（不再进新意图）→ 在途
- *     drain（v0=对内存 handle 优雅杀，work_records 留 running——重启接管归后续刀）→ 关台账。
+ *     drain（v0=对内存 handle 优雅杀，work_records 留 running——重启由启动例行接管收口，
+ *     docs/38-§2 R-B「在途接管收口」，见 takeOverRunningWorkRecords）→ 关台账。
  *     队列中未消费意图停机即弃（at-most-once，与调度器 markRan 已提交而 ingest 未消费的
  *     既有边界同语义——engine.ts 头注）。
  *   - L1 配置热重载（docs/38-§2 L1 / §4 R-A，src/hot-reload.ts）：companyDir 给定时
@@ -1084,6 +1085,49 @@ export function buildServeRuntime(
   }
 }
 
+// ————————————————————————— 在途接管（R-B） —————————————————————————
+
+/** 在途接管结果（serve 启动例行面的观测锚——启动日志一行 + 测试断言面） */
+export interface InflightTakeoverResult {
+  /** 收口条数（前命孤儿 running 工位） */
+  takenOver: number
+  /** 收口明细（单号+attempt——日志归因面） */
+  items: ReadonlyArray<{ id: string; issue: string; attempt: number }>
+}
+
+/**
+ * serve 启动例行接管 work_records running（DEV-13 R-B；docs/38-§2「在途接管收口」/
+ * docs/38-§4 分期表 R-B 行：崩溃注入测试语义转正为生产面——crash-injection ③ 的重启
+ * 恢复语义即本函数；此前冻结边界「孤儿留 running、接管归后续刀」就此清偿）。
+ *
+ * 语义边界（与 docs/17-§2/§3/§6 的关系）：
+ *   - **启动例行，非第八相位**（17-§2 主循环七相位不动）：进程边界一次面，tick 内
+ *     零行为；启动时本进程 inflight 恒空——库上一切 running 行都是前命孤儿（daemon
+ *     单写者前提，daemon_kv 同款），收口无歧义。
+ *   - **接管≠收割**（17-§6 四要件）：handle 已失、流不可续——四要件无据不判（不落
+ *     GATE_FAIL、不结算预算 settle、不烧断路连击）；收口=interrupted 终态行
+ *     （EndWorkRecord.status 值域 v0 不锁——'interrupted'=前命中断，既不冒认 done
+ *     也不误报 failed）。重派照旧走新意图（活动/镜像重决策，DEV-42①）→ 新 attempt
+ *     → 预算沿用未结预留（adopt 不双落，crash-injection ③ 冻结语义原样）。
+ *   - **零平台 IO / 零事件落账**：接管是台账卫生面（panel workers 投影「异常死亡
+ *     未收割单永远留在聚合」的已知误差由此收口，views.ts 头注）；事件词表（17-§3
+ *     冻结）无 WORKER_DEAD 名——观测面=启动日志行 + 终态行本身；加名走 SCHEMA_EVOLVE
+ *     批示流，本刀不擅动契约。
+ *   - **幂等**：过滤面（status='running' 且 ended_at 空）先于收口面（endWorkRecord
+ *     已收口再收=CONFIG_INVALID）——二次接管恒零收口；优雅停（dispose 杀 handle 留
+ *     running）与硬杀（SIGKILL）殊途同归，重启即收口。
+ */
+export function takeOverRunningWorkRecords(ledger: Ledger, now: number): InflightTakeoverResult {
+  const items: Array<{ id: string; issue: string; attempt: number }> = []
+  for (const r of ledger.listWorkRecords()) {
+    if (r.status !== 'running' || r.ended_at !== undefined) continue
+    if (ledger.endWorkRecord(r.id, { ended_at: now, status: 'interrupted' })) {
+      items.push({ id: r.id, issue: r.issue, attempt: r.attempt })
+    }
+  }
+  return { takenOver: items.length, items }
+}
+
 // ————————————————————————— 主循环 —————————————————————————
 
 /** 一拍心跳日志行（serve 运行面观测；事件面账目在台账） */
@@ -1131,6 +1175,18 @@ export interface ServeResult {
 export async function runServe(configPath: string): Promise<ServeResult> {
   const config = parseDaemonConfig(readFileSync(path.resolve(configPath), 'utf8'))
   const ledger: Ledger = openLedger(path.resolve(config.db))
+
+  // —— 在途接管（DEV-13 R-B，docs/38-§2）：serve 启动例行接管 work_records running ——
+  //    前命孤儿（硬杀 SIGKILL / 优雅停 dispose 留 running 同款）收口 interrupted；
+  //    接管≠收割（四要件无据不判），重派走新 attempt、预算沿用未结预留（adopt）。
+  //    最早落位（先于公司装载/探针/装配）：纯台账面零平台 IO——后续启动段即使失败，
+  //    前命在途账也已收口（单写者前提下无条件正确）。
+  const takeover = takeOverRunningWorkRecords(ledger, Date.now())
+  console.log(
+    takeover.takenOver > 0
+      ? `[serve] 在途接管（R-B）：${takeover.takenOver} 条前命孤儿 running 工位收口 interrupted（${takeover.items.map((i) => `${i.issue}#att${i.attempt}`).join('、')}）——接管≠收割（四要件无据不判）；重派走新 attempt、预算沿用未结预留`
+      : '[serve] 在途接管（R-B）：0 条前命孤儿 running 工位（无在途账待接管）',
+  )
 
   let stopped = false
   let stopReason: ServeResult['stopReason'] = 'signal'
@@ -1251,7 +1307,7 @@ export async function runServe(configPath: string): Promise<ServeResult> {
 
   console.log(`[serve] 停机（${stopReason}${lastError !== undefined ? `：${lastError}` : ''}）——先停唤起源（不进新意图）+ 在途 drain`)
   await stop()
-  console.log('[serve] 已优雅关闭（台账落盘；work_records 在途项接管归后续刀）')
+  console.log('[serve] 已优雅关闭（台账落盘；在途 work_records 留 running——重启启动例行接管收口（R-B））')
   // 控制面停机回执（src/stop-channel.ts）：优雅停收口**之后**落——CLI 见回执即在途
   // worker 已整树杀、台账已落盘（孤儿进程面闭环）。只回本进程应答的请求（honoredStopId）：
   // kv 读回的旧 id 属上一进程的应答面，不复回（旧回执仍在盘，按 id 匹配不误读）
