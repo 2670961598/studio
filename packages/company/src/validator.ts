@@ -35,7 +35,7 @@ import { LineCounter, parseDocument } from 'yaml'
 import { z } from 'zod'
 import type { CompanySnapshot, DeptNode, DirectoryIssue, MountResult, PersonRef, RoleName, ScheduledJob } from '@studio-next/contract'
 import { expandCadence, parseJobDuration } from './cadence.ts'
-import { ORG_CONFIG_SCHEMA_VERSION, lineOfPath, multifileRules, zodIssuesToDirectoryIssues } from './multifile.ts'
+import { ORG_CONFIG_SCHEMA_LITERALS, lineOfPath, multifileRules, zodIssuesToDirectoryIssues } from './multifile.ts'
 
 const ORG_CONFIG_FILE = 'org-config.yaml'
 
@@ -192,7 +192,9 @@ const OrgJobSchema = z
   })
 
 const OrgConfigSchema = z.strictObject({
-  schema: z.literal(ORG_CONFIG_SCHEMA_VERSION),
+  // DEV-32（docs/51-§三 B-1）：canonical=studio-next/org@1；org-config/v1=迁移期兼容
+  // （templates/DEV-27 夹具/契约 cases.json 语料仍在用——收口计划见 multifile.ts 头注）
+  schema: z.enum(ORG_CONFIG_SCHEMA_LITERALS),
   company: z.strictObject({
     name: z.string().min(1),
     // slug 语法域（docs/43-附录A-4）：与 init 通道同规——单一校验平面（SLUG_RE 单表，
@@ -201,6 +203,9 @@ const OrgConfigSchema = z.strictObject({
       message: 'slug 须形如 my-corp（小写字母/数字/连字符，两端不断字——与 init 通道同规，docs/43-附录A-4）',
     }),
     mission: z.string().optional(),
+    // DEV-32（docs/51-§三 B-1）：version=semver 三元组；迁移期可缺省（仓内语料未带——
+    // 在场不合法由判定器层指认到行，见 repo-validate.ts R5 解释记录）
+    version: z.string().optional(),
     charter_ref: z.string().min(1),
     level: z.number().int().min(2).max(9),
     level_distribution: z.record(z.string(), z.number().int()),

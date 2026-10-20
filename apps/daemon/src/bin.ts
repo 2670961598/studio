@@ -115,6 +115,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { initCompany, loadCompanyDirectory, readDirectoryFiles } from '@studio-next/company'
 import { companyAddGitUrl, deriveDirNameFromGitUrl } from '@studio-next/company'
+import { materializeCompanyRepoInput, renderRepoValidation, repoValidationJson, validateCompanyRepo } from '@studio-next/company'
+import { RepoInputError } from '@studio-next/company'
 import { CREATE_PLATFORMS, companyCreate } from '@studio-next/company'
 import type { CreatePlatform, InitOptions } from '@studio-next/company'
 import { createLocalPlatform } from '@studio-next/localplatform'
@@ -153,6 +155,13 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
       员工工作区树+依赖清单自动安装到隔离插件根——绝不写 ~/.dsh）。升级=同 url 再跑
       （镜像同步+幂等——§十-2 四点）。布局：<work-root>/<名>=公司 git 目录；.AIWS/ 与
       var/platform|plugins 在 work-root 下
+  studio-next company validate <git-url | 本地路径 | tarball> [--json] [--allow-extra] [--product]
+       公司仓库判定器（DEV-32；docs/51 规范正文）：五契约规则集全量——A 目录封闭集 /
+       B 逐文件 schema 与值域 / C 交叉引用 / D 依赖 / E 卫生（闸跑克隆产物）。合法=
+       PASS+摘要+「可初始化」exit 0；不合法=逐条违规 {规则号,文件,位置,违规描述,
+       修复建议} exit 1；判定器自身错误（网络/权限/解包失败）exit 2。--json 走机器面；
+       --allow-extra 豁免 A-1 封闭集外路径并留痕；--product 按导入产物面判（.studio-next/
+       信任锚合法在场——复验已导入公司用）
   studio-next company create <slug> [名] [--name <公司名>] [--dir <目录>]
                               [--template <模板目录>] [--platform localfile]
                               [--work-root <根>] [--db <库路径>] [--plugin-root <目录>]
@@ -490,14 +499,78 @@ async function cmdCompany(argv: string[]): Promise<number> {
       return cmdCompanyAdd(rest)
     case 'create':
       return cmdCompanyCreate(rest)
+    case 'validate':
+      return cmdCompanyValidate(rest)
     case undefined:
-      console.error('company：缺少子命令（当前支持：add、create）')
+      console.error('company：缺少子命令（当前支持：add、create、validate）')
       console.error(USAGE)
       return 1
     default:
-      console.error(`company：未知子命令：${sub}（当前支持：add、create）`)
+      console.error(`company：未知子命令：${sub}（当前支持：add、create、validate）`)
       console.error(USAGE)
       return 1
+  }
+}
+
+/**
+ * company validate <git-url | 本地路径 | tarball> [--json] [--allow-extra] —— 公司仓库
+ * 判定器（DEV-32；docs/51 规范正文：五契约规则集 A/B/C/D/E 全量）。
+ *
+ * 输入物化：目录→直用；tarball→系统 tar 解包（条目消毒：拒绝绝对路径与 .. 段）；
+ * git-url→真实克隆（克隆产物即 E 组闸面）。退出码三角：0=合法（PASS+摘要+可初始化）；
+ * 1=不合法（逐条违规 {规则号,文件,位置,违规描述,修复建议}——不许只说「校验失败」）；
+ * 2=判定器自身错误（网络/权限/解包失败——RepoInputError 面，与仓库不合法严格区分）。
+ * --json=机器面（违规四元组+via/alias+摘要一并 JSON 化）；--allow-extra=A-1 封闭集外
+ * 路径豁免并留痕（不豁免 B/C/D/E 组）。
+ */
+async function cmdCompanyValidate(argv: string[]): Promise<number> {
+  const parsed = parseArgv(argv, new Set<string>(), undefined, new Set(['json', 'allow-extra', 'product']))
+  if ('error' in parsed) {
+    console.error(`company validate：${parsed.error}`)
+    console.error(USAGE)
+    return 1
+  }
+  const input = parsed.positionals[0]
+  if (input === undefined) {
+    console.error('company validate：缺少 <git-url | 本地路径 | tarball>（例：studio-next company validate /path/to/company-repo --json）')
+    console.error(USAGE)
+    return 1
+  }
+  if (parsed.positionals.length > 1) {
+    console.error(`company validate：多余的位置参数：${parsed.positionals.slice(1).join(' ')}`)
+    console.error(USAGE)
+    return 1
+  }
+  const json = parsed.booleans.has('json')
+  let materialized
+  try {
+    materialized = await materializeCompanyRepoInput(input)
+  } catch (err) {
+    // 判定器自身错误（路径不存在/网络失败/解包失败）——exit 2 面，与「仓库不合法」严格区分
+    if (err instanceof RepoInputError) {
+      console.error(json ? JSON.stringify({ ok: false, input, error: `repo-input/${err.message}` }) : `company validate：判定器自身错误（exit 2）：${err.message}`)
+      return 2
+    }
+    console.error(`company validate：物化输入失败：${errText(err)}`)
+    return 2
+  }
+  try {
+    const result = await validateCompanyRepo(materialized.dir, {
+      allowExtra: parsed.booleans.has('allow-extra'),
+      face: parsed.booleans.has('product') ? 'product' : 'source',
+    })
+    const text = json ? repoValidationJson(result, input) : renderRepoValidation(result, input)
+    if (result.ok) {
+      console.log(text)
+      return 0
+    }
+    console.error(text)
+    return 1
+  } catch (err) {
+    console.error(`company validate：判定失败：${errText(err)}`)
+    return 2
+  } finally {
+    await materialized.cleanup()
   }
 }
 

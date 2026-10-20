@@ -109,6 +109,37 @@ export function parseDependencies(src: string): CompanyDependencies {
   return parsed.data
 }
 
+/**
+ * 非抛解析面（DEV-32 公司仓库判定器消费）：YAML 语法/结构错误不抛 CONFIG_INVALID，
+ * 返回逐条 `{path, message}` issue——判定器把 C-7（when.attr 枚举域）/D-1（version 形态）/
+ * B-5（dependencies.yaml 逐文件 schema）违规定位到键路径。schema 仍走 DependenciesSchema
+ * 单源（与 parseDependencies 同表——判定面唯一事实源不变）。
+ */
+export interface DepsParseIssue {
+  path: string
+  message: string
+}
+
+export function safeParseDependencies(
+  src: string,
+): { ok: true; data: CompanyDependencies } | { ok: false; issues: DepsParseIssue[] } {
+  let raw: unknown
+  try {
+    raw = parseYaml(src)
+  } catch (err) {
+    return { ok: false, issues: [{ path: '(root)', message: `YAML 语法错误：${err instanceof Error ? err.message : String(err)}` }] }
+  }
+  const parsed = DependenciesSchema.safeParse(raw)
+  if (parsed.success) return { ok: true, data: parsed.data }
+  return {
+    ok: false,
+    issues: parsed.error.issues.map((i) => ({
+      path: i.path.filter((p) => typeof p === 'string' || typeof p === 'number').join('.') || '(root)',
+      message: i.message,
+    })),
+  }
+}
+
 /** 读公司目录的依赖清单（在装插件前调；缺失 → null=无绑定面，空报告语义——依赖清单是可选契约文件） */
 export async function readDependencies(companyDir: string): Promise<CompanyDependencies | null> {
   const file = path.join(path.resolve(companyDir), DEPENDENCIES_FILE)

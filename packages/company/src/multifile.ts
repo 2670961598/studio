@@ -41,8 +41,14 @@ import { z } from 'zod'
 import type { DirectoryIssue } from '@studio-next/contract'
 import type { OrgConfig } from './validator.ts'
 
-/** org-config.yaml 的 schema 版本字面量（.studio-next.yaml 一致性检查的同源基准） */
+/**
+ * org-config.yaml 的 schema 版本字面量（.studio-next.yaml 一致性检查的同源基准）。
+ * DEV-32（docs/51-§三 B-1 定稿）起规范字面量为 `studio-next/org@1`；仓内既有语料
+ * （templates×3 / DEV-27 夹具 / contract cases.json 冻结语料）仍为 `org-config/v1`——
+ * 迁移期收**并集**（canonical 在前；语料迁移完成后收单表，走 docs/51-§九 版本化修订流）。
+ */
 export const ORG_CONFIG_SCHEMA_VERSION = 'org-config/v1'
+export const ORG_CONFIG_SCHEMA_LITERALS = ['studio-next/org@1', ORG_CONFIG_SCHEMA_VERSION] as const
 
 const ORG_CONFIG_FILE = 'org-config.yaml'
 const META_FILE = '.studio-next.yaml'
@@ -376,12 +382,12 @@ export function multifileRules(
       const parsed = StudioNextMetaSchema.safeParse(doc.toJS())
       if (!parsed.success) {
         issues.push(...zodIssuesToDirectoryIssues(doc, lc, parsed.error.issues, META_FILE, 'meta/missing-field'))
-      } else if (parsed.data.schema !== ORG_CONFIG_SCHEMA_VERSION) {
+      } else if (parsed.data.schema !== org.schema) {
         issues.push({
           file: META_FILE,
           line: lineOfPath(doc, lc, ['schema']),
           rule: 'meta/schema-mismatch',
-          fix: `.studio-next.yaml schema=${parsed.data.schema} 与 org-config.yaml schema=${ORG_CONFIG_SCHEMA_VERSION} 不一致（两处必须同源——04-§二/§九：schema 版本迁移由 daemon 统一执行）`,
+          fix: `.studio-next.yaml schema=${parsed.data.schema} 与 org-config.yaml schema=${org.schema} 不一致（两处必须同源——04-§二/§九：schema 版本迁移由 daemon 统一执行）`,
         })
       }
     }
