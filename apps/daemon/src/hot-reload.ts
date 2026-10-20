@@ -63,7 +63,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import {
-  AIWS_DIR,
+  SCAN_EXCLUDED_NAMES,
   TRUST_DIR,
   excludeAnchorFiles,
   loadCompanyDirectory,
@@ -73,6 +73,14 @@ import {
 } from '@studio-next/company'
 import type { CompanySnapshot, DirectoryIssue, EventRecord } from '@studio-next/contract'
 import type { Ledger } from '@studio-next/store'
+
+/**
+ * 监听面排除表（**单源扩展**——DEV-28 三处排除之一，基表=company 包 SCAN_EXCLUDED_NAMES
+ * .git/.DS_Store/.AIWS，docs/43-§五）：daemon 侧加信任锚目录 .studio-next/（TRUST_DIR，
+ * docs/43-附录A-3——approve/revoke 写锚不得触发重装载自扰环）。statDirectory 与下方
+ * createHotReload 基线 walk 同消费本表——名单一处改，两处永不漂移（原两处内联表已收敛）。
+ */
+const WATCH_EXCLUDED_NAMES: readonly string[] = [...SCAN_EXCLUDED_NAMES, TRUST_DIR]
 
 // ————————————————————————— 指纹面（纯函数，单测直接打） —————————————————————————
 
@@ -101,11 +109,9 @@ export interface StatDiff {
 }
 
 /**
- * 与 readDirectoryFiles 同规则走目录（跳过 .git/.DS_Store/.AIWS；目录序确定）——只 stat 不读内容。
- * 另排除信任锚目录 .studio-next/（TRUST_DIR，docs/43-附录A-3）：信任锚是 daemon 自管控制面
- * 文件，不是公司资产——approve/revoke 写锚不得触发重装载（否则批准动作自身引发指纹漂移
- * 告警，自扰环；「显式动作→显式应用」语义也由此保住：re-approve 只动锚、自动面无感）。
- * .AIWS 排除=员工工作区不属公司配置面（docs/43-§五，AIWS_DIR 注见 init.ts）。
+ * 与 readDirectoryFiles 同规则走目录（排除面=WATCH_EXCLUDED_NAMES 单源表；目录序确定）
+ * ——只 stat 不读内容。表义见上方常量注（.AIWS=员工工作区不属公司配置面 docs/43-§五；
+ * .studio-next/=锚自指隔离 docs/43-附录A-3——批准动作不得自触重装载）。
  */
 export function statDirectory(root: string): StatIndex {
   const out: StatIndex = {}
@@ -113,7 +119,7 @@ export function statDirectory(root: string): StatIndex {
     const entries = readdirSync(dir, { withFileTypes: true })
     entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
     for (const entry of entries) {
-      if (entry.name === '.git' || entry.name === '.DS_Store' || entry.name === TRUST_DIR || entry.name === AIWS_DIR) continue
+      if (WATCH_EXCLUDED_NAMES.includes(entry.name)) continue
       const rel = prefix === '' ? entry.name : `${prefix}/${entry.name}`
       const abs = path.join(dir, entry.name)
       if (entry.isDirectory()) walk(abs, rel)
@@ -362,8 +368,8 @@ export function createHotReload(deps: HotReloadDeps): HotReload {
     const files: Record<string, string> = {}
     const walk = (dir: string, prefix: string): void => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        // 排除表同 statDirectory（.studio-next=锚自指隔离 docs/43-附录A-3；.AIWS=员工工作区）
-        if (entry.name === '.git' || entry.name === '.DS_Store' || entry.name === TRUST_DIR || entry.name === AIWS_DIR) continue
+        // 排除面=WATCH_EXCLUDED_NAMES 单源表（同 statDirectory——.AIWS=员工工作区 docs/43-§五；.studio-next=锚自指隔离 docs/43-附录A-3）
+        if (WATCH_EXCLUDED_NAMES.includes(entry.name)) continue
         const rel = prefix === '' ? entry.name : `${prefix}/${entry.name}`
         const abs = path.join(dir, entry.name)
         if (entry.isDirectory()) walk(abs, rel)

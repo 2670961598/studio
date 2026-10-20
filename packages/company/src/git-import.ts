@@ -33,7 +33,7 @@
  * 失败纪律：任一步不过抛 ClassifiedError(CONFIG_INVALID)；fresh 通道新建目录整体撤除
  * （同 init.ts 宁失败不半成品）。
  */
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -43,6 +43,7 @@ import type { FieldProvisionMap, FlowPlatform } from '@studio-next/contract'
 import { configInvalid } from '@studio-next/contract'
 import { loadCompanyDirectory } from './validator.ts'
 import { AIWS_DIR, readDirectoryFiles } from './init.ts'
+import { ensureAiwsTree, type AiwsTreeResult } from './aiws.ts'
 import { contentFingerprint, excludeAnchorFiles, readTrustAnchor, reseedTrustAnchorOnUpgrade, seedTrustAnchor } from './trust.ts'
 import { extractPersonAttrs, installCompanyPlugins, type PluginInstallItem, type PluginInstallReport } from './dependencies.ts'
 
@@ -187,32 +188,8 @@ export function deriveDirNameFromGitUrl(gitUrl: string): string {
 }
 
 // ————————————————————————— .AIWS 员工工作区树（docs/43-§五） —————————————————————————
-
-/**
- * 建员工工作区树 `.AIWS/<部门路径>/<工号>/`——镜像 org-config 组织结构（部门层级沿用
- * departments 树的 path 与 parent；叶子=people 逐工号的文件夹；people/<工号>.md 是文件，
- * .AIWS 下对应位置是文件夹——员工可在自己文件夹里做任意事）。
- * 落点=公司根目录（公司 git 目录/var 的同级，**不进公司 git 目录**）；幂等（mkdir 已存在
- * 即过）；部门文件夹先建（无人部门也有文件夹），员工文件夹挂其 dept.path 下。
- * 排除面见 AIWS_DIR 注（init.ts）——.git/.DS_Store 同款被指纹与监听排除。
- */
-export function ensureAiwsTree(
-  aiwsRoot: string,
-  departments: readonly { path: string }[],
-  people: readonly { id: string; dept: string }[],
-): { root: string; personDirs: string[] } {
-  mkdirSync(path.join(aiwsRoot), { recursive: true })
-  const personDirs: string[] = []
-  for (const dept of departments) {
-    mkdirSync(path.join(aiwsRoot, ...dept.path.split('/')), { recursive: true })
-  }
-  for (const person of people) {
-    const rel = [...person.dept.split('/'), person.id]
-    mkdirSync(path.join(aiwsRoot, ...rel), { recursive: true })
-    personDirs.push(rel.join('/'))
-  }
-  return { root: aiwsRoot, personDirs }
-}
+// 建树+增量同步+per-company 根守卫正式化归 aiws.ts（DEV-28）：本文件只消费（建司即建、
+// 升级同建，公共 API 经 index.ts 的 aiws.ts 导出面）；排除面见 init.ts SCAN_EXCLUDED_NAMES。
 
 // ————————————————————————— 导入核（git-url 与本地路径同构共用——docs/43-§十-1） —————————————————————————
 
@@ -244,8 +221,8 @@ export interface RepoImportResult {
   /** 内容是否真的变化（幂等面：同版本再导=false，无新提交——docs/43-§十-2） */
   contentChanged: boolean
   provisioned: boolean
-  /** .AIWS 员工工作区树（建树结果——根与工号文件夹清单） */
-  aiws: { root: string; personDirs: string[] }
+  /** .AIWS 员工工作区树（建树+增量同步结果——根、工号清单、新建数、归档清单） */
+  aiws: AiwsTreeResult
   install?: PluginInstallReport
 }
 
@@ -395,10 +372,14 @@ export async function importCompanyRepo(opts: RepoImportOptions): Promise<RepoIm
   }
   const fingerprint = contentFingerprint(excludeAnchorFiles(targetFiles))
 
-  // 6b. .AIWS 员工工作区树（fresh 与 upgrade 同建——升级后组织可能扩编；幂等 mkdir。
-  //     落点缺省=公司根目录（targetDir 同级），不进公司 git 目录——docs/43-§五）
+  // 6b. .AIWS 员工工作区树（fresh 与 upgrade 同建——升级后组织可能扩编；幂等可重入，
+  //     增量同步=扩编建目录/缩编归档不删。落点缺省=公司根目录（targetDir 同级），不进
+  //     公司 git 目录——docs/43-§五；slug=仓库真 slug——per-company 根守卫不并树，§十9）
   const aiwsRoot = opts.aiwsRoot ?? path.join(path.dirname(targetDir), AIWS_DIR)
-  const aiws = ensureAiwsTree(aiwsRoot, mounted.snapshot.departments, mounted.snapshot.people)
+  const aiws = ensureAiwsTree(aiwsRoot, mounted.snapshot.departments, mounted.snapshot.people, {
+    slug: mounted.snapshot.slug,
+    ...(opts.now !== undefined ? { now: opts.now } : {}),
+  })
 
   // 7. 平台字段 provision（端口注入；公司声明 platform: localfile 才走——docs/23-§二「换平台=改配置行」）
   let provisioned = false

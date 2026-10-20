@@ -50,7 +50,8 @@ import { simpleGit } from 'simple-git'
 import { configInvalid } from '@studio-next/contract'
 import type { CompanySnapshot, FlowPlatform, PersonRef, ScheduledJob } from '@studio-next/contract'
 import { initCompany, readDirectoryFiles, AIWS_DIR } from './init.ts'
-import { ensureAiwsTree, deriveFieldProvision, extractOrgYt } from './git-import.ts'
+import { deriveFieldProvision, extractOrgYt } from './git-import.ts'
+import { ensureAiwsTree, type AiwsTreeResult } from './aiws.ts'
 import { loadCompanyDirectory, SLUG_RE } from './validator.ts'
 import { installCompanyPlugins, extractPersonAttrs } from './dependencies.ts'
 import type { PluginInstallReport } from './dependencies.ts'
@@ -146,7 +147,7 @@ export interface CompanyCreateResult {
   /** 相位结果（固定序） */
   phases: readonly CreatePhaseOutcome[]
   /** .AIWS 建树结果（dry-run=零工位——计划面计数入 detail） */
-  aiws: { root: string; personDirs: string[] }
+  aiws: AiwsTreeResult
   /** 报告文件路径（dry-run=undefined——零落盘） */
   reportFile?: string
   install?: PluginInstallReport
@@ -295,7 +296,7 @@ export function renderCreateReport(input: {
   dryRun: boolean
   phases: readonly CreatePhaseOutcome[]
   gitCommit?: string
-  aiws: { root: string; personDirs: string[] }
+  aiws: AiwsTreeResult
   install?: PluginInstallReport
 }): string {
   const table = input.phases.map((p) => `| ${p.phase} | ${p.status} | ${p.detail} |`).join('\n')
@@ -412,14 +413,19 @@ export async function companyCreate(opts: CompanyCreateOptions): Promise<Company
   // ———— P3 accounts：全员建号（本地面 .AIWS+锚点断言；平台面注入位） ————
   const provisioner = opts.accounts ?? createLocalAnchorAccounts(orgSrc)
   const aiwsExisted = existsSync(aiwsRoot)
-  let aiws: { root: string; personDirs: string[] }
+  let aiws: AiwsTreeResult
   if (dryRun) {
-    aiws = { root: aiwsRoot, personDirs: [] }
+    aiws = { root: aiwsRoot, personDirs: [], created: 0, archived: [] }
     phases.push({ phase: 'accounts', status: 'planned', detail: `将建 ${AIWS_DIR} 工位树（${snapshot.people.length} 工号文件夹）+ 账号锚点断言（${provisioner.kind}）` })
   } else {
-    aiws = ensureAiwsTree(aiwsRoot, snapshot.departments, snapshot.people)
+    // slug=本司真 slug：per-company 根守卫（docs/43-§十9 不并树）+ 增量同步（幂等可重入）
+    aiws = ensureAiwsTree(aiwsRoot, snapshot.departments, snapshot.people, { slug: snapshot.slug, now })
     const report = await provisioner.provisionMembers({ slug: snapshot.slug, dryRun, people: snapshot.people })
-    phases.push({ phase: 'accounts', status: 'provisioned', detail: `${AIWS_DIR} ${aiwsExisted ? '复用' : '新建'}（${aiws.personDirs.length} 工位）+ ${provisioner.kind}：${report.note}` })
+    phases.push({
+      phase: 'accounts',
+      status: 'provisioned',
+      detail: `${AIWS_DIR} ${aiwsExisted ? '复用' : '新建'}（${aiws.personDirs.length} 工位${aiws.archived.length > 0 ? `、归档 ${aiws.archived.length}` : ''}）+ ${provisioner.kind}：${report.note}`,
+    })
   }
 
   // ———— P4 jobs：快照→台账播种（注入面；seeded/kept 幂等观测） ————

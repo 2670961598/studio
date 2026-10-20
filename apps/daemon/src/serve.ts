@@ -78,6 +78,7 @@
  *     阻断模式+资产面扩展+真生产改动路径拦截（头注冻结边界）。
  */
 import { createRegistry, loadAgentConfig, wireRegistry, builtinResolver } from '@studio-next/adapters'
+import { AIWS_DIR, ensureAiwsTree } from '@studio-next/company'
 import { createModelCatalog, fingerprint, parseModelsYaml } from '@studio-next/core'
 import { createGateway, CONTROL_TICKET } from '@studio-next/gateway'
 import type { SignatureContext } from '@studio-next/gateway'
@@ -136,8 +137,17 @@ export interface ServeConfig {
   platform: 'localfile' | 'taiga' | 'fake'
   /** 公司 slug（events/intents/mirror 的 company 维） */
   company: string
-  /** 工位根（workspace = <rootDir>/workspaces/<单号>/att<N>） */
+  /**
+   * daemon 工位根（tmp/instructions、platform、控制面等 daemon 自管面落此）。
+   * 派发 workspace 归 .AIWS 员工家（DEV-28，docs/43-§五）——根推导见 aiwsRoot。
+   */
   rootDir: string
+  /**
+   * .AIWS 员工工作区树根（DEV-28，docs/43-§五+§十9）：缺省推导=显式本键 >
+   * dirname(companyDir)/.AIWS（公司根，生产形态——与公司 git 目录/var 平级）>
+   * `<rootDir>/.AIWS`（demo 无公司目录）。per-company 不并树：根归属标记异 slug 拒启动。
+   */
+  aiwsRoot?: string
   /** 拍间隔 ms */
   tickMs: number
   /** 并发三闸 */
@@ -363,6 +373,9 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         break
       case 'rootDir':
         cfg.rootDir = str(value, key)
+        break
+      case 'aiwsRoot':
+        cfg.aiwsRoot = str(value, key)
         break
       case 'companyDir':
         cfg.companyDir = str(value, key)
@@ -832,6 +845,28 @@ export function buildServeRuntime(
   // daemon 网关身份（共享活对象——reload 时 mutate ctx 三字段，署名跟随新组织）
   const identity = daemonIdentity(config, snapshot)
 
+  // —— .AIWS 员工工作区树（DEV-28，docs/43-§五+§十9）：建司即建+存量对账 ——
+  //    根推导（单一规则）：显式 aiwsRoot > dirname(companyDir)/.AIWS（公司根——与公司
+  //    git 目录/var 平级，生产形态）> <rootDir>/.AIWS（demo 无公司目录，daemon 自管面内）。
+  //    per-company 不并树：根归属标记异 slug → CONFIG_INVALID 拒启动（fail-closed）；
+  //    增量同步=扩编建目录/缩编归档不删（aiws.ts）；启动对账后热重载 apply 段随拍增量
+  const aiwsRoot = path.resolve(
+    config.aiwsRoot ??
+      (config.companyDir !== undefined
+        ? path.join(path.dirname(path.resolve(config.companyDir)), AIWS_DIR)
+        : path.join(path.resolve(config.rootDir), AIWS_DIR)),
+  )
+  const aiwsClock = (): Date => new Date(clock())
+  const aiwsTree = ensureAiwsTree(aiwsRoot, snapshot.departments, snapshot.people, {
+    slug: snapshot.slug,
+    now: aiwsClock,
+  })
+  log(
+    `[serve] .AIWS 员工工作区树：${aiwsRoot}（部门 ${snapshot.departments.length}、工位 ${aiwsTree.personDirs.length}` +
+      `${aiwsTree.created > 0 ? `、新建 ${aiwsTree.created}` : ''}${aiwsTree.archived.length > 0 ? `、归档 ${aiwsTree.archived.length}` : ''}` +
+      `）——派发 cwd=<部门>/<工号>/tickets/<单号>/att<N>，家保留（docs/43-§五；per-company 不并树 §十9）`,
+  )
+
   // —— executor 注册双形态（v0.5 真单刀）：agentYaml=真注册表；缺省=fake（demo 不变）——
   const registry = createRegistry()
   if (config.agentYaml !== undefined) {
@@ -890,6 +925,9 @@ export function buildServeRuntime(
     ...ENGINE_CONFIG_DEFAULTS,
     company: config.company,
     rootDir: path.resolve(config.rootDir),
+    // .AIWS 员工家（DEV-28）：派发 workspace 落员工家（docs/43-§五）——收割四要件与
+    // deliverables 收账经 dirname(briefPath) 全随迁；缺省不注入=引擎旧布局回退面
+    aiwsRoot,
     defaultPersonId: (snapshot.people[0] as PersonRef | undefined)?.id ?? '',
     deptFallback: snapshot.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback,
     defaultLane: snapshot.departments[0]?.lanes[0] ?? ENGINE_CONFIG_DEFAULTS.defaultLane,
@@ -1029,6 +1067,15 @@ export function buildServeRuntime(
         let seeded = 0
         let kept = 0
         let removed = 0
+        // .AIWS 增量同步先行（DEV-28，docs/43-§五「人事变树变」）：新员工得文件夹、
+        // 离司/下线归档不删——**先于**一切持有者替换（本步抛错=apply 整体失败 → 旧配置
+        // 保持的既有 RELOAD_APPLY_FAILED 面，fail-closed；树与配置不半换）
+        const synced = ensureAiwsTree(aiwsRoot, next.departments, next.people, { slug: next.slug, now: aiwsClock })
+        if (synced.created > 0 || synced.archived.length > 0) {
+          log(
+            `[serve] .AIWS 增量同步（reload）：新建 ${synced.created}、归档 ${synced.archived.length}${synced.archived.length > 0 ? `（${synced.archived.join('、')}——内容保留不删）` : ''}`,
+          )
+        }
         if (config.jobs) {
           // 台账段先行（幂等可重入——seedJobs 逐岗独立 upsert；失败重试下一形态自愈）
           const s = seedJobs(ledger, next.jobs, clock())

@@ -226,8 +226,9 @@ describe('DEV-27 · company add <git-url> 全链（克隆→剥离→校验→�
 
   it('.AIWS 员工工作区树：建树同构 org-config（部门得文件夹、工号在自己部门下得文件夹）', () => {
     // docs/43-§五：.AIWS/<部门路径>/<工号>/，公司根目录（targetDir 同级），不进公司 git 目录
+    // （ensureAiwsTree 正式化后返回面含 created/archived——本测试只锚同构结构，toMatchObject）
     const aiwsRoot = path.join(root, 'work', '.AIWS')
-    expect(firstImport?.aiws).toEqual({ root: aiwsRoot, personDirs: ['departments/工程部/AGENT-1'] })
+    expect(firstImport?.aiws).toMatchObject({ root: aiwsRoot, personDirs: ['departments/工程部/AGENT-1'] })
     expect(existsSync(aiwsRoot)).toBe(true)
     // 部门文件夹（无人部门也有）+ 工号文件夹（people/<工号>.md 是文件，.AIWS 下对应位置是文件夹）
     expect(existsSync(path.join(aiwsRoot, 'departments', '工程部'))).toBe(true)
