@@ -26,10 +26,10 @@
  *     NOOP_UNKNOWN_STATE 静默跳过（2026-10-20 哨查事故根因），建单口收口
  */
 import type { IssueCreate, IssueQuery, IssueRecord, PersonId, TicketId } from '@studio-next/contract'
-import type { TaigaContext, EntityRaw } from './context.ts'
-import { parseEntity, parseEntityList } from './context.ts'
-import { TaigaPlatformError } from './errors.ts'
-import { asObject } from './shape.ts'
+import type { TaigaContext, EntityRaw } from './transport/context.ts'
+import { parseEntity, parseEntityList } from './transport/context.ts'
+import { TaigaPlatformError } from './transport/errors.ts'
+import { asObject } from './transport/shape.ts'
 
 export const LIST_PAGE_SIZE = 100
 

@@ -37,11 +37,11 @@
  * 本包零文件 IO：快照经回调落盘（调用方写 var/），保持适配器纯平台面。
  */
 import type { FieldProvisionMap, TicketId } from '@studio-next/contract'
-import type { TaigaContext, StatusInfo } from '../context.ts'
-import { entityDescriptor, type TaigaEntity } from '../entities.ts'
+import type { TaigaContext, StatusInfo } from '../transport/context.ts'
+import { entityDescriptor, type TaigaEntity } from '../transport/entities.ts'
 import { validateProvisionMap } from '../fields.ts'
 import { listIssues, transitionIssue } from '../issues.ts'
-import { asArray, asObject, optNumberNull, reqNumber, reqString } from '../shape.ts'
+import { asArray, asObject, optNumberNull, reqNumber, reqString } from '../transport/shape.ts'
 
 /** 实体 → 项目默认态字段名（S0 源码定版：serializers.py default_*_status，docs/32-§九） */
 const DEFAULT_STATUS_FIELDS: Readonly<Record<TaigaEntity, string>> = {

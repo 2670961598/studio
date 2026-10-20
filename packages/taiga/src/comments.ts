@@ -12,9 +12,9 @@
  * 是平台账号名。端口缺口已记录（见 index 头注），不改 contract。
  */
 import type { Comment, SignedBody, TicketId } from '@studio-next/contract'
-import type { TaigaContext } from './context.ts'
-import { TaigaPlatformError } from './errors.ts'
-import { asArray, asObject, optBoolean, optString, reqObject, reqString } from './shape.ts'
+import type { TaigaContext } from './transport/context.ts'
+import { TaigaPlatformError } from './transport/errors.ts'
+import { asArray, asObject, optBoolean, optString, reqObject, reqString } from './transport/shape.ts'
 
 export interface HistoryEntry {
   id: string

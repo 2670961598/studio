@@ -34,3 +34,6 @@ export type {
 } from './client.ts'
 export { createMatrixNotifier, createMentionSource } from './adapter.ts'
 export type { MentionSourceOptions } from './adapter.ts'
+// DEV-48 人事同步器执行面（docs/52-§七；ensure-shape 业务幂等层——daemon 侧结构同形接口注入）
+export { createMatrixHrFace, matrixLevelFor } from './hr-face.ts'
+export type { MatrixHrFaceOptions, MatrixHrTarget } from './hr-face.ts'

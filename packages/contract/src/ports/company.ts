@@ -38,6 +38,17 @@ export interface PersonRef {
   login: string
   level: number
   dept: string
+  /**
+   * 人事状态（active|paused|retired——模板口径，v0 不锁枚举）：DEV-48 人事同步器
+   * 分类维度（docs/52-§5.1 停/复/退/复职判定）。可选=快照向后兼容（DEV-43
+   * CompanySnapshot.workflows 同款扩法）；未携带时按 active 缺省语义消费。
+   */
+  status?: string
+  /**
+   * 岗位（描述类变更 → 「调」分类，docs/52-§5.1）。正文六节不进快照（§13 风险 3：
+   * 分类器只认索引字段级变更）——快照仅承载 front-matter 索引键。
+   */
+  role?: string
 }
 
 /** D9 通用模型：一切唤起都是定时任务，挂在部门节点下（04-§三） */

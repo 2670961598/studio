@@ -24,11 +24,11 @@
  *   - provision 完成后作废实例缓存（invalidateMeta），schema() 立即反映新档
  */
 import type { FieldProvisionMap, FieldSchema } from '@studio-next/contract'
-import type { TaigaContext } from './context.ts'
-import { ENTITY_DESCRIPTORS, entityDescriptor } from './entities.ts'
-import type { TaigaEntity } from './entities.ts'
-import { TaigaPlatformError } from './errors.ts'
-import { asArray, asObject, reqString } from './shape.ts'
+import type { TaigaContext } from './transport/context.ts'
+import { ENTITY_DESCRIPTORS, entityDescriptor } from './transport/entities.ts'
+import type { TaigaEntity } from './transport/entities.ts'
+import { TaigaPlatformError } from './transport/errors.ts'
+import { asArray, asObject, reqString } from './transport/shape.ts'
 import type { PortFieldType } from './fieldmap.ts'
 import { PORT_TYPES } from './fieldmap.ts'
 

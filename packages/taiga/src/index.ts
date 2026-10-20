@@ -48,8 +48,8 @@
  *      语义，Taiga 永远报 links-unsupported（实测结论，非待办）
  */
 export { createTaigaPlatform, buildContext, type TaigaPlatformOptions } from './platform.ts'
-export { TaigaClient, type FetchLike, type TaigaAuth, type TaigaRequest } from './http.ts'
-export { TaigaPlatformError } from './errors.ts'
+export { TaigaClient, type FetchLike, type TaigaAuth, type TaigaRequest } from './transport/http.ts'
+export { TaigaPlatformError } from './transport/errors.ts'
 export { DEFAULT_PAGE_SIZE, encodeCursor, decodeCursor } from './activity.ts'
 export { readTaigaRoles, type TaigaRoleInfo } from './guards.ts'
 export {
@@ -66,10 +66,22 @@ export {
   type StatusRetired,
   type TicketNormalized,
 } from './factory/factory.ts'
-export type { TaigaEntity } from './entities.ts'
+export type { TaigaEntity } from './transport/entities.ts'
 
 /** 包名常量 */
 export const PACKAGE_NAME = '@studio-next/taiga'
 
 /** 状态标记（onboard 写面三件+links 定版已落地；见头注覆盖表） */
 export const PACKAGE_STATUS = 'onboard-cut'
+export {
+  findInviteToken,
+  findMembershipByUsername,
+  inviteMember,
+  listMemberships,
+  patchMembershipRole,
+  registerWithInviteToken,
+  removeMembership,
+  roleIdOf,
+  type TaigaMembership,
+  type TaigaRoleRef,
+} from './memberships.ts'

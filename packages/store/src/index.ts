@@ -38,6 +38,9 @@
  *       upsert + 双键读面）/ reports（报表快照行，自然键 (company,node,type,date) 唯一——
  *       同键新 id 覆盖换代 + listReports 读面）/ probes_runs（append-only 触发器兜底 + 同 id
  *       幂等）；消费接线=报表聚合管线（company reports.ts）与 :8789 财务页月报段
+ *   [x] v7 人事同步任务队列（migration v7，DEV-48 / docs/52-§9.2/§11）：hr_sync_log 可流转
+ *       任务账（op_key 幂等入队 / 乐观锁流转 / 达限 failed 终态 / 断电复位）+ setPersonStatus
+ *       （people.status 归人事流写面收口）——daemon 相位尾消化器消费（apps/daemon engine/hrsync）
  *   [x] 演习与维护 CLI 面（F2-12 可操作化）：runLedgerDrill 删库重建演习（daemon bin 出
  *       `ledger drill/dump/rebuild` 子命令组，薄壳转调本包）
  *   [ ] cron 表达式解析（croner，daemon/core 侧）+ 补跑 coalesce / 同岗不重叠（18-§三，core 后续单）
@@ -152,7 +155,8 @@ export type { Migration } from './migrations.ts'
 export { openLedger } from './ledger.ts'
 export type { AppendResult, BudgetListQuery, BudgetScope, CompanySyncResult, DumpResult, EventQuery, InsertCandidateResult, Ledger, PersonnelTimelineEntry } from './ledger.ts'
 
-// work_records / sessions + v2 五表 + v3 jobs + v4 收口面 + v5 candidates + v6 报表三表记录形状（store 层临时闸，contract schema 落地后替换）
+// work_records / sessions + v2 五表 + v3 jobs + v4 收口面 + v5 candidates + v6 报表三表
+// + v7 hr_sync_log 记录形状（store 层临时闸，contract schema 落地后替换）
 export {
   BudgetRecordSchema,
   CANDIDATE_ASSET_KINDS,
@@ -161,6 +165,10 @@ export {
   CandidateRowSchema,
   DepartmentRecordSchema,
   EndWorkRecordSchema,
+  HR_SYNC_PLATFORM_VALUES,
+  HR_SYNC_STATUS_VALUES,
+  HrSyncPayloadSchema,
+  HrSyncTaskSchema,
   JobRecordSchema,
   LEDGER_KIND_VALUES,
   LedgerEntrySchema,
@@ -182,6 +190,10 @@ export type {
   CandidateStatus,
   DepartmentRecord,
   EndWorkRecord,
+  HrSyncPayload,
+  HrSyncPlatformName,
+  HrSyncStatus,
+  HrSyncTaskRecord,
   JobRecord,
   LedgerEntryRecord,
   LedgerKind,

@@ -494,3 +494,82 @@ export const ProbeRunSchema = z.strictObject({
   duration_ms: z.number().int().min(0).optional(),
   ts: z.number().int().min(0),
 })
+
+// —— v7 DEV-48 人事同步任务队列（docs/52-§11；hr_sync_log=可流转任务账，非 append-only） ——
+
+/** hr_sync_log 变动明细（payload 列 JSON 形状；幂等收敛所需的目标态快照关键字段） */
+export interface HrSyncPayload {
+  /** 变动字段维（level/dept/status/name/login/role；入/退汇总事件='*'——core hrsync 同形） */
+  field: string
+  prev: string | null
+  next: string | null
+  /** 目标态关键字段（执行器不回查目录——任务携带目标态，多执行不坏） */
+  login?: string
+  name?: string
+  level?: number
+  dept?: string
+  role?: string
+  status?: string
+}
+
+/** store 层临时校验（拟稿待批；strict：未知列拒收） */
+export const HrSyncPayloadSchema = z.strictObject({
+  field: z.string().min(1),
+  prev: z.string().min(1).nullable(),
+  next: z.string().min(1).nullable(),
+  login: z.string().min(1).optional(),
+  name: z.string().min(1).optional(),
+  level: z.number().int().min(1).max(9).optional(),
+  dept: z.string().min(1).optional(),
+  role: z.string().min(1).optional(),
+  status: z.string().min(1).optional(),
+})
+
+/** hr_sync_log 执行平台（52-§四.1 三面；结构面冻结三值） */
+export const HR_SYNC_PLATFORM_VALUES = ['taiga', 'matrix', 'ledger'] as const
+export type HrSyncPlatformName = (typeof HR_SYNC_PLATFORM_VALUES)[number]
+
+/** hr_sync_log 任务状态机（52-§11 DDL 注释四态；流转合法——无 append-only 触发器） */
+export const HR_SYNC_STATUS_VALUES = ['pending', 'applying', 'done', 'failed'] as const
+export type HrSyncStatus = (typeof HR_SYNC_STATUS_VALUES)[number]
+
+/**
+ * hr_sync_log 记录（docs/52-§11；DEV-48）。与 personnel_events 分工：
+ * personnel_events=人事事实账（append-only，权威）；本表=同步任务账（可流转，
+ * pending→applying→done/failed；断电恢复 resetStaleHrSyncApplying）。
+ */
+export interface HrSyncTaskRecord {
+  id: string
+  ts: number
+  company: string
+  person_id: string
+  /** 变动类型：入/调/升/降/停/复/退（personnel_events.type 同值域——v0 不锁枚举） */
+  kind: string
+  platform: HrSyncPlatformName
+  /** 幂等键（52-§11：person+kind+字段维度；实现并 platform+目标值维，见 migrations v7 注） */
+  op_key: string
+  /** 挂单号（入队哨兵 @hr:<batchId>——相位尾补单后回写真单号；NOT NULL 恒成立） */
+  ticket: string
+  status: HrSyncStatus
+  attempts: number
+  last_error?: string
+  payload?: HrSyncPayload
+  updated: number
+}
+
+/** store 层临时校验（拟稿待批；strict：未知列拒收；payload JSON 往返闸在写入面 ledger.ts） */
+export const HrSyncTaskSchema = z.strictObject({
+  id: z.string().min(1),
+  ts: z.number().int().min(0),
+  company: z.string().min(1),
+  person_id: z.string().min(1),
+  kind: z.string().min(1),
+  platform: z.enum(HR_SYNC_PLATFORM_VALUES),
+  op_key: z.string().min(1),
+  ticket: z.string().min(1),
+  status: z.enum(HR_SYNC_STATUS_VALUES),
+  attempts: z.number().int().min(0),
+  last_error: z.string().min(1).optional(),
+  payload: HrSyncPayloadSchema.optional(),
+  updated: z.number().int().min(0),
+})

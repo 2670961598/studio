@@ -15,12 +15,10 @@
  * 部分失败面（与 cutover 的原子语义对齐——不留半改态）：
  *   - 新配置校验不过（loadCompanyDirectory 红或目录读失败）：**保持旧配置继续跑** +
  *     ESCALATE 事件落账（note=RELOAD_CONFIG_INVALID，面板 :8787 事件流可见）——不 crash
- *     不半改态。防刷屏：同一 stat 形态只告警一次（stats 再变即新告警=修复重试路径）；
- *     手动触发恒重试（结果文件回执）。
+ *     不半改态。防刷屏：同一 stat 形态只告警一次（stats 再变即新告警=修复重试路径）；手动触发恒重试（结果文件回执）。
  *   - 应用失败（apply 回调抛错，如台账写红）：同上保持旧态 + ESCALATE
  *     （note=RELOAD_APPLY_FAILED）。apply 内部顺序（serve 侧注入体）：播种/移除调度岗
- *     （幂等可重入）→ 快照持有者替换 → engine.applyCompanyUpdate（纯赋值不抛）——
- *     前置失败时引擎面未动。
+ *     （幂等可重入）→ 快照持有者替换 → engine.applyCompanyUpdate（纯赋值不抛）——前置失败时引擎面未动。
  *   - 信任闸拦截（docs/43-附录A-3 批准指纹——装载校验≠变更批准；spike 验证 docs/44-§二
  *     条款4）：公司目录有信任锚（.studio-next/）且锚 trust=false 或内容指纹 ≠ 批准指纹 →
  *     **拒自动应用 + 撤销受信位（fail-closed 回 untrusted 渲染）+ ESCALATE**
@@ -292,6 +290,8 @@ export interface HotReloadApplyReport {
   jobsSeeded: number
   jobsKept: number
   jobsRemoved: number
+  /** 人事批次（DEV-48，52-§5.2/§9.1；hrSync 关=恒空档）：批次号/摘要/任务数（任务消化在相位尾，本 note 只留观测锚） */
+  hr?: { batchId: string | null; summary: string; enqueued: number }
 }
 
 /** 热重载依赖（serve 装配注入；IO 面全部可注入替身） */
@@ -516,7 +516,7 @@ export function createHotReload(deps: HotReloadDeps): HotReload {
     const evt = appendEvent(
       makeEvent(
         'SCHEMA_EVOLVE',
-        `RELOAD;trigger=${trigger};company=${snapshot.slug};变更=[${renderStatDiff(diff)}];指纹=${oldFp.slice(0, 19)}→${next.overall.slice(0, 19)};jobs=+${applyReport.jobsSeeded}/-${applyReport.jobsRemoved}(keep ${applyReport.jobsKept});people=${snapshot.people.length};depts=${snapshot.departments.length};零进程重启（docs/38-§2 L1）`,
+        `RELOAD;trigger=${trigger};company=${snapshot.slug};变更=[${renderStatDiff(diff)}];指纹=${oldFp.slice(0, 19)}→${next.overall.slice(0, 19)};jobs=+${applyReport.jobsSeeded}/-${applyReport.jobsRemoved}(keep ${applyReport.jobsKept})${(applyReport.hr?.enqueued ?? 0) > 0 ? `;HRSYNC;batch=${applyReport.hr?.batchId ?? '-'};${applyReport.hr?.summary ?? ''}（任务+${String(applyReport.hr?.enqueued ?? 0)} 入队——相位尾消化）` : ''};people=${snapshot.people.length};depts=${snapshot.departments.length};零进程重启（docs/38-§2 L1）`,
         Math.min(9, Math.max(1, snapshot.level)),
         snapshot.departments[0]?.path ?? deps.deptFallback,
         bytes,

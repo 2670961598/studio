@@ -9,7 +9,7 @@
  *   int → number（Taiga number 型属性）；date → ISO 字符串；其余 → 字符串
  */
 import type { FieldProvisionMap } from '@studio-next/contract'
-import { TaigaPlatformError } from './errors.ts'
+import { TaigaPlatformError } from './transport/errors.ts'
 
 const PORT_TYPES = ['string', 'int', 'enum', 'date', 'text'] as const
 export type PortFieldType = (typeof PORT_TYPES)[number]

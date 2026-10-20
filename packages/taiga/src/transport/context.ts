@@ -9,7 +9,7 @@
  */
 import type { TaigaClient } from './http.ts'
 import type { EntityDescriptor } from './entities.ts'
-import type { TaigaFieldMap } from './fieldmap.ts'
+import type { TaigaFieldMap } from '../fieldmap.ts'
 import { TaigaPlatformError } from './errors.ts'
 import { asArray, asObject, optAttrValues, optNumberNull, optString, optStringNull, reqNumber, reqString } from './shape.ts'
 
