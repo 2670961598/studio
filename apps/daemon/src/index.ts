@@ -13,10 +13,10 @@
  *   [ ] v0.2  store 接线：SQLite 台账建表、migration、快照/重建脚本
  *   [x] v0.3  panel 接线：:8787 只读监控（jobs/runs/workers/事件流；`studio-next panel --db`）
  *   [x] v0.4  首个定时岗：调度表 + 启动补跑（coalesce 成一次）+ 结果落账
- *             （apps/daemon/src/scheduler.ts + engine.ingest 意图入口 + serve jobs 开关；
+ *             （apps/daemon/src/engine/scheduler.ts + engine.ingest 意图入口 + serve jobs 开关；
  *             48h 连续运行证据与真实系统岗归后续运维单——诚实边界见 scheduler.ts 头注）
  *   [x] v0.5  合龙件：主循环七相位引擎 + `studio-next serve`（demo 模式=fake 全家桶端到端，
- *             apps/daemon/src/engine.ts / serve.ts / test/e2e.test.ts）
+ *             apps/daemon/src/engine/engine.ts / serve.ts / test/e2e.test.ts）
  *   [ ] v0.5  真单：dsh 真跑 + YouTrack/网关 wkey + localfile 平台 + 审批流 + 真闸门验收命令
  *   [ ] v0.6+ 四家适配器、公司面 :8789、唤起六源、对外 API :8788、进化管线
  */

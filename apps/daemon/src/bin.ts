@@ -29,7 +29,7 @@
  *   sandbox --db <库路径> --candidate <id> [--command <冻结验收命令>] [--file <变更文件>]
  *           [--timeout <ms>] [--root <资产根目录>]
  *       进化链沙箱执行器（20-§九「候选制品→沙箱→三态闸门」的沙箱环节；临时目录法——
- *       生产零触碰，结构性保证见 src/sandbox.ts 头注）：取候选 → tmp 拷贝最小集（资产+
+ *       生产零触碰，结构性保证见 src/evolve/sandbox.ts 头注）：取候选 → tmp 拷贝最小集（资产+
  *       同目录测试文件）→ 应用变更（--file=资产整文件替换，v0）→ 跑冻结验收命令
  *       （--command；超时进程组杀）→ updateVerification 落证据（sandboxPass=判定）→
  *       proposed 则迁移 sandboxed——一条命令进沙箱。判定红非命令错误（exit 0，档案面）；
@@ -38,7 +38,7 @@
  *           [--no-restart] [--no-gray] [--root <资产根目录>] [--actor <actor>] [--dept <部门path>]
  *           [--level <1-9>]
  *       进化链切权执行器（20-§九管线「→灰度→切权」的切权环节，进化链四刀之三，
- *       src/cutover.ts）：approved/promoted 候选**受控上产**——双闸（状态前置 + 判负闸
+ *       src/evolve/cutover.ts）：approved/promoted 候选**受控上产**——双闸（状态前置 + 判负闸
  *       authorize 写前复跑，evolve-guard 观察模式的受控对偶）→ 备份现存目标为
  *       <目标>.bak-<候选id>（回滚锚点，保留）→ 同目录 tmp+rename 原子写 → 读回复核
  *       hash → approved 则迁移 promoted（core 判边+乐观锁）→ SCHEMA_EVOLVE 事件落账
@@ -47,7 +47,7 @@
  *       --no-restart 抑制重启提示；v0 恒不实际重启（supervisor 看护归运维刀——诚实边界）。
  *       库必须已存在（写面不代建库）。
  *   gray --db <库路径> --candidate <id> [--check | --close] [--root <资产根目录>]
- *       灰度观察窗三动作（20-§四灰度零事故；进化链四刀之四收官，src/gray.ts）：
+ *       灰度观察窗三动作（20-§四灰度零事故；进化链四刀之四收官，src/evolve/gray.ts）：
  *       缺省=查窗（窗状态/阈值/锚点只读）；--check=手动检查（窗内 ESCALATE/CIRCUIT_BREAK
  *       事故信号计数 ≥ 阈值 → **自动回滚**：备份逐字节恢复+复核+promoted→retired+
  *       SCHEMA_EVOLVE 事件 note=gray-rollback；窗到期无事故 → 关窗=灰度完成可请求制作人
@@ -58,7 +58,7 @@
  *             [--casebook <案例库目录>] [--slug <条目slug>] [--date <YYYY-MM-DD>]
  *             [--dept <部门path>] [--level <1-9>] [--actor <actor>]
  *       复盘归档链（20-§十一「发现→止血→复盘（挂复盘单）→案例库」的复盘→案例库两环；
- *       进化链四刀之二，src/postmortem.ts）：断路器关联（该单 CIRCUIT_BREAK/ESCALATE
+ *       进化链四刀之二，src/evolve/postmortem.ts）：断路器关联（该单 CIRCUIT_BREAK/ESCALATE
  *       台账历史自动进时间线）→ 渲染复盘模板（七节，无「责任人」字段——不追责的机制化）
  *       → 写案例库条目文件（<casebook>/<date>-<slug>.md：条目+完整复盘自包含）→ 落
  *       POSTMORTEM 事件（note=条目路径、size、payload_hash）。--input 必给（复盘正文
@@ -104,7 +104,7 @@
  *       DEV-41：daemon 消费请求后改名 .consume（去重位落 daemon_kv 跨重启）——残留
  *       请求不再使重启进程一拍自停；回执文件保留，本命令轮询按 id 匹配不受影响。
  *   （v0 诚实边界：真 dsh / 真 YouTrack / 网关 wkey / 审批流 / localfile 平台均未接线——
- *     逐项清单见 src/serve.ts 与 src/engine.ts 头注）
+ *     逐项清单见 src/serve.ts 与 src/engine/engine.ts 头注）
  *
  * argv 解析零依赖手写（单命令薄壳不值得引库；16-§二 选型纪律：引新依赖须登记选型表）。
  * 退出码：0 成功（sandbox 判定 PASS/FAIL 均 0——红是档案面非命令错误；gray 判定面回滚/关窗/守夜均 0——回滚是合法判定结果非命令错误）｜1 用法错误 / 校验不通过 / init 失败 / 演习 FAIL / panel 失败 / overview 失败 / external 失败 / candidates 失败 / sandbox 链面失败（库/候选/状态/写入窗）/ cutover 链面失败（双闸/备份/写/复核/迁移/落账——失败已回滚）/ gray 链面失败（无窗候选/备份缺失/回滚面失败——窗保持 open 待处置）/ postmortem 失败 / serve 配置错｜
@@ -130,17 +130,17 @@ import type { CompanySnapshot, FlowPlatform } from '@studio-next/contract'
 import { CONTROL_TICKET, createGateway } from '@studio-next/gateway'
 import type { SignatureContext } from '@studio-next/gateway'
 import { DEV_GATEWAY_SECRET, parseDaemonConfig, seedJobs } from './serve.ts'
-import { createFakePlatform } from './fakes.ts'
-import { createGatedPlatform } from './gated-platform.ts'
-import { ENGINE_CONFIG_DEFAULTS } from './engine.ts'
-import { awaitReloadResult, writeReloadRequest } from './hot-reload.ts'
-import { awaitStopResult, writeStopRequest, type StopRequest } from './stop-channel.ts'
-import { makeUlid } from './id.ts'
+import { createFakePlatform } from './engine/fakes.ts'
+import { createGatedPlatform } from './engine/gated-platform.ts'
+import { ENGINE_CONFIG_DEFAULTS } from './engine/engine.ts'
+import { awaitReloadResult, writeReloadRequest } from './control/hot-reload.ts'
+import { awaitStopResult, writeStopRequest, type StopRequest } from './control/stop-channel.ts'
+import { makeUlid } from './engine/id.ts'
 import { runServe } from './serve.ts'
-import { renderSandboxLines, runCandidateSandbox } from './sandbox.ts'
-import { renderCutoverLines, runCutover } from './cutover.ts'
-import { renderGrayCheckLines, renderGrayStatusLines, checkGrayWindow, closeGrayWindow, readGrayWindow } from './gray.ts'
-import { parsePostmortemInput, renderPostmortemLines, runPostmortemChain } from './postmortem.ts'
+import { renderSandboxLines, runCandidateSandbox } from './evolve/sandbox.ts'
+import { renderCutoverLines, runCutover } from './evolve/cutover.ts'
+import { renderGrayCheckLines, renderGrayStatusLines, checkGrayWindow, closeGrayWindow, readGrayWindow } from './evolve/gray.ts'
+import { parsePostmortemInput, renderPostmortemLines, runPostmortemChain } from './evolve/postmortem.ts'
 
 const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
 
@@ -186,7 +186,7 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
       库不存在即拒（只读面不代建库）
   studio-next sandbox --db <库路径> --candidate <id> [--command <冻结验收命令>]
                       [--file <变更文件>] [--timeout <ms>] [--root <资产根目录>]
-      进化链沙箱执行器（20-§九沙箱环节，src/sandbox.ts）：临时目录拷贝资产最小集 → 应用
+      进化链沙箱执行器（20-§九沙箱环节，src/evolve/sandbox.ts）：临时目录拷贝资产最小集 → 应用
       变更（--file=候选资产整文件替换）→ 跑 --command 冻结验收命令（超时杀进程组）→
       updateVerification 落证据 → proposed 迁移 sandboxed。生产零触碰（结构性保证）；
       判定 PASS/FAIL 均非命令错误（exit 0——红是档案面）；--command 缺省=fail 如实落账；
@@ -194,7 +194,7 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
   studio-next cutover --db <库路径> --candidate <id> --file <新文件> --company <公司slug>
                       [--no-restart] [--no-gray] [--root <资产根目录>] [--actor <actor>]
                       [--dept <部门path>] [--level <1-9>]
-      进化链切权执行器（20-§九切权环节，进化链四刀之三，src/cutover.ts）：approved/promoted
+      进化链切权执行器（20-§九切权环节，进化链四刀之三，src/evolve/cutover.ts）：approved/promoted
       候选受控上产——双闸（状态∈{approved,promoted} + 判负闸 authorize 写前复跑）→ 备份
       <目标>.bak-<候选id>（回滚锚点保留）→ tmp+rename 原子写 → 读回复核 → approved 迁移
       promoted → SCHEMA_EVOLVE 事件落账（note=候选+资产+旧新 hash）；失败面先回滚再报
@@ -202,7 +202,7 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
       --no-restart 抑制重启提示（v0 恒不实际重启——supervisor 看护归运维刀）；
       --root 缺省当前目录；库必须已存在（写面不代建库）
   studio-next gray --db <库路径> --candidate <id> [--check | --close] [--root <资产根目录>]
-      灰度观察窗三动作（20-§四灰度零事故；进化链四刀之四收官，src/gray.ts）：缺省=查窗
+      灰度观察窗三动作（20-§四灰度零事故；进化链四刀之四收官，src/evolve/gray.ts）：缺省=查窗
       （窗状态/阈值/备份锚点，只读）；--check=手动检查（窗内 ESCALATE/CIRCUIT_BREAK 事故
       信号计数 ≥ 阈值 → 自动回滚——备份逐字节恢复+复核+promoted→retired+SCHEMA_EVOLVE 事件
       note=gray-rollback；窗到期无事故 → 关窗=灰度完成可请求制作人过目；守夜中 → 无动作）；
@@ -213,11 +213,11 @@ const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
   studio-next postmortem --db <库路径> --company <slug> --issue <复盘单号> --input <复盘.json>
                          [--casebook <案例库目录>] [--slug <条目slug>] [--date <YYYY-MM-DD>]
                          [--dept <部门path>] [--level <1-9>] [--actor <actor>]
-      复盘归档链（20-§十一复盘→案例库，src/postmortem.ts）：断路器关联（该单 CIRCUIT_BREAK/
+      复盘归档链（20-§十一复盘→案例库，src/evolve/postmortem.ts）：断路器关联（该单 CIRCUIT_BREAK/
       ESCALATE 台账历史自动进时间线）→ 渲染复盘模板（七节；无「责任人」字段——复盘不追责
       的机制化）→ 写案例库条目（<casebook>/<date>-<slug>.md，缺省案例库=当前目录 docs/casebook；
       条目=现象/根因/解法/预防 + 完整复盘附录）→ 落 POSTMORTEM 事件（note=条目约定路径、
-      size、payload_hash）。--input JSON 七件套见 src/postmortem.ts PostmortemInput；
+      size、payload_hash）。--input JSON 七件套见 src/evolve/postmortem.ts PostmortemInput；
       --input 必给（复盘正文不可虚构）；库必须已存在（写面不代建库）
   studio-next panel --db <库路径> [--port 8787]
       :8787 只读监控面（v0.3，docs/16-§四）：jobs/runs/workers/事件流（SSE），
@@ -735,7 +735,7 @@ async function cmdCandidates(argv: string[]): Promise<number> {
 }
 
 /**
- * sandbox 子命令：进化链沙箱执行薄壳（语义全在 src/sandbox.ts——runner+CLI 链）。
+ * sandbox 子命令：进化链沙箱执行薄壳（语义全在 src/evolve/sandbox.ts——runner+CLI 链）。
  * 退出码语义（拟稿，sandbox.ts 头注）：链走完（证据落账+迁移完成）即 0——判定红是档案面
  * 非命令错误；用法/库/候选/状态面错误 1。库必须已存在：候选必须在库，写面不代建库
  * （candidates list 同款 existsSync 闸）。
@@ -806,7 +806,7 @@ async function cmdSandbox(argv: string[]): Promise<number> {
 }
 
 /**
- * cutover 子命令：进化链切权薄壳（语义全在 src/cutover.ts——受控上产执行器）。
+ * cutover 子命令：进化链切权薄壳（语义全在 src/evolve/cutover.ts——受控上产执行器）。
  * --file 必给（新内容全文——判负闸消费其 sha256）；--company 必给（events.company 台账
  * 路由键，postmortem 同款不猜）。库必须已存在：事件要落账+状态要迁移，写面不代建库
  * （sandbox 同款 existsSync 闸）。--no-restart 抑制重启提示（v0 恒不实际重启——诚实边界）。
@@ -890,7 +890,7 @@ async function cmdCutover(argv: string[]): Promise<number> {
 }
 
 /**
- * gray 子命令：灰度观察窗薄壳（语义全在 src/gray.ts——进化链四刀之四收官）。
+ * gray 子命令：灰度观察窗薄壳（语义全在 src/evolve/gray.ts——进化链四刀之四收官）。
  * 三动作（互斥）：缺省=查窗（只读 kv 状态面）｜--check=手动检查（判定三态：阈值破窗→
  * 自动回滚字节级恢复+promoted→retired+note=gray-rollback 事件；到期无事故→关窗；守夜中
  * →无动作）｜--close=手动关窗（幂等；关窗不回滚——回滚只由事故阈值触发，面分离）。
@@ -984,7 +984,7 @@ async function cmdGray(argv: string[]): Promise<number> {
 }
 
 /**
- * postmortem 子命令：复盘归档薄壳（语义全在 src/postmortem.ts——渲染器+CLI 链）。
+ * postmortem 子命令：复盘归档薄壳（语义全在 src/evolve/postmortem.ts——渲染器+CLI 链）。
  * --input 必给（拟稿，postmortem.ts 头注：复盘正文不可虚构——缺即用法错误，不给空模板
  * 充数的旁路）；--issue 与 JSON 内 issue 双给时须一致（双源分歧如实拒）。库必须已存在：
  * 事件要落账，写面不代建库（sandbox 同款 existsSync 闸）。
@@ -1015,7 +1015,7 @@ async function cmdPostmortem(argv: string[]): Promise<number> {
   }
   const inputPath = parsed.flags.input
   if (inputPath === undefined) {
-    console.error('postmortem：缺少 --input <复盘.json>（复盘正文不可虚构——七件套形状见 src/postmortem.ts PostmortemInput；fail-closed 拒空模板旁路）')
+    console.error('postmortem：缺少 --input <复盘.json>（复盘正文不可虚构——七件套形状见 src/evolve/postmortem.ts PostmortemInput；fail-closed 拒空模板旁路）')
     console.error(USAGE)
     return 1
   }
@@ -1374,7 +1374,7 @@ async function cmdExternal(argv: string[]): Promise<number> {
 }
 
 /**
- * reload 子命令：L1 配置热重载手动触发薄壳（执行体全在 daemon 侧 src/hot-reload.ts——
+ * reload 子命令：L1 配置热重载手动触发薄壳（执行体全在 daemon 侧 src/control/hot-reload.ts——
  * 本命令只写控制面请求 + 轮询回执）。工位根发现序：--root > --config（缺省 ./daemon.yaml，
  * 读其 rootDir）> 缺省 ./var。退出码：0=重载成功或幂等 unchanged；1=回执失败
  * （company-mismatch/no-company-dir/config-invalid/apply-failed）或超时（daemon 不在跑/
@@ -1442,7 +1442,7 @@ async function cmdReload(argv: string[]): Promise<number> {
 
 /**
  * stop 子命令：控制面优雅停机薄壳（DEV-9 顺带项——孤儿进程问题的通道面；执行体全在
- * daemon 侧 src/serve.ts runServe + src/stop-channel.ts）。动机：`nohup sh -c "…"` 双层
+ * daemon 侧 src/serve.ts runServe + src/control/stop-channel.ts）。动机：`nohup sh -c "…"` 双层
  * 壳下 kill 外层 sh 不杀 node 孙进程——停机改走 daemon 自身优雅停（在途 worker 整树
  * 杀+台账落盘），回执为证。工位根发现序与 reload 同款：--root > --config（缺省
  * ./daemon.yaml，读其 rootDir）> 缺省 ./var。退出码：0=优雅停完成（回执 stopped=true）；

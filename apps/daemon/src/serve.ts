@@ -12,7 +12,7 @@
  *   jobs: true|false（定时岗调度开关，v0.4）   jobPollMs: <调度轮询间隔>（缺省 15000）
  *   models: <models.yaml 路径>（可选价目表，17-§4：装载→catalog 注入引擎——注入=估算
  *     态 A「estimateCost 校准+双帽」；缺省=态 B 降级「估算=适配器自报、仅票级帽」，
- *     两态详见 src/budget-gate.ts 头注。**缺省不拷贝 models.example.yaml**）
+ *     两态详见 src/engine/budget-gate.ts 头注。**缺省不拷贝 models.example.yaml**）
  *   budgetTicketCapUsd / budgetPersonCapUsd（可选预算帽：票级恒生效；岗级仅态 A 生效）
  *   gateway: true|false（网关写收口开关，缺省开——17-§7；生产不得关）
  *   gatewaySecret: <网关 HMAC 密钥>（>=32B；缺省开发值——**生产必配**，见 DEV_GATEWAY_SECRET 警告）
@@ -41,13 +41,13 @@
  *     AGENTS.md 通道接线（v1.5#1，本刀）：dsh capabilities.agents_md='user_level'——
  *     dispatch 落指令临时文件（workspace 外）+ launch env STUDIO_NEXT_INSTRUCTIONS；
  *     bridge 插件 overlay 由启动期生成（见下方 provisioning 段），挂载归 agent.yaml cmd。
- *   - 网关（17-§7 写入全收口）：**平台写路径已过闸**（src/gated-platform.ts——控制面 control key、
+ *   - 网关（17-§7 写入全收口）：**平台写路径已过闸**（src/engine/gated-platform.ts——控制面 control key、
  *     署名注入、fail-closed；缺省开，daemon.yaml `gatewaySecret:` 配密钥、缺省开发值生产必换）。
- *     worker 级按单 wkey 已接（src/worker-key.ts：dispatch 签发+TaskBrief.credentials
+ *     worker 级按单 wkey 已接（src/engine/worker-key.ts：dispatch 签发+TaskBrief.credentials
  *     env 注入、GATE_FAIL/断路/CLOSE 吊销）；仍欠：studio-tools stdio 入口（worker 进程内挂 MCP
  *     server 的入口单——工厂已备，须复用 createStudioToolsServer）与吊销集跨进程可见性
  *     （authority 落 store，gateway 包挂账）；审批流（呈批事件名待批示）同前。
- *   - 定时岗（v0.4，jobs: true）：scheduler（src/scheduler.ts）+ 引擎意图入口（engine.ingest）
+ *   - 定时岗（v0.4，jobs: true）：scheduler（src/engine/scheduler.ts）+ 引擎意图入口（engine.ingest）
  *     全链已通（demo 样例岗=DEMO_SNAPSHOT.health-patrol）；**公司目录 jobs 段装载不进
  *     snapshot**——packages/company 校验器只收形状、toSnapshot 恒置 jobs:[]（v0.1-M3 边界，
  *     见 validator.ts 头注「留后续单」），本刀不动 packages/*——公司目录岗进台账归该单；
@@ -58,7 +58,7 @@
  *     + cadence 档位展开器（cadence: true，35-§3 首刀——档位岗调度表生命周期源）
  *     + SLA/升级计时器（sla: true，35-§3 首刀——escalate 意图 + ESCALATE 落账；notify 发送
  *     归 notify 端口后续刀）。
- *     startAll 的 emit 统一进 engine.ingest——源零直驱（注册表与源实现见 src/sources.ts）。
+ *     startAll 的 emit 统一进 engine.ingest——源零直驱（注册表与源实现见 src/engine/sources.ts）。
  *     意图消费门在引擎：v0.4 面只物化 schedule 意图，webhook/mention 等明报不支持
  *     （六源全通归 v0.8 后续刀）——注册面先行，消费面按刀推进。
  *   - SIGINT/SIGTERM 优雅停：等当前拍收口 → **先 stopAll 唤起源**（不再进新意图）→ 在途
@@ -66,13 +66,13 @@
  *     docs/38-§2 R-B「在途接管收口」，见 takeOverRunningWorkRecords）→ 关台账。
  *     队列中未消费意图停机即弃（at-most-once，与调度器 markRan 已提交而 ingest 未消费的
  *     既有边界同语义——engine.ts 头注）。
- *   - L1 配置热重载（docs/38-§2 L1 / §4 R-A，src/hot-reload.ts）：companyDir 给定时
+ *   - L1 配置热重载（docs/38-§2 L1 / §4 R-A，src/control/hot-reload.ts）：companyDir 给定时
  *     每拍拍边界（tick 收口后）检查公司目录资产指纹（轻量 stat+mtime，reloadWatch 缺省开）
  *     与控制面 reload 请求（<rootDir>/control/）；变更且稳定/手动触发 → 重走装载面（校验 →
  *     快照 → 调度岗播种/移除 → 装配器/人员索引/署名上下文替换）→ RELOAD 落 SCHEMA_EVOLVE
  *     继续跑——零进程重启、不中断在途单。坏配置拒载保持旧态 + ESCALATE（面板可见）。
  *     daemon.yaml 自身与框架代码不在 L1 面（L2 归 R-C）。
- *   - 进化管线判负闸（v0 观察模式，src/evolve-guard.ts）：serve 启动对框架资产清单（v0
+ *   - 进化管线判负闸（v0 观察模式，src/evolve/evolve-guard.ts）：serve 启动对框架资产清单（v0
  *     极小样例集）跑 authorize（core assertChangeAuthorized ∘ 台账候选全集），unauthorized
  *     如实报告（日志+ESCALATE 事件）**不阻断启动**；空库首启跳过（零检查如实）。真单刀接
  *     阻断模式+资产面扩展+真生产改动路径拦截（头注冻结边界）。
@@ -104,21 +104,20 @@ import {
   type EngineConfig,
   type TickDecisionEntry,
   type TickReport,
-} from './engine.ts'
-import { runEvolveStartupSelfCheck, type EvolveSelfCheckReport, type FrozenAsset } from './evolve-guard.ts'
-import { createFakeAdapter, createFakePlatform } from './fakes.ts'
-import { createGatedPlatform } from './gated-platform.ts'
-import { createDefaultGateRunner, createAcceptanceGateRunner } from './gate.ts'
-import { answerReloadNoCompanyDir, createHotReload, type HotReload } from './hot-reload.ts'
-import { makeUlid } from './id.ts'
-import { provisionDshBridgeOverlay } from './instructions-store.ts'
-import { CADENCE_SOURCE_MANIFEST, createCadenceSource, createSlaSource, SLA_SOURCE_MANIFEST } from './jobs-sources.ts'
-import { createDefaultAssembler } from './prompt-assembly.ts'
-import type { PromptAssembler } from './prompt-assembly.ts'
-import { nextRunAt, type Scheduler } from './scheduler.ts'
-import { flowsFromWorkflows } from './typeflows.ts'
-import { consumeStopRequest, readStopRequest, STOP_LAST_SEEN_KV_KEY, writeStopResult } from './stop-channel.ts'
-import type { WorkerKeyDeps } from './worker-key.ts'
+} from './engine/engine.ts'
+import { runEvolveStartupSelfCheck, type EvolveSelfCheckReport, type FrozenAsset } from './evolve/evolve-guard.ts'
+import { createFakeAdapter, createFakePlatform } from './engine/fakes.ts'
+import { createGatedPlatform } from './engine/gated-platform.ts'
+import { createDefaultGateRunner, createAcceptanceGateRunner } from './engine/gate.ts'
+import { answerReloadNoCompanyDir, createHotReload, type HotReload } from './control/hot-reload.ts'
+import { makeUlid } from './engine/id.ts'
+import { provisionDshBridgeOverlay } from './engine/instructions-store.ts'
+import { CADENCE_SOURCE_MANIFEST, createCadenceSource, createSlaSource, SLA_SOURCE_MANIFEST } from './engine/jobs-sources.ts'
+import { createDefaultAssembler } from './engine/prompt-assembly.ts'
+import type { PromptAssembler } from './engine/prompt-assembly.ts'
+import { nextRunAt, type Scheduler } from './engine/scheduler.ts'
+import { consumeStopRequest, readStopRequest, STOP_LAST_SEEN_KV_KEY, writeStopResult } from './control/stop-channel.ts'
+import type { WorkerKeyDeps } from './engine/worker-key.ts'
 import {
   createFileWatchSource,
   createSchedulerSource,
@@ -126,7 +125,7 @@ import {
   FILE_WATCH_MANIFEST,
   SCHEDULER_SOURCE_MANIFEST,
   type SourceRegistry,
-} from './sources.ts'
+} from './engine/sources.ts'
 
 // ————————————————————————— 配置 —————————————————————————
 
@@ -192,21 +191,21 @@ export interface ServeConfig {
   matrix: boolean
   /**
    * watch-file 示例源开关（22-§三.1 验收靶子；缺省关）：true 时监听 fileWatchPath 指定
-   * 文件的变化，JSON 行各产一条 webhook 意图（dedupKey=mtime#行号，见 src/sources.ts）。
+   * 文件的变化，JSON 行各产一条 webhook 意图（dedupKey=mtime#行号，见 src/engine/sources.ts）。
    */
   fileWatch: boolean
   /** watch-file 监听文件路径（fileWatch: true 时必配；文件须先存在——CONFIG_INVALID 明报） */
   fileWatchPath?: string
   /**
    * cadence 档位展开器源开关（35-§3 首刀；缺省关）：true 时注册档位岗调度表生命周期源
-   * （src/jobs-sources.ts——start 播种/周期刷新/stop 移除 payload 带 cadence_tier 的岗；
+   * （src/engine/jobs-sources.ts——start 播种/周期刷新/stop 移除 payload 带 cadence_tier 的岗；
    * 到点意图仍走既有 scheduler→schedule 意图链，零新轮子）。jobs: false 时开了也无
    * scheduler 消费（意图无人到点产出——配置面诚实共存，不代开 jobs）。
    */
   cadence: boolean
   /**
    * SLA/升级计时器源开关（35-§3 首刀；缺省关）：true 时注册 tick 驱动扫描器——岗单据
-   * first-ack 超时/升级链档产 kind='escalate' 意图 + ESCALATE 落账（src/jobs-sources.ts；
+   * first-ack 超时/升级链档产 kind='escalate' 意图 + ESCALATE 落账（src/engine/jobs-sources.ts；
    * 只产意图+落账，notify 发送归 notify 端口后续刀）。扫描轮询复用 jobPollMs。
    */
   sla: boolean
@@ -214,7 +213,7 @@ export interface ServeConfig {
    * L1 配置热重载·自动指纹监听开关（docs/38-§2 L1 / §4 R-A；缺省开，仅 companyDir 给定
    * 时生效）：每拍轻量 stat+mtime 扫公司目录，变更且稳定 → 拍边界重装载（零进程重启）。
    * false=只剩手动通道（`studio-next reload`）。坏配置拒载保持旧态（RELOAD_CONFIG_INVALID
-   * 落账，面板可见）。详见 src/hot-reload.ts 头注。
+   * 落账，面板可见）。详见 src/control/hot-reload.ts 头注。
    */
   reloadWatch: boolean
   /** 公司目录路径（可选：装载 CompanySnapshot；缺省用内置 demo 快照） */
@@ -230,7 +229,7 @@ export interface ServeConfig {
   /** 岗级预算帽缺省（USD；04-§四；仅价目表态 A 生效） */
   budgetPersonCapUsd?: number
   /**
-   * 网关写收口开关（17-§7「一切平台写入经 wkey 网关」；src/gated-platform.ts）：
+   * 网关写收口开关（17-§7「一切平台写入经 wkey 网关」；src/engine/gated-platform.ts）：
    * 缺省开——demo fake 平台也过真闸（同 secret 同验签链路）证明收口面；false=裸 platform
    * （仅测试/对照用，生产不得关——头注警告）。
    */
@@ -703,7 +702,7 @@ function wireGatedPlatform(raw: FlowPlatform, config: ServeConfig, identity: Ret
 }
 
 /**
- * worker 级 wkey 接线（17-§7「按单签发→随派发注入→关单吊销」；src/worker-key.ts）。
+ * worker 级 wkey 接线（17-§7「按单签发→随派发注入→关单吊销」；src/engine/worker-key.ts）。
  * gateway: false 时不签发（与控制面同开关）；签发实例绑 CONTROL_TICKET——本实例只用
  * issue/revoke 面，verify 面结构性失效（永远不能验 worker key，防误用；worker 侧验签
  * 归 per-ticket studio-tools 接线，吊销跨进程可见性疑点见 worker-key.ts 头注）。
@@ -803,11 +802,11 @@ export interface ServeRuntime {
    * L1 配置热重载执行体（docs/38-§2 L1 / §4 R-A；companyDir 给定时存在）：
    * runServe 主循环在**拍边界**（tick() 收口后）调 check()——指纹自动 + 控制面手动
    * 两触发面；缺省=未挂公司目录（demo 快照），L1 不适用（reload 请求由
-   * answerReloadNoCompanyDir 回执拒绝）。详见 src/hot-reload.ts 头注。
+   * answerReloadNoCompanyDir 回执拒绝）。详见 src/control/hot-reload.ts 头注。
    */
   hotReload?: HotReload
   /**
-   * 启动期进化判负自检汇报（src/evolve-guard.ts，v0 观察模式）：ESCALATE 事件已在装配期
+   * 启动期进化判负自检汇报（src/evolve/evolve-guard.ts，v0 观察模式）：ESCALATE 事件已在装配期
    * 落账（unauthorized 时）；本字段为汇报面（测试/面板观测锚）。
    */
   evolveSelfCheck: EvolveSelfCheckReport
@@ -852,7 +851,7 @@ export function buildServeRuntime(
     matrixSource?: () => InvokeSource
     /**
      * 进化判负自检注入面（测试确定性；缺省=仓样例集 FROZEN_FRAMEWORK_ASSETS + cwd 真文件
-     * 哈希——src/evolve-guard.ts 头注锚定口径）：manifest/hashFile/fileExists 逐项覆盖。
+     * 哈希——src/evolve/evolve-guard.ts 头注锚定口径）：manifest/hashFile/fileExists 逐项覆盖。
      */
     evolveSelfCheck?: {
       manifest?: readonly FrozenAsset[]
@@ -949,7 +948,7 @@ export function buildServeRuntime(
     catalog = createModelCatalog(parsed)
     log(`[serve] 价目表装载：${config.models}（fingerprint=${fingerprint(parsed)}；估算态 A：estimateCost 校准+双帽）`)
   } else {
-    log('[serve] 无价目表：预算闸态 B 降级（估算=适配器自报、仅票级帽——见 src/budget-gate.ts 头注两态）')
+    log('[serve] 无价目表：预算闸态 B 降级（估算=适配器自报、仅票级帽——见 src/engine/budget-gate.ts 头注两态）')
   }
 
   const engineConfig: EngineConfig = {
@@ -991,7 +990,7 @@ export function buildServeRuntime(
       docRefs: ['docs/17-§2（主循环七相位）', 'docs/17-§6（收割四要件）'],
     })
 
-  // worker 级 wkey（17-§7）：按单签发→TaskBrief.credentials env 注入→关单吊销（src/worker-key.ts）
+  // worker 级 wkey（17-§7）：按单签发→TaskBrief.credentials env 注入→关单吊销（src/engine/worker-key.ts）
   const workerKeys = wireWorkerKeys(config, identity, clock, log)
   const engine = createEngine({
     // 写路径网关收口（17-§7）：raw platform 包一层 gated 代理——engine 写调用签名不变（透明）
@@ -1022,7 +1021,7 @@ export function buildServeRuntime(
     const seeded = seedJobs(ledger, snapshot.jobs, clock())
     log(`[serve] 定时岗播种：新 ${seeded.seeded} / 保留 ${seeded.kept}（快照共 ${snapshot.jobs.length} 岗）`)
     // scheduler 源：包装现有调度器（零改 scheduler.ts）——手动泵（poll）经 sink 直达 ingest
-    // （serve 测试面），start 后由注册表 emit 接管同一队列（src/sources.ts 头注）
+    // （serve 测试面），start 后由注册表 emit 接管同一队列（src/engine/sources.ts 头注）
     const schedulerSource = createSchedulerSource({
       ledger,
       clock,
@@ -1056,7 +1055,7 @@ export function buildServeRuntime(
     )
   }
 
-  // —— 岗位运作规格两新源（35-§3 首刀，src/jobs-sources.ts）——
+  // —— 岗位运作规格两新源（35-§3 首刀，src/engine/jobs-sources.ts）——
   // cadence 档位展开器：档位岗调度表生命周期（start 播种/刷新/stop 移除）；到点意图走
   // 既有 scheduler→scheduleIntent 链（复用调度器 tick 零新轮子——jobs: true 才有 tick 面）
   if (config.cadence) {
@@ -1144,7 +1143,7 @@ export function buildServeRuntime(
     )
   }
 
-  // —— 进化管线判负闸·启动自检（v0 观察模式，src/evolve-guard.ts；20-§九 无 candidate id
+  // —— 进化管线判负闸·启动自检（v0 观察模式，src/evolve/evolve-guard.ts；20-§九 无 candidate id
   //    的生产改动判负）：对框架资产清单逐项 authorize，unauthorized 落 ESCALATE 如实报告、
   //    不阻断启动（阻断模式+资产面扩展归真单刀——头注冻结边界） ——
   const evolveSelfCheck = runEvolveStartupSelfCheck({
@@ -1341,7 +1340,7 @@ export async function runServe(configPath: string): Promise<ServeResult> {
   const gateMode = realGateMode(config) ? '真验收闸门（冻结验收命令真执行）' : '占位闸门（exit0 模拟）'
   console.log(`[serve] 栈形态：${stackMode} + ${execMode} + ${gateMode}（边界见 src/serve.ts 头注）`)
   // 唤起源统一启动（22-§一）：各源 start(emit)——emit 统一进引擎 ingest 队列，
-  // 下一拍 state-diff 前消费；单源启动异常由注册表隔离（捕获+计数+继续，src/sources.ts）
+  // 下一拍 state-diff 前消费；单源启动异常由注册表隔离（捕获+计数+继续，src/engine/sources.ts）
   sources.startAll((intent) => {
     engine.ingest([intent])
   })
@@ -1367,7 +1366,7 @@ export async function runServe(configPath: string): Promise<ServeResult> {
     } else {
       answeredRequestId = answerReloadNoCompanyDir(path.resolve(config.rootDir), config.company, answeredRequestId)
     }
-    // —— 控制面停机通道（DEV-9 顺带项，src/stop-channel.ts；DEV-41 重启失忆修复）：reload
+    // —— 控制面停机通道（DEV-9 顺带项，src/control/stop-channel.ts；DEV-41 重启失忆修复）：reload
     //    应答在前（停机前不悬空积压请求），停机请求在后；按 id 去重——去重位跨重启双保险：
     //    ① 先落 daemon_kv（改名前崩的窗口由重启读回兜底）② 再原子改名 .consume（live 面
     //    清空，新进程见无请求即正常起）。拍边界纪律不变（docs/17-§2——停机也是拍收口面） ——
@@ -1396,7 +1395,7 @@ export async function runServe(configPath: string): Promise<ServeResult> {
   console.log(`[serve] 停机（${stopReason}${lastError !== undefined ? `：${lastError}` : ''}）——先停唤起源（不进新意图）+ 在途 drain`)
   await stop()
   console.log('[serve] 已优雅关闭（台账落盘；在途 work_records 留 running——重启启动例行接管收口（R-B））')
-  // 控制面停机回执（src/stop-channel.ts）：优雅停收口**之后**落——CLI 见回执即在途
+  // 控制面停机回执（src/control/stop-channel.ts）：优雅停收口**之后**落——CLI 见回执即在途
   // worker 已整树杀、台账已落盘（孤儿进程面闭环）。只回本进程应答的请求（honoredStopId）：
   // kv 读回的旧 id 属上一进程的应答面，不复回（旧回执仍在盘，按 id 匹配不误读）
   if (honoredStopId !== null) {
