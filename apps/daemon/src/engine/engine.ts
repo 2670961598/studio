@@ -179,11 +179,7 @@ import type { ExecutorRegistry } from '@studio-next/adapters'
 import type { Ledger } from '@studio-next/store'
 import { gateDispatch, settleDispatch, type BudgetGateDeps } from './budget-gate.ts'
 import { crashHook } from './crash-points.ts'
-<<<<<<< ours
 import { buildEventIndex, type EventIndex } from './sentinel/events-index.ts'
-=======
-import { indexEvents, type EventIndex } from './events/index.ts'
->>>>>>> theirs
 import type { GateRunner } from './gate.ts'
 import { accountJobOutput } from './jobs/output-account.ts'
 import { makeUlid } from './tools/id.ts'
@@ -1383,10 +1379,6 @@ export function createEngine(deps: EngineDeps): Engine {
     mutations += unknownStateAlarmed + statusSetDrift
 
     // —— 相位 2 state-diff：受影响单逐个 decide（每单至多一动作；provisionalActions 供三闸） ——
-<<<<<<< ours
-=======
-    const index = indexEvents(ledger)
->>>>>>> theirs
     const dispatchQ: Array<{ action: Extract<Action, { type: 'dispatch' }>; intentKey: string }> = []
     const approvalQ: Array<Extract<Action, { type: 'submit_approval' }>> = []
     const collectQ: Array<Extract<Action, { type: 'collect' }>> = []
