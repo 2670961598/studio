@@ -17,6 +17,9 @@
  *     CandidateRecord 可序列化形态（值域**复制**自 core 冻结枚举——store src 零 core 运行时
  *     依赖，漂移由一致性测试钉死，沿 STUDIO_TOOLS 先例）+ created_at 库侧列；形状差异取舍
  *     （asset_type 列名 / version TEXT / asset_path 补列）见 migrations v5 头注与接口行注。
+ *   - v6 报表三表（17-§3 / docs/50 断链6 / 04-§三）：ledgers 单据派生镜像（LedgerEntryRecord
+ *     ——表名与库句柄 Ledger 撞名，记录名避撞）/ reports 报表快照行（ReportRecord，type 值域
+ *     daily/weekly/monthly 取 04-§三三档）/ probes_runs 探针跑分（ProbeRunRecord，append-only）。
  *
  * **拟稿待批（docs 未细化处逐条标明，contract 落地后替换为契约校验）**：
  *   - 「工号」列名 person_id；「started/ended」→ started_at/ended_at（epoch ms，ended 可空=在途）；
@@ -394,4 +397,100 @@ export const CandidateRowSchema = z.strictObject({
   parent_id: z.string().min(1).nullable(),
   status: z.enum(CANDIDATE_STATUS_VALUES),
   created_at: z.number().int().min(0),
+})
+
+// —— v6 报表三表（17-§3 / docs/50 断链6 / 04-§三 报表契约；migration v6 同批） ——
+
+/** ledgers 单据派生面 kind 值域（17-§3「kind(task/progress)」——task=任务面 / progress=进展面） */
+export const LEDGER_KIND_VALUES = ['task', 'progress'] as const
+export type LedgerKind = (typeof LEDGER_KIND_VALUES)[number]
+
+/** reports type 值域（04-§三 front-matter type：daily 日报 / weekly 周报 / monthly 月报——三档报表） */
+export const REPORT_TYPE_VALUES = ['daily', 'weekly', 'monthly'] as const
+export type ReportType = (typeof REPORT_TYPE_VALUES)[number]
+
+/** date 列形状：YYYY-MM-DD（归属期锚日——月报=当月末日 UTC，由期键派生非生成时刻；拟稿待批） */
+const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * ledgers 记录（单据派生镜像，17-§3「issue, kind(task/progress), body(json), updated」）。
+ * 表名 ledgers 与库句柄 Ledger 同名异义——表名 17-§3 冻结，记录名取 LedgerEntryRecord 避撞。
+ * body 为任意 JSON 值（写入面序列化闸 + 读出面 JSON 往返，同 jobs.payload 口径——单据派生，
+ * 形状归上游，store 不猜）。可由单据重建（覆盖写语义，见 ledger.ts upsertLedgerEntry 行注）。
+ */
+export interface LedgerEntryRecord {
+  issue: string
+  kind: LedgerKind
+  /** JSON 文本落列的往返值（任意 JSON；不可序列化值在写入面拒） */
+  body: unknown
+  /** 派生时刻（epoch ms；last-write-wins——同 ticket_mirror.updated 口径） */
+  updated: number
+}
+
+/**
+ * reports 记录（报表快照行，17-§3「id, company, node, type, date, 口径版本, json_ref」）。
+ * 自然键 (company, node, type, date) 唯一（04-§三 {node}/{date}-{type} 渲染约定的机制化）；
+ * 重算覆盖换代（最新快照胜）。json_ref=公司目录相对路径（F2-03 结果体分离——正文留文件）。
+ */
+export interface ReportRecord {
+  id: string
+  company: string
+  /** 报表节点：公司级=公司 slug｜部门级=部门 path｜人级=工号（04-§三逐级聚合方向） */
+  node: string
+  type: ReportType
+  /** 归属期锚日 YYYY-MM-DD（月报=当月末日 UTC） */
+  date: string
+  /** 口径版本戳（如 monthly/v1——指标口径变更时换值，读面可辨新旧不可比；17-§3「口径版本」列） */
+  caliber: string
+  /** 报表 JSON 快照的公司目录相对路径 */
+  json_ref: string
+}
+
+/**
+ * probes_runs 记录（探针跑分，17-§3「executor, model, probe_id, pass, cost, duration, ts」）。
+ * 拟稿：id 为库侧补列（append-only 幂等回填唯一键）；cost→cost_usd、duration→duration_ms
+ * 列名对齐库内货币/时延口径（events 先例）。append-only（触发器机制保证，见 migrations v6）。
+ */
+export interface ProbeRunRecord {
+  id: string
+  executor: string
+  model: string
+  probe_id: string
+  /** 跑分判定（行↔列 INTEGER 0/1 往返） */
+  pass: boolean
+  /** 可选列显式收 undefined（zod v4 .optional() 推断同款——assertRecord 回值可直接入本类型） */
+  cost_usd?: number | undefined
+  duration_ms?: number | undefined
+  ts: number
+}
+
+/** store 层临时校验（拟稿待批；strict：未知列拒收；body 序列化闸在写入面 ledger.ts） */
+export const LedgerEntrySchema = z.strictObject({
+  issue: z.string().min(1),
+  kind: z.enum(LEDGER_KIND_VALUES),
+  body: z.unknown(),
+  updated: z.number().int().min(0),
+})
+
+/** store 层临时校验（拟稿待批；strict：未知列拒收；date 锚日形状闸 YYYY-MM-DD） */
+export const ReportRecordSchema = z.strictObject({
+  id: z.string().min(1),
+  company: z.string().min(1),
+  node: z.string().min(1),
+  type: z.enum(REPORT_TYPE_VALUES),
+  date: z.string().regex(DATE_KEY_RE, 'date 须为 YYYY-MM-DD（归属期锚日——月报=当月末日 UTC）'),
+  caliber: z.string().min(1),
+  json_ref: z.string().min(1),
+})
+
+/** store 层临时校验（拟稿待批；strict：未知列拒收） */
+export const ProbeRunSchema = z.strictObject({
+  id: z.string().min(1),
+  executor: z.string().min(1),
+  model: z.string().min(1),
+  probe_id: z.string().min(1),
+  pass: z.boolean(),
+  cost_usd: z.number().min(0).optional(),
+  duration_ms: z.number().int().min(0).optional(),
+  ts: z.number().int().min(0),
 })

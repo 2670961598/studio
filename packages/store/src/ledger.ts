@@ -68,6 +68,20 @@
  *     （store/candidates:verification-window）；无此行=false（markRan 同风格如实上报）。
  *     序列化与 insertCandidate 同源（serializeVerification 单一口径源，两写面字节一致）；
  *     乐观锁不需要（daemon 单写者），语句级 WHERE status='sandboxed' 防越阶段。
+ *
+ * v6 扩面（报表三表，17-§3 / docs/50 断链6 / 04-§三；migrations v6 同批）：
+ *   - ledgers（单据派生镜像）：upsertLedgerEntry 覆盖写（last-write-wins，可由单据重建——
+ *     upsertTicketMirror 同口径；body JSON 序列化闸）+ 双键读面（getLedgerEntry /
+ *     listLedgerEntries，kind 枚举闸）。
+ *   - reports（报表快照行）：insertReport 自然键 (company,node,type,date) 语义——同键同 id
+ *     全列一致幂等跳过 / 同键新 id 覆盖换代（最新快照胜，04-§三 {node}/{date}-{type}
+ *     渲染键稳定）/ 同 id 异内容拒（id 全局唯一，appendEvent 口径）+ listReports 读面
+ *     （date,id 升序；type 枚举闸）。json_ref=公司目录相对路径（F2-03 结果体分离）。
+ *   - probes_runs（探针跑分）：appendProbeRun append-only（触发器拦 UPDATE/DELETE 机制
+ *     兜底 + 同 id 幂等规则对齐 appendEvent）+ listProbeRuns 读面（executor/probe_id/
+ *     ts 闭区间过滤）。
+ *   - 消费接线：报表聚合管线（company 包 reports.ts 月报最小闭环）与 :8789 财务页月报段
+ *     读 listReports；daemon 侧定时岗产报落 insertReport 归后续刀接线。
  */
 import { writeFileSync } from 'node:fs'
 import type { DatabaseSync } from 'node:sqlite'
@@ -88,8 +102,13 @@ import {
   DepartmentRecordSchema,
   EndWorkRecordSchema,
   JobRecordSchema,
+  LEDGER_KIND_VALUES,
+  LedgerEntrySchema,
   PersonRecordSchema,
   PersonnelEventRecordSchema,
+  ProbeRunSchema,
+  REPORT_TYPE_VALUES,
+  ReportRecordSchema,
   SessionRecordSchema,
   TERMINAL_CANDIDATE_STATUS_VALUES,
   TicketMirrorRecordSchema,
@@ -100,8 +119,13 @@ import {
   type DepartmentRecord,
   type EndWorkRecord,
   type JobRecord,
+  type LedgerEntryRecord,
+  type LedgerKind,
   type PersonRecord,
   type PersonnelEventRecord,
+  type ProbeRunRecord,
+  type ReportRecord,
+  type ReportType,
   type SessionRecord,
   type TicketMirrorRecord,
   type WorkRecord,
@@ -282,6 +306,38 @@ export interface Ledger {
    * 乐观锁不需要（单写者）；语句级 WHERE status='sandboxed' 防越阶段。
    */
   updateVerification(id: string, verification: unknown): boolean
+  // —— v6 报表三表读写面（17-§3 / docs/50 断链6 / 04-§三；daemon/报表聚合管线消费） ——
+  /**
+   * ledgers 单据派生镜像 upsert（复合主键 (issue, kind)，last-write-wins——权威源在单据，
+   * 本表可重建，同 upsertTicketMirror 口径）。body 序列化闸：不可 JSON 序列化 →
+   * CONFIG_INVALID（同 serializeVerification 风格）。返回落库后的记录形状。
+   */
+  upsertLedgerEntry(record: unknown): LedgerEntryRecord
+  /** 按 (issue, kind) 双键取单据派生行；无此行=undefined */
+  getLedgerEntry(issue: string, kind: LedgerKind): LedgerEntryRecord | undefined
+  /** 单据派生行列表（updated 升序，同刻按 issue/kind 稳定序）；issue / kind 可选过滤（kind 枚举外值拒） */
+  listLedgerEntries(query?: { issue?: string; kind?: LedgerKind }): LedgerEntryRecord[]
+  /**
+   * reports 报表快照行落库（自然键 (company, node, type, date) 唯一——04-§三渲染约定的
+   * 机制化）：同自然键同 id 全列一致 → 幂等跳过（appended=false）；同自然键**新 id** →
+   * 覆盖换代（id/caliber/json_ref 随新值，最新快照胜——历史在文件与 REPORT_* 事件）；
+   * 同 id 异自然键或同 id 内容不一致 → CONFIG_INVALID（id 全局唯一语义，拒改口供）。
+   */
+  insertReport(record: unknown): AppendResult
+  /** 按 id 取报表行；无此行=undefined */
+  getReport(id: string): ReportRecord | undefined
+  /** 报表行列表（date, id 升序）；company / node / type 可选过滤（type 枚举外值拒） */
+  listReports(query?: { company?: string; node?: string; type?: ReportType }): ReportRecord[]
+  /**
+   * probes_runs 探针跑分 append（append-only——触发器拦 UPDATE/DELETE 机制兜底）：
+   * 同 id 全列一致 → 幂等跳过（appended=false，F2-13 回填口径）；同 id 内容不一致 →
+   * CONFIG_INVALID（appendEvent 同规则）。
+   */
+  appendProbeRun(record: unknown): AppendResult
+  /** 按 id 取跑分行；无此行=undefined */
+  getProbeRun(id: string): ProbeRunRecord | undefined
+  /** 跑分行列表（ts, id 升序）；executor / probe_id / since/until（ts 闭区间）可选过滤 */
+  listProbeRuns(query?: { executor?: string; probe_id?: string; since?: number; until?: number }): ProbeRunRecord[]
 }
 
 /** tokens 四桶 canonical 序（F2-04 列名序）：同内容恒同字节串 */
@@ -1282,6 +1338,242 @@ export function openLedger(path: string): Ledger {
     return Number(result.changes) > 0
   }
 
+  // —— v6 报表三表读写面（17-§3 / docs/50 断链6 / 04-§三） ——
+
+  /** ledgers.body 序列化（serializeVerification 同风格：不可序列化 → CONFIG_INVALID，不入账） */
+  const serializeLedgerBody = (body: unknown, issue: string, kind: string): string => {
+    try {
+      const serialized = JSON.stringify(body)
+      if (serialized === undefined) {
+        configInvalid('store/ledger-entry:body-unserializable', `单据 ${issue}/${kind} body 含不可 JSON 序列化的值`)
+      }
+      return serialized
+    } catch (err) {
+      configInvalid('store/ledger-entry:body-unserializable', `单据 ${issue}/${kind} body 不可序列化：${errorMessage(err)}`)
+    }
+  }
+
+  const rowToLedgerEntry = (row: SqlRow): LedgerEntryRecord => ({
+    issue: str(row, 'issue'),
+    kind: str(row, 'kind') as LedgerKind,
+    body: JSON.parse(str(row, 'body')) as unknown,
+    updated: Number(row['updated']),
+  })
+
+  const rowToReport = (row: SqlRow): ReportRecord => ({
+    id: str(row, 'id'),
+    company: str(row, 'company'),
+    node: str(row, 'node'),
+    type: str(row, 'type') as ReportType,
+    date: str(row, 'date'),
+    caliber: str(row, 'caliber'),
+    json_ref: str(row, 'json_ref'),
+  })
+
+  const rowToProbeRun = (row: SqlRow): ProbeRunRecord => {
+    const rec: ProbeRunRecord = {
+      id: str(row, 'id'),
+      executor: str(row, 'executor'),
+      model: str(row, 'model'),
+      probe_id: str(row, 'probe_id'),
+      pass: Number(row['pass']) === 1,
+      ts: Number(row['ts']),
+    }
+    const costUsd = optNum(row, 'cost_usd')
+    if (costUsd !== undefined) rec.cost_usd = costUsd
+    const durationMs = optNum(row, 'duration_ms')
+    if (durationMs !== undefined) rec.duration_ms = durationMs
+    return rec
+  }
+
+  function sameProbeRun(a: ProbeRunRecord, b: ProbeRunRecord): boolean {
+    return (
+      a.id === b.id &&
+      a.executor === b.executor &&
+      a.model === b.model &&
+      a.probe_id === b.probe_id &&
+      a.pass === b.pass &&
+      a.cost_usd === b.cost_usd &&
+      a.duration_ms === b.duration_ms &&
+      a.ts === b.ts
+    )
+  }
+
+  const upsertLedgerEntry = (record: unknown): LedgerEntryRecord => {
+    const r = assertRecord(LedgerEntrySchema, record, 'store/ledger-entry:invalid')
+    const bodyJson = serializeLedgerBody(r.body, r.issue, r.kind)
+    // last-write-wins 覆盖（单据派生镜像可重建——同 upsertTicketMirror 口径；单写者=daemon，
+    // 无并发面）。幂等同写自然落 UPDATE 同值，调用方可比对返回值。
+    db.prepare(
+      `INSERT INTO ledgers (issue, kind, body, updated) VALUES (?, ?, ?, ?)
+       ON CONFLICT (issue, kind) DO UPDATE SET body = excluded.body, updated = excluded.updated`,
+    ).run(r.issue, r.kind, bodyJson, r.updated)
+    const row = db.prepare('SELECT * FROM ledgers WHERE issue = ? AND kind = ?').get(r.issue, r.kind) as SqlRow
+    return rowToLedgerEntry(row)
+  }
+
+  /** kind 运行期值域闸（TS 字面量挡编译期，JS 调用方如实拒——listBudgets kinds 闸同风格） */
+  const isLedgerKind = (v: unknown): v is LedgerKind => (LEDGER_KIND_VALUES as readonly string[]).includes(v as string)
+
+  const getLedgerEntry = (issue: string, kind: LedgerKind): LedgerEntryRecord | undefined => {
+    const row = db.prepare('SELECT * FROM ledgers WHERE issue = ? AND kind = ?').get(issue, kind) as SqlRow | undefined
+    return row === undefined ? undefined : rowToLedgerEntry(row)
+  }
+
+  const listLedgerEntries = (query: { issue?: string; kind?: LedgerKind } = {}): LedgerEntryRecord[] => {
+    if (query.kind !== undefined && !isLedgerKind(query.kind)) {
+      configInvalid('store/ledgers:bad-kind', `kind=${String(query.kind)} 枚举外（值域 ${LEDGER_KIND_VALUES.join('/')}）`)
+    }
+    const where: string[] = []
+    const params: Array<string | number> = []
+    if (query.issue !== undefined) {
+      where.push('issue = ?')
+      params.push(query.issue)
+    }
+    if (query.kind !== undefined) {
+      where.push('kind = ?')
+      params.push(query.kind)
+    }
+    let sql = 'SELECT * FROM ledgers'
+    if (where.length > 0) sql += ` WHERE ${where.join(' AND ')}`
+    sql += ' ORDER BY updated ASC, issue ASC, kind ASC'
+    return (db.prepare(sql).all(...params) as SqlRow[]).map(rowToLedgerEntry)
+  }
+
+  const insertReport = (record: unknown): AppendResult => {
+    const r = assertRecord(ReportRecordSchema, record, 'store/report:invalid')
+    // 同 id 全列一致幂等跳过 / 内容不一致拒（id 全局唯一语义——appendEvent 口径）；
+    // 同自然键 (company,node,type,date) 异 id → 覆盖换代（快照最新胜，04-§三渲染键稳定）。
+    const byId = db.prepare('SELECT * FROM reports WHERE id = ?').get(r.id) as SqlRow | undefined
+    if (byId !== undefined) {
+      const same = rowToReport(byId)
+      if (sameReport(same, r)) return { id: r.id, appended: false }
+      configInvalid(
+        'store/reports:id-conflict',
+        `报表 id=${r.id} 已存在且内容不一致（同 id 异自然键/异内容均拒——换内容用新 id 落，自然键覆盖走新 id 路径）`,
+      )
+    }
+    const byNatural = db
+      .prepare('SELECT * FROM reports WHERE company = ? AND node = ? AND type = ? AND date = ?')
+      .get(r.company, r.node, r.type, r.date) as SqlRow | undefined
+    if (byNatural !== undefined) {
+      db.prepare('UPDATE reports SET id = ?, caliber = ?, json_ref = ? WHERE company = ? AND node = ? AND type = ? AND date = ?').run(
+        r.id,
+        r.caliber,
+        r.json_ref,
+        r.company,
+        r.node,
+        r.type,
+        r.date,
+      )
+      return { id: r.id, appended: true }
+    }
+    db.prepare('INSERT INTO reports (id, company, node, type, date, caliber, json_ref) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      r.id,
+      r.company,
+      r.node,
+      r.type,
+      r.date,
+      r.caliber,
+      r.json_ref,
+    )
+    return { id: r.id, appended: true }
+  }
+
+  /** 记录级全列比对（reports 幂等判据） */
+  function sameReport(a: ReportRecord, b: ReportRecord): boolean {
+    return (
+      a.id === b.id &&
+      a.company === b.company &&
+      a.node === b.node &&
+      a.type === b.type &&
+      a.date === b.date &&
+      a.caliber === b.caliber &&
+      a.json_ref === b.json_ref
+    )
+  }
+
+  /** type 运行期值域闸（listReports 查询参数；字面量类型挡编译期，JS 调用方如实拒） */
+  const isReportType = (v: unknown): v is ReportType => (REPORT_TYPE_VALUES as readonly string[]).includes(v as string)
+
+  const listReports = (query: { company?: string; node?: string; type?: ReportType } = {}): ReportRecord[] => {
+    if (query.type !== undefined && !isReportType(query.type)) {
+      configInvalid('store/reports:bad-type', `type=${String(query.type)} 枚举外（值域 ${REPORT_TYPE_VALUES.join('/')}——04-§三三档）`)
+    }
+    const where: string[] = []
+    const params: Array<string | number> = []
+    if (query.company !== undefined) {
+      where.push('company = ?')
+      params.push(query.company)
+    }
+    if (query.node !== undefined) {
+      where.push('node = ?')
+      params.push(query.node)
+    }
+    if (query.type !== undefined) {
+      where.push('type = ?')
+      params.push(query.type)
+    }
+    let sql = 'SELECT * FROM reports'
+    if (where.length > 0) sql += ` WHERE ${where.join(' AND ')}`
+    sql += ' ORDER BY date ASC, id ASC'
+    return (db.prepare(sql).all(...params) as SqlRow[]).map(rowToReport)
+  }
+
+  const appendProbeRun = (record: unknown): AppendResult => {
+    const r = assertRecord(ProbeRunSchema, record, 'store/probe-run:invalid')
+    // 幂等规则：同 id 全列一致跳过，不一致抛错（F2-13 回填幂等；append-only 拒覆盖语义）
+    const existing = db.prepare('SELECT * FROM probes_runs WHERE id = ?').get(r.id) as SqlRow | undefined
+    if (existing !== undefined) {
+      if (sameProbeRun(rowToProbeRun(existing), r)) return { id: r.id, appended: false }
+      configInvalid(
+        'store/probe-run:duplicate-id',
+        `跑分 id=${r.id} 已存在且内容不一致（append-only，拒绝覆盖语义的重复入账）`,
+      )
+    }
+    db.prepare('INSERT INTO probes_runs (id, executor, model, probe_id, pass, cost_usd, duration_ms, ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
+      r.id,
+      r.executor,
+      r.model,
+      r.probe_id,
+      r.pass ? 1 : 0,
+      r.cost_usd ?? null,
+      r.duration_ms ?? null,
+      r.ts,
+    )
+    return { id: r.id, appended: true }
+  }
+
+  const getProbeRun = (id: string): ProbeRunRecord | undefined => {
+    const row = db.prepare('SELECT * FROM probes_runs WHERE id = ?').get(id) as SqlRow | undefined
+    return row === undefined ? undefined : rowToProbeRun(row)
+  }
+
+  const listProbeRuns = (query: { executor?: string; probe_id?: string; since?: number; until?: number } = {}): ProbeRunRecord[] => {
+    const where: string[] = []
+    const params: Array<string | number> = []
+    if (query.executor !== undefined) {
+      where.push('executor = ?')
+      params.push(query.executor)
+    }
+    if (query.probe_id !== undefined) {
+      where.push('probe_id = ?')
+      params.push(query.probe_id)
+    }
+    if (query.since !== undefined) {
+      where.push('ts >= ?')
+      params.push(query.since)
+    }
+    if (query.until !== undefined) {
+      where.push('ts <= ?')
+      params.push(query.until)
+    }
+    let sql = 'SELECT * FROM probes_runs'
+    if (where.length > 0) sql += ` WHERE ${where.join(' AND ')}`
+    sql += ' ORDER BY ts ASC, id ASC'
+    return (db.prepare(sql).all(...params) as SqlRow[]).map(rowToProbeRun)
+  }
+
   return {
     db,
     close: () => db.close(),
@@ -1331,6 +1623,18 @@ export function openLedger(path: string): Ledger {
     candidatesByStatus,
     transitionCandidate,
     updateVerification,
+    upsertLedgerEntry,
+    getLedgerEntry,
+    listLedgerEntries,
+    insertReport,
+    getReport: (id: string) => {
+      const row = db.prepare('SELECT * FROM reports WHERE id = ?').get(id) as SqlRow | undefined
+      return row === undefined ? undefined : rowToReport(row)
+    },
+    listReports,
+    appendProbeRun,
+    getProbeRun,
+    listProbeRuns,
   }
 }
 

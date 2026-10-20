@@ -34,14 +34,35 @@
  *       lineageOf（全祖先链，应用层循环，断链/成环 fail-closed）/ candidatesByStatus
  *       （判负查 active 集）/ transitionCandidate（乐观锁，边合法性归 core）；daemon 接线
  *       （assertChangeAuthorized 消费 active 集）归后续刀
+ *   [x] v6 报表三表（migration v6，17-§3 / docs/50 断链6 / 04-§三）：ledgers（单据派生镜像
+ *       upsert + 双键读面）/ reports（报表快照行，自然键 (company,node,type,date) 唯一——
+ *       同键新 id 覆盖换代 + listReports 读面）/ probes_runs（append-only 触发器兜底 + 同 id
+ *       幂等）；消费接线=报表聚合管线（company reports.ts）与 :8789 财务页月报段
  *   [x] 演习与维护 CLI 面（F2-12 可操作化）：runLedgerDrill 删库重建演习（daemon bin 出
  *       `ledger drill/dump/rebuild` 子命令组，薄壳转调本包）
  *   [ ] cron 表达式解析（croner，daemon/core 侧）+ 补跑 coalesce / 同岗不重叠（18-§三，core 后续单）
- *   [ ] 17-§3 其余表（后续 migration 逐版本补）：ledgers / reports / probes_runs
  *   [ ] 回填工具（F2-13：done.json/REPORT/stream/events → 对账 → 幂等回填；旁路关单标注规则）
  *   [ ] rebuild --from yt,org 两源通道（F2-12 全量再生；现仅 jsonl 源）
  *   [ ] 季度删库演习挂 cron 岗留证（`ledger drill` 已可操作化，v0.4 定时岗落地后挂）
  *   [ ] 数据保留与归档（>90 天事件按月导出，热表留索引，见 docs/19-§四）
+ *
+ * v6 拟稿待批 / 疑点（只记录，不改文档）：
+ *   - ledgers 复合主键 (issue, kind)：17-§3 未言明主键（issue 单列不唯一、kind 亦然），取最
+ *     自然双键；覆盖写 last-write-wins（单据派生可重建——upsertTicketMirror 同口径），不加
+ *     updated 单调闸（重建回填允许乱序）——待批
+ *   - ledgers 表名与库句柄类型 Ledger 同名异义（17-§3 冻结表名）：记录名取 LedgerEntryRecord
+ *     避撞——纯命名取舍，无语义影响
+ *   - reports 口径版本列名 caliber（17-§3 中文列名英文化；值如 monthly/v1 由聚合管线自定，
+ *     store 不锁值域）；date=归属期锚日 YYYY-MM-DD（月报=当月末日 UTC，由期键派生——形状闸
+ *     只锁 YYYY-MM-DD，语义校验归调用方）——待批
+ *   - reports 自然键覆盖换代语义（同键新 id 覆盖：最新快照胜，历史在文件与 REPORT_* 事件）；
+ *     同 id 异内容一律 CONFIG_INVALID（id 全局唯一，appendEvent 口径）——换代与拒改的边界
+ *     划分待批
+ *   - probes_runs id 为库侧补列（17-§3 未列；append-only 幂等回填需要唯一键，events 同款
+ *     非空串不锁 ULID）；cost→cost_usd、duration→duration_ms 列名对齐库内口径（events 先例）；
+ *     append-only 用触发器机制兜底（personnel_events 同款）——待批
+ *   - reports/probes_runs 均无 company 一致性闸（行内 company 列不做 events 级校验）：
+ *     报表行公司维过滤靠查询参数，坏行走调用方责任——是否补闸待批
  *
  * v5 拟稿待批 / 疑点（只记录，不改文档）：
  *   - 列名取舍：asset_type（core 字段名，任务草案曾写 asset_kind——行↔记录零改名）；version
@@ -131,7 +152,7 @@ export type { Migration } from './migrations.ts'
 export { openLedger } from './ledger.ts'
 export type { AppendResult, BudgetListQuery, BudgetScope, CompanySyncResult, DumpResult, EventQuery, InsertCandidateResult, Ledger, PersonnelTimelineEntry } from './ledger.ts'
 
-// work_records / sessions + v2 五表 + v3 jobs + v4 收口面 + v5 candidates 记录形状（store 层临时闸，contract schema 落地后替换）
+// work_records / sessions + v2 五表 + v3 jobs + v4 收口面 + v5 candidates + v6 报表三表记录形状（store 层临时闸，contract schema 落地后替换）
 export {
   BudgetRecordSchema,
   CANDIDATE_ASSET_KINDS,
@@ -141,8 +162,13 @@ export {
   DepartmentRecordSchema,
   EndWorkRecordSchema,
   JobRecordSchema,
+  LEDGER_KIND_VALUES,
+  LedgerEntrySchema,
   PersonRecordSchema,
   PersonnelEventRecordSchema,
+  ProbeRunSchema,
+  REPORT_TYPE_VALUES,
+  ReportRecordSchema,
   SessionRecordSchema,
   TERMINAL_CANDIDATE_STATUS_VALUES,
   TicketMirrorRecordSchema,
@@ -157,8 +183,13 @@ export type {
   DepartmentRecord,
   EndWorkRecord,
   JobRecord,
+  LedgerEntryRecord,
+  LedgerKind,
   PersonRecord,
   PersonnelEventRecord,
+  ProbeRunRecord,
+  ReportRecord,
+  ReportType,
   SessionRecord,
   TerminalCandidateStatus,
   TicketMirrorRecord,

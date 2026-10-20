@@ -12,12 +12,14 @@
  *   GET /<slug>/people           人事列表：PersonRef 表（工号/姓名/login/等级/部门）+ 档案正文链接
  *   GET /<slug>/people/<工号>    人事档案：md 原文渲染为 pre 块（01-C2-04；转义后进 pre）
  *   GET /<slug>/progress         进度：ticket_mirror 按状态聚合计数（有 ledger 时）
- *   GET /<slug>/finance          财务：budgets 三口径分列 + 事件 LLM 成本按日（有 ledger 时）
+ *   GET /<slug>/finance          财务：budgets 三口径分列 + 事件 LLM 成本按日 + 月报段
+ *                                （reports 表 type='monthly' + json_ref 快照 headline，有 ledger 时）
  *   未注册 slug / 未知工号 / 未知子路径 → 404 HTML 页
  *
  * 注入纪律（与 :8787 createPanelApp 同款）：panel 不 import company 包——组织数据经
  * snapshotProvider 注入（() => CompanySnapshot，wiring 侧用 loadCompanyDirectory 装载），
- * 档案正文经 readPersonFile 注入，台账经 openLedger 工厂注入（懒调恰一次并缓存，句柄归注入方）。
+ * 档案正文经 readPersonFile 注入，报表快照经 readReportFile 注入（json_ref → JSON 正文），
+ * 台账经 openLedger 工厂注入（懒调恰一次并缓存，句柄归注入方）。
  * 无 ledger 的公司：progress/finance 两页如实显示「无台账数据」，不臆造空聚合。
  *
  * 只读纪律：overview 对 SQLite 零写（WAL 单写多读同库并存安全，与 :8787 同款）。serveOverview
@@ -59,6 +61,8 @@ export interface OverviewCompanySource {
   mission?: string
   /** 人事档案原文读取（工号 → md 全文）；缺省=无档案正文（people 页不出现档案链接） */
   readPersonFile?: (personId: string) => string | undefined
+  /** 报表快照原文读取（公司目录相对 json_ref → JSON 全文）；缺省=finance 页月报行「快照不可读」 */
+  readReportFile?: (jsonRef: string) => string | undefined
   /** 台账工厂（懒调恰一次并缓存；句柄归注入方管）；缺省=无台账（progress/finance 降级面） */
   openLedger?: () => Ledger
 }
@@ -194,7 +198,8 @@ export function createOverviewApp(opts: OverviewAppOptions): OverviewApp {
     return c.html(renderProgressPage(slug, resolved.snapshot, progress))
   })
 
-  // 财务：budgets 三口径分列 + LLM 成本按日（有 ledger 时；无 ledger 如实降级）
+  // 财务：budgets 三口径分列 + LLM 成本按日 + 月报段（reports 表 type='monthly' +
+  // json_ref 快照 headline——04-§三渲染约定；有 ledger 时；无 ledger 如实降级）
   app.get('/:slug/finance', (c) => {
     const slug = c.req.param('slug')
     const resolved = resolveCompany(slug)
@@ -208,6 +213,8 @@ export function createOverviewApp(opts: OverviewAppOptions): OverviewApp {
             mirrors: resolved.ledger.listTicketMirrors(),
             peopleIds: new Set(resolved.snapshot.people.map((p) => p.id)),
             events: resolved.ledger.queryEvents({ company: slug }),
+            reports: resolved.ledger.listReports({ company: slug, type: 'monthly' }),
+            ...(resolved.source.readReportFile !== undefined ? { readReportFile: resolved.source.readReportFile } : {}),
           })
     return c.html(renderFinancePage(slug, resolved.snapshot, finance))
   })

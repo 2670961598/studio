@@ -192,7 +192,7 @@ describe('坏 JSONL 重建中止（失败面）', () => {
     // 单事务回滚：目标库零事件（migration 已落，schema_version 独立事务）
     const l = openLedger(target)
     expect(l.queryEvents().length).toBe(0)
-    expect(l.version()).toBe(5)
+    expect(l.version()).toBe(6)
     l.close()
   })
 
