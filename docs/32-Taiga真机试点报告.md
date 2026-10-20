@@ -75,7 +75,7 @@ FlowPlatform-Taiga 适配器首刀（`packages/taiga`，feature/platform-taiga �
 ## 八、补记：onboard 写面三件 + links 真机补测（2026-10-19，platform 泳道）
 
 onboard 刀（feature/platform-taiga-onboard）对 §四待核项与写面三件的实测答卷。
-原始证据：`/Volumes/BigDisk/probe-evidence/taiga-links/`（manifest P00-P84 + 冒烟日志）。
+原始证据：见本地探针档案（`probe-evidence/taiga-links/`——manifest P00-P84 + 冒烟日志）。
 
 **links 关联模型五结论**（§四「issue↔US 横向关联是否存在」的最终答案）：
 

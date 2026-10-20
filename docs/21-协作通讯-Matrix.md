@@ -36,7 +36,7 @@
 ## 五、部署（本机，外置硬盘）
 
 - Synapse（官方 docker 镜像），绑 127.0.0.1:8008，不开联邦，注册用 shared secret（仅框架持有）（勘误 2026-10-17：真实 Synapse 配置键为 `registration_shared_secret`，`registration_shared_token` 非真实 Synapse 配置键——依据 21A-Synapse部署手册调研）
-- **数据目录在外置硬盘**（`/Volumes/BigDisk/matrix/`，制作人 2026-10-16 定调：不占 Mac 内置盘）；
+- **数据目录在外置硬盘**（`<外置盘>/matrix/`——挂载点由部署环境自定，制作人 2026-10-16 定调：不占 Mac 内置盘）；
   备份随该盘策略
 - 账号：每 agent 工号一个 Matrix 账号（@<工号>:localhost）；框架网关 bot 一个管理账号
 - 安全：凭证不落日志/台账；频道历史默认保留 90 天

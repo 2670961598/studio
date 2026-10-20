@@ -3,7 +3,7 @@
 > 2026-10-18 ｜ cli 泳道探针工兵出品。制作人需求原话：「别的 agent 发消息了，跟他同单子的其他 agent
 > 如果活着，我们就将这条消息临时插入进去」——向**运行中**的 dsh 会话注入一条临时消息，像聊天一样。
 > 方法：全部结论来自真机实测（`/opt/homebrew/bin/dsh` 0.2.0-rc.2）+ 装机明文源码交叉核；B 段插件全部真机跑通。
-> **本单未改任何 packages/ 代码**。证据落 `/Volumes/BigDisk/probe-evidence/dsh-plugin/`（索引 `INDEX.md`）。
+> **本单未改任何 packages/ 代码**。证据落本地探针档案（`probe-evidence/dsh-plugin/`，索引 `INDEX.md`）。
 > 凭证路径沿用 docs/31 §7：kimi-coding provider + `KIMI_API_KEY` env（OAuth 15 分钟窗口，跑前 `kimi -p hi` 刷新）；
 > 恒 `DSH_TELEMETRY_MODE=DISABLED`；令牌/进程 token 零落盘（A3 服务器日志已脱敏）。
 
@@ -162,7 +162,7 @@ daemon 侧 throttle（同单消息合并防抖）与队列可视（`session/proj
 
 ## 证据与副作用
 
-- 证据目录：`/Volumes/BigDisk/probe-evidence/dsh-plugin/`（`INDEX.md` 索引 24 件：A 段 12、B 段 7、工件 5）
+- 证据目录：见本地探针档案（`probe-evidence/dsh-plugin/`——`INDEX.md` 索引 24 件：A 段 12、B 段 7、工件 5）
 - 副作用自查：docker 基线逐名 diff 一致（taiga×9/matrix/youtrack 未碰）；dsh web 进程已杀；
   探针插件/pnpm link/sdk profile/overlay 全部清除；`~/.dsh/profiles/headless|web` 还原模板态
   （headless 保留 docs/31 §7 的 kimi 激活层——本单前置既有）。
