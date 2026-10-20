@@ -28,13 +28,13 @@
  * 等于适配器绑定的 project slug，不一致显式报错（防跨公司误伤）。
  */
 import type { CompanySlug, GuardRule } from '@studio-next/contract'
-import type { TaigaContext } from './context.ts'
-import { TaigaContext as Context } from './context.ts'
-import { entityDescriptor, type TaigaEntity } from './entities.ts'
-import { TaigaPlatformError } from './errors.ts'
-import { TaigaClient, type FetchLike, type TaigaAuth } from './http.ts'
+import type { TaigaContext } from './transport/context.ts'
+import { TaigaContext as Context } from './transport/context.ts'
+import { entityDescriptor, type TaigaEntity } from './transport/entities.ts'
+import { TaigaPlatformError } from './transport/errors.ts'
+import { TaigaClient, type FetchLike, type TaigaAuth } from './transport/http.ts'
 import { TaigaFieldMap } from './fieldmap.ts'
-import { asArray, asObject, optBoolean, reqNumber, reqString } from './shape.ts'
+import { asArray, asObject, optBoolean, reqNumber, reqString } from './transport/shape.ts'
 
 export interface TaigaRoleInfo {
   id: number

@@ -21,10 +21,10 @@
  *   - findInviteToken 纯函数：console/邮件日志文本 → token（§6.1 步③的文本面）。
  */
 
-import { TaigaPlatformError } from './errors.ts'
-import type { TaigaContext } from './context.ts'
-import type { FetchLike } from './http.ts'
-import { asArray, asObject, optBoolean, optNumberNull, optString, optStringNull, reqNumber, reqString } from './shape.ts'
+import { TaigaPlatformError } from './transport/errors.ts'
+import type { TaigaContext } from './transport/context.ts'
+import type { FetchLike } from './transport/http.ts'
+import { asArray, asObject, optBoolean, optNumberNull, optString, optStringNull, reqNumber, reqString } from './transport/shape.ts'
 import { LIST_PAGE_SIZE } from './issues.ts'
 
 /** 成员行（MembershipDetailSerializer 消费字段投影；full_name/email 隐私面可缺省） */

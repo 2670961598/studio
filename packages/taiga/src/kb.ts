@@ -24,9 +24,9 @@
  *             valid"，P61/P62；成功 version+1、editions+1，P63）
  */
 import type { KbHit } from '@studio-next/contract'
-import type { TaigaContext } from './context.ts'
-import { TaigaPlatformError } from './errors.ts'
-import { asArray, asObject, optString, reqNumber, reqString } from './shape.ts'
+import type { TaigaContext } from './transport/context.ts'
+import { TaigaPlatformError } from './transport/errors.ts'
+import { asArray, asObject, optString, reqNumber, reqString } from './transport/shape.ts'
 
 const SNIPPET_WIDTH = 160
 const SNIPPET_CONTEXT = 32

@@ -27,9 +27,9 @@
  *   link() 三型全部显式报错 links-unsupported（不装懂、不落半吊子链）
  */
 import type { LinkType, TicketId } from '@studio-next/contract'
-import type { TaigaContext, EntityRaw } from './context.ts'
-import { TaigaPlatformError } from './errors.ts'
-import { asArray, asObject, optNumber, reqNumber } from './shape.ts'
+import type { TaigaContext, EntityRaw } from './transport/context.ts'
+import { TaigaPlatformError } from './transport/errors.ts'
+import { asArray, asObject, optNumber, reqNumber } from './transport/shape.ts'
 
 const LIST_PAGE_SIZE = 100
 
