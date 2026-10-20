@@ -30,4 +30,4 @@ studio-next postmortem --db <库> --company <slug> --issue <复盘单号> \
 
 链：断路器关联（该单 CIRCUIT_BREAK/ESCALATE 台账历史自动进时间线）→ 渲染复盘模板
 （七节；无「责任人」字段）→ 写案例条目文件 → 落 POSTMORTEM 事件。实现与形状闸见
-`apps/daemon/src/postmortem.ts`。
+`apps/daemon/src/evolve/postmortem.ts`。

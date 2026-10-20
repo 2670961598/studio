@@ -9,7 +9,7 @@
     ".": "./src/index.ts"
   },
   "bin": {
-    "studio-next": "./src/bin.ts"
+    "studio-next": "./src/cli/main.ts"
   },
   "scripts": {
     "start": "node src/index.ts",

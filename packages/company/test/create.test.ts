@@ -358,7 +358,7 @@ describe('companyCreate · 建号退化实现的纯函数面', () => {
 })
 
 describe('spawn 冒烟（CLI 面：studio-next company create）', () => {
-  const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../apps/daemon/src/bin.ts')
+  const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../apps/daemon/src/cli/main.ts')
 
   function run(args: string[]): ReturnType<typeof spawnSync> {
     return spawnSync(process.execPath, [bin, 'company', 'create', ...args], {

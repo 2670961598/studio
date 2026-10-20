@@ -104,6 +104,8 @@ SQLite 里不存第二份可变状态，状态永远以 YouTrack 为准、镜像
 
 ## 三、调度（定时任务管理）
 
+> daemon 侧落点：`apps/daemon/src/engine/scheduler.ts`（DEV-45 按域分层归 engine；jobs 表与补跑语义见下）。
+
 ### 3.1 现成库盘点（2026 实测调研）
 
 | 库 | 持久化 | 错过补跑 | 结论 |

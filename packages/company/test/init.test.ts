@@ -2,8 +2,8 @@
  * v0.1-M3 init 验收测试（docs/16-§四 v0.1 验收口径：studio-next init 出模板公司并通过自检）
  *
  * 拟冻结验收命令（测试内固化，16-§四 口径的可执行化）：
- *   node apps/daemon/src/bin.ts init demo --dir <tmp>    → exit 0（复制/替换/自检/git 首提全过）
- *   node apps/daemon/src/bin.ts validate <tmp>/demo      → exit 0（slug/level 摘要）
+ *   node apps/daemon/src/cli/main.ts init demo --dir <tmp>    → exit 0（复制/替换/自检/git 首提全过）
+ *   node apps/daemon/src/cli/main.ts validate <tmp>/demo      → exit 0（slug/level 摘要）
  *
  * 两段：
  *   1. initCompany 全链（复制 / 占位替换 / 自检 / git 首提）——进程内直调，断言到文件内容与 git 状态
@@ -177,7 +177,7 @@ describe('initCompany 全链（复制 / 占位替换 / 自检 / git 首提）', 
 })
 
 describe('spawn 冒烟（拟冻结验收命令：init demo → validate demo → exit 0）', () => {
-  const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../apps/daemon/src/bin.ts')
+  const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../apps/daemon/src/cli/main.ts')
   const run = (args: string[]) =>
     spawnSync(process.execPath, [bin, ...args], { encoding: 'utf8', env: { ...process.env, ...GIT_ENV } })
 

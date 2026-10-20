@@ -202,7 +202,7 @@ export function jobViews(jobs: JobRecord[], now: number): JobView[] {
  * 断路事件的台账匹配口径（**双通道**，拟稿待批点）：
  *   1) event = 'CIRCUIT_BREAK'（17-§3 冻结枚举名——回填/演练语料与后续发单形态）；
  *   2) event = 'ESCALATE' 且 note 以 'CIRCUIT_BREAK：' 起头（daemon 现行唯一发单形态：
- *      apps/daemon/src/engine.ts makeEvent('ESCALATE', …, note='CIRCUIT_BREAK：<单号> 连击 N
+ *      apps/daemon/src/engine/engine.ts makeEvent('ESCALATE', …, note='CIRCUIT_BREAK：<单号> 连击 N
  *      达阈值 T（签名 S）→ 自动开 bug 单 B')——熔断作为升级事件落账，note 承载结构化信息）。
  * 只按 1) 匹配会漏 daemon 真数据（面板空卡），只按 2) 匹配会漏冻结枚举名——故双通道并集。
  */

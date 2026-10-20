@@ -21,6 +21,9 @@ Studio Next 把「一家公司」建模成代码外部的一个 git 目录（下
 
 ```
 apps/daemon/          唯一常驻进程（Node 24 LTS）：主循环、调度、看护
+                      （src 四域分层：engine 引擎核 / control 控制面 / evolve 进化链 /
+                        cli 命令面一命令一模块；serve.ts+index.ts 装配留 src 根；
+                        test/ 目录按同分组镜像）
 packages/contract/    契约包：cases.json + JSON Schema + runner（规格测试的唯一标尺）
 packages/core/        纯逻辑：状态机 / 主循环决策 / 收割 / 闸门 / 预算 / 断路（零 IO）
 packages/store/       node:sqlite + drizzle：schema、migration、快照、重建脚本

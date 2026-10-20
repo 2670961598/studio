@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { simpleGit } from 'simple-git'
 
-const binPath = fileURLToPath(new URL('../../../apps/daemon/src/bin.ts', import.meta.url))
+const binPath = fileURLToPath(new URL('../../../apps/daemon/src/cli/main.ts', import.meta.url))
 const fixtureSrc = fileURLToPath(new URL('./fixtures/company-dist', import.meta.url))
 
 let root = ''
