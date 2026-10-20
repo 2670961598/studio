@@ -38,6 +38,9 @@ export * from "./streams.ts";
 /** dsh 适配器（默认主力）：四原语实现，已知坑沉淀见文件头注（docs/17-§6 / docs/18-§1.2） */
 export * from "./dsh.ts";
 
+/** seatbelt 写域圈定（DEV-29 原型 attempt3）：profile 生成器 + argv 包装，docs/43-§五权限圈② */
+export * from "./seatbelt.ts";
+
 /** claude 适配器（参考实现）：预算帽/续跑/版本门槛降级/原生 cost 账目，头注见 docs/17-§6 claude 行 */
 export * from "./claude.ts";
 
