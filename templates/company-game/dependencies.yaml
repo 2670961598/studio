@@ -1,0 +1,28 @@
+# 依赖清单 · 游戏公司示例（docs/43-§四「员工的行为面」）
+#
+# 属性值 → dsh 插件映射：员工档案属性命中 → 该插件对本员工启用 → 框架替他安装
+# （安装目标=隔离插件根，源=公司包内 plugins/ 目录优先；版本语义见 docs/43-§十-6）。
+#
+# 本示例两条绑定覆盖两种命中面：
+#   1. role 命中（GAME-1 是主程）→ dsh-asset-check ^1.0（包内自带 → 导入即装）
+#   2. dept 命中（内容部成员，path 全量+末段名双候选——docs/43-§十-5）→ dsh-loc-lint
+#      0.9.0（精确版形态；包内无源 → 默认进安装报告 missing 面如实可见、不阻断导入
+#      ——依赖清单同时是能力声明，docs/43-§十-7 / 51-D-3）
+#
+# attr 只收档案已知键封闭枚举：role/dept/level/skills/executor/status（51-C-7）。
+
+schema: studio-next/dependencies@1
+
+bindings:
+  - when:
+      attr: role
+      is: 主程
+    plugins:
+      - name: dsh-asset-check
+        version: "^1.0"
+  - when:
+      attr: dept
+      is: 内容部
+    plugins:
+      - name: dsh-loc-lint
+        version: "0.9.0"

@@ -1,0 +1,12 @@
+# Studio Next 挂载元信息（.studio-next.yaml）—— 行业示例包 · 互联网公司
+#
+# v1.1 语义（docs/43-§一）：公司包=git 仓库即公司。本文件以**本地挂载元信息**形态随行
+# （schema 与 org-config.yaml 同源）；created_at/last_validated_at/last_validation 由
+# 导入流盖戳，人工不要手改。
+
+schema: org-config/v1
+template: company-internet
+created_at: null
+last_validated_at: null
+last_validation: null
+framework_version: null

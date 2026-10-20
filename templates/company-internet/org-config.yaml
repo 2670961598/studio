@@ -1,0 +1,133 @@
+# Studio Next · 行业示例公司包 · 互联网公司（templates/company-internet）
+#
+# 契约依据：docs/43-§三（行业模板包：同 schema、不同资产——「下载即可开一家互联网公司」）
+# 与 docs/43-§二（org-config schema 冻结契约）；目录契约见 docs/51-契约 A/B。
+#
+# 本文件是**公司与编制的唯一事实源**：与 templates/company-2-level 同一张 schema
+# （org-config/v1），行业差异全部表达在资产（charter/prompts 战役/jobs 岗/依赖清单），
+# 不动 schema——「规范少、上限高」的关键取舍（docs/43-§二末条）。
+#
+# 上手说明见 README.md；传播通道=git 网址即公司（docs/43-§一）：
+#   studio-next company add <本包的 git-url> [名] --work-root <目录>
+
+schema: org-config/v1
+
+company:
+  name: 星潮互联网公司 # 公司名（公司层提示词 L1 的内容源之一）
+  slug: internet-corp # 概览路由 http://<host>:8789/<slug>/...；升级通道按此认家
+  mission: 用小步快跑的可度量迭代，把用户需求变成拿得出手的互联网产品 # 使命（L1）
+  charter_ref: charter.md # 公司章程路径（相对公司目录根）
+  level: 3 # 公司等级 2-9；3 级=多部门协作的完整产品公司
+  level_distribution: # 等级分布（人数必须与 people[].level 实数相等）
+    3: 1 # 研发负责人 1 名
+    2: 2 # 前端工程师 / 增长运营 各 1 名
+  platform: localfile # 声明性平台绑定（docs/23-§二：换平台=改配置行；导入流据此走字段 provision）
+
+# 部门索引：纵向=等级锚权限，横向=部门树；互联网公司的两轴=研发交付 + 增长运营
+departments:
+  - name: 研发部
+    path: departments/研发部
+    leader: NET-1 # 主管工号（指向 people 索引与人事档案）
+    level: 3
+    parent: null # 根部门
+    lanes: [core, feature] # 泳道 = 资源标签 + 并行开发单元（core=主线，feature=特性并行）
+    functions: [交付] # 部门职能
+    relations: [] # 跨部门关系（本模板最小面；扩展形见 docs/25 DeptRelation）
+  - name: 增长部
+    path: departments/增长部
+    leader: GRO-1
+    level: 2
+    parent: null
+    lanes: [growth] # 增长泳道：实验与数据并行位
+    functions: [增长运营]
+    relations: []
+
+# 人员索引（只留派工索引；职责正文以 departments/**/people/<工号>.md 档案为准）
+people:
+  - id: NET-1 # 工号 = 文件名 = 永不变主键
+    name: 全栈工程师
+    login: net-eng # YouTrack 账号锚点（账号=等级锚点，工号=人）
+    level: 3
+    dept: departments/研发部
+    role: 研发负责人 # 岗位（依赖清单 role 命中位——docs/43-§四：属性决定插件开关）
+    reports_to: null
+    skills: [typescript, nodejs] # 技能本体（内部工种映射表，不用自由文本）
+    status: active
+    executor: dsh # executor 偏好；v1 唯一保证面=dsh（docs/43-§六）
+    file: departments/研发部/people/NET-1.md
+  - id: NET-2
+    name: 前端工程师
+    login: net-web
+    level: 2
+    dept: departments/研发部
+    role: 前端工程师 # 依赖清单命中位：role=前端工程师 → dsh-web-test（见 dependencies.yaml）
+    reports_to: NET-1 # 汇报线（上级工号）
+    skills: [typescript, react]
+    status: active
+    executor: dsh
+    file: departments/研发部/people/NET-2.md
+  - id: GRO-1
+    name: 增长运营
+    login: growth-ops
+    level: 2
+    dept: departments/增长部
+    role: 增长运营
+    reports_to: null
+    skills: [analytics] # 依赖清单命中位：skills 含 analytics → dsh-metrics-board（缺源=能力声明面）
+    status: active
+    executor: dsh
+    file: departments/增长部/people/GRO-1.md
+
+# 定时岗清单（04-§三 D9 通用模型）：互联网公司的两岗=站点巡逻 + 增长日报
+jobs:
+  - id: net-site-patrol # 站点健康巡逻：每 10 分钟看一次可用性与错误率
+    dept: departments/研发部
+    cron: "*/10 * * * *" # 本地时区
+    role: 研发负责人
+    level: 2
+    type: patrol # 巡逻岗：巡检在途/告警面，产出巡逻纪要
+    model_tier: low
+    budget_cap: 1 # USD/次
+    output: reports/研发部/
+    sla: # 岗位运作规格（docs/35-§3）：首响 10 分钟内
+      first-ack: 10m
+  - id: net-growth-daily # 增长日报：每日 18:30 汇总北极星指标与实验结论
+    dept: departments/增长部
+    triggers: # 节奏档位（与 cron 恰给其一——docs/35-§3）
+      cadence: daily
+      at: "18:30"
+    role: 增长运营
+    level: 2
+    type: report
+    model_tier: low
+    budget_cap: 2
+    output: reports/增长部/
+    outputs: [daily-growth-report] # 产出物清单（报表模板名）
+    sla:
+      first-ack: 30m
+      resolve-hint: 4h
+
+# YouTrack 账号锚点映射（账号=等级锚点，不随新增公司而新增账号）
+accounts:
+  - login: net-eng
+    level: 3
+    note: 星潮互联网：研发负责人等级锚点
+  - login: net-web
+    level: 2
+    note: 星潮互联网：前端工程师等级锚点
+  - login: growth-ops
+    level: 2
+    note: 星潮互联网：增长运营等级锚点
+
+# YouTrack 字段/状态流映射覆盖（公司可整体替换；fields 供导入流 provision——docs/23）
+yt:
+  project: NET # 一公司一项目（N1：短名=公司代号）
+  starting_number: 1
+  fields:
+    state: State
+    dept: 部门
+    level: 等级
+  flows: {} # 空=走框架默认 flow_by_level 模板（docs/18-§二）
+
+# executor 偏好覆盖（缺省继承框架级 agent.yaml；people[].executor 已逐人声明）
+executors: {}

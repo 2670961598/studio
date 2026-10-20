@@ -1,0 +1,27 @@
+# 增长部 · 部门章程与规定（互联网公司示例包）
+#
+# 契约依据：docs/04-§二（部门领导配置 = 本文件；leader 指向工号）
+
+name: 增长部
+path: departments/增长部
+level: 2
+parent: null # 根部门（与研发部平级；互联网公司第二轴=增长运营）
+leader: GRO-1 # 主管工号（指向 people/ 内人事档案）
+functions: # 部门职能
+  - 增长运营
+lanes: # 泳道：资源标签 + 并行开发单元
+  - growth # 增长泳道：实验与数据并行位，不阻塞交付主线
+reports_to: null
+
+# 部门规定（部门内部规则；不得与 charter.md 的红线冲突）
+rules:
+  - 数据口径先冻结后使用：指标定义改动走批示，实验结论不得换口径复述（charter 第三条）
+  - 每日增长日报是定时岗（net-growth-daily），不是人肉惯例
+  - 涉及用户数据拉取的单据，先过脱敏与最小化检查，再动手
+
+# 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}
+relations: []
+
+# 本部门名下的定时岗（清单与 org-config.yaml 的 jobs 段保持一致）
+jobs:
+  - net-growth-daily # 增长日报：每日 18:30

@@ -1,0 +1,12 @@
+{
+  "name": "dsh-asset-check",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "游戏公司示例包自带插件（docs/34-§3.1 形态：ESM 具名导出 + dsh.bundle 声明 + cordis.patch.yml insert 条目）；依赖清单 role=主程 命中即安装——公司包内唯一允许的代码位（docs/43-§四）",
+  "main": "src/index.mjs",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
