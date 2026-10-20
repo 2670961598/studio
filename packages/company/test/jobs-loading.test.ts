@@ -409,4 +409,11 @@ describe('cadence 解析面纯函数（src/cadence.ts——daemon 读视图同�
     expect(parseJobOps('nonsense')).toEqual({})
     expect(parseJobOps({ cadence_tier: 'biannual', sla: 'x', escalate: [null, { after_ms: -1, unacked: 'x' }] })).toEqual({}) // 坏段不进结果
   })
+
+  it('parseJobOps：output 落点读面（DEV-50——收割侧收账的消费键；空串/非串不进结果）', async () => {
+    const { parseJobOps } = await import('../src/cadence.ts')
+    expect(parseJobOps({ type: 'report', output: 'reports/工程部/' })).toEqual({ output: 'reports/工程部/' })
+    expect(parseJobOps({ output: '' })).toEqual({}) // 空串=未声明
+    expect(parseJobOps({ output: 42 })).toEqual({}) // 非串=坏段不进结果
+  })
 })
