@@ -16,7 +16,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests",
+    "guard:boundaries": "node scripts/guards/boundaries.mjs",
+    "test": "bun run guard:boundaries && vitest run --passWithNoTests",
     "daemon": "node apps/daemon/src/index.ts"
   },
   "devDependencies": {
