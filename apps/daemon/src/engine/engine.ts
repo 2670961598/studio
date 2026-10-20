@@ -172,7 +172,6 @@ import {
   type Action,
   type BreakerState,
   type ConcurrencyLimits,
-  type DecisionCode,
   type FlowTable,
 } from '@studio-next/core'
 import type { ExecutorRegistry } from '@studio-next/adapters'
@@ -190,6 +189,8 @@ import type { ReadTier } from './read-tiers.ts'
 import { heartbeatSentinelRecord, runDev49Sentinels } from './sentinel/sentinels.ts'
 import { mintWorkerKey, workerKeyCredentials, workerKeyGuidance, WORKER_WKEY_ENV_KEY } from './worker-key.ts'
 import type { WorkerKeyDeps } from './worker-key.ts'
+import type { HrSyncTickReport } from './hrsync/hrsync.ts'
+import type { TickActionResult, TickDecisionEntry, TickPhaseDispatchBudget, TickReport } from './tick-report/types.ts'
 
 // ————————————————————————— 配置 —————————————————————————
 
@@ -376,9 +377,16 @@ export interface EngineDeps {
    * CLOSE=终局吊销——17-§7；接线件与通道选型裁决见 src/engine/worker-key.ts。
    */
   workerKeys?: WorkerKeyDeps
+  /**
+   * 人事同步消化器（可选注入；缺省不注入=行为零变更——DEV-48 docs/52-§9.2）：
+   * 相位 7 尾每拍 drain maxHrSyncPerTick 条 hr_sync_log（补单/挂账/三面执行/重试）。
+   * 装配与配置门（hrSync/hrMatrix 开关、known-secrets 脱敏闭包）见 serve.ts。
+   */
+  hrSync?: { drain(): Promise<HrSyncTickReport> }
 }
 
 // ————————————————————————— TickReport（17-§2「tick 返回结构化 actions」） —————————————————————————
+<<<<<<< ours
 
 /** 采集相位汇报 */
 export interface TickPhaseCollect {
@@ -460,6 +468,10 @@ export interface TickReport {
   inflightAfter: number
   errors: readonly string[]
 }
+=======
+// 类型体在 ./tick-report/types.ts（BC-S2 先拆再增）；此处再出口保持消费面 import 路径不变
+export type { TickPhaseCollect, TickDecisionEntry, TickActionResult, TickPhaseHarvest, TickPhaseDispatchBudget, TickReport } from './tick-report/types.ts'
+>>>>>>> theirs
 
 // ————————————————————————— 内部状态 —————————————————————————
 
@@ -1750,6 +1762,20 @@ export function createEngine(deps: EngineDeps): Engine {
       heartbeat = true
     }
 
+    // —— 相位 7 尾·人事同步队列消化（DEV-48，docs/52-§9.2）：每拍消化 maxHrSyncPerTick 条 ——
+    // 未注入（hrSync 配置关）=恒缺省不进报告；补单/挂账/三面执行/重试记账全在消化器内
+    // （src/engine/hrsync/hrsync.ts——engine 只留相位缝，关注点分离）。
+    let hrSync: HrSyncTickReport | undefined
+    if (deps.hrSync !== undefined) {
+      try {
+        hrSync = await deps.hrSync.drain()
+        mutations += hrSync.done + hrSync.failed
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        errors.push(`hr-sync drain 失败：${msg}`)
+      }
+    }
+
     return {
       seq,
       ts: { start: startedAt, end: now() },
@@ -1775,7 +1801,11 @@ export function createEngine(deps: EngineDeps): Engine {
         harvest,
         merge: { merged },
         recycle: { recycled },
-        account: { eventsAppended: tickEvents.length, heartbeat },
+        account: {
+          eventsAppended: tickEvents.length + (hrSync?.eventsAppended ?? 0),
+          heartbeat,
+          ...(hrSync !== undefined ? { hrSync } : {}),
+        },
       },
       actions: decidedActions,
       actionResults,

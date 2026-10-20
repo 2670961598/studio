@@ -73,3 +73,15 @@ export const PACKAGE_NAME = '@studio-next/taiga'
 
 /** 状态标记（onboard 写面三件+links 定版已落地；见头注覆盖表） */
 export const PACKAGE_STATUS = 'onboard-cut'
+export {
+  findInviteToken,
+  findMembershipByUsername,
+  inviteMember,
+  listMemberships,
+  patchMembershipRole,
+  registerWithInviteToken,
+  removeMembership,
+  roleIdOf,
+  type TaigaMembership,
+  type TaigaRoleRef,
+} from './memberships.ts'

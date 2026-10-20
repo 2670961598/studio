@@ -160,3 +160,46 @@ describe('daemon.yaml platform: taiga 配置面', () => {
     expect(() => wirePlatform(baseCfg({ taigaFieldsFile: map }))).not.toThrow()
   })
 })
+
+// —— 人事同步器配置面（DEV-48，docs/52-§九：缺省关；开=交叉校验 fail-fast） ——
+
+const BASE_YAML = ['db: ./x.sqlite', 'company: demo', 'platform: localfile'].join('\n')
+
+describe('daemon.yaml hrSync 配置面（DEV-48）', () => {
+  it('缺省：hrSync=false + 节流/重试缺省值（52-§9.2）', () => {
+    const cfg = parseDaemonConfig(BASE_YAML)
+    expect(cfg.hrSync).toBe(false)
+    expect(cfg.hrMatrix).toBe(false)
+    expect(cfg.hrMaxPerTick).toBe(2)
+    expect(cfg.hrRetryLimit).toBe(3)
+    expect(cfg.hrApplyingTimeoutMs).toBe(0) // 0=装配期按 10×tickMs 推导
+    expect(cfg.hrTaigaInvitePolls).toBe(10)
+  })
+
+  it('hrSync: true + platform: taiga 缺 hrTaigaInviteLog → 拒（令牌只落日志——§6.1）', () => {
+    expect(() => parseDaemonConfig(`${TAIGA_YAML}\nhrSync: true`)).toThrow(/hrTaigaInviteLog/)
+  })
+
+  it('hrSync: true + platform: taiga 配齐 inviteLog → 过', () => {
+    const cfg = parseDaemonConfig(`${TAIGA_YAML}\nhrSync: true\nhrTaigaInviteLog: ./var/taiga-invite.log`)
+    expect(cfg.hrSync).toBe(true)
+    expect(cfg.hrTaigaInviteLog).toBe('./var/taiga-invite.log')
+  })
+
+  it('hrSync: true + hrMatrix: true 缺 hrMatrixRooms（或缺 company= 项）→ 拒（§7.2）', () => {
+    expect(() => parseDaemonConfig(`${BASE_YAML}\nhrSync: true\nhrMatrix: true`)).toThrow(/hrMatrixRooms/)
+    expect(() => parseDaemonConfig(`${BASE_YAML}\nhrSync: true\nhrMatrix: true\nhrMatrixRooms: 研发部=#rd:srv`)).toThrow(/company=/)
+  })
+
+  it('hrMatrixRooms 合法形（company + 部门项）→ 过', () => {
+    const cfg = parseDaemonConfig(`${BASE_YAML}\nhrSync: true\nhrMatrix: true\nhrMatrixRooms: company=#co:srv;研发部=#rd:srv`)
+    expect(cfg.hrMatrixRooms).toBe('company=#co:srv;研发部=#rd:srv')
+  })
+
+  it('数值键坏值拒绝（hrMaxPerTick/hrRetryLimit/hrApplyingTimeoutMs/hrTaigaInvitePolls）', () => {
+    expect(() => parseDaemonConfig(`${BASE_YAML}\nhrSync: true\nhrMaxPerTick: 0`)).toThrow(/hrMaxPerTick/)
+    expect(() => parseDaemonConfig(`${BASE_YAML}\nhrSync: true\nhrRetryLimit: x`)).toThrow(/hrRetryLimit/)
+    expect(() => parseDaemonConfig(`${BASE_YAML}\nhrSync: true\nhrApplyingTimeoutMs: -1`)).toThrow(/hrApplyingTimeoutMs/)
+    expect(() => parseDaemonConfig(`${BASE_YAML}\nhrSync: true\nhrTaigaInvitePolls: 0`)).toThrow(/hrTaigaInvitePolls/)
+  })
+})

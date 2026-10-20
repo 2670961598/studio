@@ -349,6 +349,44 @@ const MIGRATIONS: readonly Migration[] = [
       '',
     ].join('\n'),
   },
+  {
+    // v7：DEV-48 人事同步器任务队列（docs/52-§11 DDL 拟稿 + 实现单补强）：
+    //   - hr_sync_log=同步任务账（可流转）——与 personnel_events（人事事实账，append-only）
+    //     语义不同，**不加 UPDATE/DELETE 触发器**（§11 行注明示：status 机流转合法）；
+    //   - id=ULID（appendEvent 同族生成口径）；op_key=幂等键（person+kind+platform+字段+
+    //     prev/next 目标值维——52-§11「person+kind+字段维度」的补强，跨批次重放安全由
+    //     执行器目标态收敛语义保证）；
+    //   - ticket NOT NULL：挂单号（apply 段入队时可为哨兵 @hr:<batchId>——补单在相位尾
+    //     消化器完成，D7 自动补开人事对账单；§5.2/§9.1 张力的实现取位，plan 留痕）；
+    //   - payload：变动明细 JSON（field/prev/next+目标态关键字段——执行器不回查目录，
+    //     幂等收敛所需；形状闸在 records.ts HrSyncPayloadSchema）；
+    //   - 拟稿点（52-§11 未列，实现单补）：payload 列。status 值域四态照 §11 DDL 注释
+    //     冻结（pending|applying|done|failed）：失败达限（重试 N 次）→ failed 终态 +
+    //     ESCALATE（断路形状借用 docs/17-§6，不自动开 bug 单——§9.2）；唤醒走
+    //     releaseHrSyncFailed 显式面（人工/对账岗），不发明第五态。
+    version: 7,
+    name: 'v0.12 DEV-48 人事同步任务队列：hr_sync_log（docs/52-§11）',
+    sql: [
+      'CREATE TABLE hr_sync_log (',
+      '  id TEXT PRIMARY KEY,',
+      '  ts INTEGER NOT NULL,',
+      '  company TEXT NOT NULL,',
+      '  person_id TEXT NOT NULL,',
+      '  kind TEXT NOT NULL,',
+      "  platform TEXT NOT NULL,             -- 'taiga' | 'matrix' | 'ledger'（52-§四.1 三面）",
+      '  op_key TEXT NOT NULL,',
+      '  ticket TEXT NOT NULL,',
+      "  status TEXT NOT NULL DEFAULT 'pending',  -- pending|applying|done|failed（52-§11）",
+      '  attempts INTEGER NOT NULL DEFAULT 0,',
+      '  last_error TEXT,',
+      '  payload TEXT,',
+      '  updated INTEGER NOT NULL',
+      ');',
+      'CREATE INDEX idx_hr_sync_log_pending ON hr_sync_log (status, updated);',
+      'CREATE INDEX idx_hr_sync_log_op_key ON hr_sync_log (op_key);',
+      '',
+    ].join('\n'),
+  },
 ]
 
 /** 内置迁移的最高版本（0 = 无迁移可用，仅占位防呆） */

@@ -82,12 +82,9 @@ import { AIWS_DIR, ensureAiwsTree } from '@studio-next/company'
 import { createModelCatalog, fingerprint, parseModelsYaml, DEFAULT_FLOW_TABLE } from '@studio-next/core'
 import { createGateway, CONTROL_TICKET } from '@studio-next/gateway'
 import type { SignatureContext } from '@studio-next/gateway'
-import { createLocalPlatform } from '@studio-next/localplatform'
 import { openLedger, type Ledger } from '@studio-next/store'
-import { createTaigaPlatform, type TaigaAuth } from '@studio-next/taiga'
 import type {
   CompanySnapshot,
-  FieldProvisionMap,
   FlowPlatform,
   InvokeSource,
   ModelCatalog,
@@ -106,10 +103,10 @@ import {
   type TickReport,
 } from '../engine/engine.ts'
 import { runEvolveStartupSelfCheck, type EvolveSelfCheckReport, type FrozenAsset } from '../evolve/evolve-guard.ts'
-import { createFakeAdapter, createFakePlatform } from '../engine/fakes.ts'
+import { createFakeAdapter } from '../engine/fakes.ts'
 import { createGatedPlatform } from '../engine/tools/gated-platform.ts'
 import { createDefaultGateRunner, createAcceptanceGateRunner } from '../engine/gate.ts'
-import { answerReloadNoCompanyDir, createHotReload, type HotReload } from '../control/hot-reload.ts'
+import { answerReloadNoCompanyDir, createHotReload, type HotReload, type HotReloadApplyReport } from '../control/hot-reload.ts'
 import { makeUlid } from '../engine/tools/id.ts'
 import { provisionDshBridgeOverlay } from '../engine/instructions-store.ts'
 import { CADENCE_SOURCE_MANIFEST, createCadenceSource, createSlaSource, SLA_SOURCE_MANIFEST } from '../engine/jobs-sources.ts'
@@ -119,6 +116,12 @@ import { nextRunAt, type Scheduler } from '../engine/scheduler.ts'
 import { flowsFromWorkflows } from '../engine/typeflows.ts'
 import { consumeStopRequest, readStopRequest, STOP_LAST_SEEN_KV_KEY, writeStopResult } from '../control/stop-channel.ts'
 import type { WorkerKeyDeps } from '../engine/worker-key.ts'
+import type { MatrixHrFace } from '../engine/hrsync/hrsync.ts'
+// 人事同步器装配（DEV-48，docs/52-§九）——hr 配置面/装配体/平台接线件（BC-S2 先拆再增）
+import { assembleHrSync, hrApplySegment } from './hrsync/assemble.ts'
+import { coerceHrServeKey, HR_SERVE_DEFAULTS, validateHrServeCross, type HrServeConfig } from './hrsync/config.ts'
+import { wirePlatform } from './platform/wire.ts'
+export { wirePlatform } from './platform/wire.ts'
 import {
   createFileWatchSource,
   createSchedulerSource,
@@ -130,8 +133,11 @@ import {
 
 // ————————————————————————— 配置 —————————————————————————
 
-/** serve 配置（v0 最小面；引擎子配置并入扁平键） */
-export interface ServeConfig {
+/**
+ * serve 配置（v0 最小面；引擎子配置并入扁平键）。hr* 人事同步器键子面在
+ * assembly/hrsync/config.ts 的 HrServeConfig（DEV-48，docs/52-§九——此处 extends 收平）。
+ */
+export interface ServeConfig extends HrServeConfig {
   /** 台账库路径（不存在则建库+migrate——store openLedger 语义） */
   db: string
   /** 协作平台：fake（demo）| localfile（docs/23 LocalFile 平台）| taiga（docs/30 推荐 + docs/32 真机试点；接入点见 wirePlatform） */
@@ -300,6 +306,8 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   jobs: false,
   jobPollMs: 15_000,
   matrix: false,
+  // 人事同步器缺省关（DEV-48，docs/52-§九；缺省值面=HR_SERVE_DEFAULTS 单一源）
+  ...HR_SERVE_DEFAULTS,
   fileWatch: false,
   cadence: false,
   sla: false,
@@ -462,6 +470,19 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'sla':
         cfg.sla = bool(value, key)
         break
+      // —— 人事同步器键组（DEV-48，docs/52-§九/§六.1/§七）——胁迫/校验细节收口在
+      //    assembly/hrsync/config.ts（coerceHrServeKey——键不属 hr 面则回落本 switch）
+      case 'hrSync':
+      case 'hrMaxPerTick':
+      case 'hrRetryLimit':
+      case 'hrApplyingTimeoutMs':
+      case 'hrMatrix':
+      case 'hrMatrixRooms':
+      case 'hrTaigaInviteLog':
+      case 'hrTaigaInvitePolls':
+      case 'hrTaigaInvitePollMs':
+        coerceHrServeKey(cfg, key, value, { str, num, bool })
+        break
       case 'reloadWatch':
         cfg.reloadWatch = bool(value, key)
         break
@@ -521,6 +542,8 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       throw new Error(`daemon.yaml：platform: taiga 缺必配键：${missing.join('、')}（见 serve.ts 头注 taiga 段）`)
     }
   }
+  // —— 人事同步器交叉校验（DEV-48，docs/52；细节在 assembly/hrsync/config.ts）——
+  validateHrServeCross(cfg)
   return cfg
 }
 
@@ -574,6 +597,7 @@ function realGateMode(config: ServeConfig): boolean {
 }
 
 /**
+<<<<<<< ours
  * Taiga 凭据供给（token 供给面）：daemon.yaml 只配形态（taigaAuth: password|token），
  * 值一律经进程 env——TAIGA_USERNAME+TAIGA_PASSWORD（密码态：JWT 自动登录，401 自动
  * 刷新/重登，http.ts）或 TAIGA_TOKEN+TAIGA_REFRESH（token 态：预换 token，有 refresh
@@ -660,6 +684,8 @@ export function wirePlatform(config: ServeConfig): FlowPlatform {
 }
 
 /**
+=======
+>>>>>>> theirs
  * daemon 侧网关身份（控制面与 worker-key 签发共用的 secret/署名上下文/工号）。
  * 签名上下文取快照首部门+公司级（控制面无人员档案，拟稿待批）。
  * **L1 热重载活对象**（docs/38-§2）：gateway 逐调用读 ctx 字段——reload 时 mutate
@@ -851,6 +877,14 @@ export function buildServeRuntime(
     /** matrix 源工厂（matrix: true 时调用；不注入=CONFIG_INVALID——daemon 不强依赖 matrix 包） */
     matrixSource?: () => InvokeSource
     /**
+     * Matrix 人事执行面工厂（DEV-48，docs/52-§七；hrSync+hrMatrix: true 时调用）：
+     * 装配单元注入 createMatrixHrFace 产物（结构同形 engine/hrsync MatrixHrFace——
+     * daemon 不 import @studio-next/matrix，同 matrixSource 注入纪律）。
+     */
+    hrMatrixFace?: () => MatrixHrFace
+    /** 出站脱敏补充秘密面（DEV-48，docs/52-§十二；matrix shared_secret 等装配单元持有物） */
+    hrKnownSecrets?: readonly string[]
+    /**
      * 进化判负自检注入面（测试确定性；缺省=仓样例集 FROZEN_FRAMEWORK_ASSETS + cwd 真文件
      * 哈希——src/evolve/evolve-guard.ts 头注锚定口径）：manifest/hashFile/fileExists 逐项覆盖。
      */
@@ -993,10 +1027,31 @@ export function buildServeRuntime(
 
   // worker 级 wkey（17-§7）：按单签发→TaskBrief.credentials env 注入→关单吊销（src/engine/worker-key.ts）
   const workerKeys = wireWorkerKeys(config, identity, clock, log)
+  // raw platform（未包网关代理的原件）：engine 拿 gated 代理（下）；daemon 自身动作
+  //（hr-sync 对账单开单）拿原件——网关收口的是 worker 写路径，非 daemon 自身动作
+  const rawPlatform = wirePlatform(config)
+
+  // —— 人事同步器装配（DEV-48，docs/52-§九；hrSync: true 时）：三面执行体 + 消化器 ——
+  //    注入位=EngineDeps.hrSync（engine 相位 7 尾 drain，行为缝不在引擎内）；hrSync 关
+  //    =零装配零注入，既有行为字节不变。装配体收口在 assembly/hrsync/assemble.ts
+  //    （启动期台账镜像接线 syncCompany + 断电复位 + Taiga/Matrix 面接线——docs/52-§六/§七/§九）。
+  const hrDigester = assembleHrSync({
+    config,
+    ...(opts?.hrMatrixFace !== undefined ? { hrMatrixFace: opts.hrMatrixFace } : {}),
+    ...(opts?.hrKnownSecrets !== undefined ? { hrKnownSecrets: opts.hrKnownSecrets } : {}),
+    ledger,
+    snapshot,
+    clock,
+    log,
+    engineDeptFallback: engineConfig.deptFallback,
+    platformIssues: rawPlatform.issues,
+    makeId: makeUlid,
+  })
   const engine = createEngine({
     // 写路径网关收口（17-§7）：raw platform 包一层 gated 代理——engine 写调用签名不变（透明）
-    platform: wireGatedPlatform(wirePlatform(config), config, identity, clock, log),
+    platform: wireGatedPlatform(rawPlatform, config, identity, clock, log),
     ...(workerKeys !== undefined ? { workerKeys } : {}),
+    ...(hrDigester !== undefined ? { hrSync: hrDigester } : {}),
     ledger,
     registry,
     assembler: makeAssembler(),
@@ -1099,7 +1154,7 @@ export function buildServeRuntime(
       log,
       deptFallback: engineConfig.deptFallback,
       watch: config.reloadWatch,
-      apply(next: CompanySnapshot): { jobsSeeded: number; jobsKept: number; jobsRemoved: number } {
+      apply(next: CompanySnapshot): HotReloadApplyReport {
         let seeded = 0
         let kept = 0
         let removed = 0
@@ -1112,12 +1167,23 @@ export function buildServeRuntime(
             `[serve] .AIWS 增量同步（reload）：新建 ${synced.created}、归档 ${synced.archived.length}${synced.archived.length > 0 ? `（${synced.archived.join('、')}——内容保留不删）` : ''}`,
           )
         }
+        // —— 人事同步入队（DEV-48，docs/52-§5.2 步2-3/§9.1）：diff 分类→三面任务入队
+        //    （哨兵票；diff 基=台账镜像现值，零平台 IO；hrSync 关=零动作）——实现体在
+        //    assembly/hrsync/assemble.ts（hrApplySegment）；抛错=apply 整体失败保持旧
+        //    态（fail-closed，与上同面）。
+        const hr = hrApplySegment({ enabled: config.hrSync, ledger, prev: companyState.snapshot, next, company: config.company, clock, makeId: makeUlid, log })
         if (config.jobs) {
           // 台账段先行（幂等可重入——seedJobs 逐岗独立 upsert；失败重试下一形态自愈）
           const s = seedJobs(ledger, next.jobs, clock())
           seeded = s.seeded
           kept = s.kept
           removed = removeMissingJobs(ledger, next)
+        }
+        // 台账镜像（DEV-48，docs/52-§5.2 步4）：people/departments 直覆（status 列归
+        // 任务执行写面 setPersonStatus，镜像不动——ledger.ts 头注口径）；幂等可重入。
+        // store v2 面本单前从未接 daemon——hrSync 开=启动+reload 双点接线
+        if (config.hrSync) {
+          ledger.syncCompany(next)
         }
         // 纯赋值段（不抛）：快照持有者 → 引擎整组换 → 署名上下文
         companyState.snapshot = next
@@ -1136,7 +1202,7 @@ export function buildServeRuntime(
         identity.ctx.company = next.name
         identity.ctx.dept = next.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback
         identity.ctx.level = Math.max(1, next.level)
-        return { jobsSeeded: seeded, jobsKept: kept, jobsRemoved: removed }
+        return { jobsSeeded: seeded, jobsKept: kept, jobsRemoved: removed, hr }
       },
     })
     log(

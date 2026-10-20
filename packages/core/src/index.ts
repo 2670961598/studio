@@ -75,6 +75,12 @@ export * from './budget.ts'
 // 进化管线纯逻辑（16-§四 v0.10 / 02-F3 / 20-§九：候选谱系+三态闸门+判负面）
 export * from './evolution.ts'
 
+// 人事变动分类器（DEV-48，docs/52-§5.1；七值域 入/调/升/降/停/复/退 单一源）
+export * from './hrsync.ts'
+
+// 出站密钥扫描/脱敏（DEV-48，docs/52-§十二 + AGENTS 纪律 6「出站内容过密钥扫描」）
+export * from './secrets.ts'
+
 /** 包名常量 */
 export const PACKAGE_NAME = '@studio-next/core'
 

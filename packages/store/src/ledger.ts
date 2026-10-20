@@ -82,6 +82,9 @@
  *     ts 闭区间过滤）。
  *   - 消费接线：报表聚合管线（company 包 reports.ts 月报最小闭环）与 :8789 财务页月报段
  *     读 listReports；daemon 侧定时岗产报落 insertReport 归后续刀接线。
+ *
+ * v7 扩面（DEV-48，docs/52-§9.2/§11）：hr_sync_log 任务账 + setPersonStatus——读写面与
+ * 接口文档收口在 hr-sync-queue.ts（Ledger extends HrSyncQueueFace，方法名恒平）。
  */
 import { writeFileSync } from 'node:fs'
 import type { DatabaseSync } from 'node:sqlite'
@@ -94,6 +97,9 @@ import {
   type ValidationIssue,
 } from '@studio-next/contract'
 import { openSqlite } from './driver.ts'
+import { createHrSyncQueue } from './hr-sync-queue.ts'
+import type { HrSyncQueueFace } from './hr-sync-queue.ts'
+import { assertRecord, optNum, optStr, str, type SqlRow } from './row-helpers.ts'
 import { currentVersion, migrate } from './migrations.ts'
 import {
   BudgetRecordSchema,
@@ -207,7 +213,7 @@ export type PersonnelTimelineEntry =
   | { source: 'session'; ts: number; record: SessionRecord }
 
 /** 台账句柄：daemon 持有；db 暴露 DatabaseSync 标准面（引擎切换只动 driver.ts） */
-export interface Ledger {
+export interface Ledger extends HrSyncQueueFace {
   db: DatabaseSync
   close(): void
   /** 当前 schema 版本（schema_version 表 MAX(version)；0=无迁移记录） */
@@ -366,22 +372,6 @@ function parseTokens(json: string): EventRecord['tokens'] {
 
 // —— 行 ↔ 记录映射（events；列集逐列对齐 contract EventRecordSchema 字段名） ——
 
-type SqlRow = Record<string, unknown>
-
-function str(row: SqlRow, key: string): string {
-  return String(row[key])
-}
-
-function optStr(row: SqlRow, key: string): string | undefined {
-  const v = row[key]
-  return v === null || v === undefined ? undefined : String(v)
-}
-
-function optNum(row: SqlRow, key: string): number | undefined {
-  const v = row[key]
-  return v === null || v === undefined ? undefined : Number(v)
-}
-
 function rowToEvent(row: SqlRow): EventRecord {
   const rec: EventRecord = {
     id: str(row, 'id'),
@@ -508,21 +498,6 @@ function errorMessage(err: unknown): string {
 }
 
 /** zod schema 的结构面（免 import zod 类型；safeParse 结果形状即可） */
-interface RecordParser<T> {
-  safeParse(input: unknown): { success: true; data: T } | { success: false; error: { issues: ReadonlyArray<{ path: ReadonlyArray<string | number | symbol>; message: string }> } }
-}
-
-/** v2 五表写口的临时闸：非法 → CONFIG_INVALID（subcause=<prefix>:<首个 issue 路径>；对齐 events 闸风格） */
-function assertRecord<T>(schema: RecordParser<T>, input: unknown, prefix: string): T {
-  const parsed = schema.safeParse(input)
-  if (!parsed.success) {
-    const first = parsed.error.issues[0]
-    const path = first === undefined ? '(root)' : first.path.map(String).join('.') || '(root)'
-    configInvalid(`${prefix}:${path}`, first === undefined ? undefined : `${path}: ${first.message}`)
-  }
-  return parsed.data
-}
-
 /** 打开（或创建）台账库：建库 → PRAGMA 对齐 → migrate()（幂等）→ 返回句柄 */
 export function openLedger(path: string): Ledger {
   const db = openSqlite(path)
@@ -1635,6 +1610,7 @@ export function openLedger(path: string): Ledger {
     appendProbeRun,
     getProbeRun,
     listProbeRuns,
+    ...createHrSyncQueue(db),
   }
 }
 
