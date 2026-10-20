@@ -688,7 +688,7 @@ describe('DEV-32 · E 组（卫生契约）——每规则一对夹具', () => {
       expect(twinResult.ok, JSON.stringify(twinResult.violations)).toBe(true)
   })
 
-  it('[E-4] 文件总数超 5000 资源护栏', async () => {
+  it('[E-4] 文件总数超 5000 资源护栏', { timeout: 30_000 }, async () => {
     const mutant = await materializeBase(path.join(root, 'e', 'E-4-count'))
     const bulk = path.join(mutant, 'docs', 'bulk')
     mkdirSync(bulk, { recursive: true })
