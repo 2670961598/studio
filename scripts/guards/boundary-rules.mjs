@@ -153,7 +153,7 @@ export const maxLinesPerFile = 600;
  * 清偿义务：每里程碑对账点核对净变化——只许净减（§十五.三.4）。
  */
 export const lineBaseline = {
-  "apps/daemon/src/engine/engine.ts": 1855, // DEV-48 相位缝(+14，hrsync/ 子域拆分完成后的装配缝)
+  "apps/daemon/src/engine/engine.ts": 1865, // DEV-141 咬合释放消费键(+10，bug 修复：DEDUP 自锁根治——123 号卡 3.5h 实证；前值 1855=DEV-48 相位缝)
   "packages/store/src/ledger.ts": 1665,
   "apps/daemon/src/assembly/serve.ts": 1476, // DEV-48 hrSync 装配与配置门(+63，逻辑在 engine/hrsync/)
   "packages/company/src/repo-validate.ts": 1021,

@@ -59,8 +59,12 @@
  *     dispose()/stop 通道同一条 kill 链：SIGTERM 进程组→宽限→SIGKILL；await 即 02-F1-08
  *     「kill 后等死再重派」的等死）→ 工位收口 interrupted（**R-B 接管同款在途语义**：
  *     接管≠收割——四要件对被杀工人不可判，不落 GATE_FAIL 不结算预算）→ 回滚首批位，
- *     重派 attempt+1 经 rescan 兜底（activity 意图键未释放——22-§三.2 在工键经
- *     GATE_PASS/GATE_FAIL 才释放，kill 面两皆无；与 R-B 接管后重派同款路径，DEV-42①）；
+ *     重派 attempt+1 经 rescan 兜底（**咬合收口即释放消费键——studio-dev-141 修订
+ *     2026-10-21**：原口径「activity 键未释放、重派靠 rescan 兜底」自相矛盾——rescan
+ *     意图键与上誓消费键同形（mirror 派发被杀时），兜底恰被自己压制：123 号卡 16:59
+ *     咬合→20:33 才被平台偶发活动救活，3.5h 零派发实证；修法=STALL 咬合事件作为该誓
+ *     了结锚进 events-index 释放面（见 events-index.ts STALL_KILL_CLOSE_ANCHOR）——
+ *     kill 面「无结论事件不释放」只在 GATE_FAIL 唯一释放路径的世界里成立）；
  *     ② 消亡面（无在途句柄——工人已死/重启后在途丢失，三例实况面）——GATE_FAIL 收口
  *     （note 前缀 WORKER_DEAD：，与 failHarvest 流异常面同法）+ 遗留 running 工位收口
  *     failed + activity 键释放 → 重派 attempt+1 活动驱动。两面均入断路器（dispositions：
@@ -72,7 +76,10 @@
  *     事件、键不释放（22-§三.2），STALL_SILENT 候选会被 dedup step1 挡成 DEDUP_NOOP
  *     = 看门狗对第二誓起失明（告警断流，「只叫不咬」的第二层）。豁免后健康探针每拍
  *     可达（mirror 候选+rescan 兜底），重派安全由状态机守（已派发态无前向 dispatch
- *     后继）；回滚后的新单态去重照常生效。
+ *     后继）；回滚后的新单态去重照常生效——**studio-dev-141 修订**：该口径只对「同誓
+ *     内 replay」成立；咬合收口即释放消费键（events-index 141 面），回退态单 rescan
+ *     兜底即刻可派（原「红证 ② t4 回滚回声仍 DEDUP」的期望世界=无外部活动时单卡死
+ *     数小时，123 号卡 3.5h 实证否决）。
  *   - docs/18-§三 状态归位：调度器不是控制面——岗单据与普通单走同一状态机同一收割链。
  *   - docs/16-§三 预算 / docs/20-§六.8：派发前预算闸（reserve→双行落账→才 launch——
  *     预算预留-结算**不落即不派**的机制化收口）+ 收割成功 settle 冲销（actual=每成功
@@ -124,8 +131,11 @@
  *     全列入参；未给值 COALESCE 不动，语句列位与原直发逐列同形）。收口路径结构性单次
  *     （closeWorkRecord 调用点均在 inflight 注销前、每 entry 恰一次），v4 面「已收口再收=
  *     CONFIG_INVALID」的防重闸在正常流不触发——是对原语句的收口语义收紧，非行为变更。
- *   - seenIntentKeys 语义：DISPATCH 落账即「意图已消费」；该单出现 GATE_PASS/GATE_FAIL 后键
- *     释放（成功→证据就绪走收割链；失败→回首批位可再派）。100 重复活动→1 次派发即此语义。
+ *   - seenIntentKeys 语义：DISPATCH 落账即「意图已消费」；该单出现 GATE_PASS/GATE_FAIL
+ *     后键释放（成功→证据就绪走收割链；失败→回首批位可再派）；**STALL 咬合（kill 面
+ *     收口锚）同样释放**（studio-dev-141：键释放≠收割结论——interrupted 单在工生命
+ *     已终结，重派是新誓唤起非 replay；fake 平台 transition 产活动故旧测试经 activity
+ *     通道逃生未暴露）。100 重复活动→1 次派发即此语义（同誓内口径不变）。
  *   - attempt 口径：= 该单 DISPATCH 事件计数 + 1（events 派生，可重放）。
  *   - events.level：IssueRecord.level 是流等级（0→L0 流），events.level 是 1..9 人员/公司口径——
  *     取 max(1, level)（0 级单按 1 记）。两口径混用为文档疑点，已上报不改文档。
@@ -178,7 +188,7 @@ import type { ExecutorRegistry } from '@studio-next/adapters'
 import type { Ledger } from '@studio-next/store'
 import { gateDispatch, settleDispatch, type BudgetGateDeps } from './budget-gate.ts'
 import { crashHook } from './crash-points.ts'
-import { buildEventIndex, type EventIndex } from './sentinel/events-index.ts'
+import { buildEventIndex, STALL_KILL_CLOSE_ANCHOR, type EventIndex } from './sentinel/events-index.ts'
 import type { GateRunner } from './gate.ts'
 import { accountJobOutput } from './jobs/output-account.ts'
 import { deliverablesOf, reconIssueRecord, runHarvestRecon, statHarvestDenial, WORKSPACE_UMASK, type HarvestReconResult } from './jobs/harvest-recon.ts'
@@ -1236,8 +1246,8 @@ export function createEngine(deps: EngineDeps): Engine {
       }
       makeEvent('STALL', rolled ?? fresh, workAttempt, tickEvents, {
         note:
-          `${silent}（第 ${nth}/${threshold} 次达阈——咬合）：${killNote}；工位收口 interrupted（R-B 在途语义：接管≠收割，四要件不可判）；` +
-          `rollback=${rolled !== undefined ? freshAnchor : '跳过（等级未登记流）'}；重派=attempt+1 经 rescan 兜底（activity 键未释放——22-§三.2，R-B 同款路径 DEV-42①；预算沿用 adopt 不结算）` +
+          `${silent}（第 ${nth}/${threshold} 次达阈——咬合）：${killNote}；${STALL_KILL_CLOSE_ANCHOR}（R-B 在途语义：接管≠收割，四要件不可判）；` +
+          `rollback=${rolled !== undefined ? freshAnchor : '跳过（等级未登记流）'}；重派=attempt+1 经 rescan 兜底（咬合收口即释放消费键——studio-dev-141 修订：原「activity 键未释放」口径致回退态单 rescan 兜底被 DEDUP_NOOP 压制 3.5h 实证；键释放≠收割结论，GATE_FAIL/预算面不动；预算沿用 adopt 不结算）` +
           `${workerKeys !== undefined ? '；wkey=env-离场（凭据随被杀子进程终结；重派重签新 key——不吊销 ticket）' : ''}`,
       })
       // 断路入账（dispositions：STALL countsTowardBreaker=true）
@@ -1508,11 +1518,12 @@ export function createEngine(deps: EngineDeps): Engine {
       const lane = issue.lane ?? config.defaultLane
       const intent = cand.intent
       // 看门狗喂数豁免（DEV-44）：在工（已派发态）单的本单消费键不注入 seenIntentKeys——
-      // dedup 防 replay 不防健康探针；镜像键被上一誓消费后（kill 面无结论事件、键不释放），
-      // STALL_SILENT 会被 step1 挡成 DEDUP_NOOP，看门狗对第二誓起失明（mirror 派发后告警
+      // dedup 防 replay 不防健康探针；镜像键被上一誓消费后（咬合前在工期），STALL_SILENT
+      // 会被 step1 挡成 DEDUP_NOOP，看门狗对第二誓起失明（mirror 派发后告警
       // 断流=「只叫不咬」的深层机制，红证 ④ 复现）。豁免只影响在工单 noop 决策码面
       // （DEDUP_NOOP→EVIDENCE_PENDING/STALL_SILENT）：重派安全由状态机守（已派发态无
-      // 前向 dispatch 后继），回滚后的新单态去重照常生效（红证 ② t4 回滚回声仍 DEDUP）。
+      // 前向 dispatch 后继）；回滚后的新单态——咬合收口已释放消费键（events-index
+      // studio-dev-141 面），rescan 兜底即刻可派，无需豁免。
       const candFlow = flowOf(issue)
       const ownSeenKey = candFlow === undefined ? null : index.seenKeyOf(ticket)
       const inWork = candFlow !== undefined && issue.state === flowAnchors(candFlow).dispatched
