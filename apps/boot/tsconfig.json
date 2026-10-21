@@ -1,0 +1,5 @@
+{
+  // 组合根类型门禁（继承仓根 tsconfig.base.json 的全部严格开关）
+  "extends": "../../tsconfig.base.json",
+  "include": ["src/**/*.ts"]
+}

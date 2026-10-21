@@ -255,7 +255,7 @@ form_secret: "<generate 产出，不入库>"
 | 5.7 | E2EE | v0.1 明文房间（README 已声明依赖本机未加密部署）；内网+无联邦下可接受；建房间时**不得开加密**（`encryption: false`） | 维持明文；如需再评估 vodozemac |
 | 5.8 | 90 天保留 | retention 配置+purge job 属 Synapse 可选模块，与「关单归档」并存的两套清理语义要分清（retention=时间维度、归档=单据维度）；**配置口径待验证** | 部署时实测 retention 生效行为后再冻结 |
 | 5.9 | 大写工号 vs 小写 localpart | MXID 语法限小写（§2.2），`@AGENT-3` 唤醒词与 `agent-3` 账号并存：mentions.ts 解析的是**消息文本**（默认样式只认大写工号），displayname=工号原文，映射规则需网关组装侧一致 | 冻结「localpart=工号小写、displayname=工号原文、唤醒词=大写工号」三线约定 |
-| 5.10 | 幂等键 | 25-§3.4 v1.3：mention 意图 dedupKey=Matrix eventId，单实例事件 id 全局唯一，天然满足 | 无动作，登记即可 |
+| 5.10 | 幂等键 | 25-§3.4 v1.3：mention 意图 dedupKey=Matrix eventId，单实例事件 id 全局唯一，天然满足 | 需源侧设置（105-刀A 勘误，批示9：mentions.ts 产意图即写 dedupKey=eventId，引擎校验 dedupKey===eventId 防伪造绕幂等） |
 
 ---
 

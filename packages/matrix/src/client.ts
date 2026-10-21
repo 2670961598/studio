@@ -11,6 +11,9 @@
  * DEV-48 增补（docs/52-§七 / 21A-§2.3）：GET+POST /_synapse/admin/v1/register（shared-secret
  * 建号）· whoami · displayname · createRoom · directory/room 别名解析 · invite/join/kick ·
  * power_levels 读写。薄网络层——业务幂等（ensure-shape）在 hr-face.ts（§7.4 纪律）。
+ * * 限流礼让（105-刀A A-4，F4 事故教训）：429 → 读 retry_after_ms 等待后重试一次
+ * （缺省 2000ms、上限 30000ms 封顶）；再 429 则抛错走调用方退避——不吞不限流。
+ * 长轮询：sync timeout 由调用方传入（适配层空闲期默认 25s，见 adapter.ts）。
  */
 import { createHmac } from 'node:crypto'
 /** 注入式 fetch 的最小结构类型（globalThis.fetch 天然满足） */
@@ -96,13 +99,30 @@ export class MatrixClient {
     }
   }
 
-  /** 发文本消息（m.room.message/m.text）；channel 语义=room_id（v0.1 不做 alias 解析） */
-  async sendMessage(roomId: string, text: string): Promise<{ eventId: string }> {
+  /**
+   * 发文本消息（m.room.message/m.text）；channel 语义=room_id（v0.1 不做 alias 解析）。
+   * mentionedUserIds：写入 m.mentions.user_ids（v1.5 意图元数据）——发送侧显式声明
+   * 结构化提及（105-刀A A-4）；缺省带空 m.mentions（明确「无提及」，防正文 @ 词元
+   * 触发收端客户端 push 高亮的误报面）。不解析 MXID，调用方负责传完整 user_id。
+   */
+  async sendMessage(
+    roomId: string,
+    text: string,
+    options?: { mentionedUserIds?: readonly string[] },
+  ): Promise<{ eventId: string }> {
     const txnId = `sn-${globalThis.crypto.randomUUID()}`
+    const mentioned = options?.mentionedUserIds
     const res = await this.request<{ event_id?: unknown }>(
       'PUT',
       `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${txnId}`,
-      { auth: true, body: { msgtype: 'm.text', body: text } },
+      {
+        auth: true,
+        body: {
+          msgtype: 'm.text',
+          body: text,
+          'm.mentions': mentioned !== undefined && mentioned.length > 0 ? { user_ids: [...mentioned] } : {},
+        },
+      },
     )
     if (typeof res.event_id !== 'string') throw new Error('matrix sendMessage: 响应缺 event_id')
     return { eventId: res.event_id }
@@ -260,25 +280,71 @@ export class MatrixClient {
       headers['Content-Type'] = 'application/json'
       body = JSON.stringify(init.body)
     }
-    const res = await this.fetchLike(url.toString(), {
-      method,
-      headers,
-      ...(body !== undefined ? { body } : {}),
-    })
-    if (!res.ok) throw await toApiError(method, path, res)
-    return (await res.json()) as T
+    // 429 礼让重试一次（105-刀A A-4）：读 retry_after_ms 等待（缺省 2000、上限 30s）；
+    // 再 429 抛错走调用方退避。循环体最多两轮，非 429 失败直抛。
+    for (let attempt = 0; ; attempt += 1) {
+      const res = await this.fetchLike(url.toString(), {
+        method,
+        headers,
+        ...(body !== undefined ? { body } : {}),
+      })
+      if (res.ok) return (await res.json()) as T
+      // 错误体只读一次（Response.json() 不可重复调用），解析结果同时喂错误面与 429 面
+      const parsed = await readErrorBody(res)
+      if (res.status === 429 && attempt === 0) {
+        await sleep(clampRetryAfterMs(parsed.retry_after_ms))
+        continue
+      }
+      throw apiErrorFrom(method, path, res.status, parsed)
+    }
   }
 }
 
-/** 非 2xx → 带 status/errcode 的 Error（端口纪律：不抛裸字符串） */
-async function toApiError(method: string, path: string, res: FetchResponse): Promise<Error> {
-  let detail = ''
+/** 非 2xx 错误体的防御性读取：能读 JSON 就读（errcode/error/retry_after_ms），否则空对象 */
+async function readErrorBody(
+  res: FetchResponse,
+): Promise<{ errcode?: string; error?: string; retry_after_ms?: number }> {
   try {
-    const parsed = (await res.json()) as { errcode?: unknown; error?: unknown }
-    if (typeof parsed.errcode === 'string') detail = ` ${parsed.errcode}`
-    if (typeof parsed.error === 'string') detail += `: ${parsed.error}`
+    const parsed = (await res.json()) as {
+      errcode?: unknown
+      error?: unknown
+      retry_after_ms?: unknown
+    }
+    return {
+      ...(typeof parsed.errcode === 'string' ? { errcode: parsed.errcode } : {}),
+      ...(typeof parsed.error === 'string' ? { error: parsed.error } : {}),
+      ...(typeof parsed.retry_after_ms === 'number' && Number.isFinite(parsed.retry_after_ms)
+        ? { retry_after_ms: parsed.retry_after_ms }
+        : {}),
+    }
   } catch {
-    // 非 JSON 错误体：只带状态码
+    return {} // 非 JSON 错误体：只带状态码
   }
-  return new Error(`matrix api ${res.status} ${method} ${path}${detail}`)
+}
+
+/** 429 等待时长：尊重服务端 retry_after_ms；缺省 2000ms；负数按 0；上限 30000ms 封顶 */
+function clampRetryAfterMs(retryAfterMs: number | undefined): number {
+  if (retryAfterMs === undefined) return 2000
+  return Math.min(Math.max(retryAfterMs, 0), 30_000)
+}
+
+/** 可中断安全的 sleep：定时器 unref（等待期不阻止进程退出），不抛错 */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    ;(timer as { unref?: () => void }).unref?.()
+  })
+}
+
+/** 非 2xx → 带 status/errcode 的 Error（端口纪律：不抛裸字符串） */
+function apiErrorFrom(
+  method: string,
+  path: string,
+  status: number,
+  parsed: { errcode?: string; error?: string },
+): Error {
+  let detail = ''
+  if (parsed.errcode !== undefined) detail = ` ${parsed.errcode}`
+  if (parsed.error !== undefined) detail += `: ${parsed.error}`
+  return new Error(`matrix api ${status} ${method} ${path}${detail}`)
 }

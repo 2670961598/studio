@@ -10,11 +10,20 @@
         "vitest": "^3.0.0",
       },
     },
+    "apps/boot": {
+      "name": "@studio-next/boot",
+      "version": "0.1.0",
+      "dependencies": {
+        "@studio-next/contract": "workspace:*",
+        "@studio-next/daemon": "workspace:*",
+        "@studio-next/matrix": "workspace:*",
+      },
+    },
     "apps/daemon": {
       "name": "@studio-next/daemon",
       "version": "0.1.0",
       "bin": {
-        "studio-next": "./src/bin.ts",
+        "studio-next": "./src/cli/main.ts",
       },
       "dependencies": {
         "@studio-next/adapters": "workspace:*",
@@ -302,6 +311,8 @@
     "@studio-next/adapters": ["@studio-next/adapters@workspace:packages/adapters"],
 
     "@studio-next/api": ["@studio-next/api@workspace:packages/api"],
+
+    "@studio-next/boot": ["@studio-next/boot@workspace:apps/boot"],
 
     "@studio-next/company": ["@studio-next/company@workspace:packages/company"],
 

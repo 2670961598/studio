@@ -6,7 +6,9 @@
   "description": "Studio Next daemon：框架唯一常驻进程（主循环/调度/看护）",
   "main": "src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./engine": "./src/engine/engine.ts",
+    "./serve": "./src/assembly/serve.ts"
   },
   "bin": {
     "studio-next": "./src/cli/main.ts"

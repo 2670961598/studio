@@ -1,0 +1,20 @@
+{
+  "name": "@studio-next/boot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Studio Next 组合根（105-刀A A-3）：装配 daemon × @studio-next/matrix——仓内唯一同时依赖两包的单元（25-§一.2 依赖方向的受准例外，daemon 本体零 matrix import）",
+  "main": "src/boot.ts",
+  "exports": {
+    ".": "./src/boot.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@studio-next/contract": "workspace:*",
+    "@studio-next/daemon": "workspace:*",
+    "@studio-next/matrix": "workspace:*"
+  }
+}

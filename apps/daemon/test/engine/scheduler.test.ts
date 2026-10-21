@@ -12,7 +12,7 @@
  *   8. schedule 意图全链（22-§一「源只产意图」）：ingest → tick 物化岗单据（PATROL 留痕）
  *      → decide → DISPATCH → 收割 → GATE_PASS → … → CLOSE（定时岗结果落台账）
  *   9. 意图幂等（22-§三.2）：同 dedupKey 重复 ingest 只物化一次；重启重放（新引擎同台账）不双开
- *  10. 意图明报：unknown job_id / 公司不匹配 / 非 schedule kind / 缺 dedupKey 逐项如实入 errors
+ *  10. 意图明报：unknown job_id / 公司不匹配 / 分发表外 kind（webhook，105-刀A 后 mention 已开闸）/ 缺 dedupKey 逐项如实入 errors
  *  11. serve 接线：jobs/jobPollMs 配置解析、seedJobs 播种语义（新岗下一槽、既有岗保欠账、
  *      坏 cron 隔离窗）、buildServeRuntime 起停（stop=停调度器+drain+关台账，SIGINT 同收口）
  */
@@ -586,11 +586,11 @@ describe('schedule 意图：明报路径（不静默）', () => {
     s.ledger.close()
   })
 
-  it('非 schedule kind → errors 明报不支持', async () => {
+  it('分发表外 kind（webhook）→ errors 明报不支持（105-刀A：mention 已开闸，改用 webhook 钉不支持面）', async () => {
     const s = buildEngineStack('kind-reject')
-    s.engine.ingest([{ kind: 'mention', company: 'demo', source: 'test', dedupKey: 'm1' }])
+    s.engine.ingest([{ kind: 'webhook', company: 'demo', source: 'test', dedupKey: 'm1' }])
     const report = await s.engine.tick()
-    expect(report.errors.join('\n')).toContain("kind='mention' 不支持")
+    expect(report.errors.join('\n')).toContain("kind='webhook' 不支持")
     s.ledger.close()
   })
 

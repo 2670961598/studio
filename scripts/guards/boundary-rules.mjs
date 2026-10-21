@@ -100,6 +100,10 @@ export const packageLayers = {
  * （daemon→api/prompt/yt 为已声明休眠边，一并冻结为允许）。未列出的跨包依赖=违例。
  */
 export const allowedPackageEdges = [
+  // —— apps/boot（105-刀A Matrix 装配单元，studio-dev-123 宰相亲批入表 2026-10-21）——
+  ["boot", "contract"],
+  ["boot", "daemon"],
+  ["boot", "matrix"],
   ["daemon", "panel"],
   ["daemon", "api"],
   ["daemon", "prompt"],
@@ -153,15 +157,15 @@ export const maxLinesPerFile = 600;
  * 清偿义务：每里程碑对账点核对净变化——只许净减（§十五.三.4）。
  */
 export const lineBaseline = {
-  "apps/daemon/src/engine/engine.ts": 1865, // DEV-141 咬合释放消费键(+10，bug 修复：DEDUP 自锁根治——123 号卡 3.5h 实证；前值 1855=DEV-48 相位缝)
+  "apps/daemon/src/engine/engine.ts": 2035, // 105-刀A 消费门(+170：kind→handler 分发表+③混合语义——提案落位=引擎核心域；拆分归后续 contrib 刀；前值 1865=DEV-141)
   "packages/store/src/ledger.ts": 1665,
-  "apps/daemon/src/assembly/serve.ts": 1476, // DEV-48 hrSync 装配与配置门(+63，逻辑在 engine/hrsync/)
+  "apps/daemon/src/assembly/serve.ts": 1491, // 105-刀A matrix 必配键交叉校验(+15) // DEV-48 hrSync 装配与配置门(+63，逻辑在 engine/hrsync/)
   "packages/company/src/repo-validate.ts": 1021,
   "apps/daemon/test/control/hot-reload.test.ts": 930,
   "apps/daemon/test/engine/scheduler.test.ts": 785,
   "packages/company/src/dependencies.ts": 775,
   "packages/company/test/repo-validate.test.ts": 766,
-  "apps/daemon/test/engine/sources.test.ts": 749,
+  "apps/daemon/test/engine/sources.test.ts": 768, // 105-刀A 唤醒源测试(+19)
   "packages/adapters/src/dsh.ts": 726,
   "packages/taiga/src/testutil.ts": 723,
   "packages/adapters/test/dsh.test.ts": 715,
