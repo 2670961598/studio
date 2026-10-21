@@ -77,8 +77,8 @@ export const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
       条目=现象/根因/解法/预防 + 完整复盘附录）→ 落 POSTMORTEM 事件（note=条目约定路径、
       size、payload_hash）。--input JSON 七件套见 src/evolve/postmortem.ts PostmortemInput；
       --input 必给（复盘正文不可虚构）；库必须已存在（写面不代建库）
-  studio-next panel --db <库路径> [--port 8787]
-      :8787 只读监控面（v0.3，docs/16-§四）：jobs/runs/workers/事件流（SSE），
+  studio-next panel --db <库路径> [--port 8791]
+      :8791 只读监控面（v0.3，docs/16-§四）：jobs/runs/workers/事件流（SSE），
       全部读 SQLite 零写；库不存在即拒启；Ctrl-C 优雅关闭
   studio-next overview --company <目录> [--company <目录2> …] [--db <库路径>] [--port 8789]
       :8789 公司概览面（v0.7 读面，docs/04-§七）：挂载公司目录（可多家，校验不过拒绝挂载）
@@ -124,6 +124,6 @@ export const USAGE = `studio-next —— Studio Next 框架 CLI（v0.1）
       重启）——残留请求不再使重启进程一拍自停；回执文件保留，轮询按 id 匹配不受影响。
       超时无回执 exit 1（daemon 未运行/拍太慢/控制面目录不符）；工位根发现序与 reload 同款。
 
-默认值：--dir 缺省 ./<slug>；--name 缺省 <slug>；--port 缺省 8787（panel）/ 8789（overview）/ 8788（external）
+默认值：--dir 缺省 ./<slug>；--name 缺省 <slug>；--port 缺省 8791（panel）/ 8789（overview）/ 8788（external）
 文档：docs/04-公司目录与等级体系.md §二/§七/§九；docs/16-技术实现与里程碑.md §四；docs/02-需求-框架面.md F2-11/F2-12；docs/17-整体技术设计.md §8`
 

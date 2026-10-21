@@ -1,8 +1,8 @@
 /**
- * server —— :8787 监控面服务器层（v0.3 首刀 + 全量口径补齐）
+ * server —— :8791 监控面服务器层（v0.3 首刀 + 全量口径补齐）
  *
  * 依据：docs/16-§四 v0.3（验收「信息覆盖：jobs/runs/workers/事件流齐备」）、docs/17-§8
- * （:8787 端面全量口径：jobs/runs/workers 实时流 SSE/事件流/断路器与漂移告警/成本趋势
+ * （:8791 端面全量口径：jobs/runs/workers 实时流 SSE/事件流/断路器与漂移告警/成本趋势
  * ——全部读 SQLite；断路器+成本两卡本刀补齐，漂移告警待判据冻结）、docs/16-§二
  * （Web 选型 Hono + streamSSE，已登记）。
  *
@@ -271,12 +271,12 @@ export function createPanelApp(opts: PanelAppOptions): PanelApp {
 }
 
 // —— 真监听壳（薄）：node:http fetch 适配器 + 生命周期 ——
-// ①② 提取为共用件（:8787 servePanel 与 :8789 serveOverview 同一实现——overview/server.ts 复用）：
+// ①② 提取为共用件（:8791 servePanel 与 :8789 serveOverview 同一实现——overview/server.ts 复用）：
 // toWebRequest / forwardResponse / listenHono 导出；错误兜底文案按 label 参数化。
 
 /** servePanel 选项 */
 export interface ServePanelOptions extends PanelAppOptions {
-  /** 绑定地址（缺省 127.0.0.1——:8787 是内部监控面，默认只绑本机） */
+  /** 绑定地址（缺省 127.0.0.1——:8791 是内部监控面，默认只绑本机） */
   hostname?: string
 }
 
@@ -292,7 +292,7 @@ const HOP_BY_HOP_RESPONSE = new Set(['connection', 'keep-alive', 'proxy-connecti
  * IncomingMessage → 标准 Request；断连经 AbortSignal 传给 hono。
  * v0.9 起 :8788 对外面有 POST 请求体：非 GET/HEAD 方法收集 body 为 Buffer（Request BodyInit）。
  * 客户端键注入：socket.remoteAddress 以 `x-sn-client-key` 头写入（**覆写**同名入站头——
- * 外部不可伪造），供对外面配额按客户端分桶；:8787/:8789 不读此头，行为不变。
+ * 外部不可伪造），供对外面配额按客户端分桶；:8791/:8789 不读此头，行为不变。
  */
 export async function toWebRequest(req: IncomingMessage, signal: AbortSignal): Promise<Request> {
   const host = typeof req.headers.host === 'string' && req.headers.host !== '' ? req.headers.host : '127.0.0.1'

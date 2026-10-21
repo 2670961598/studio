@@ -64,14 +64,14 @@
  *       → 写案例库条目文件（<casebook>/<date>-<slug>.md：条目+完整复盘自包含）→ 落
  *       POSTMORTEM 事件（note=条目路径、size、payload_hash）。--input 必给（复盘正文
  *       不可虚构——缺即拒，fail-closed）；库必须已存在（写面不代建库）。
- *   panel --db <库路径> [--port 8787]
- *       :8787 只读监控面（v0.3）：jobs/runs/workers/事件流（SSE），全部读 SQLite 零写；
+ *   panel --db <库路径> [--port 8791]
+ *       :8791 只读监控面（v0.3）：jobs/runs/workers/事件流（SSE），全部读 SQLite 零写；
  *       库不存在即拒启（panel 不代建库）；SIGINT/SIGTERM 优雅关闭
  *   overview --company <目录> [--company <目录2> …] [--db <库路径>] [--port 8789]
  *       :8789 公司概览面（v0.7 读面）：挂载公司目录（校验不过拒绝挂载）→ /<slug>/ 概览/
  *       组织/人事/进度/财务五读面（全 GET 只读、服务端渲染零前端依赖）；--db 可选（给出则
  *       进度/财务页读台账，必须已存在——只读不代建库）；项目/报表/编辑中心归后续刀。
- *       【选型说明（拟稿）】独立子命令而非 serve --overview-port：:8787 本就是独立 panel
+ *       【选型说明（拟稿）】独立子命令而非 serve --overview-port：:8791 本就是独立 panel
  *       子命令（serve 主循环不内嵌面板），:8789 同款——只读壳与 daemon 生命周期解耦，
  *       WAL 同库并存安全；待制作人批示后固化
  *   external --company <目录> [--company <目录2> …] [--db <库路径>] [--port 8788]

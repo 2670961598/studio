@@ -11,7 +11,7 @@
  *   [x] v0.1  `studio-next init` 从 templates/company-2-level 生成公司目录 + 目录校验器（M3：src/cli/main.ts 出 studio-next bin）
  *   [ ] v0.1  契约包接线：cases.json 规格测试进 CI
  *   [ ] v0.2  store 接线：SQLite 台账建表、migration、快照/重建脚本
- *   [x] v0.3  panel 接线：:8787 只读监控（jobs/runs/workers/事件流；`studio-next panel --db`）
+ *   [x] v0.3  panel 接线：:8791 只读监控（jobs/runs/workers/事件流；`studio-next panel --db`）
  *   [x] v0.4  首个定时岗：调度表 + 启动补跑（coalesce 成一次）+ 结果落账
  *             （apps/daemon/src/engine/scheduler.ts + engine.ingest 意图入口 + serve jobs 开关；
  *             48h 连续运行证据与真实系统岗归后续运维单——诚实边界见 scheduler.ts 头注）

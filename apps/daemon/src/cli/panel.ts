@@ -22,7 +22,7 @@ export async function cmdPanel(argv: string[]): Promise<number> {
     console.error(USAGE)
     return 1
   }
-  let port = 8787
+  let port = 8791
   if (parsed.flags.port !== undefined) {
     port = Number.parseInt(parsed.flags.port, 10)
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -38,7 +38,7 @@ export async function cmdPanel(argv: string[]): Promise<number> {
     console.error(`panel 启动失败：${errText(err)}`)
     return 1
   }
-  console.log(`[panel] :8787 监控面已监听 → http://${handle.hostname}:${String(handle.port)}/（只读，Ctrl-C 退出）`)
+  console.log(`[panel] 监控面已监听 → http://${handle.hostname}:${String(handle.port)}/（只读，Ctrl-C 退出）`)
   console.log(`[panel] 台账：${path.resolve(dbPath)}（零写；端面 /api/health|jobs|runs|workers|events|events/stream|snapshot）`)
   await new Promise<void>((resolve) => {
     const stop = (): void => resolve()

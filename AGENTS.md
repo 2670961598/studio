@@ -31,7 +31,7 @@ packages/yt/          YouTrack 客户端：活动流游标、字段映射、网�
 packages/adapters/    executor 适配器：dsh（默认）/ claude / codex / kimi，四原语实现
 packages/company/     公司目录：schema 校验、挂载、报表聚合、定时岗调度源
 packages/prompt/      L0-L5 组装器 → AGENTS.md + 任务书 + 分层指纹
-packages/panel/       Hono：:8787 监控 / :8789 公司概览（<slug> 路由）
+packages/panel/       Hono：:8791 监控 / :8789 公司概览（<slug> 路由）
 packages/api/         Hono：:8788 对外 API（只落单不派工，默认局域网）
 templates/            公司目录模板（studio-next init 的脚手架）
 docs/                 设计文档库——施工依据，冲突以文档为准
@@ -44,7 +44,7 @@ docs/                 设计文档库——施工依据，冲突以文档为准
 - 类型门禁：`bun run typecheck`（等价 `tsc --noEmit`，根 `tsconfig.json` 覆盖全部包）
 - 类型纪律：`strict` + 全量严格开关；**只写可擦除语法**（禁 enum / namespace / 参数属性 / 装饰器）
 - 起进程：`bun run daemon`（骨架阶段只打印启动横幅就退出）
-- 端口约定：8787 监控（内部）｜8788 对外 API（默认局域网）｜8789 公司概览
+- 端口约定：8791 监控（内部）｜8788 对外 API（默认局域网）｜8789 公司概览
 - 分层宪法门禁：`bun run guard:boundaries`（依赖方向冻结+尺寸阈 25/600+域平面基线，
   规则唯一源 `scripts/guards/boundary-rules.mjs`，宪法=docs/20-§十五；`bun run test`
   前置串接——层间新边/平面超基线/新超限件会先红测试闸；改方向表/阈值/基线=提案流）
