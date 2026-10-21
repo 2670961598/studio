@@ -9,6 +9,7 @@
 import type { EventRecord, TicketId } from '@studio-next/contract'
 import type { Action, DecisionCode } from '@studio-next/core'
 import type { HrSyncTickReport } from '../hrsync/hrsync.ts'
+import type { HarvestReconResult } from '../jobs/harvest-recon.ts'
 
 /** 采集相位汇报 */
 export interface TickPhaseCollect {
@@ -48,6 +49,8 @@ export interface TickPhaseHarvest {
   completed: number
   failed: number
   pending: number
+  /** 相位 4 尾对账步（P3，studio-dev-100 提案 §4.3-1；节流拍才有——缺省每 30 拍） */
+  recon?: HarvestReconResult
 }
 
 /** 派发相位预算闸汇报（docs/16-§三 reserve→refusal；20-§六.8） */

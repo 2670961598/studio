@@ -74,8 +74,8 @@ describe('契约语料（evt/rpt 域）', () => {
 // —— 事件名：冻结枚举 + 前缀族双通道（17-§3）——————————————————
 
 describe('事件名双通道（17-§3 冻结清单）', () => {
-  it('冻结清单计数互证：23 具体 + 2 前缀族 = 25 类（F2-02「25 类事件枚举」）', () => {
-    expect(EVENT_NAMES).toHaveLength(23)
+  it('冻结清单计数互证：23 具体 + 2 前缀族 = 25 类；P3 增补后 25 具体 + 2 前缀族 = 27 类（F2-02 互证面随提案 §6.2-4 批示更新）', () => {
+    expect(EVENT_NAMES).toHaveLength(25)
     expect(EVENT_PREFIX_FAMILIES).toEqual(['GW_', 'REPORT_'])
   })
 
