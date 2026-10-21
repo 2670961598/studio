@@ -4,20 +4,18 @@ import path from 'node:path'
 import { parseDaemonConfig } from '../assembly/serve.ts'
 import { awaitReloadResult, writeReloadRequest } from '../control/hot-reload.ts'
 import { makeUlid } from '../engine/tools/id.ts'
-import { USAGE } from './usage.ts'
+import { CONCISE, SECTION } from './usage.ts'
+import { helpOk, usageFail, wantsHelp } from './help.ts'
 import { errText, parseArgv } from './argv.ts'
 
 export async function cmdReload(argv: string[]): Promise<number> {
+  if (wantsHelp(argv)) return helpOk(SECTION.reload) // S1b 预检：先于解析与一切副作用
   const parsed = parseArgv(argv, new Set(['company', 'root', 'config', 'timeout']))
   if ('error' in parsed) {
-    console.error(`reload：${parsed.error}`)
-    console.error(USAGE)
-    return 1
+    return usageFail('reload', parsed.error, CONCISE.reload)
   }
   if (parsed.positionals.length > 0) {
-    console.error(`reload：多余的位置参数：${parsed.positionals.join(' ')}`)
-    console.error(USAGE)
-    return 1
+    return usageFail('reload', `多余的位置参数：${parsed.positionals.join(' ')}`, CONCISE.reload)
   }
   let timeoutMs = 15_000
   if (parsed.flags.timeout !== undefined) {

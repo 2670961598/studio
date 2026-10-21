@@ -13,6 +13,9 @@ export interface Argv {
  * 零依赖 argv 解析：--key value 成对消费（booleanFlags 中的旗标无值，出现即真）；
  * 未知旗标 / 缺值即用法错误。repeatableFlags 中的旗标可多次出现（取值收集进 multi，
  * 后值不覆盖前值）。
+ *
+ * `--key=value` 内联式同样收（studio-dev-103 E12/F5 处置，studio-dev-125 实施——加法式：
+ * 空格式语义不变，两式并存；布尔旗标不收内联值，`--flag=x` 即用法错误）。
  */
 export function parseArgv(argv: string[], valueFlags: ReadonlySet<string>, repeatableFlags?: ReadonlySet<string>, booleanFlags?: ReadonlySet<string>): Argv | { error: string } {
   const positionals: string[] = []
@@ -22,19 +25,29 @@ export function parseArgv(argv: string[], valueFlags: ReadonlySet<string>, repea
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i] ?? ''
     if (arg.startsWith('--')) {
-      const key = arg.slice(2)
+      const eq = arg.indexOf('=')
+      const key = eq === -1 ? arg.slice(2) : arg.slice(2, eq)
+      const inline = eq === -1 ? undefined : arg.slice(eq + 1)
       if (booleanFlags?.has(key)) {
+        if (inline !== undefined) return { error: `布尔旗标 --${key} 不收值（去掉 =${inline}）` }
         booleans.add(key)
         continue
       }
       if (!valueFlags.has(key)) return { error: `未知参数：${arg}` }
-      const value = argv[i + 1]
-      if (value === undefined || value.startsWith('--')) return { error: `${arg} 缺少取值` }
+      let value: string
+      if (inline !== undefined) {
+        if (inline === '') return { error: `${arg} 缺少取值` }
+        value = inline
+      } else {
+        const next = argv[i + 1]
+        if (next === undefined || next.startsWith('--')) return { error: `${arg} 缺少取值` }
+        value = next
+        i += 1
+      }
       flags[key] = value
       if (repeatableFlags?.has(key)) {
         ;(multi[key] ??= []).push(value)
       }
-      i += 1
     } else {
       positionals.push(arg)
     }

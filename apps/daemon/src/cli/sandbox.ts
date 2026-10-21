@@ -3,32 +3,26 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { openLedger } from '@studio-next/store'
 import { renderSandboxLines, runCandidateSandbox } from '../evolve/sandbox.ts'
-import { USAGE } from './usage.ts'
+import { CONCISE, SECTION } from './usage.ts'
+import { helpOk, usageFail, wantsHelp } from './help.ts'
 import { errText, parseArgv } from './argv.ts'
 
 export async function cmdSandbox(argv: string[]): Promise<number> {
+  if (wantsHelp(argv)) return helpOk(SECTION.sandbox) // S1b 预检：先于解析与一切副作用
   const parsed = parseArgv(argv, new Set(['db', 'candidate', 'command', 'file', 'timeout', 'root']))
   if ('error' in parsed) {
-    console.error(`sandbox：${parsed.error}`)
-    console.error(USAGE)
-    return 1
+    return usageFail('sandbox', parsed.error, CONCISE.sandbox)
   }
   if (parsed.positionals.length > 0) {
-    console.error(`sandbox：多余的位置参数：${parsed.positionals.join(' ')}`)
-    console.error(USAGE)
-    return 1
+    return usageFail('sandbox', `多余的位置参数：${parsed.positionals.join(' ')}`, CONCISE.sandbox)
   }
   const dbPath = parsed.flags.db
   if (dbPath === undefined) {
-    console.error('sandbox：缺少 --db <库路径>')
-    console.error(USAGE)
-    return 1
+    return usageFail('sandbox', '缺少 --db <库路径>', CONCISE.sandbox)
   }
   const candidateId = parsed.flags.candidate
   if (candidateId === undefined) {
-    console.error('sandbox：缺少 --candidate <候选 id>')
-    console.error(USAGE)
-    return 1
+    return usageFail('sandbox', '缺少 --candidate <候选 id>', CONCISE.sandbox)
   }
   let timeoutMs: number | undefined
   if (parsed.flags.timeout !== undefined) {
@@ -40,7 +34,7 @@ export async function cmdSandbox(argv: string[]): Promise<number> {
   }
   const resolvedDb = path.resolve(dbPath)
   if (!existsSync(resolvedDb)) {
-    console.error(`sandbox：库不存在：${resolvedDb}（候选必须在库——写面不代建库，先由 daemon/提案面建库）`)
+    console.error(`sandbox：库不存在：${resolvedDb}（候选必须在库——写面不代建库——建库走 studio-next company create <slug>（缺省即建库））`)
     return 1
   }
   try {

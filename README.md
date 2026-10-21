@@ -21,7 +21,7 @@ Studio Next 是一个 **AI 公司框架**：把「一家公司」建模成代码
 │   ├── adapters/           # executor 适配器：dsh（默认）/ claude / codex / kimi
 │   ├── company/            # 公司目录：schema 校验、挂载、报表聚合、定时岗调度源
 │   ├── prompt/             # L0-L5 提示词组装器 → AGENTS.md + 任务书 + 分层指纹
-│   ├── panel/              # Hono 面板：:8787 监控 / :8789 公司概览（<slug> 路由）
+│   ├── panel/              # Hono 面板：:8791 监控 / :8789 公司概览（<slug> 路由）
 │   └── api/                # :8788 对外 API（只落单不派工，默认局域网）
 ├── templates/company-2-level/   # 2 级公司目录模板（studio-next init 的脚手架）
 └── docs/                   # 设计文档库（施工依据）
@@ -29,24 +29,35 @@ Studio Next 是一个 **AI 公司框架**：把「一家公司」建模成代码
 
 ## Quickstart
 
-> 占位：依赖尚未安装，命令均为目标形态，实现进度见里程碑（`docs/16-技术实现与里程碑.md`）。
+以下命令在仓内均可直接跑通（现状即所得；未接线面的诚实清单见 `apps/daemon/src/assembly/serve.ts` 头注）。
 
 ```bash
-# 1. 安装依赖（bun workspaces）
+# 1. 安装依赖（bun workspaces；daemon 跑 Node 24 LTS——原生 type-stripping 直跑 .ts）
 bun install
 
 # 2. 类型门禁（合同要求：CI 必跑）
 bun run typecheck
 
-# 3. 测试（单测 + 契约测试）
+# 3. 测试（边界门禁 + 单测 + 契约测试）
 bun run test
 
-# 4. 起常驻进程
-bun run daemon
+# 4. CLI 命令面（全命令清单；单命令 -h/--help 看分面；--version 看版本）
+bun apps/daemon/src/cli/main.ts --help
 
-# 5. 从模板生成一家公司（目标形态，暂未实现）
-bun run studio-next init ./my-company --template company-2-level
+# 5. 从模板生成一家公司（<slug>=小写字母/数字/连字符，如 my-company；--template 收模板
+#    目录路径，缺省仓根 templates/company-2-level——不是模板名）
+bun apps/daemon/src/cli/main.ts init my-company
+
+# 6. 一条命令创建并接线一家公司（init→provision→建号→jobs→插件→报告→daemon.yaml 骨架，
+#    幂等；studio-dev-103 S4A）
+bun apps/daemon/src/cli/main.ts company create my-company
+
+# 7. 起常驻主循环（七相位引擎；配置样例内嵌于 serve --help——company create 已顺产骨架）
+bun apps/daemon/src/cli/main.ts serve --config var/daemon.yaml
 ```
+
+> 注：`bun run daemon` 仍是骨架占位（横幅即退）——常驻进程走上面第 7 步的 `serve`；
+> CLI 入口 `apps/daemon/src/cli/main.ts` 亦即 package.json bin `studio-next` 的落点。
 
 ## 文档
 

@@ -15,20 +15,18 @@ import path from 'node:path'
 import { buildContext, cureFactoryStatuses, type FactoryStatusSnapshot } from '@studio-next/taiga'
 import { loadTaigaFieldMap, parseDaemonConfig, resolveTaigaAuth } from '../assembly/serve.ts'
 import { errText, parseArgv } from './argv.ts'
-import { USAGE } from './usage.ts'
+import { CONCISE, SECTION } from './usage.ts'
+import { helpOk, usageFail, wantsHelp } from './help.ts'
 
 export async function cmdTaigaCure(argv: string[]): Promise<number> {
+  if (wantsHelp(argv)) return helpOk(SECTION['taiga-cure']) // S1b 预检：先于解析与一切副作用
   const parsed = parseArgv(argv, new Set(['config']))
   if ('error' in parsed) {
-    console.error(`taiga-cure：${parsed.error}`)
-    console.error(USAGE)
-    return 1
+    return usageFail('taiga-cure', parsed.error, CONCISE['taiga-cure'])
   }
   const configPath = parsed.flags.config
   if (configPath === undefined) {
-    console.error('taiga-cure：缺少 --config <daemon.yaml>')
-    console.error(USAGE)
-    return 1
+    return usageFail('taiga-cure', '缺少 --config <daemon.yaml>', CONCISE['taiga-cure'])
   }
   try {
     const config = parseDaemonConfig(readFileSync(path.resolve(configPath), 'utf8'))
