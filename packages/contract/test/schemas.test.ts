@@ -12,6 +12,7 @@ import {
   ERROR_CATEGORIES_COMPLETE,
   EVENT_NAMES,
   EVENT_PREFIX_FAMILIES,
+  EXECUTOR_ERROR_CODES,
   EventRecordSchema,
   PLATFORM_ACTIVITY_KINDS,
   SummarySidecarSchema,
@@ -19,6 +20,7 @@ import {
   evtSubject,
   extractReportSkeleton,
   isEventName,
+  isExecutorErrorCode,
   isPlatformActivityKind,
   rptSubject,
   runCases,
@@ -128,6 +130,39 @@ describe('PlatformActivity.kind 冻结词表（三实现实际产出归并）', 
       '',
     ]) {
       expect(isPlatformActivityKind(bad)).toBe(false)
+    }
+  })
+})
+
+// —— StreamEvent.turn_end.errorCode 冻结词表（25-§3.1 末 v1.7 裁决，102-P2-③）—————
+
+describe('executor errorCode 冻结词表（102-P2：已产码收编）', () => {
+  it('三词冻结：AUTH/MISSING_CREDENTIAL/EXTERNAL_RATE_LIMIT，序即成员序', () => {
+    expect([...EXECUTOR_ERROR_CODES]).toEqual(['AUTH', 'MISSING_CREDENTIAL', 'EXTERNAL_RATE_LIMIT'])
+  })
+
+  it('三词全部命中词表判定（红向）', () => {
+    for (const code of EXECUTOR_ERROR_CODES) expect(isExecutorErrorCode(code)).toBe(true)
+  })
+
+  it('收编账：dsh 两码（v1.5 先行）+ daemon fake 既成值（102 E7 漂移）在册——词表冻结如实反映已产码', () => {
+    // E7：apps/daemon/src/engine/fakes.ts 已产 EXTERNAL_RATE_LIMIT（收编不改其义）；
+    // v1.5 dsh 先行两码（docs/31-§7 P-04/A4）——三词全部来自「已产」而非臆造
+    expect(isExecutorErrorCode('AUTH')).toBe(true)
+    expect(isExecutorErrorCode('MISSING_CREDENTIAL')).toBe(true)
+    expect(isExecutorErrorCode('EXTERNAL_RATE_LIMIT')).toBe(true)
+  })
+
+  it('越界负测：缺前缀变体、复数形漂移、小写、多词拼接、空串一律拒收（绿向防漂移）', () => {
+    for (const bad of [
+      'RATE_LIMIT', // 缺 EXTERNAL_ 前缀的缩写漂移
+      'MISSING_CREDENTIALS', // 复数形漂移
+      'auth', // 小写变体
+      'AUTH_RATE_LIMIT', // 两码误拼
+      'EXTERNAL_RATE_LIMITED', // 时态漂移
+      '',
+    ]) {
+      expect(isExecutorErrorCode(bad)).toBe(false)
     }
   })
 })
