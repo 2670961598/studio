@@ -72,6 +72,9 @@
         "yaml": "^2.6.0",
         "zod": "^4.0.0",
       },
+      "devDependencies": {
+        "@studio-next/localplatform": "workspace:*",
+      },
     },
     "packages/contract": {
       "name": "@studio-next/contract",

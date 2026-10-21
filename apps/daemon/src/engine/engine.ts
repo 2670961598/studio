@@ -181,6 +181,7 @@ import { crashHook } from './crash-points.ts'
 import { buildEventIndex, type EventIndex } from './sentinel/events-index.ts'
 import type { GateRunner } from './gate.ts'
 import { accountJobOutput } from './jobs/output-account.ts'
+import { deliverablesOf, reconIssueRecord, runHarvestRecon, statHarvestDenial, WORKSPACE_UMASK, type HarvestReconResult } from './jobs/harvest-recon.ts'
 import { makeUlid } from './tools/id.ts'
 import { instructionsTarget, removeInstructions, writeInstructions } from './instructions-store.ts'
 import type { PromptAssembler } from './prompt-assembly.ts'
@@ -190,7 +191,7 @@ import { heartbeatSentinelRecord, runDev49Sentinels } from './sentinel/sentinels
 import { mintWorkerKey, workerKeyCredentials, workerKeyGuidance, WORKER_WKEY_ENV_KEY } from './worker-key.ts'
 import type { WorkerKeyDeps } from './worker-key.ts'
 import type { HrSyncTickReport } from './hrsync/hrsync.ts'
-import type { TickActionResult, TickDecisionEntry, TickPhaseDispatchBudget, TickReport } from './tick-report/types.ts'
+import type { TickActionResult, TickDecisionEntry, TickPhaseDispatchBudget, TickPhaseHarvest, TickReport } from './tick-report/types.ts'
 export type { TickDecisionEntry, TickReport } from './tick-report/types.ts'
 
 // ————————————————————————— 配置 —————————————————————————
@@ -287,6 +288,14 @@ export interface EngineConfig {
    */
   statusSetPatrolEveryTicks?: number
   /**
+   * 收割尾对账步节流（P3，studio-dev-100 提案 §4.3-1，2026-10-21 全批）：每 N 拍对
+   * PATROL job= 锚的收割成功单跑「jobs[].output 声明落点 × 公司目录实际文件」对账——
+   * 缺归档=REPORT_MISSING 事件+内容哈希幂等补收（先事件后搬运；异哈希转人工绝不覆盖）。
+   * 节流原因=全量事件扫描（与 buildEventIndex 同量级，量级口径同 mirrorRescan）；
+   * companyDir 未注入=面未开零行为；0=关（负对照/测试隔离用）；缺省 30。
+   */
+  harvestReconEveryTicks?: number
+  /**
    * 票级预算帽缺省（USD；docs/16-§三 reserve 票帽面）：TaskBrief.budgetCap（单票面）
    * 优先，缺省回退本帽；两者皆无=不设限。超帽=refusal 行落账且不派（20-§六.8）。
    */
@@ -333,6 +342,7 @@ export const ENGINE_CONFIG_DEFAULTS: EngineConfig = {
   killGraceMs: 5_000,
   mirrorRescanEveryTicks: 30,
   statusSetPatrolEveryTicks: 30,
+  harvestReconEveryTicks: 30,
 }
 
 /**
@@ -728,6 +738,7 @@ export function createEngine(deps: EngineDeps): Engine {
     let instructionsPath: string | undefined // bridge 通道临时文件（收割/派发失败后清理）
     const at = now()
     let launched: Handle | undefined
+    let prevUmask: number | undefined
     try {
       // detect 前置（18-§一：launch 前必跑；不达标明报不静默降级）
       const detect = await adapter.detect()
@@ -758,6 +769,13 @@ export function createEngine(deps: EngineDeps): Engine {
         agentsChannel: { channel: adapter.capabilities.agents_md, target: agentsTarget },
         readView,
       })
+      // —— P3-② 权限前移（studio-dev-100 提案 §4.3-2，治 E12 于干预窗内）：工位脚手架
+      //    落盘与 worker 子进程（umask 随 fork 继承）统一 0o022——产物默认 ≥0644，收割/
+      //    收账面（异用户部署）可达；finally 恢复原 mask（process.umask 进程全局态，
+      //    窗口=脚手架落盘→launch 返回；engine 单线程逐派发，窗内 await 无并发落盘面）——
+      //    【拟稿：executor 工具面硬编码 0600 的写入不受 umask 影响，残面由收割 stat
+      //    兜底（HARVEST_DENIED）如实暴露，不静默】
+      prevUmask = process.umask(WORKSPACE_UMASK)
       mkdirSync(workspace, { recursive: true })
       if (nativeAgents) {
         writeFileSync(agentsTarget, assembled.agentsMd.text, 'utf8')
@@ -866,6 +884,10 @@ export function createEngine(deps: EngineDeps): Engine {
       // token 只活在本次调用栈——丢弃即离场；不吊销 ticket——重试重签同 ticket，ticket 级
       // 吊销是终局动作，见 worker-key.ts 头注拟稿；失效兜底=TTL+nonce 单次）。
       return fail(`DISPATCH_FAIL：${msg}`)
+    } finally {
+      // P3-② 权限前移窗收口：恢复派发前 umask（早退面——detect 不达标/预算拒派/launch
+      // 异常——同样不泄漏全局态）
+      if (prevUmask !== undefined) process.umask(prevUmask)
     }
   }
 
@@ -976,6 +998,15 @@ export function createEngine(deps: EngineDeps): Engine {
     const fresh = await platform.issues.get(ticket)
     const flow = flowOf(fresh)
     const stats = await adapter.resultStats(entry.handle)
+    // —— P3-② stat 兜底（studio-dev-100 §4.3-2，治 E12）：收账面可达性体检——REPORT/
+    //    deliverables 不可读即 HARVEST_DENIED 事件不静默。四要件语义冻结不动（denied 不
+    //    改判 GATE_PASS/FAIL，只补可见性）；umask 前移后此面应为零，非零即残险如实上账 ——
+    const denied = statHarvestDenial(entry.workspace, gate.reportPath)
+    if (denied !== undefined) {
+      makeEvent('HARVEST_DENIED', fresh, entry.attempt, tickEvents, {
+        note: `收账面不可读（stat 兜底）→人工处置；path=${denied.path};cause=${denied.reason}`,
+      })
+    }
 
     const verdict = { completed, nonEmptyOutput, reportExists: gate.reportExists, exit0: gate.exitCode === 0 }
     const fourOk = verdict.completed && verdict.nonEmptyOutput && verdict.reportExists && verdict.exit0
@@ -1076,6 +1107,22 @@ export function createEngine(deps: EngineDeps): Engine {
       makeEvent('GATE_FAIL', fresh, entry.attempt, tickEvents, {
         note: `${detail};rollback=跳过（等级未登记流）${wkeyDiscarded ? ';wkey=env-离场（凭据随子进程终结；重派重签新 credentials）' : ''}`,
       })
+    }
+    // —— P3-③ 悬空面可见（studio-dev-100 §4.3-1，94 号工况/E10）：缺 REPORT 而工位已有
+    //    交付物 → HARVEST_INCOMPLETE 事件——半成品证据（deliverables 清单）进重派/回收
+    //    决策视野；**不自动补收、不代写 REPORT**（补收治「写错位」不治「没写」，病根归因
+    //    留给事件流——红队 R7 修订面）。attempt 作用域：每次失败收割各落一条（与 GATE_FAIL
+    //    同拍性），重派续跑（att2+ 复用半成品）时决策面可见前科 ——
+    if (!verdict.reportExists) {
+      const deliverables = deliverablesOf(entry.workspace)
+      if (deliverables !== undefined) {
+        makeEvent('HARVEST_INCOMPLETE', fresh, entry.attempt, tickEvents, {
+          note:
+            `有产物无REPORT（悬空面）；workspace=${entry.workspace}` +
+            `;deliverables=${deliverables.length}件（${deliverables.slice(0, 5).join('、')}${deliverables.length > 5 ? '…' : ''}）` +
+            `；处置=进重派/回收决策（不补收不代写）`,
+        })
+      }
     }
     // 断路器：worker 错误入账（同单同签名连击；达阈值熔断→open_bug）——共享件见
     // strikeBreakerAndMaybeTrip（DEV-44 起 STALL 响置体同链，防双源漂移）
@@ -1569,7 +1616,7 @@ export function createEngine(deps: EngineDeps): Engine {
     }
 
     // —— 相位 4 收割：在途 handle 检查（本拍派发的下一拍才收）→ collect 动作 → STALL 响置（DEV-44） ——
-    const harvest = { checked: 0, completed: 0, failed: 0, pending: 0 }
+    const harvest: TickPhaseHarvest = { checked: 0, completed: 0, failed: 0, pending: 0 }
     for (const entry of [...inflight.values()]) {
       if (entry.dispatchedAtSeq === seq) {
         harvest.pending += 1
@@ -1629,6 +1676,25 @@ export function createEngine(deps: EngineDeps): Engine {
       } else {
         errors.push(`STALL 响置失败 ${action.ticket}：${result.detail ?? ''}`)
       }
+    }
+    // —— 相位 4 收割尾·落位对账步（P3，studio-dev-100 提案 §4.3-1；docs/17-§2 相位内
+    //    步骤——不增删相位）：PATROL job= 锚的收割成功单 × jobs[].output 声明落点 ×
+    //    公司目录实际文件——缺归档=REPORT_MISSING 事件+内容哈希幂等补收（先事件后搬运；
+    //    异哈希转人工绝不覆盖）。节流 N 拍一扫（全量事件扫描，量级口径同 mirrorRescan）；
+    //    companyDir 未注入=面未开零行为；对账只补漏不改判（四要件/GATE 语义冻结）——
+    let recon: HarvestReconResult | undefined
+    const reconEvery = config.harvestReconEveryTicks ?? 30
+    if (config.companyDir !== undefined && reconEvery > 0 && seq % reconEvery === 0) {
+      const at = now()
+      recon = runHarvestRecon({
+        ledger,
+        companyDir: config.companyDir,
+        emit: (name, ticket, attempt, note) => {
+          makeEvent(name, reconIssueRecord({ ticket, mirror: ledger.getTicketMirror(ticket), deptFallback: config.deptFallback, at }), attempt, tickEvents, { note })
+        },
+        onProblem: (message) => errors.push(message),
+      })
+      if (recon !== undefined) harvest.recon = recon
     }
 
     // —— 相位 5 合并：复验通过 → 已交付（v0 模拟合并——无真 git 操作，note 如实标注） ——

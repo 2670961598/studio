@@ -10,6 +10,9 @@
  *     注：F2-02 另列 `pid`（进程号）而 17-§3 表无此列——两文档口径不一，本 schema 从 17-§3，疑点已上报。
  *   - 事件名 = 17-§3 冻结清单：23 个具体名 + `GW_*`/`REPORT_*` 两个前缀族 = 25 类
  *     （与 F2-02「25 类事件枚举」互证）。前缀族走「枚举 ∪ 前缀正则」双通道。
+ *   - P3 增补（studio-dev-100 提案 §6.2-4，制作人 2026-10-21 全批——枚举进 contract 才
+ *     实现，SCHEMA_EVOLVE 通道）：+`HARVEST_INCOMPLETE`/`HARVEST_DENIED` → 25 具体名 +
+ *     2 前缀族 = 27 类；`REPORT_MISSING` 走 `REPORT_*` 前缀族既有通道（无需枚举项）。
  *   - tokens 四桶 = F2-04 冻结列名 input/output/cache_read/cache_creation（互斥桶，
  *     至少其一出现）。kernel.TokenCounts 是 executor 归一化层的三字段口径，不用于台账。
  *   - 拟稿待批（docs 未细化）：attempt 最小值取 1（首次尝试=1）；level 取 1..9
@@ -46,7 +49,7 @@ export const UlidSchema = z
 
 // —— 事件名：冻结枚举 + 前缀族双通道（17-§3）——
 
-/** 23 个具体事件名（17-§3 冻结清单，序即文档序） */
+/** 25 个具体事件名（17-§3 冻结清单 23 项，序即文档序；+P3 增补 2 项——studio-dev-100 §6.2-4 批示） */
 export const EVENT_NAMES = [
   'DISPATCH',
   'GATE_PASS',
@@ -71,6 +74,9 @@ export const EVENT_NAMES = [
   'CIRCUIT_BREAK',
   'RESUME',
   'INVOKE_EXTERNAL',
+  // —— P3 收账对账（studio-dev-100 提案 §4.3，2026-10-21 制作人全批 §6.2-4）——
+  'HARVEST_INCOMPLETE', // 有产物无 REPORT（94 号工况）：悬空面可见，不代写不补收
+  'HARVEST_DENIED', // 收账面不可读（E12 chmod 类）：stat 兜底不静默（权限前移后的残险网）
 ] as const
 
 /** 前缀族：网关动作 / 报表产物（17-§3 以 `GW_*`/`REPORT_*` 记） */
