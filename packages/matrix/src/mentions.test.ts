@@ -207,3 +207,110 @@ describe('extractRoomMessages', () => {
     expect(extractRoomMessages({})).toEqual([])
   })
 })
+
+describe('dedupKey 源侧设置（105-刀A A-1，21A-§5.10 勘误后口径）', () => {
+  it('每条 mention 意图 dedupKey=eventId', () => {
+    const intents = parseMentions(msg({ body: '@AGENT-3 看', eventId: '$wake-1' }), { company: COMPANY })
+    expect(intents).toHaveLength(1)
+    expect(intents[0]?.dedupKey).toBe('$wake-1')
+  })
+
+  it('同一消息多目标：多条意图同 dedupKey（引擎幂等键按一次@一人折叠——契约面留痕）', () => {
+    const intents = parseMentions(msg({ body: '@AGENT-3 @WORKER-2 都看下', eventId: '$wake-2' }), { company: COMPANY })
+    expect(targets(intents)).toEqual(['AGENT-3', 'WORKER-2'])
+    expect(new Set(intents.map((i) => i.dedupKey))).toEqual(new Set(['$wake-2']))
+  })
+})
+
+describe('parseMentions · m.mentions.user_ids 互补路（105-刀A A-4，F2/F3）', () => {
+  it('正文无 @ 词元但 user_ids 列工号 → 仍唤起（pill 点选场景）', () => {
+    const intents = parseMentions(
+      msg({ body: '请确认 X 的方案', mentions: { userIds: ['@agent-3:localhost'] } }),
+      { company: COMPANY },
+    )
+    expect(targets(intents)).toEqual(['AGENT-3'])
+    const p = intents[0]?.payload as { mention: string }
+    expect(p.mention).toBe('@AGENT-3')
+  })
+
+  it('user_ids 命中 bot（selfUserId）与发送者本人 → 不算唤醒', () => {
+    const intents = parseMentions(
+      msg({
+        sender: '@producer:localhost',
+        mentions: { userIds: ['@bot:localhost', '@producer:localhost', '@agent-3:localhost'] },
+      }),
+      { company: COMPANY, selfUserId: '@bot:localhost' },
+    )
+    expect(targets(intents)).toEqual(['AGENT-3'])
+  })
+
+  it('user_ids 与正文词元命中同一目标 → 去重为一条；两路不同目标 → 各一条', () => {
+    const both = parseMentions(
+      msg({ body: '@AGENT-3 复核', mentions: { userIds: ['@agent-3:localhost', '@worker-2:localhost'] } }),
+      { company: COMPANY },
+    )
+    expect(targets(both)).toEqual(['AGENT-3', 'WORKER-2'])
+  })
+
+  it('user_ids 的 MXID localpart 大写化后过同一工号样式：非工号形状不唤起', () => {
+    const intents = parseMentions(
+      msg({ mentions: { userIds: ['@randomperson:localhost', '@agent-3:localhost'] } }),
+      { company: COMPANY },
+    )
+    expect(targets(intents)).toEqual(['AGENT-3'])
+  })
+
+  it('user_ids 走 roles 样式同样适用（agentIdPattern 覆盖样式后 pill 路同步生效）', () => {
+    const intents = parseMentions(
+      msg({ mentions: { userIds: ['@dev7:localhost'] } }),
+      { company: COMPANY, agentIdPattern: /^dev\d+$/ },
+    )
+    expect(targets(intents)).toEqual(['dev7'])
+  })
+
+  it('msgtype 非 m.text 时 user_ids 路同样关闭（m.notice 一律空）', () => {
+    const intents = parseMentions(
+      msg({ msgtype: 'm.notice', mentions: { userIds: ['@agent-3:localhost'] } }),
+      { company: COMPANY },
+    )
+    expect(intents).toEqual([])
+  })
+})
+
+describe('extractRoomMessages · m.mentions 投影', () => {
+  it('content.m.mentions.user_ids 投影为 mentions.userIds；形状不符整段丢弃（不猜）', () => {
+    const sync = {
+      next_batch: 't2',
+      rooms: {
+        join: {
+          '!dept:localhost': {
+            timeline: {
+              events: [
+                {
+                  type: 'm.room.message', event_id: '$m1', sender: '@a:localhost',
+                  content: { msgtype: 'm.text', body: 'hi', 'm.mentions': { user_ids: ['@agent-3:localhost'] } },
+                },
+                {
+                  type: 'm.room.message', event_id: '$m2', sender: '@a:localhost',
+                  content: { msgtype: 'm.text', body: 'yo', 'm.mentions': { user_ids: 'not-array' } },
+                },
+                {
+                  type: 'm.room.message', event_id: '$m3', sender: '@a:localhost',
+                  content: { msgtype: 'm.text', body: 'zz', 'm.mentions': 'garbage' },
+                },
+              ],
+            },
+          },
+        },
+      },
+    }
+    const messages = extractRoomMessages(sync)
+    expect(messages).toHaveLength(3)
+    expect(messages[0]).toEqual({
+      eventId: '$m1', roomId: '!dept:localhost', sender: '@a:localhost',
+      msgtype: 'm.text', body: 'hi', mentions: { userIds: ['@agent-3:localhost'] },
+    })
+    expect(messages[1]?.mentions).toBeUndefined()
+    expect(messages[2]?.mentions).toBeUndefined()
+  })
+})

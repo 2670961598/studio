@@ -97,6 +97,8 @@ describe('client + notifier · 发送路径请求形状', () => {
         'WORKER-3 已用 $12.50',
         '- [单据](https://yt.local/issue/STUDIO-100)',
       ].join('\n'),
+      // 105-刀A A-4：发送侧恒带 m.mentions（通知无结构化提及→空对象，防正文 @ 词元误高亮）
+      'm.mentions': {},
     })
   })
 
@@ -150,12 +152,13 @@ describe('mention source · 轮询唤起', () => {
       text: '@AGENT-3 看下 STUDIO-100',
     })
 
-    // 第二拉请求形状：GET /sync?timeout=0&since=t1 + Bearer
+    // 第二拉请求形状：GET /sync?timeout=25000&since=t1 + Bearer
+    // （105-刀A A-4：增量 sync 空闲期长轮询 timeout=syncTimeoutMs 默认 25000；基线拉取恒为 0）
     const secondSync = ff.calls[2]
     if (secondSync === undefined) throw new Error('第二拉未发出')
     expect(secondSync.init.method).toBe('GET')
     expect(secondSync.url).toContain('/_matrix/client/v3/sync?')
-    expect(secondSync.url).toContain('timeout=0')
+    expect(secondSync.url).toContain('timeout=25000')
     expect(secondSync.url).toContain('since=t1')
     expect(secondSync.init.headers?.Authorization).toBe('Bearer tok-1')
 
@@ -278,5 +281,96 @@ describe('mention source · 轮询唤起', () => {
     await vi.advanceTimersByTimeAsync(100) // 退避 50→100 后重试成功
     expect(ff.calls).toHaveLength(2)
     source.stop()
+  })
+})
+
+// ————————————————————————— 105-刀A A-4：429 礼让 + 发送侧 m.mentions —————————————————————————
+
+describe('client · 429 限流礼让（F4：尊重 retry_after_ms，单次重试）', () => {
+  it('429 + retry_after_ms=100 → 等待后重试一次，成功即透传（不吞错误不做指数退避——退避归适配层）', async () => {
+    vi.useFakeTimers()
+    const ff = new FakeFetch()
+    const client = makeClient(ff, 'tok-1')
+    ff.enqueueJson(429, { errcode: 'M_LIMIT_EXCEEDED', error: 'Too many requests', retry_after_ms: 100 })
+    ff.enqueueJson(200, { event_id: '$ok' })
+    const pending = client.sendMessage('!hall:localhost', 'hi')
+    const check = pending.then((r) => expect(r.eventId).toBe('$ok'))
+    await vi.advanceTimersByTimeAsync(99)
+    expect(ff.calls).toHaveLength(1) // 未到 retry_after_ms：未重试
+    await vi.advanceTimersByTimeAsync(1)
+    await check
+    expect(ff.calls).toHaveLength(2) // 恰一次重试
+  })
+
+  it('429 无 retry_after_ms → 缺省等待 2000ms', async () => {
+    vi.useFakeTimers()
+    const ff = new FakeFetch()
+    const client = makeClient(ff, 'tok-1')
+    ff.enqueueJson(429, { errcode: 'M_LIMIT_EXCEEDED' })
+    ff.enqueueJson(200, { event_id: '$ok' })
+    const pending = client.sendMessage('!hall:localhost', 'hi')
+    const check = pending.then((r) => expect(r.eventId).toBe('$ok'))
+    await vi.advanceTimersByTimeAsync(1999)
+    expect(ff.calls).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1)
+    await check
+    expect(ff.calls).toHaveLength(2)
+  })
+
+  it('retry_after_ms 超上限（120000）→ 封顶 30000ms', async () => {
+    vi.useFakeTimers()
+    const ff = new FakeFetch()
+    const client = makeClient(ff, 'tok-1')
+    ff.enqueueJson(429, { retry_after_ms: 120_000 })
+    ff.enqueueJson(200, { event_id: '$ok' })
+    const pending = client.sendMessage('!hall:localhost', 'hi')
+    const check = pending.then((r) => expect(r.eventId).toBe('$ok'))
+    await vi.advanceTimersByTimeAsync(29_999)
+    expect(ff.calls).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1)
+    await check
+  })
+
+  it('重试后仍 429 → 抛带 errcode 的 Error（走调用方退避，不无限礼让）', async () => {
+    vi.useFakeTimers()
+    const ff = new FakeFetch()
+    const client = makeClient(ff, 'tok-1')
+    ff.enqueueJson(429, { errcode: 'M_LIMIT_EXCEEDED', retry_after_ms: 10 })
+    ff.enqueueJson(429, { errcode: 'M_LIMIT_EXCEEDED', retry_after_ms: 10 })
+    const pending = client.sendMessage('!hall:localhost', 'hi')
+    const expectFail = expect(pending).rejects.toThrow('M_LIMIT_EXCEEDED') // 先挂期望，防裸拒绝窗口
+    await vi.advanceTimersByTimeAsync(50)
+    await expectFail
+    expect(ff.calls).toHaveLength(2) // 只重试一次
+  })
+
+  it('非 429 错误不重试（直抛）', async () => {
+    const ff = new FakeFetch()
+    const client = makeClient(ff, 'tok-1')
+    ff.enqueueJson(403, { errcode: 'M_FORBIDDEN' })
+    await expect(client.sendMessage('!hall:localhost', 'hi')).rejects.toThrow('matrix api 403')
+    expect(ff.calls).toHaveLength(1)
+  })
+})
+
+describe('client · sendMessage 发送侧 m.mentions（A-4：收端正确高亮的前提）', () => {
+  it('mentionedUserIds → m.mentions.user_ids（数组去拷贝）', async () => {
+    const ff = new FakeFetch()
+    const client = makeClient(ff, 'tok-1')
+    ff.enqueueJson(200, { event_id: '$e1' })
+    await client.sendMessage('!hall:localhost', '请复核', { mentionedUserIds: ['@agent-3:localhost', '@prime-0:localhost'] })
+    const body = JSON.parse(ff.calls[0]?.init.body ?? '{}')
+    expect(body['m.mentions']).toEqual({ user_ids: ['@agent-3:localhost', '@prime-0:localhost'] })
+  })
+
+  it('未传/空列表 → 恒带空 m.mentions 对象（显式无提及，防正文 @ 词元误高亮）', async () => {
+    const ff = new FakeFetch()
+    const client = makeClient(ff, 'tok-1')
+    ff.enqueueJson(200, { event_id: '$e1' })
+    ff.enqueueJson(200, { event_id: '$e2' })
+    await client.sendMessage('!hall:localhost', '@AGENT-3 见通知')
+    await client.sendMessage('!hall:localhost', 'plain', { mentionedUserIds: [] })
+    expect(JSON.parse(ff.calls[0]?.init.body ?? '{}')['m.mentions']).toEqual({})
+    expect(JSON.parse(ff.calls[1]?.init.body ?? '{}')['m.mentions']).toEqual({})
   })
 })

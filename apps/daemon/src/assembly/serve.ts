@@ -16,6 +16,9 @@
  *   budgetTicketCapUsd / budgetPersonCapUsd（可选预算帽：票级恒生效；岗级仅态 A 生效）
  *   gateway: true|false（网关写收口开关，缺省开——17-§7；生产不得关）
  *   gatewaySecret: <网关 HMAC 密钥>（>=32B；缺省开发值——**生产必配**，见 DEV_GATEWAY_SECRET 警告）
+ *   matrix: true|false（@唤醒源开关，105-刀A A-3；true 时必配 matrixHomeserverUrl/
+ *     matrixUserId，可选 matrixRooms/matrixRoles/matrixPollMs/matrixSyncTimeoutMs——
+ *     bot 密码**永不入 yaml**，经 env MATRIX_BOT_PASSWORD 供给，装配单元 apps/boot 读取）
  *   platformDir: <LocalFile 平台根>（可选；platform: localfile 时缺省 <rootDir>/platform）
  *   agentYaml: <agent.yaml 路径>（可选；给定时按 docs/17-§4 装载真 executor 注册表——
  *     loadAgentConfig+wireRegistry+builtinResolver；缺省 fake adapter（demo））
@@ -59,8 +62,10 @@
  *     + SLA/升级计时器（sla: true，35-§3 首刀——escalate 意图 + ESCALATE 落账；notify 发送
  *     归 notify 端口后续刀）。
  *     startAll 的 emit 统一进 engine.ingest——源零直驱（注册表与源实现见 src/engine/sources.ts）。
- *     意图消费门在引擎：v0.4 面只物化 schedule 意图，webhook/mention 等明报不支持
- *     （六源全通归 v0.8 后续刀）——注册面先行，消费面按刀推进。
+ *     意图消费门在引擎（kind→handler 分发表，105-刀A A-2）：schedule｜mention 已开闸
+ *     （mention=③混合语义：@工号 物化唤醒单派该岗位，@宰相/@制作人 源侧 roles 映射成
+ *     工号同径派发）；escalate 归刀B（notify 端口接线单）、webhook 等其余 kind 明报不
+ *     支持（六源全通归 v0.8 后续刀）——注册面先行，消费面按刀推进。
  *   - SIGINT/SIGTERM 优雅停：等当前拍收口 → **先 stopAll 唤起源**（不再进新意图）→ 在途
  *     drain（v0=对内存 handle 优雅杀，work_records 留 running——重启由启动例行接管收口，
  *     docs/38-§2 R-B「在途接管收口」，见 takeOverRunningWorkRecords）→ 关台账。
@@ -196,6 +201,22 @@ export interface ServeConfig extends HrServeConfig {
    * 开而未注入工厂=CONFIG_INVALID 拒启动（不静默空转）。
    */
   matrix: boolean
+  /**
+   * matrix homeserver 基址（105-刀A A-3；matrix: true 时必配）：如 http://127.0.0.1:8008。
+   * daemon.yaml 只配非敏感面——bot 密码**永不入 yaml**，经进程 env MATRIX_BOT_PASSWORD
+   * 供给（21A D5 批示：密码红名单，装配单元 apps/boot 读取）。
+   */
+  matrixHomeserverUrl?: string
+  /** matrix bot 账号 user_id（@slug-bot:server；matrix: true 时必配） */
+  matrixUserId?: string
+  /** 监听房间白名单（分号分隔 room_id；缺省=bot 可见全部已加入房间）——扁平 YAML 不收列表 */
+  matrixRooms?: string
+  /** 角色词映射（分号分隔 角色词=工号，如 宰相=PRIME-0;制作人=PRODUCER-0；③混合语义源侧面） */
+  matrixRoles?: string
+  /** 轮询间隔 ms（缺省 3000——源节奏；@studio-next/matrix adapter 同名缺省） */
+  matrixPollMs?: number
+  /** 增量 sync 长轮询超时 ms（缺省 25000——空闲期挂连接，A-4；基线拉取恒 0） */
+  matrixSyncTimeoutMs?: number
   /**
    * watch-file 示例源开关（22-§三.1 验收靶子；缺省关）：true 时监听 fileWatchPath 指定
    * 文件的变化，JSON 行各产一条 webhook 意图（dedupKey=mtime#行号，见 src/engine/sources.ts）。
@@ -458,6 +479,24 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'matrix':
         cfg.matrix = bool(value, key)
         break
+      case 'matrixHomeserverUrl':
+        cfg.matrixHomeserverUrl = str(value, key)
+        break
+      case 'matrixUserId':
+        cfg.matrixUserId = str(value, key)
+        break
+      case 'matrixRooms':
+        cfg.matrixRooms = str(value, key)
+        break
+      case 'matrixRoles':
+        cfg.matrixRoles = str(value, key)
+        break
+      case 'matrixPollMs':
+        cfg.matrixPollMs = num(value, key)
+        break
+      case 'matrixSyncTimeoutMs':
+        cfg.matrixSyncTimeoutMs = num(value, key)
+        break
       case 'fileWatch':
         cfg.fileWatch = bool(value, key)
         break
@@ -544,6 +583,20 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
   }
   // —— 人事同步器交叉校验（DEV-48，docs/52；细节在 assembly/hrsync/config.ts）——
   validateHrServeCross(cfg)
+  // —— matrix 必配键交叉校验（105-刀A A-3；fail-fast 同 taiga 先例）：开关开=非敏感装配
+  //    面必齐；bot 密码只经 env MATRIX_BOT_PASSWORD（永不入 yaml，21A D5）——
+  //    键组由装配单元 apps/boot 消费（daemon 只收不发 Matrix 网络请求）。
+  if (cfg.matrix) {
+    const missingMatrix = [
+      ...(cfg.matrixHomeserverUrl === undefined ? ['matrixHomeserverUrl'] : []),
+      ...(cfg.matrixUserId === undefined ? ['matrixUserId'] : []),
+    ]
+    if (missingMatrix.length > 0) {
+      throw new Error(
+        `daemon.yaml：matrix: true 缺必配键：${missingMatrix.join('、')}（105-刀A；密码经 env MATRIX_BOT_PASSWORD 供给，不入 yaml）`,
+      )
+    }
+  }
   return cfg
 }
 
@@ -1038,9 +1091,11 @@ export function buildServeRuntime(
   if (config.matrix) {
     if (opts?.matrixSource === undefined) {
       throw new Error(
-        'CONFIG_INVALID：matrix: true 需注入 matrix 源工厂（buildServeRuntime opts.matrixSource）——' +
-          'daemon 不强依赖 @studio-next/matrix；装配单元注入 createMentionSource 产物（22-§二，' +
-          'start/stop 签名对齐 InvokeSource 端口即可接入）',
+        'CONFIG_INVALID：matrix: true 需注入 matrix 源工厂（runServe/buildServeRuntime opts.matrixSource）——' +
+          'daemon 不强依赖 @studio-next/matrix（25-§一.2）；装配单元 apps/boot 组合根注入 ' +
+          'createMentionSource 产物（105-刀A A-3：boot 读 daemon.yaml matrixHomeserverUrl/' +
+          'matrixUserId/matrixRooms/matrixRoles/matrixPollMs/matrixSyncTimeoutMs + env ' +
+          'MATRIX_BOT_PASSWORD → login → createMentionSource → runServe opts）',
       )
     }
     sources.register(opts.matrixSource(), MATRIX_MANIFEST)
@@ -1271,7 +1326,17 @@ export interface ServeResult {
  * 信号可打断等待）→ 信号/出错优雅停（runtime.stop 统一收口：停调度器→drain→关台账）。
  * 返回 ServeResult（exit code 由调用方定：signal=0；error=1）。
  */
-export async function runServe(configPath: string): Promise<ServeResult> {
+export async function runServe(
+  configPath: string,
+  opts?: {
+    /**
+     * matrix 源工厂（105-刀A A-3）：matrix: true 时注入（装配单元 apps/boot 构造
+     * createMentionSource 产物——daemon 不强依赖 @studio-next/matrix）；缺省不注入
+     * （matrix: true 且未注入=CONFIG_INVALID 拒启动）。
+     */
+    matrixSource?: () => InvokeSource
+  },
+): Promise<ServeResult> {
   const config = parseDaemonConfig(readFileSync(path.resolve(configPath), 'utf8'))
   const ledger: Ledger = openLedger(path.resolve(config.db))
 
@@ -1326,7 +1391,9 @@ export async function runServe(configPath: string): Promise<ServeResult> {
     }
   }
 
-  const { engine, sources, stop, hotReload } = buildServeRuntime(config, ledger, snapshot)
+  const { engine, sources, stop, hotReload } = buildServeRuntime(config, ledger, snapshot, {
+    ...(opts?.matrixSource !== undefined ? { matrixSource: opts.matrixSource } : {}),
+  })
 
   // 未挂公司目录的 daemon：L1 热重载不适用——reload 请求仍回执拒绝（不悬空 CLI 轮询）
   let answeredRequestId: string | null = null

@@ -22,10 +22,12 @@
  *     同 tick 重放 / 重启重放均不双写。
  *   - docs/23-§四 demo 模式：fake 全家桶（platform/adapter/台账/公司目录）零外部依赖跑通——
  *     端到端预演见 apps/daemon/test/e2e.test.ts。
- *   - docs/22-§一/§二 唤起源（schedule 源，v0.4）：ingest() 是意图注入口——调度器
- *     onDue 产 kind='schedule' 意图（payload 携 job_id，dedupKey=job_id+触发时刻），
- *     **只产意图不直接干活**；引擎在 state-diff 前把意图物化为「岗单据」进 decide 主链：
- *     PATROL 留痕 → 派发 → 收割 → …（定时岗结果落台账的机制面，16-§四 v0.4）。
+ *   - docs/22-§一/§二 唤起源：ingest() 是意图注入口——schedule 源（v0.4，scheduler 的
+ *     onDue 产 kind='schedule' 意图，payload 携 job_id，dedupKey=job_id+触发时刻）与
+ *     mention 源（v0.5 消费门开闸，105-刀A：Matrix 适配器产 kind='mention' 意图，
+ *     dedupKey=eventId，经组合根 apps/boot 注入——daemon 本体不 import matrix 包），
+ *     **只产意图不直接干活**；引擎在 state-diff 前按消费门分发表把意图物化为单据进
+ *     decide 主链：PATROL 留痕 → 派发 → 收割 → …（结果落台账的机制面，16-§四）。
  *     **岗单物化落位分型**（DEV-40，2026-10-20 哨查事故防复发）：工单型岗落流程初态
  *     （新单）照走派发-收割链；巡查岗（payload.type='patrol'）是巡查工件不是工单——
  *     落终态锚点（delivered 无前向边=结构性不可派发），decide 恒走回收 CLOSE
@@ -142,14 +144,30 @@
  *   - ticket_mirror.created：IssueRecord 无 created 字段，以 updated 近似（镜像可重建，17-§3）。
  *   - HEARTBEAT 哨兵单号：events.issue 必填（contract），零动作拍挂 config.heartbeatIssue（'-'）。
  *
- * schedule 意图消费口径（v0.4 拟稿待批，见 scheduler.ts 头注）：
+ * 意图消费口径（消费门=kind→handler 普适分发表，105-刀A A-2 开闸；schedule 面=v0.4 既有）：
+ *   - 前置共闸（全 kind 一致，无 kind 特判——判负线①）：公司匹配 → 分发表命中 → 无 ticket
+ *     意图缺 dedupKey=HOLD_INTENT_MALFORMED 明报拒收（25-§3.4 v1.3，判负线②）；
+ *   - 分发表已开：schedule（岗单据物化）｜mention（@唤醒单物化，105-刀A）；escalate 槽位
+ *     归刀B notify 端口接线单，未注册即明报不支持（jobs-lifecycle 既有断言保持绿，S8）；
  *   - 岗单据物化形态：type='task'、level=0（走 L0 状态流——定时岗无人审批环：岗的设立即
  *     授权，每跑再挂制作人审批与 48h 无人值守矛盾）、assignee=job.role（RoleName 恰为工号则
  *     精确命中，否则回退 defaultPersonId——岗位名→工号映射待人事档案面）；
+ *   - @唤醒单物化形态（105-§5.3 定稿=③ 混合语义，docs/21-§四/22-§二 同源文字）：@工号 →
+ *     唤醒单直派该岗位；@宰相/@制作人 → 源侧 roles 映射成工号后同径派发（被唤醒者下游动作
+ *     =对外 API :8788 落单，引擎不感知通道——两路同构）。type='task'、level=0、
+ *     assignee=payload.target（必须命中人事索引——未知工号明报丢弃，防 typo 唤醒落
+ *     defaultPersonId 的错人面）、title/description 携 roomId+eventId 溯源（S1）；
+ *   - mention 幂等：dedupKey=Matrix eventId 源侧设置（21A-§5.10 勘误后口径，判负线③），
+ *     引擎侧断言 dedupKey===payload.eventId（伪造绕幂等明报拒收）；物化层幂等=PATROL 留痕
+ *     派生键集 append-only 不释放（同 eventId 重投/源重放恒只物化一次，22-§三.2）；
+ *   - mention PATROL note 不含 job= 字段：jobs-sources 的 jobTickets 正则只认 job= 前缀——
+ *     唤醒单对 SLA 扫描器结构性不可见（亲查 jobs-sources.ts）；note 动态字段经分号净化，
+ *     防频道内容注入 job=/intent= 键（频道内容按不可信输入对待，21-§三）；
  *   - job.level/model_tier/budget_cap 落 jobs 表随行，不进 v0 派发链（模型档接线归后续刀）；
  *   - markRan 已提交而进程崩溃于 ingest 消费前：该次触发丢失（at-most-once）——已物化岗单据
- *     经活动流重启后仍被主循环接管；
- *   - 非 schedule 意图 ingest 明报不支持（六源其余五源归 v0.8 唤起六源刀）。
+ *     经活动流重启后仍被主循环接管；mention 同径（源重启按 eventId 重投可追补；E17 停机
+ *     不丢意图两预案进 spike 比选不预设——105-§5.3-3）；
+ *   - 分发表外 kind（ticket/relay/resume/webhook/escalate）明报不支持（六源全通归 v0.8）。
  */
 import { createHash } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -467,8 +485,9 @@ interface LaneLease {
 export interface Engine {
   tick(): Promise<TickReport>
   /**
-   * 意图注入口（22-§一 源协议在引擎侧的落点）：唤起源（v0.4=scheduler 的 schedule 源）
-   * 把意图推入队列，下一拍 state-diff 前消费——物化/去重/决策全在 tick 内（源零直驱）。
+   * 意图注入口（22-§一 源协议在引擎侧的落点）：唤起源（v0.4=scheduler 的 schedule 源；
+   * v0.5+ mention 源经组合根注入，105-刀A）把意图推入队列，下一拍 state-diff 前消费——
+   * 物化/去重/决策全在 tick 内（源零直驱）。
    */
   ingest(intents: readonly InvokeIntent[]): void
   /** 队列深度（观测/测试断言：未消费意图数） */
@@ -509,6 +528,74 @@ const TICK_SEQ_KEY = 'tick.seq'
 
 /** 驻留哨兵：parkRace 计时器到点（本拍无事件/时间片尽）——迭代器驻留，下一拍续收 */
 const PARKED = Symbol('harvest-parked')
+
+// ————————————————————————— mention 意图消费件（105-刀A A-2） —————————————————————————
+
+/**
+ * mention 意图负载形状（105-刀A，语义定稿=③ 混合）：结构对齐 @studio-next/matrix 的
+ * MentionPayload——daemon 不 import 适配器包（25-§一.2 依赖方向，判负线⑦），按契约
+ * payload=unknown 做结构校验；两形状的兼容性由组合根守护测试钉死（apps/boot）。
+ */
+export interface MentionIntentPayload {
+  /** 唤醒目标工号（@宰相/@制作人 等角色词已经源侧 roles 映射成工号） */
+  target: string
+  /** 唤醒词原文（如 @ENG-3 / @宰相） */
+  mention: string
+  /** 消息全文（m.text；仅文本可唤起，21-§三） */
+  text: string
+  /** Matrix eventId——幂等键源（dedupKey=eventId 源侧设置，21A-§5.10 勘误后口径） */
+  eventId: string
+  /** 发送者 MXID（溯源） */
+  sender: string
+  /** 房间 ID（溯源，S1 要求单据可查到 roomId） */
+  room: string
+  /** 频道名（溯源；源侧可缺） */
+  channel?: string
+}
+
+/**
+ * 结构校验（频道内容按不可信输入对待，21-§三）：非对象/必填字符串缺失 → 错误原因串；
+ * 过 → 收窄为 MentionIntentPayload（不拷贝、不猜未知字段——透传溯源原文）。
+ * 导出面：组合根 apps/boot 的守护测试用它钉「matrix MentionPayload ↔ 本形状」结构
+ * 兼容（两包互不 import，形状契约由组合根守）。
+ */
+export function checkMentionPayload(payload: unknown): MentionIntentPayload | string {
+  if (typeof payload !== 'object' || payload === null) return 'payload 非对象'
+  const p = payload as Record<string, unknown>
+  for (const key of ['target', 'mention', 'text', 'eventId', 'sender', 'room'] as const) {
+    if (typeof p[key] !== 'string') return `${key} 缺失或非字符串`
+  }
+  if (p.channel !== undefined && typeof p.channel !== 'string') return 'channel 非字符串'
+  return payload as MentionIntentPayload
+}
+
+/** PATROL note 动态字段净化：分号/换行替换（键值分隔符与 note 行结构不可被频道内容注入） */
+function noteSafe(value: string): string {
+  return value.replaceAll(';', '；').replaceAll('\n', ' ').replaceAll('\r', ' ')
+}
+
+/** 正文摘录：空白折叠取前 40 字（标题一眼可辨；超长截断，全文在 description） */
+function mentionExcerpt(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().slice(0, 40)
+}
+
+/** @唤醒单标题（S1：单据可查、带溯源锚点） */
+function mentionTicketTitle(p: MentionIntentPayload): string {
+  const excerpt = mentionExcerpt(p.text)
+  return excerpt === '' ? `[@唤醒] ${p.mention}` : `[@唤醒] ${p.mention} ${excerpt}`
+}
+
+/** @唤醒单描述：roomId+eventId+sender 溯源 + ③ 混合语义注 + 正文全文 */
+function mentionTicketDescription(p: MentionIntentPayload): string {
+  return [
+    `唤醒来源：Matrix 频道（room=${p.room}${p.channel !== undefined ? ` channel=${p.channel}` : ''}）`,
+    `事件：${p.eventId}（幂等键源 dedupKey=eventId，21A-§5.10 勘误后口径）`,
+    `发送者：${p.sender}`,
+    `唤醒词：${p.mention}（③ 混合语义：@工号=物化唤醒单派该岗位；@宰相/@制作人=API 落单通道）`,
+    '正文：',
+    p.text,
+  ].join('\n')
+}
 
 /**
  * 有界竞速：next() 就绪（含拒绝——原样传播走 WORKER_DEAD 面）则即时返回；ms 内未就绪
@@ -1382,39 +1469,29 @@ export function createEngine(deps: EngineDeps): Engine {
     const stallQ: Array<Extract<Action, { type: 'stall_alarm' }>> = []
     let provisionalActions = 0
 
-    // —— 相位 2 前置：意图队列消费（schedule 源，22-§一）——排程意图物化为岗单据进候选 ——
+    // —— 相位 2 前置：意图队列消费（源只产意图，22-§一）——kind→handler 普适分发表 ——
+    // 消费门（105-刀A A-2）：前置共闸对全 kind 一致（公司匹配 → 分发表命中 → 无 ticket
+    // 意图缺 dedupKey=HOLD_INTENT_MALFORMED 明报拒收，25-§3.4 v1.3），无 kind 特判
+    // （判负线①）；分发表已开 schedule｜mention（escalate 槽位归刀B notify 端口接线单）。
     const candidates: Array<{ ticket: TicketId; intent: InvokeIntent }> = []
     const drained = intentQueue.splice(0)
     const drainSeen = new Set<string>()
-    for (const intent of drained) {
-      if (intent.kind !== 'schedule') {
-        errors.push(`意图消费：kind='${intent.kind}' 不支持（v0.4 只落 schedule 源；六源全通归 v0.8）——丢弃`)
-        continue
-      }
-      if (intent.company !== config.company) {
-        errors.push(`意图消费：公司不匹配（intent=${intent.company} engine=${config.company}）——丢弃`)
-        continue
-      }
+
+    // schedule handler：排程意图物化岗单据（v0.4 既有语义逐字保持——payload.job_id 校验/
+    // 台账查岗/L0 物化/PATROL 留痕）
+    const consumeSchedule = async (intent: InvokeIntent, intentKey: string): Promise<void> => {
       const payload = (intent.payload ?? {}) as { job_id?: unknown }
-      if (typeof intent.dedupKey !== 'string' || intent.dedupKey === '') {
-        errors.push('意图消费：schedule 意图缺 dedupKey（无 ticket 意图必填，invoke v1.3）——丢弃')
-        continue
-      }
       if (typeof payload.job_id !== 'string' || payload.job_id === '') {
         errors.push('意图消费：schedule 意图 payload 缺 job_id——丢弃')
-        continue
+        return
       }
-      const intentKey = intentKeyOf(intent)
-      // 意图幂等（22-§三.2）：PATROL 已留痕的键（append-only 不释放——markRan 已记账，
-      // 重投不得重跑）或本拍重复键，只物化一次
-      if (index.patrolKeys.has(intentKey) || drainSeen.has(intentKey)) continue
       const job = ledger.getJob(payload.job_id)
       if (job === undefined) {
         errors.push(`意图消费：job ${payload.job_id} 不在台账（热更移除？）——丢弃`)
-        continue
+        return
       }
       try {
-        // 物化岗单据：L0 流（无人审批环）+ job.role 命工号则精确指派（口径见文件头注拟稿）。
+        // 物化岗单据：L0 流（无人审批环）+ job.role 命工号则精确指派（口径见文件头注）。
         // 落位分型（DEV-40，2026-10-20 哨查事故防复发，docs/25-§3.2 IssueCreate.initialState）：
         //   - 工单型岗（report/cadence 等产出实工件）：不指定落位→适配器落流程初态（新单），
         //     照走 v0.4 派发-收割链（16-§四）；budget_cap 正因会派发才存在。
@@ -1446,6 +1523,99 @@ export function createEngine(deps: EngineDeps): Engine {
       } catch (err) {
         errors.push(`意图消费：job ${job.job_id} 岗单据物化失败：${err instanceof Error ? err.message : String(err)}`)
       }
+    }
+
+    // mention handler：@唤醒单物化（105-刀A A-2；语义定稿=③ 混合，docs/21-§四/22-§二 同源
+    // 文字）——@工号 → 唤醒单直派该岗位；@宰相/@制作人 → 源侧 roles 映射成工号后同径派发
+    // （被唤醒者下游动作=对外 API :8788 落单，引擎不感知通道，两路同构）。
+    const consumeMention = async (intent: InvokeIntent, intentKey: string): Promise<void> => {
+      const checked = checkMentionPayload(intent.payload)
+      if (typeof checked === 'string') {
+        errors.push(`意图消费：mention 意图 payload 形状不符（${checked}）——丢弃（频道内容按不可信输入对待，21-§三）`)
+        return
+      }
+      // dedupKey=eventId 源侧设置契约（21A-§5.10 勘误后口径，判负线③）：不一致=伪造绕幂等
+      // 面或源侧漂移，明报拒收不静默
+      if (intent.dedupKey !== checked.eventId) {
+        errors.push(
+          `意图消费：mention 意图 dedupKey≠payload.eventId（${String(intent.dedupKey)} vs ${checked.eventId}）——丢弃（幂等键源侧契约，105-刀A）`,
+        )
+        return
+      }
+      // note 键值可表示性闸（PATROL note 幂等键层的物理约束，防御纵深）：eventId 含分号/
+      // 换行 → intent=<intentKey> 在 note 中无法无损表示（解析按 ; 切分——截断键会让两个
+      // 不同 eventId 静默撞车）。真实 Matrix eventId 字符集不含分号，此闸只防伪造源/上游
+      // 漂移——明报拒收不静默（频道内容按不可信输入对待，21-§三）。
+      if (/[;\r\n]/.test(checked.eventId)) {
+        errors.push('意图消费：mention 意图 eventId 含分号/换行（PATROL note 键值不可表示）——丢弃')
+        return
+      }
+      // 唤醒目标必须命中人事索引：未知工号明报丢弃——resolvePerson 的 defaultPersonId 回退
+      // 语义会把 typo 唤醒落错人，唤醒件不适用回退（resolvePerson 只服务岗单/兜底派发）
+      if (!people.some((p) => p.id === checked.target)) {
+        errors.push(`意图消费：mention 唤醒目标 ${checked.target} 不在人事索引——丢弃（未知工号明报，频道内容不可信）`)
+        return
+      }
+      try {
+        const created = await platform.issues.create({
+          title: mentionTicketTitle(checked),
+          description: mentionTicketDescription(checked),
+          type: 'task',
+          level: 0,
+          assignee: checked.target,
+        })
+        syncMirror(created)
+        // PATROL 留痕（事件词表冻结复用，不新增名）：note 携 intent=<intentKey> 进 patrolKeys
+        // （append-only 不释放）——同 eventId 重投/源重放恒只物化一次；note 刻意不含 job=
+        // 字段（jobs-sources 的 jobTickets 正则只认 job= 前缀——唤醒单对 SLA 扫描器结构性
+        // 不可见）；动态字段经 noteSafe 分号净化，防频道内容注入 job=/intent= 键。
+        makeEvent('PATROL', created, 1, tickEvents, {
+          note:
+            `intent=${noteSafe(intentKey)};target=${noteSafe(checked.target)};event=${noteSafe(checked.eventId)};` +
+            `room=${noteSafe(checked.room)}${checked.channel !== undefined ? `;channel=${noteSafe(checked.channel)}` : ''};` +
+            `sender=${noteSafe(checked.sender)};dedup=${String(intent.dedupKey)};来源=${intent.source}`,
+        })
+        mutations += 1
+        drainSeen.add(intentKey)
+        candidates.push({ ticket: created.id, intent })
+      } catch (err) {
+        errors.push(`意图消费：mention 唤醒单物化失败（event=${checked.eventId}）：${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+
+    // 普适分发表（105-刀A A-2）：新 kind 开闸=注册一个 handler，前置共闸/幂等零改。
+    // escalate：槽位归刀B（notify 端口接线单）——未注册即明报不支持（jobs-lifecycle 既有
+    // 断言 kind='escalate' 不支持 保持绿，S8）。
+    const intentHandlers: {
+      [K in InvokeIntent['kind']]?: (intent: InvokeIntent, intentKey: string) => Promise<void>
+    } = {
+      schedule: consumeSchedule,
+      mention: consumeMention,
+    }
+
+    for (const intent of drained) {
+      if (intent.company !== config.company) {
+        errors.push(`意图消费：公司不匹配（intent=${intent.company} engine=${config.company}）——丢弃`)
+        continue
+      }
+      const handler = intentHandlers[intent.kind]
+      if (handler === undefined) {
+        errors.push(
+          `意图消费：kind='${intent.kind}' 不支持（消费门分发表：schedule｜mention 已开（105-刀A）；escalate 归刀B；六源全通归 v0.8）——丢弃`,
+        )
+        continue
+      }
+      // HOLD_INTENT_MALFORMED 前置闸（25-§3.4 v1.3，判负线②）：无 ticket 意图必填
+      // dedupKey——明报拒收不静默（对 schedule/mention 及后续开闸的每个 kind 一致）
+      if (intent.ticket === undefined && (typeof intent.dedupKey !== 'string' || intent.dedupKey === '')) {
+        errors.push(`意图消费：${intent.kind} 意图缺 dedupKey（无 ticket 意图必填，invoke v1.3）——丢弃`)
+        continue
+      }
+      const intentKey = intentKeyOf(intent)
+      // 意图幂等（22-§三.2）：PATROL 已留痕的键（append-only 不释放——markRan 已记账，
+      // 重投不得重跑）或本拍重复键，只物化一次
+      if (index.patrolKeys.has(intentKey) || drainSeen.has(intentKey)) continue
+      await handler(intent, intentKey)
     }
 
     // —— 相位 2 前置②：复活对账（DEV-42②，2026-10-20 哨查 studio-dev-51/57 复活无效）——

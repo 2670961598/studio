@@ -510,10 +510,29 @@ describe('serve 接线：配置面与三源装配', () => {
     expect(parseDaemonConfig(base).matrix).toBe(false)
     expect(parseDaemonConfig(base).fileWatch).toBe(false)
     expect(parseDaemonConfig(base).fileWatchPath).toBeUndefined()
-    const cfg = parseDaemonConfig(`${base}matrix: true\nfileWatch: true\nfileWatchPath: /tmp/i.jsonl\n`)
+    // matrix 键组齐 → 开；六个键各自解析（str/num；105-刀A A-3）
+    const cfg = parseDaemonConfig(
+      `${base}matrix: true\n` +
+        'matrixHomeserverUrl: http://127.0.0.1:18008\n' +
+        'matrixUserId: @demo-bot:studio.local\n' +
+        'matrixRooms: !a:lo;!b:lo\n' +
+        'matrixRoles: 宰相=PRIME-0;制作人=PRODUCER-0\n' +
+        'matrixPollMs: 5000\n' +
+        'matrixSyncTimeoutMs: 30000\n' +
+        'fileWatch: true\nfileWatchPath: /tmp/i.jsonl\n',
+    )
     expect(cfg.matrix).toBe(true)
+    expect(cfg.matrixHomeserverUrl).toBe('http://127.0.0.1:18008')
+    expect(cfg.matrixUserId).toBe('@demo-bot:studio.local')
+    expect(cfg.matrixRooms).toBe('!a:lo;!b:lo')
+    expect(cfg.matrixRoles).toBe('宰相=PRIME-0;制作人=PRODUCER-0')
+    expect(cfg.matrixPollMs).toBe(5000)
+    expect(cfg.matrixSyncTimeoutMs).toBe(30000)
     expect(cfg.fileWatch).toBe(true)
     expect(cfg.fileWatchPath).toBe('/tmp/i.jsonl')
+    // 开而缺必配键（homeserver/userId 任一）→ parse 面 fail-fast（105-刀A：同 taiga 先例）
+    expect(() => parseDaemonConfig(`${base}matrix: true\n`)).toThrow(/matrix: true 缺必配键/)
+    expect(() => parseDaemonConfig(`${base}matrix: true\nmatrixHomeserverUrl: http://127.0.0.1:18008\n`)).toThrow(/matrix: true 缺必配键/)
     expect(() => parseDaemonConfig(`${base}matrix: yes\n`)).toThrow(/matrix/)
   })
 
