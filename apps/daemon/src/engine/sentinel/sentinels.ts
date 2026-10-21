@@ -17,6 +17,14 @@
  * 洪泛控制（append-only 事件派生键，PATROL 键同法；键集由 events-index.ts 重建）：
  *   - 单级哨：键=`${ticket}|${state}`——每单每态告一次（治存量后不刷屏；新流外态=新键=新告）
  *   - 巡逻核：键=漂移状态名——每状态名告一次
+ *
+ * studio-dev-126 C2 增面（provision 声明态 × 平台真态双向漂移，proposal §1-C 组）：
+ *   - DECLARED_STATUS_MISSING：fields 文件声明在档、平台真源已无——建单/流转将吃
+ *     unknown-state 假红的**事前**哨（原两哨都在「平台多出」方向，缺「平台少了」向）
+ *   - PLATFORM_STATUS_EXTRA：平台在位、声明未收——平台侧手加/模板重拷回流（与
+ *     UNKNOWN_STATUS 流表面互补：流表面问「能不能用」，本面问「与 provision 事实源
+ *     是否一致」——双向恰等才是收口）
+ *   - declared 输入缺省=面关（无 fields 文件的部署零行为变化——localfile/fake 不比）
  */
 import type { FieldSchema, IssueRecord, TicketId } from '@studio-next/contract'
 import { DEFAULT_FLOW_TABLE, flowStates, type FlowTable, type StateFlow } from '@studio-next/core'
@@ -34,6 +42,10 @@ export interface Dev49SentinelDeps {
   alarmedKeys: ReadonlySet<string>
   /** 巡逻核已告状态名集（事件派生） */
   driftKeys: ReadonlySet<string>
+  /** C2 声明缺失向已告状态名集（事件派生；studio-dev-126） */
+  missingKeys: ReadonlySet<string>
+  /** C2 平台额外向已告状态名集（事件派生；studio-dev-126） */
+  extraKeys: ReadonlySet<string>
   /** attempt 求值器（事件派生） */
   attemptOf(ticket: TicketId): number
   /** 落账口 */
@@ -44,6 +56,8 @@ export interface Dev49SentinelDeps {
     every: number
     schema(): Promise<FieldSchema[]>
     flows?: FlowTable
+    /** provision 声明态面（C2 双向比对输入；缺省=面关——studio-dev-126） */
+    declared?: readonly string[]
     heartbeatIssue: string
     deptFallback: string
     at: number
@@ -57,6 +71,10 @@ export interface Dev49SentinelOut {
   alarmed: number
   /** 巡逻核本拍新告漂移状态名数（非巡逻拍恒 0） */
   drift: number
+  /** C2 声明缺失向本拍新告数（面关/非巡逻拍恒 0；studio-dev-126） */
+  declaredMissing: number
+  /** C2 平台额外向本拍新告数（面关/非巡逻拍恒 0；studio-dev-126） */
+  declaredExtra: number
 }
 
 /**
@@ -89,6 +107,8 @@ export async function runDev49Sentinels(deps: Dev49SentinelDeps): Promise<Dev49S
 
   // —— 巡逻核：平台状态集 − 有效流表声明集 ≠∅ → 心跳哨兵单逐漂移状态名告警 ——
   let drift = 0
+  let declaredMissing = 0
+  let declaredExtra = 0
   if (deps.patrol.every > 0 && deps.patrol.seq % deps.patrol.every === 0) {
     const schema = await deps.patrol.schema().catch((err: unknown) => {
       deps.onError(`状态集巡逻核失败（fields.schema）：${err instanceof Error ? err.message : String(err)}`)
@@ -109,7 +129,32 @@ export async function runDev49Sentinels(deps: Dev49SentinelDeps): Promise<Dev49S
         )
         drift += 1
       }
+      // —— C2 双向比对（studio-dev-126）：provision 声明面 × 平台真源，同一拍同一
+      //    schema 读零额外 IO；declared 缺省=面关（上游不注入即不比）
+      const declaredFace = deps.patrol.declared
+      if (declaredFace !== undefined) {
+        const platformSet = new Set(platformStates)
+        for (const name of declaredFace) {
+          if (platformSet.has(name) || deps.missingKeys.has(name)) continue
+          deps.emit(
+            heartbeatSentinelRecord(deps.patrol.heartbeatIssue, deps.patrol.deptFallback, deps.patrol.at),
+            1,
+            `DECLARED_STATUS_MISSING;status=${name}`,
+          )
+          declaredMissing += 1
+        }
+        const declaredSet = new Set(declaredFace)
+        for (const name of platformStates) {
+          if (declaredSet.has(name) || deps.extraKeys.has(name)) continue
+          deps.emit(
+            heartbeatSentinelRecord(deps.patrol.heartbeatIssue, deps.patrol.deptFallback, deps.patrol.at),
+            1,
+            `PLATFORM_STATUS_EXTRA;status=${name}`,
+          )
+          declaredExtra += 1
+        }
+      }
     }
   }
-  return { alarmed, drift }
+  return { alarmed, drift, declaredMissing, declaredExtra }
 }

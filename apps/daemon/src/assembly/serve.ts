@@ -120,7 +120,7 @@ import type { MatrixHrFace } from '../engine/hrsync/hrsync.ts'
 // 人事同步器装配（DEV-48，docs/52-§九）——hr 配置面/装配体/平台接线件（BC-S2 先拆再增）
 import { assembleHrSync, hrApplySegment } from './hrsync/assemble.ts'
 import { coerceHrServeKey, HR_SERVE_DEFAULTS, validateHrServeCross, type HrServeConfig } from './hrsync/config.ts'
-import { loadTaigaFieldMap, resolveTaigaAuth, wirePlatform } from './platform/wire.ts'
+import { loadTaigaFieldMap, provisionDeclaredStates, resolveTaigaAuth, wirePlatform } from './platform/wire.ts'
 export { resolveTaigaAuth, loadTaigaFieldMap, wirePlatform }
 import {
   createFileWatchSource,
@@ -953,6 +953,11 @@ export function buildServeRuntime(
     ...(typeFlows !== undefined ? { flows: { ...DEFAULT_FLOW_TABLE, ...typeFlows } } : {}),
     ...(config.budgetTicketCapUsd !== undefined ? { budgetTicketCapUsd: config.budgetTicketCapUsd } : {}),
     ...(config.budgetPersonCapUsd !== undefined ? { budgetPersonCapUsd: config.budgetPersonCapUsd } : {}),
+    // C2 声明态漂移哨输入（studio-dev-126）：taiga 且挂了字段映射文件才注入（同一份
+    // 文件 loadTaigaFieldMap 单源重读——启动期一次，非每拍）；其余平台缺省=面关
+    ...(config.platform === 'taiga' && config.taigaFieldsFile !== undefined
+      ? { provisionDeclaredStates: provisionDeclaredStates(loadTaigaFieldMap(config.taigaFieldsFile), config.taigaEntity ?? 'userstory') }
+      : {}),
     ...(config.companyDir !== undefined ? { companyDir: path.resolve(config.companyDir) } : {}), // 岗产物落位收账锚（DEV-50）
   }
   // 装配器工厂（L1 热重载换装配器=换快照重建——静态部分不随公司目录变）

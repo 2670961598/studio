@@ -7,6 +7,8 @@
  */
 import { describe, expect, it } from 'vitest'
 import { FakeTaiga, expectTaigaReject, makePlatform } from './testutil.ts'
+import { createTaigaPlatform } from './platform.ts'
+import { TEST_BASE_URL, TEST_PASSWORD_AUTH } from './platform-fixture.ts'
 
 describe('fields.schema()（真源反射）', () => {
   it('state=枚举（状态集名字序稳定）；基础维齐；自定义属性按平台属性集反射', async () => {
@@ -77,6 +79,72 @@ describe('fields.provision()（GET-first 幂等建档）', () => {
       'bad-provision-map',
     )
     await expectTaigaReject(() => p.fields.provision({ fields: { dept: '部门' }, states: ['New', 3 as never], stateFlow: {} }), 'CONFIG_INVALID', 'bad-provision-map')
+  })
+})
+
+// ————————————————— T3 并发 TOCTOU 窗口吸收（studio-dev-126 B 轴，S3 证据 docs/32-§九） —————————————————
+
+describe('fields.provision() 并发 TOCTOU 窗口：判重 GET 后对手先建 → POST 吃 400 → 读回吸收', () => {
+  /** 脚本化 fetch：首判重 GET 回空集（对手未落成的时点视图），其余透传真 fake */
+  function staleFirstView(fake: FakeTaiga): FakeTaiga['fetch'] {
+    let staleLeft = 1
+    return async (url: string, init?: RequestInit): Promise<Response> => {
+      if (staleLeft > 0 && (init?.method ?? 'GET') === 'GET' && url.includes('/userstory-statuses')) {
+        staleLeft -= 1
+        return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return fake.fetch(url, init)
+    }
+  }
+
+  /** makePlatform 形状复用：仅换 fetch 注入（脚本化视图的确定性来源） */
+  function scriptedPlatform(_fake: FakeTaiga, fetch: FakeTaiga['fetch']) {
+    return createTaigaPlatform({ baseUrl: TEST_BASE_URL, project: 'probe-co', auth: TEST_PASSWORD_AUTH, fetch })
+  }
+
+  it('窗口咬合：GET 空视图判缺 → POST 撞对手已建吃 400 Duplicated → 读回在场即吸收（幂等成功不误报）', async () => {
+    const fake = new FakeTaiga()
+    fake.statuses.push({ id: 90, name: '验收中', slug: 'yan-shou' }) // 对手已建成（真源在档）
+    const p = scriptedPlatform(fake, staleFirstView(fake))
+    // 不抛=吸收成立（旧行为：400 → CONFIG_INVALID 假红——B 轴事故面）
+    await p.fields.provision({ fields: {}, states: ['验收中'], stateFlow: {} })
+    const posts = fake.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/userstory-statuses'))
+    expect(posts).toHaveLength(1) // 撞窗那发 POST 留了账（窗口真发生过的证据）
+    expect(fake.statuses.filter((s) => s.name === '验收中')).toHaveLength(1) // 真源恰一份（无重复建档）
+  })
+
+  it('吸收有界：400 后读回仍不在场 → 原样重抛（真 CONFIG_INVALID 不吞）', async () => {
+    const fake = new FakeTaiga()
+    // 脚本：POST userstory-statuses 恒回 400 Duplicated（平台谎报重名）而真源并无该名
+    const fetch = async (url: string, init?: RequestInit): Promise<Response> => {
+      if ((init?.method ?? 'GET') === 'POST' && url.includes('/userstory-statuses')) {
+        return new Response(JSON.stringify({ name: ['Duplicated name'] }), { status: 400, headers: { 'Content-Type': 'application/json' } })
+      }
+      return fake.fetch(url, init)
+    }
+    const p = scriptedPlatform(fake, fetch)
+    await expectTaigaReject(
+      () => p.fields.provision({ fields: {}, states: ['验收中'], stateFlow: {} }),
+      'CONFIG_INVALID',
+      'bad-request',
+    )
+    expect(fake.statuses.some((s) => s.name === '验收中')).toBe(false) // 真缺：未建档未谎报吸收
+  })
+
+  it('属性面同法：400 Already exists（真机 P82-P84 词面）→ 读回吸收', async () => {
+    const fake = new FakeTaiga()
+    fake.attributes.push({ id: 90, name: '成本', type: 'number' }) // 对手已建
+    let staleLeft = 1
+    const fetch = async (url: string, init?: RequestInit): Promise<Response> => {
+      if (staleLeft > 0 && (init?.method ?? 'GET') === 'GET' && url.includes('/userstory-custom-attributes')) {
+        staleLeft -= 1
+        return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return fake.fetch(url, init)
+    }
+    const p = scriptedPlatform(fake, fetch)
+    await p.fields.provision({ fields: { cost: '成本' }, types: { cost: 'int' as const }, states: [], stateFlow: {} }) // 不抛=吸收
+    expect(fake.attributes.filter((a) => a.name === '成本')).toHaveLength(1)
   })
 })
 

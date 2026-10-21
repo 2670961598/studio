@@ -9,6 +9,10 @@
  *     调/停/复=无 Taiga 动作（platformsFor 已挡，不到本面）。
  *   - docs/52-§6.4 idempotent 纪律：membership 在位=已邀请（不重发）；token 注册冲突≈
  *     已建号；不在位移除=目标态已达成——**ensure-shape 收敛**（§6.3 同款）。
+ *   - studio-dev-126 T5 写通纪律：本面任何成员集变更（邀请/注册激活/移除）后立即
+ *     `ctx.invalidateMembers()`——同实例缓存（by_slug 内嵌成员，N11）不过夜；否则
+ *     长驻 daemon 的 issues 读面（usernameById 归属名）与写面（idByUsername 派派单）
+ *     在下一拍还看旧成员集（hr-sync 建号后派单 unknown-user 假红）。
  *
  * 边界（分层宪法 docs/20-§十五）：daemon→taiga 合法边（boundary-rules 允许）——与
  * matrix 面（daemon 侧结构同形接口、装配期注入）形成对照：taiga 无需该舞步。
@@ -72,6 +76,7 @@ export function createTaigaHrFace(opts: TaigaHrFaceOptions): TaigaHrFace {
       }
       if (existing === undefined) {
         await inviteMember(opts.context, { username, roleSlug })
+        opts.context.invalidateMembers() // T5 写通：邀请行入列——成员集已变
       }
       // 在位未激活（邀请已发、注册未完成）或新发邀请：抓令牌走注册闭环
       const token = await pollInviteToken(opts)
@@ -84,6 +89,7 @@ export function createTaigaHrFace(opts: TaigaHrFaceOptions): TaigaHrFace {
           ...(displayName !== undefined ? { fullName: displayName } : {}),
           ...(opts.fetch !== undefined ? { fetch: opts.fetch } : {}),
         })
+        opts.context.invalidateMembers() // T5 写通：注册激活成员位（公开端点不走 ctx，但成员集真变了）
         return { membershipId: existing?.id ?? 0, created: true }
       } catch (err) {
         // 注册冲突≈账号已建（此前批次已注册、membership 尚未激活回显）——ensure-shape 收敛
@@ -107,6 +113,7 @@ export function createTaigaHrFace(opts: TaigaHrFaceOptions): TaigaHrFace {
       const m = await findMembershipByUsername(opts.context, username)
       if (m === undefined) return // 已移除=目标态
       await removeMembership(opts.context, m.id)
+      opts.context.invalidateMembers() // T5 写通：移除后成员集真变（停位不再占席）
     },
   }
 }

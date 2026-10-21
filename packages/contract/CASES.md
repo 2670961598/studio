@@ -110,6 +110,26 @@ docs/04-§二 契约全貌；实现 packages/company/src/multifile.ts）。`dir`
   一致），接线归 platform 泳道后续批次（102-§4.5-4 不催在飞泳道）；到期条件=泳道合入后
   补第三 subject 同批 case 三绿。
 
+### plat 域 v1 语义说明·第二批（studio-dev-126，2026-10-21 提案全批）
+
+> 增批 2 case（C-plat-009/010）= **provision 收敛批**：同 map 的 provision 是收敛
+> 幂等操作——重跑（C-plat-009）与两写者并发竞跑（C-plat-010，TOCTOU 判重窗口）都
+> 不得误报 CONFIG_INVALID（studio-dev-104 提案 B 轴：并发 TOCTOU 窗口收敛为幂等成功，
+> 非假 CONFIG_INVALID）。
+
+- **op 增批**：`fields.provision.rerun`（同 map 二连跑）、`fields.provision.concurrent`
+  （同 map Promise.all 双跑）——subject **诚实计算** `out.converged`（任一跑抛错即
+  false，case 断言钉死 true，谎报必被反证揪出）；`expected.out` 走 runner 的
+  键集全等断言面。
+- **map 合法形状跨实现一致**：`fields` 恒含 `state` 映射（yt 面要求——IssueRecord.state
+  必填、transition 写它；taiga/localfile 面同形状放行）——契约 map 是三实现共享面，
+  合法性取最严公约。
+- **分层证明纪律**：契约 case = 三适配器统一义务面（收敛不误报）；**窗口吸收机制**
+  （真机 400 `Duplicated name` 二写读回吸收——B 轴的实现体）归 taiga 包单测
+  `fields.test.ts`（FakeTaiga 脚本化 400 形状对齐真机实测，S3 证据 docs/32-§九），
+  不进契约面——机制是实现自由度，收敛是契约冻结面。
+
+
 ## 运行方式
 
 ```ts

@@ -133,3 +133,35 @@ localhost:9000 实例背后的 taiga-back 容器内 Django 源码（读 `taiga/p
 ——扫描与删除之间的竞态新建单（仍落旧默认态）被 moveTo 兜底迁进声明集，语义
 与 A2 完全同构（「任何路径建单都落公司声明集内」）。快照先行（roles 快照同款
 先例）仍保留：删除不可逆，入档后行。
+
+## 十、补记：studio-dev-126 S3 真机探针（2026-10-21，适配器三轴收口）
+
+studio-dev-104 提案（2026-10-21 制作人全批）的定案探针答卷。取证项目=一次性
+sn126-spike（id 4，**探毕即删**，不触 studio-dev 项目）；凭据 admin JWT；
+证据全文存施工作业区（probe-log.txt，可重跑 probe.sh 复核）。
+
+**C3 定案：POST 建单体直带 `{status}` 生效——建单落位一步化**
+
+- `POST /userstories {status:<id>}`：响应回显 status，by_ref 复读一致（真机生效，
+  非静默丢弃——区别于生成链字段的「回显不可写」面，§七对照）；
+- 坏 id 999999 → `400 {"status": ["Invalid pk '999999' - object does not exist."]}`——
+  未知目标态在建单 IO 前即拒（原子失败，不产落在默认态的半吊子单）；
+- 结论：issues.ts createIssue 改一步落位（POST 体带 status）；原两步通道
+  「建后补 PATCH 迁移」的崩溃窗口（建已落平台默认态、迁移前进程死→单永驻错态
+  且无账可对——哨兵只看状态集不看单落位）消除；落位复核保留为防御性零写兜底。
+
+**B 轴定案：重名 400 词面两族——只做状态码级耦合，不解析词面**
+
+- `POST /userstory-statuses` 重名 → `400 {"name": ["Duplicated name"]}`；
+- `POST /userstory-custom-attributes` 重名 → `400 {"name": ["Already exists one
+  with the same name."], "project": ["Already exists one with the same name."]}`
+  ——与 statuses **词面不同**；
+- 结论：并发 TOCTOU 判重吸收以「400 + 读回在场」为准（fields.ts
+  postOrAbsorbDuplicate），**不解析错误词面**（词面非契约，跨版本漂移风险）；
+  读回不在场=真 CONFIG_INVALID，原样重抛不吞。
+
+**幂等基线：两跑零写**
+
+同 map 连跑两次 provision：第二次零 POST/PATCH（状态/属性 ids 稳定）——
+GET-first 判重 + 缓存作废（invalidateMeta）链路真机成立（C-plat-009 契约面的
+真机背书）。

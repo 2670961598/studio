@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs'
 import { resolve as resolvePath } from 'node:path'
 import type { FieldProvisionMap, FlowPlatform } from '@studio-next/contract'
 import { createLocalPlatform } from '@studio-next/localplatform'
-import { createTaigaPlatform, type TaigaAuth } from '@studio-next/taiga'
+import { createTaigaPlatform, type TaigaAuth, type TaigaEntity } from '@studio-next/taiga'
 import { createFakePlatform } from '../../engine/fakes.ts'
 import type { ServeConfig } from '../serve.ts'
 
@@ -68,6 +68,22 @@ export function loadTaigaFieldMap(file: string): FieldProvisionMap {
     throw new Error(`CONFIG_INVALID：taigaFieldsFile 须是 FieldProvisionMap 形状（{fields,types?,states,stateFlow}，缺 fields 段）：${file}`)
   }
   return raw as FieldProvisionMap
+}
+
+/**
+ * provision 声明态面（studio-dev-126 C2 巡逻核输入，单源计算）：
+ * 绑定实体的声明态全集 =（entities[entity] 档案优先，回退 map.states——provision
+ * 写入 ctx.desc.statuses 的同域面）∪ typeInbox 值域（类型收件态是绑定实体上的
+ * 状态名——建单解析序第二级）。**不含**其它实体的 entities[].states（它们落
+ * issue-statuses/task-statuses 别端点，与 schema() 反射的绑定实体状态集不可比——
+ * 收进来自会双向假红）。排序输出=确定性（配置指纹可比）。
+ */
+export function provisionDeclaredStates(map: FieldProvisionMap, entity: TaigaEntity): string[] {
+  const profile = map.entities?.[entity]
+  const base = profile !== undefined && profile.states.length > 0 ? profile.states : map.states
+  const out = new Set<string>(base)
+  for (const inbox of Object.values(map.typeInbox ?? {})) out.add(inbox)
+  return [...out].sort()
 }
 
 /**

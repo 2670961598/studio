@@ -17,6 +17,13 @@
  */
 export type TaigaEntity = 'userstory' | 'issue' | 'task'
 
+/**
+ * 列表分页尺寸（transport 层共享常量——studio-dev-126 T2 收口：原居 issues.ts，
+ * memberships/activity/links 从业务面反向引入它=传输层常量倒挂；迁至本家后全部
+ * 经 entities.ts 单一来源引入，issues.ts 不再被传输面反向依赖）
+ */
+export const LIST_PAGE_SIZE = 100
+
 export interface EntityDescriptor {
   entity: TaigaEntity
   /** 列表/建单/PATCH 集合路径段 */

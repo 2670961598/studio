@@ -30,7 +30,7 @@ import type { TaigaContext, EntityRaw } from './transport/context.ts'
 import { parseEntityList } from './transport/context.ts'
 import { TaigaPlatformError } from './transport/errors.ts'
 import { fetchHistory, kindOfEntry, type HistoryEntry } from './comments.ts'
-import { LIST_PAGE_SIZE } from './issues.ts'
+import { LIST_PAGE_SIZE } from './transport/entities.ts'
 import { asObject } from './transport/shape.ts'
 
 export const DEFAULT_PAGE_SIZE = 100

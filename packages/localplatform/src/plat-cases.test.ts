@@ -53,6 +53,18 @@ function platSubject(p: FlowPlatform, base: string): (input: unknown) => Promise
         return p.comments.add(c.issue === 'BASE' ? base : (c.issue ?? ''), c.body as never)
       case 'fields.provision':
         return p.fields.provision(c.map as unknown as FieldProvisionMap)
+      // studio-dev-126 C-plat-009/010（幂等/并发收敛批）：subject 诚实计算 converged——
+      // 二跑/竞跑任一抛错即 false（case 的 out 断言把它钉死为 true，假收敛必红）
+      case 'fields.provision.rerun':
+        return p.fields
+          .provision(c.map as unknown as FieldProvisionMap)
+          .then(() => p.fields.provision(c.map as unknown as FieldProvisionMap))
+          .then(() => ({ converged: true }), () => ({ converged: false }))
+      case 'fields.provision.concurrent':
+        return Promise.all([
+          p.fields.provision(c.map as unknown as FieldProvisionMap),
+          p.fields.provision(c.map as unknown as FieldProvisionMap),
+        ]).then(() => ({ converged: true }), () => ({ converged: false }))
       case 'issues.get':
         return p.issues.get(c.id ?? '')
       case 'kb.get':
@@ -75,30 +87,38 @@ async function rejectOf(p: FlowPlatform, base: string, input: unknown): Promise<
 }
 
 describe('plat 域契约（102-P2-①：错误分类一致性——localfile 侧内存实现接线）', () => {
-  it('8 条 plat case 全绿（只断言 category 全等）', async () => {
+  it('10 条 plat case 全绿（错误分类 8 + 幂等/并发收敛 2；studio-dev-126 增批）', async () => {
     const { p, base } = await subject()
     const r = await runCases(manifest, { plat: platSubject(p, base) }, { domains: ['plat'] })
     expect(r.failed).toEqual([])
-    expect(r.total).toBe(8)
-    expect(r.passed).toBe(8)
+    expect(r.total).toBe(10)
+    expect(r.passed).toBe(10)
   })
 
-  it('防恒反证：谎报 subject（category 取反重抛）8 条必全红——runner 真能揪错', async () => {
+  it('防恒反证：谎报 subject（category 取反重抛）10 条必全红——runner 真能揪错', async () => {
     const { p, base } = await subject()
     const lying = (input: unknown): Promise<unknown> =>
-      platSubject(p, base)(input).catch((err: unknown) => {
-        if (err instanceof LocalPlatformError) {
-          throw new LocalPlatformError(
-            err.category === 'CONFIG_INVALID' ? 'EXTERNAL_REJECT' : 'CONFIG_INVALID',
-            err.subcause,
-            'plat-cases 反证：故意改坏 category',
-          )
-        }
-        throw err
-      })
+      platSubject(p, base)(input)
+        .then((out) => {
+          // studio-dev-126 收敛批反证面：converged 结果取反（谎报收敛必被 runner 揪出）
+          if (out !== null && typeof out === 'object' && 'converged' in (out as Record<string, unknown>)) {
+            return { converged: !(out as { converged: boolean }).converged }
+          }
+          return out
+        })
+        .catch((err: unknown) => {
+          if (err instanceof LocalPlatformError) {
+            throw new LocalPlatformError(
+              err.category === 'CONFIG_INVALID' ? 'EXTERNAL_REJECT' : 'CONFIG_INVALID',
+              err.subcause,
+              'plat-cases 反证：故意改坏 category',
+            )
+          }
+          throw err
+        })
     const r = await runCases(manifest, { plat: lying }, { domains: ['plat'] })
     expect(r.passed).toBe(0)
-    expect(r.failed).toHaveLength(8)
+    expect(r.failed).toHaveLength(10)
   })
 
   it('同错同键：同一坏输入两次抛同 category×subcause（单实现稳定键，102-§4.2）', async () => {
