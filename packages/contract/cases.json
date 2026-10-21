@@ -1139,6 +1139,142 @@
           "enabledChangedFlips": true
         }
       }
+    },
+    {
+      "id": "C-plat-001",
+      "domain": "plat",
+      "docs": "25-§一.4",
+      "title": "坏游标（非 base64url 可解码形）→ CONFIG_INVALID（102-P2-①：两实现只断言 category 全等）",
+      "input": {
+        "op": "activity.since",
+        "cursor": "garbage"
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-plat-002",
+      "domain": "plat",
+      "docs": "25-§一.4",
+      "title": "坏游标（不合活动 id 模式）→ CONFIG_INVALID",
+      "input": {
+        "op": "activity.since",
+        "cursor": "a-0000xx"
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-plat-003",
+      "domain": "plat",
+      "docs": "25-§一.4",
+      "title": "坏署名体（author 非字符串）→ CONFIG_INVALID",
+      "input": {
+        "op": "comments.add",
+        "issue": "BASE",
+        "body": {
+          "author": 42,
+          "body": "x",
+          "signature": "[c]"
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-plat-004",
+      "domain": "plat",
+      "docs": "25-§一.4",
+      "title": "坏署名体（署名多行）→ CONFIG_INVALID",
+      "input": {
+        "op": "comments.add",
+        "issue": "BASE",
+        "body": {
+          "author": "E-1",
+          "body": "x",
+          "signature": "两\n行"
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-plat-005",
+      "domain": "plat",
+      "docs": "25-§一.4",
+      "title": "坏字段 provision（缺 fields/states/stateFlow）→ CONFIG_INVALID",
+      "input": {
+        "op": "fields.provision",
+        "map": {}
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-plat-006",
+      "domain": "plat",
+      "docs": "25-§一.4",
+      "title": "坏字段 provision（字段平台名非字符串）→ CONFIG_INVALID",
+      "input": {
+        "op": "fields.provision",
+        "map": {
+          "fields": {
+            "a": 1
+          },
+          "states": [],
+          "stateFlow": {}
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-plat-007",
+      "domain": "plat",
+      "docs": "25-§一.4",
+      "title": "单不存在（issues.get）→ EXTERNAL_REJECT（not-found 族）",
+      "input": {
+        "op": "issues.get",
+        "id": "NOPE-999"
+      },
+      "expected": {
+        "err": {
+          "category": "EXTERNAL_REJECT"
+        }
+      }
+    },
+    {
+      "id": "C-plat-008",
+      "domain": "plat",
+      "docs": "25-§一.4",
+      "title": "文章不存在（kb.get）→ EXTERNAL_REJECT（not-found 族）",
+      "input": {
+        "op": "kb.get",
+        "path": "missing/doc.md"
+      },
+      "expected": {
+        "err": {
+          "category": "EXTERNAL_REJECT"
+        }
+      }
     }
   ]
 }

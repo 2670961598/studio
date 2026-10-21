@@ -48,7 +48,8 @@
 | `dir` | company 校验器 | 语义（规则命中）；行号定位由 company 单测负责 |
 | `evt` / `rpt` | contract 自身（src/schemas/，M1.2 已落：evt 5 条 + rpt 3 条） | 事件记录/REPORT+summary 格式 |
 | `deps` | company 依赖清单引擎（DEV-26 已落：17 条——解析/绑定求值/版本并集/决策纯面/指纹） | 语义（43-§四+§十5-8 / 51-D）；隔离根安装/registry+log+confirm/热重载 IO 面由 company 单测负责 |
-| `exe` / `plat` / `inv` / `mdl` / `gw` | 各泳道 | 端口冒烟 case |
+| `exe` / `inv` / `mdl` / `gw` | 各泳道 | 端口冒烟 case |
+| `plat` | 各平台实现（yt/localfile 已接线，taiga 挂到期——见下方 v1 语义说明） | **错误分类一致性**（102-P2-①：只断言 category 全等）；端口冒烟正例归 P1 批次未兑现 |
 
 ### deps 域 v1 语义说明（DEV-26，规范 v1.1 已冻结——docs/43-§四/§十5-8）
 
@@ -81,6 +82,33 @@ docs/04-§二 契约全貌；实现 packages/company/src/multifile.ts）。`dir`
   以宽容位 `strictFiles:false` 包装 `loadCompanyDirectory`，既有 3 case 口径零漂移。
 - 多文件全目录校验的契约面留给后续批次的 `dir2` 域（开批时落 case，`strictFiles` 宽容位
   届时随契约化收口）；多文件行为面暂由 company 单测（multifile.test.ts）承载。
+
+### plat 域 v1 语义说明（studio-dev-102 P2-①，2026-10-21 落批）
+
+> 首批 8 case（C-plat-001..008）= **错误分类一致性批**：同一坏输入打两实现
+> （yt 真适配器＋localfile 内存实现），只断言 `expected.err.category` 全等
+> （docs/25-§一.4 错误语义统一；docs/25-§6-2 前半句自此有机械兑现面）。
+
+- **op 路由约定**：`input.op` 按键分派到 FlowPlatform 七面（docs/25-§3.2）——
+  `activity.since`→activity.since(cursor)、`comments.add`→issues 侧评论写、
+  `fields.provision`→fields.provision(map)、`issues.get`→issues.get(id)、
+  `kb.get`→kb.get(path)。subject 由各实现包测试内接线
+  （yt：`packages/yt/src/plat-cases.test.ts`，真适配器＋FakeYouTrack 注入 fetch——
+  坏输入族全部先于网络/落盘校验；localplatform：
+  `packages/localplatform/src/plat-cases.test.ts`，内存实现＋tmpRoot）。
+- **BASE 哨兵**：`issue: "BASE"` = subject 预建基准单（两实现各自预建一张同位单，
+  subject 负责翻译成本实现单号）——两实现的 comments 写路径都**先查单存在再验署名体**
+  （同序），坏署名体 case 必须落在存在的单上才会走到署名校验。
+- **只断言 category 纪律**：`expected.err` 只给 `category` 不给 `subcause`——subcause
+  跨实现差异**如实放行**（yt `not-found` vs localfile `kb-not-found` 同属 not-found 族）；
+  跨实现 subcause 词表对齐=第二阶段，随公共 subcause 词表批示（102-§4.2 冻结面）。
+  单实现内的稳定键（同错同键：同一坏输入两次抛同 subcause）与 not-found 族稳定键前缀
+  由各实现包测试断言（不进契约面）。
+- **反证纪律**：各实现包测试内含「改坏 category 必红」反证（谎报 subject 必被 runner
+  揪出——防恒）。
+- **taiga 到期挂账**：taiga 实现已同构（102 证据 E4：三套错误类 category+subcause 形状
+  一致），接线归 platform 泳道后续批次（102-§4.5-4 不催在飞泳道）；到期条件=泳道合入后
+  补第三 subject 同批 case 三绿。
 
 ## 运行方式
 

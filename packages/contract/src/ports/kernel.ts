@@ -34,7 +34,9 @@ export type StreamEvent =
       /**
        * 机器可读错误码（v1.5，2026-10-19 制作人批，渐进兼容）：如 dsh 的 AUTH /
        * MISSING_CREDENTIAL——message 原文保留在 error；前缀拼接方案废除
-       * （可选位：先填的家先受益，其余 executor 发现一个做一个）
+       * （可选位：先填的家先受益，其余 executor 发现一个做一个）。
+       * v1.7：值域冻结为 EXECUTOR_ERROR_CODES（词表三件套落位 schemas/errors.ts——
+       * kernel 本文件守零运行时纪律；映射附表 docs/25 附录 A）
        */
       errorCode?: string
     }
