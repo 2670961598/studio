@@ -1,26 +1,22 @@
 // ✦ DEV-45 结构刀（studio-dev-78）：本文件自 apps/daemon/src/bin.ts L1084-L1128 逐字节拆出（纯移动零功能变更；核验=对 git 历史旧路径对应行区间字节一致，仅增本行头注、import 头与 export 关键字）。
 import path from 'node:path'
 import { servePanel } from '@studio-next/panel'
-import { USAGE } from './usage.ts'
+import { CONCISE, SECTION } from './usage.ts'
+import { helpOk, usageFail, wantsHelp } from './help.ts'
 import { errText, parseArgv } from './argv.ts'
 
 export async function cmdPanel(argv: string[]): Promise<number> {
+  if (wantsHelp(argv)) return helpOk(SECTION.panel) // S1b 预检：先于解析与一切副作用
   const parsed = parseArgv(argv, new Set(['db', 'port']))
   if ('error' in parsed) {
-    console.error(`panel：${parsed.error}`)
-    console.error(USAGE)
-    return 1
+    return usageFail('panel', parsed.error, CONCISE.panel)
   }
   if (parsed.positionals.length > 0) {
-    console.error(`panel：多余的位置参数：${parsed.positionals.join(' ')}`)
-    console.error(USAGE)
-    return 1
+    return usageFail('panel', `多余的位置参数：${parsed.positionals.join(' ')}`, CONCISE.panel)
   }
   const dbPath = parsed.flags.db
   if (dbPath === undefined) {
-    console.error('panel：缺少 --db <库路径>')
-    console.error(USAGE)
-    return 1
+    return usageFail('panel', '缺少 --db <库路径>', CONCISE.panel)
   }
   let port = 8791
   if (parsed.flags.port !== undefined) {

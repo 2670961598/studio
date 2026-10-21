@@ -1,18 +1,21 @@
 // ✦ DEV-45 结构刀（studio-dev-78）：本文件自 apps/daemon/src/bin.ts L605-L679 逐字节拆出（纯移动零功能变更；核验=对 git 历史旧路径对应行区间字节一致，仅增本行头注、import 头与 export 关键字）。
 import path from 'node:path'
 import { openLedger, rebuild, renderDrillReport, runLedgerDrill } from '@studio-next/store'
-import { USAGE } from './usage.ts'
+import { CONCISE, SECTION } from './usage.ts'
 import { errText } from './argv.ts'
+import { helpOk, missingSub, unknownSub, usageFail, wantsHelp } from './help.ts'
+
+/** 组面已知子命令表（S1d did-you-mean 的候选集=本表） */
+const LEDGER_SUBS = ['drill', 'dump', 'rebuild'] as const
 
 export async function cmdLedger(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv
   switch (sub) {
     case 'drill': {
+      if (wantsHelp(rest)) return helpOk(SECTION.ledger) // S1b 预检（先于副作用——不建库）
       const dbPath = rest[0]
       if (rest.length !== 1 || dbPath === undefined) {
-        console.error('ledger drill：需要恰好一个参数（演习库路径；必须不存在——防误删真实台账）')
-        console.error(USAGE)
-        return 1
+        return usageFail('ledger drill', '需要恰好一个参数（演习库路径；必须不存在——防误删真实台账）', CONCISE.ledger)
       }
       try {
         const report = await runLedgerDrill(path.resolve(dbPath))
@@ -25,11 +28,10 @@ export async function cmdLedger(argv: string[]): Promise<number> {
       }
     }
     case 'dump': {
+      if (wantsHelp(rest)) return helpOk(SECTION.ledger)
       const [dbPath, outPath] = rest
       if (rest.length !== 2 || dbPath === undefined || outPath === undefined) {
-        console.error('ledger dump：需要恰好两个参数（库路径、输出.jsonl）')
-        console.error(USAGE)
-        return 1
+        return usageFail('ledger dump', '需要恰好两个参数（库路径、输出.jsonl）', CONCISE.ledger)
       }
       try {
         const ledger = openLedger(path.resolve(dbPath))
@@ -46,11 +48,10 @@ export async function cmdLedger(argv: string[]): Promise<number> {
       }
     }
     case 'rebuild': {
+      if (wantsHelp(rest)) return helpOk(SECTION.ledger)
       const [source, target] = rest
       if (rest.length !== 2 || source === undefined || target === undefined) {
-        console.error('ledger rebuild：需要恰好两个参数（源.jsonl、目标库路径）')
-        console.error(USAGE)
-        return 1
+        return usageFail('ledger rebuild', '需要恰好两个参数（源.jsonl、目标库路径）', CONCISE.ledger)
       }
       try {
         const result = rebuild(path.resolve(source), path.resolve(target))
@@ -62,15 +63,14 @@ export async function cmdLedger(argv: string[]): Promise<number> {
       }
     }
     case undefined:
+      // S1c-B 批示统一：裸组命令=错误行+组简段+exit 1（原 exit 0 收敛——git 惯例）
+      return missingSub('ledger', LEDGER_SUBS, CONCISE.ledger)
     case '-h':
     case '--help':
     case 'help':
-      console.log(USAGE)
-      return 0
+      return helpOk(SECTION.ledger)
     default:
-      console.error(`未知 ledger 子命令：${sub}`)
-      console.error(USAGE)
-      return 1
+      return unknownSub('ledger', sub, LEDGER_SUBS, CONCISE.ledger)
   }
 }
 

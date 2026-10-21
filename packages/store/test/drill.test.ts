@@ -110,10 +110,12 @@ describe('spawn 冒烟（拟冻结验收命令：studio-next ledger drill → ex
     expect(again.stderr).toContain('store/drill:target-exists')
   }, 30000)
 
-  it('用法错误：未知 ledger 子命令 / 缺参 → exit 1 + stderr 用法', () => {
+  it('用法错误：未知 ledger 子命令 / 缺参 → exit 1 + stderr 错误行 + stdout 简段（studio-dev-103 S1 分面）', () => {
     const bogus = run(['ledger', 'bogus'])
     expect(bogus.status).toBe(1)
-    expect(bogus.stderr).toContain('未知 ledger 子命令')
+    // S1d：错误行→stderr（含已知子命令）；简段→stdout（不再倾倒全文 USAGE）
+    expect(bogus.stderr).toContain('ledger：未知子命令：bogus（当前支持：drill、dump、rebuild）')
+    expect(bogus.stdout).toContain('本组全文：studio-next ledger --help')
 
     const missing = run(['ledger', 'drill'])
     expect(missing.status).toBe(1)

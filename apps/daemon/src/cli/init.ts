@@ -2,26 +2,20 @@
 import path from 'node:path'
 import { initCompany } from '@studio-next/company'
 import type { InitOptions } from '@studio-next/company'
-import { USAGE } from './usage.ts'
+import { CONCISE, SECTION } from './usage.ts'
 import { errText, parseArgv } from './argv.ts'
+import { helpOk, usageFail, wantsHelp } from './help.ts'
 
 export async function cmdInit(argv: string[]): Promise<number> {
+  if (wantsHelp(argv)) return helpOk(SECTION.init) // S1b 预检：先于解析、零副作用
   const parsed = parseArgv(argv, new Set(['name', 'dir', 'template']))
-  if ('error' in parsed) {
-    console.error(`init：${parsed.error}`)
-    console.error(USAGE)
-    return 1
-  }
+  if ('error' in parsed) return usageFail('init', parsed.error, CONCISE.init)
   const slug = parsed.positionals[0]
   if (slug === undefined) {
-    console.error('init：缺少 <slug>（例：studio-next init demo-corp）')
-    console.error(USAGE)
-    return 1
+    return usageFail('init', '缺少 <slug>（例：studio-next init demo-corp）', CONCISE.init)
   }
   if (parsed.positionals.length > 1) {
-    console.error(`init：多余的位置参数：${parsed.positionals.slice(1).join(' ')}`)
-    console.error(USAGE)
-    return 1
+    return usageFail('init', `多余的位置参数：${parsed.positionals.slice(1).join(' ')}`, CONCISE.init)
   }
 
   const options: InitOptions = { slug, targetDir: parsed.flags.dir ?? path.resolve(slug) }
@@ -33,6 +27,11 @@ export async function cmdInit(argv: string[]): Promise<number> {
     console.log(`已生成公司目录：${result.dir}`)
     console.log(`git 首次提交：${result.gitCommit}`)
     console.log(`目录自检：通过（slug=${slug}；结构契约 docs/04-§二）`)
+    // S3 下一步指引（E10：init 只是脚手架相位——provision/建号/建库在 create/add）
+    console.log('下一步：')
+    console.log(`  1. 结构自检：studio-next validate ${result.dir}`)
+    console.log(`  2. 建号/建库一条龙：studio-next company create ${slug}（对既有目录再跑=adopt 收敛不重建；或 company add <git-url> 导入既有公司仓）`)
+    console.log('  3. 起主循环：studio-next serve --config <daemon.yaml>（配置面与最小例：studio-next serve --help）')
     return 0
   } catch (err) {
     // initCompany 的失败即 ClassifiedError(CONFIG_INVALID)（宁失败不半成品，已撤除产物）

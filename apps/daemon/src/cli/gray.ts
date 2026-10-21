@@ -3,41 +3,33 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { openLedger } from '@studio-next/store'
 import { renderGrayCheckLines, renderGrayStatusLines, checkGrayWindow, closeGrayWindow, readGrayWindow } from '../evolve/gray.ts'
-import { USAGE } from './usage.ts'
+import { CONCISE, SECTION } from './usage.ts'
+import { helpOk, usageFail, wantsHelp } from './help.ts'
 import { errText, parseArgv } from './argv.ts'
 
 export async function cmdGray(argv: string[]): Promise<number> {
+  if (wantsHelp(argv)) return helpOk(SECTION.gray) // S1b 预检：先于解析与一切副作用
   const parsed = parseArgv(argv, new Set(['db', 'candidate', 'root']), undefined, new Set(['check', 'close']))
   if ('error' in parsed) {
-    console.error(`gray：${parsed.error}`)
-    console.error(USAGE)
-    return 1
+    return usageFail('gray', parsed.error, CONCISE.gray)
   }
   if (parsed.positionals.length > 0) {
-    console.error(`gray：多余的位置参数：${parsed.positionals.join(' ')}`)
-    console.error(USAGE)
-    return 1
+    return usageFail('gray', `多余的位置参数：${parsed.positionals.join(' ')}`, CONCISE.gray)
   }
   if (parsed.booleans.has('check') && parsed.booleans.has('close')) {
-    console.error('gray：--check 与 --close 互斥（检查=判定+自动处置；关窗=平安提前收口——三动作一次一个）')
-    console.error(USAGE)
-    return 1
+    return usageFail('gray', '--check 与 --close 互斥（检查=判定+自动处置；关窗=平安提前收口——三动作一次一个）', CONCISE.gray)
   }
   const dbPath = parsed.flags.db
   if (dbPath === undefined) {
-    console.error('gray：缺少 --db <库路径>')
-    console.error(USAGE)
-    return 1
+    return usageFail('gray', '缺少 --db <库路径>', CONCISE.gray)
   }
   const candidateId = parsed.flags.candidate
   if (candidateId === undefined) {
-    console.error('gray：缺少 --candidate <候选 id>')
-    console.error(USAGE)
-    return 1
+    return usageFail('gray', '缺少 --candidate <候选 id>', CONCISE.gray)
   }
   const resolvedDb = path.resolve(dbPath)
   if (!existsSync(resolvedDb)) {
-    console.error(`gray：库不存在：${resolvedDb}（观察窗检查是写面（kv/事件/生产文件）——不代建库，先由 daemon/切权面建库）`)
+    console.error(`gray：库不存在：${resolvedDb}（观察窗检查是写面（kv/事件/生产文件）——不代建库——建库走 studio-next company create <slug>（缺省即建库））`)
     return 1
   }
   const assetRoot = parsed.flags.root ?? '.'

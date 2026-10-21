@@ -191,7 +191,9 @@ describe('spawn 冒烟（拟冻结验收命令：init demo → validate demo →
 
     const validateRun = run(['validate', target])
     expect(validateRun.status).toBe(0)
-    expect(validateRun.stderr).toBe('')
+    // S2（studio-dev-103，studio-dev-125 实施）：validate=兼容别名——stderr 固定一行
+    // 弃用告警（stdout/退码零变化）；结果断言不受扰
+    expect(validateRun.stderr.trim()).toBe('validate：已让位 company check（同语义同退码同输出）——本命令保留兼容，后续版本移除（studio-dev-103 S2）')
     expect(validateRun.stdout).toContain('demo')
     expect(validateRun.stdout).toContain('2 级公司')
   })

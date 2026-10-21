@@ -3,44 +3,34 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { openLedger } from '@studio-next/store'
 import { renderCutoverLines, runCutover } from '../evolve/cutover.ts'
-import { USAGE } from './usage.ts'
+import { CONCISE, SECTION } from './usage.ts'
+import { helpOk, usageFail, wantsHelp } from './help.ts'
 import { errText, parseArgv } from './argv.ts'
 
 export async function cmdCutover(argv: string[]): Promise<number> {
+  if (wantsHelp(argv)) return helpOk(SECTION.cutover) // S1b 预检：先于解析与一切副作用
   const parsed = parseArgv(argv, new Set(['db', 'candidate', 'file', 'company', 'root', 'actor', 'dept', 'level']), undefined, new Set(['no-restart', 'no-gray']))
   if ('error' in parsed) {
-    console.error(`cutover：${parsed.error}`)
-    console.error(USAGE)
-    return 1
+    return usageFail('cutover', parsed.error, CONCISE.cutover)
   }
   if (parsed.positionals.length > 0) {
-    console.error(`cutover：多余的位置参数：${parsed.positionals.join(' ')}`)
-    console.error(USAGE)
-    return 1
+    return usageFail('cutover', `多余的位置参数：${parsed.positionals.join(' ')}`, CONCISE.cutover)
   }
   const dbPath = parsed.flags.db
   if (dbPath === undefined) {
-    console.error('cutover：缺少 --db <库路径>')
-    console.error(USAGE)
-    return 1
+    return usageFail('cutover', '缺少 --db <库路径>', CONCISE.cutover)
   }
   const candidateId = parsed.flags.candidate
   if (candidateId === undefined) {
-    console.error('cutover：缺少 --candidate <候选 id>')
-    console.error(USAGE)
-    return 1
+    return usageFail('cutover', '缺少 --candidate <候选 id>', CONCISE.cutover)
   }
   const filePath = parsed.flags.file
   if (filePath === undefined) {
-    console.error('cutover：缺少 --file <新文件>（新内容全文——判负闸消费其 sha256，缺即用法错误）')
-    console.error(USAGE)
-    return 1
+    return usageFail('cutover', '缺少 --file <新文件>（新内容全文——判负闸消费其 sha256，缺即用法错误）', CONCISE.cutover)
   }
   const company = parsed.flags.company
   if (company === undefined) {
-    console.error('cutover：缺少 --company <公司 slug>（events.company 台账路由键，不猜）')
-    console.error(USAGE)
-    return 1
+    return usageFail('cutover', '缺少 --company <公司 slug>（events.company 台账路由键，不猜）', CONCISE.cutover)
   }
   let level: number | undefined
   if (parsed.flags.level !== undefined) {
@@ -52,7 +42,7 @@ export async function cmdCutover(argv: string[]): Promise<number> {
   }
   const resolvedDb = path.resolve(dbPath)
   if (!existsSync(resolvedDb)) {
-    console.error(`cutover：库不存在：${resolvedDb}（切权要落账+迁移——写面不代建库，先由 daemon/提案面建库）`)
+    console.error(`cutover：库不存在：${resolvedDb}（切权要落账+迁移——写面不代建库——建库走 studio-next company create <slug>（缺省即建库））`)
     return 1
   }
   try {

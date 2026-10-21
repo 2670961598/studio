@@ -3,38 +3,30 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { openLedger } from '@studio-next/store'
 import { parsePostmortemInput, renderPostmortemLines, runPostmortemChain } from '../evolve/postmortem.ts'
-import { USAGE } from './usage.ts'
+import { CONCISE, SECTION } from './usage.ts'
+import { helpOk, usageFail, wantsHelp } from './help.ts'
 import { errText, parseArgv } from './argv.ts'
 
 export async function cmdPostmortem(argv: string[]): Promise<number> {
+  if (wantsHelp(argv)) return helpOk(SECTION.postmortem) // S1b 预检：先于解析与一切副作用
   const parsed = parseArgv(argv, new Set(['db', 'company', 'issue', 'input', 'casebook', 'slug', 'date', 'dept', 'level', 'actor']))
   if ('error' in parsed) {
-    console.error(`postmortem：${parsed.error}`)
-    console.error(USAGE)
-    return 1
+    return usageFail('postmortem', parsed.error, CONCISE.postmortem)
   }
   if (parsed.positionals.length > 0) {
-    console.error(`postmortem：多余的位置参数：${parsed.positionals.join(' ')}`)
-    console.error(USAGE)
-    return 1
+    return usageFail('postmortem', `多余的位置参数：${parsed.positionals.join(' ')}`, CONCISE.postmortem)
   }
   const dbPath = parsed.flags.db
   if (dbPath === undefined) {
-    console.error('postmortem：缺少 --db <库路径>')
-    console.error(USAGE)
-    return 1
+    return usageFail('postmortem', '缺少 --db <库路径>', CONCISE.postmortem)
   }
   const company = parsed.flags.company
   if (company === undefined) {
-    console.error('postmortem：缺少 --company <公司 slug>（events.company 台账路由键，不猜）')
-    console.error(USAGE)
-    return 1
+    return usageFail('postmortem', '缺少 --company <公司 slug>（events.company 台账路由键，不猜）', CONCISE.postmortem)
   }
   const inputPath = parsed.flags.input
   if (inputPath === undefined) {
-    console.error('postmortem：缺少 --input <复盘.json>（复盘正文不可虚构——七件套形状见 src/evolve/postmortem.ts PostmortemInput；fail-closed 拒空模板旁路）')
-    console.error(USAGE)
-    return 1
+    return usageFail('postmortem', '缺少 --input <复盘.json>（复盘正文不可虚构——七件套形状见 src/evolve/postmortem.ts PostmortemInput；fail-closed 拒空模板旁路）', CONCISE.postmortem)
   }
   let raw: string
   try {
@@ -69,7 +61,7 @@ export async function cmdPostmortem(argv: string[]): Promise<number> {
   }
   const resolvedDb = path.resolve(dbPath)
   if (!existsSync(resolvedDb)) {
-    console.error(`postmortem：库不存在：${resolvedDb}（POSTMORTEM 事件要落账——写面不代建库，先由 daemon/回填侧建库）`)
+    console.error(`postmortem：库不存在：${resolvedDb}（POSTMORTEM 事件要落账——写面不代建库——建库走 studio-next company create <slug>（缺省即建库））`)
     return 1
   }
   try {

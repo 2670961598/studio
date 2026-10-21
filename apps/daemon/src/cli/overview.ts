@@ -4,7 +4,8 @@ import { loadCompanyDirectory, readDirectoryFiles } from '@studio-next/company'
 import type { CompanySnapshot } from '@studio-next/contract'
 import { mountHotCompanySource, serveOverview } from '@studio-next/panel/overview'
 import type { HotCompanyHandle, OverviewCompanySource } from '@studio-next/panel/overview'
-import { USAGE } from './usage.ts'
+import { CONCISE, SECTION } from './usage.ts'
+import { helpOk, usageFail, wantsHelp } from './help.ts'
 import { errText, parseArgv } from './argv.ts'
 
 
@@ -41,22 +42,17 @@ function extractMission(orgConfigSrc: string | undefined): string | undefined {
  * 文件名与 front-matter id 一致）。默认只绑本机。
  */
 export async function cmdOverview(argv: string[]): Promise<number> {
+  if (wantsHelp(argv)) return helpOk(SECTION.overview) // S1b 预检：先于解析与一切副作用
   const parsed = parseArgv(argv, new Set(['company', 'db', 'port']), new Set(['company']))
   if ('error' in parsed) {
-    console.error(`overview：${parsed.error}`)
-    console.error(USAGE)
-    return 1
+    return usageFail('overview', parsed.error, CONCISE.overview)
   }
   if (parsed.positionals.length > 0) {
-    console.error(`overview：多余的位置参数：${parsed.positionals.join(' ')}`)
-    console.error(USAGE)
-    return 1
+    return usageFail('overview', `多余的位置参数：${parsed.positionals.join(' ')}`, CONCISE.overview)
   }
   const companyDirs = parsed.multi.company ?? []
   if (companyDirs.length === 0) {
-    console.error('overview：至少给一个 --company <公司目录>（可重复给多家）')
-    console.error(USAGE)
-    return 1
+    return usageFail('overview', '至少给一个 --company <公司目录>（可重复给多家）', CONCISE.overview)
   }
   let port = 8789
   if (parsed.flags.port !== undefined) {
@@ -127,7 +123,8 @@ export async function cmdOverview(argv: string[]): Promise<number> {
     console.error(`overview 启动失败：${errText(err)}`)
     return 1
   }
-  console.log(`[overview] :8789 公司概览面已监听 → http://${handle.hostname}:${String(handle.port)}/（只读，Ctrl-C 退出）`)
+  // E16③（studio-dev-103）：启动日志端口前缀=实际监听端口——原硬编码 :8789 在 --port 换口时谎报
+  console.log(`[overview] :${String(handle.port)} 公司概览面已监听 → http://${handle.hostname}:${String(handle.port)}/（只读，Ctrl-C 退出）`)
   console.log(`[overview] 已挂载：${companies.map((c) => c.slug).join('、')}${parsed.flags.db !== undefined ? `；台账：${path.resolve(parsed.flags.db)}（零写）` : '；无台账（progress/finance 页如实显示无台账数据）'}`)
   console.log('[overview] 热重载：目录监听中（fs.watch recursive，防抖 150ms——目录变更下一请求即见；重载失败保旧图）/api/overview/* JSON 带 snapshotMeta 快照标注')
   console.log('[overview] 端面：/ 换装页（Naive UI+ECharts，SPA）｜/legacy 旧版只读面｜/api/overview/* JSON｜/<slug>/ 概览｜/<slug>/org|people|progress|finance 各 tab｜/<slug>/people/<工号> 档案')

@@ -2,38 +2,42 @@
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { CANDIDATE_STATUS_VALUES, openLedger } from '@studio-next/store'
-import { USAGE } from './usage.ts'
+import { CONCISE, SECTION } from './usage.ts'
 import { errText, parseArgv } from './argv.ts'
+import { helpOk, missingSub, unknownSub, usageFail, wantsHelp } from './help.ts'
+
+const CANDIDATES_SUBS = ['list'] as const
 
 export async function cmdCandidates(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv
-  if (sub !== 'list') {
-    if (sub !== undefined && sub !== '-h' && sub !== '--help' && sub !== 'help') {
-      console.error(`未知 candidates 子命令：${sub}`)
-    }
-    console.error(USAGE)
-    return sub === undefined || sub === '-h' || sub === '--help' || sub === 'help' ? 0 : 1
+  switch (sub) {
+    case 'list':
+      break
+    case undefined:
+      // S1c-B 批示统一：裸组命令=错误行+组简段+exit 1（原 exit 0 收敛——git 惯例）
+      return missingSub('candidates', CANDIDATES_SUBS, CONCISE.candidates)
+    case '-h':
+    case '--help':
+    case 'help':
+      return helpOk(SECTION.candidates)
+    default:
+      return unknownSub('candidates', sub, CANDIDATES_SUBS, CONCISE.candidates)
   }
+  if (wantsHelp(rest)) return helpOk(SECTION.candidates) // S1b 预检（先于库存在性检查）
   const parsed = parseArgv(rest, new Set(['db']))
   if ('error' in parsed) {
-    console.error(`candidates list：${parsed.error}`)
-    console.error(USAGE)
-    return 1
+    return usageFail('candidates list', parsed.error, CONCISE.candidates)
   }
   if (parsed.positionals.length > 0) {
-    console.error(`candidates list：多余的位置参数：${parsed.positionals.join(' ')}`)
-    console.error(USAGE)
-    return 1
+    return usageFail('candidates list', `多余的位置参数：${parsed.positionals.join(' ')}`, CONCISE.candidates)
   }
   const dbPath = parsed.flags.db
   if (dbPath === undefined) {
-    console.error('candidates list：缺少 --db <库路径>')
-    console.error(USAGE)
-    return 1
+    return usageFail('candidates list', '缺少 --db <库路径>', CONCISE.candidates)
   }
   const resolved = path.resolve(dbPath)
   if (!existsSync(resolved)) {
-    console.error(`candidates list：库不存在：${resolved}（只读面不代建库——先由 daemon/回填侧建库）`)
+    console.error(`candidates list：库不存在：${resolved}（只读面不代建库——建库走 studio-next company create <slug>（缺省即建库））`)
     return 1
   }
   try {

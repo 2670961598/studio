@@ -10,26 +10,22 @@ import { DEV_GATEWAY_SECRET } from '../assembly/serve.ts'
 import { createFakePlatform } from '../engine/fakes.ts'
 import { createGatedPlatform } from '../engine/tools/gated-platform.ts'
 import { ENGINE_CONFIG_DEFAULTS } from '../engine/engine.ts'
-import { USAGE } from './usage.ts'
+import { CONCISE, SECTION } from './usage.ts'
+import { helpOk, usageFail, wantsHelp } from './help.ts'
 import { errText, parseArgv } from './argv.ts'
 
 export async function cmdExternal(argv: string[]): Promise<number> {
+  if (wantsHelp(argv)) return helpOk(SECTION.external) // S1b 预检：先于解析与一切副作用
   const parsed = parseArgv(argv, new Set(['company', 'db', 'port', 'token', 'requests-per-minute']), new Set(['company']), new Set(['lan']))
   if ('error' in parsed) {
-    console.error(`external：${parsed.error}`)
-    console.error(USAGE)
-    return 1
+    return usageFail('external', parsed.error, CONCISE.external)
   }
   if (parsed.positionals.length > 0) {
-    console.error(`external：多余的位置参数：${parsed.positionals.join(' ')}`)
-    console.error(USAGE)
-    return 1
+    return usageFail('external', `多余的位置参数：${parsed.positionals.join(' ')}`, CONCISE.external)
   }
   const companyDirs = parsed.multi.company ?? []
   if (companyDirs.length === 0) {
-    console.error('external：至少给一个 --company <公司目录>（可重复给多家）')
-    console.error(USAGE)
-    return 1
+    return usageFail('external', '至少给一个 --company <公司目录>（可重复给多家）', CONCISE.external)
   }
   let port = 8788
   if (parsed.flags.port !== undefined) {
@@ -118,7 +114,8 @@ export async function cmdExternal(argv: string[]): Promise<number> {
     return 1
   }
   console.log(
-    `[external] :8788 对外 API 已监听 → http://${handle.hostname}:${String(handle.port)}/v1/agent-card` +
+    // E16③（studio-dev-103）：启动日志端口前缀=实际监听端口——原硬编码 :8788 在 --port 换口时谎报
+    `[external] :${String(handle.port)} 对外 API 已监听 → http://${handle.hostname}:${String(handle.port)}/v1/agent-card` +
       `${parsed.booleans.has('lan') ? '' : '（默认只绑本机——对局域网开放须 --lan，D4 拟稿反转）'}`,
   )
   console.log(
