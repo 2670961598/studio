@@ -171,7 +171,7 @@ export const lineBaseline = {
   "packages/company/src/validator.ts": 647,
   "apps/daemon/test/evolve/gray.test.ts": 625,
   "apps/daemon/src/control/hot-reload.ts": 624,
-  "packages/panel/src/overview/views.ts": 611,
+  "packages/panel/src/overview/views.ts": 618, // DEV-12 刀二归位（+7：/legacy 路由基与换装注释；行为=旧五读面整组迁 legacy）
   "packages/store/test/v5-candidates.test.ts": 602,
 };
 

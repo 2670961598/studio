@@ -1,7 +1,10 @@
 /**
- * :8789 公司概览面端面测试（v0.7 首刀：读面）：app.request() 进程内驱动（零端口）。
+ * :8789 公司概览面端面测试（v0.7 首刀读面 + DEV-12 换装刀二）：app.request() 进程内驱动（零端口）。
  * 依据：docs/16-§四 v0.7（公司面：组织/人事/财务/进度）、docs/04-§七（slug 路由/404/根路径
- * 公司清单）、docs/17-§8（:8789 端面）。
+ * 公司清单）、docs/17-§8（:8789 端面）、docs/37-§5.1/§8（换装路线 I：服务器层只加路由不改语义）。
+ *
+ * 刀二迁移：v0.7 服务端渲染五读面整组迁 /legacy（断言随之迁移——旧面语义逐字节保留）；
+ * 规范路径换为换装壳（shell）+ /api/overview/* JSON 读面（asOf/snapshotMeta 快照标注）。
  *
  * 语料：
  *   - example-corp：**模板目录直读**（templates/company-2-level → readDirectoryFiles →
@@ -17,7 +20,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { loadCompanyDirectory, readDirectoryFiles } from '@studio-next/company'
 import type { CompanySnapshot, DeptNode } from '@studio-next/contract'
 import { openLedger, type BudgetRecord, type Ledger, type TicketMirrorRecord } from '@studio-next/store'
-import { createOverviewApp } from '../src/overview/index.ts'
+import { createOverviewApp, mountHotCompanySource } from '../src/overview/index.ts'
 import { buildFinanceSnapshot, buildOrgTree, buildProgressSnapshot, escapeHtml } from '../src/overview/index.ts'
 import type { OverviewApp } from '../src/overview/index.ts'
 import { T0, makeEvent } from './corpus.ts'
@@ -188,15 +191,15 @@ const htmlOf = async (pathName: string): Promise<{ status: number; html: string 
   return { status: res.status, html: await res.text() }
 }
 
-// ————————————————————————— GET /（公司清单） —————————————————————————
+// ————————————————————————— GET /legacy（旧版公司清单——v0.7 首刀面整组迁移） —————————————————————————
 
-describe('GET /（根路径=公司清单，04-§七）', () => {
-  it('列全部挂载公司：名称/slug/等级/部门数/人数/平台 + /<slug>/ 链接；text/html', async () => {
-    const { status, html } = await htmlOf('/')
+describe('GET /legacy（公司清单，04-§七）', () => {
+  it('列全部挂载公司：名称/slug/等级/部门数/人数/平台 + /legacy/<slug>/ 链接；text/html', async () => {
+    const { status, html } = await htmlOf('/legacy')
     expect(status).toBe(200)
     expect(html).toContain('<!doctype html>')
-    expect(html).toContain('href="/example-corp/"')
-    expect(html).toContain('href="/corp-b/"')
+    expect(html).toContain('href="/legacy/example-corp/"')
+    expect(html).toContain('href="/legacy/corp-b/"')
     expect(html).toContain('示例公司')
     expect(html).toContain('合成公司乙')
     expect(html).toContain('youtrack')
@@ -206,9 +209,9 @@ describe('GET /（根路径=公司清单，04-§七）', () => {
 
 // ————————————————————————— 概览卡 —————————————————————————
 
-describe('GET /<slug>/（概览卡）', () => {
+describe('GET /legacy/<slug>/（概览卡——旧版面）', () => {
   it('模板公司：公司名/等级/使命/部门数/人数/平台绑定/章程（snapshot 全字段）', async () => {
-    const { status, html } = await htmlOf('/example-corp/')
+    const { status, html } = await htmlOf('/legacy/example-corp/')
     expect(status).toBe(200)
     expect(html).toContain('示例公司')
     expect(html).toContain('L2')
@@ -219,8 +222,8 @@ describe('GET /<slug>/（概览卡）', () => {
   })
 
   it('合成公司：部门 4（含悬挂部）/人数 3；/corp-b（无尾斜杠）与 /corp-b/ 同页', async () => {
-    const withSlash = await htmlOf('/corp-b/')
-    const withoutSlash = await htmlOf('/corp-b')
+    const withSlash = await htmlOf('/legacy/corp-b/')
+    const withoutSlash = await htmlOf('/legacy/corp-b')
     expect(withSlash.status).toBe(200)
     expect(withoutSlash.status).toBe(200)
     expect(withoutSlash.html).toBe(withSlash.html)
@@ -244,9 +247,9 @@ describe('GET /<slug>/（概览卡）', () => {
 
 // ————————————————————————— 组织树 —————————————————————————
 
-describe('GET /<slug>/org（组织树）', () => {
+describe('GET /legacy/<slug>/org（组织树——旧版面）', () => {
   it('嵌套正确：总裁办→工程部→平台组 按序嵌套；各部 leader/lanes/functions 渲染；悬挂部提升为根 + warn', async () => {
-    const { status, html } = await htmlOf('/corp-b/org')
+    const { status, html } = await htmlOf('/legacy/corp-b/org')
     expect(status).toBe(200)
     // 嵌套序（DOM 顺序 = 树先序）：总裁办 在 工程部 前、工程部 在 平台组 前
     const iRoot = html.indexOf('>总裁办')
@@ -296,23 +299,23 @@ describe('buildOrgTree（纯函数直测）', () => {
 
 // ————————————————————————— 人事 —————————————————————————
 
-describe('GET /<slug>/people（人事列表）', () => {
+describe('GET /legacy/<slug>/people（人事列表——旧版面）', () => {
   it('PersonRef 表全字段（工号/姓名/login/等级/部门）；有档案者给链接、无档案者如实标注', async () => {
-    const { status, html } = await htmlOf('/corp-b/people')
+    const { status, html } = await htmlOf('/legacy/corp-b/people')
     expect(status).toBe(200)
     for (const marker of ['PB-1', '乙一号', 'pb-1', 'PB-2', '乙二号', 'PB-3', '乙三号', 'departments/总裁办', 'departments/工程部/平台组']) {
       expect(html).toContain(marker)
     }
-    expect(html).toContain('href="/corp-b/people/PB-1"')
-    expect(html).toContain('href="/corp-b/people/PB-3"')
-    expect(html).not.toContain('href="/corp-b/people/PB-2"')
+    expect(html).toContain('href="/legacy/corp-b/people/PB-1"')
+    expect(html).toContain('href="/legacy/corp-b/people/PB-3"')
+    expect(html).not.toContain('href="/legacy/corp-b/people/PB-2"')
     expect(html).toContain('（无档案正文）')
   })
 })
 
-describe('GET /<slug>/people/<工号>（档案正文）', () => {
+describe('GET /legacy/<slug>/people/<工号>（档案正文——旧版面）', () => {
   it('md 原文渲染为 pre 块（模板公司 AGENT-1：六节档案全文进 pre）', async () => {
-    const res = await app.request('/example-corp/people/AGENT-1')
+    const res = await app.request('/legacy/example-corp/people/AGENT-1')
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toContain('text/html')
     const html = await res.text()
@@ -323,28 +326,28 @@ describe('GET /<slug>/people/<工号>（档案正文）', () => {
   })
 
   it('档案正文按不可信输入转义：PB-3 档案中的 <script> 实体化，无裸脚本标签', async () => {
-    const { status, html } = await htmlOf('/corp-b/people/PB-3')
+    const { status, html } = await htmlOf('/legacy/corp-b/people/PB-3')
     expect(status).toBe(200)
     expect(html).toContain('&lt;script&gt;')
     expect(html).not.toContain('<script>')
   })
 
   it('在册但正文缺失 → 200 + 如实缺失说明（不 404 不臆造）', async () => {
-    const { status, html } = await htmlOf('/corp-b/people/PB-2')
+    const { status, html } = await htmlOf('/legacy/corp-b/people/PB-2')
     expect(status).toBe(200)
     expect(html).toContain('档案正文缺失')
   })
 
   it('未知工号 → 404', async () => {
-    expect((await htmlOf('/corp-b/people/UNKNOWN-9')).status).toBe(404)
+    expect((await htmlOf('/legacy/corp-b/people/UNKNOWN-9')).status).toBe(404)
   })
 })
 
 // ————————————————————————— 进度（有台账 / 无台账降级） —————————————————————————
 
-describe('GET /<slug>/progress（ticket_mirror 状态聚合）', () => {
+describe('GET /legacy/<slug>/progress（ticket_mirror 状态聚合——旧版面）', () => {
   it('corp-b：按状态聚合计数（开发中 2/已完成 1、共 3 单）；他公司单不计', async () => {
-    const { status, html } = await htmlOf('/corp-b/progress')
+    const { status, html } = await htmlOf('/legacy/corp-b/progress')
     expect(status).toBe(200)
     expect(html).toContain('共 3 单')
     expect(html.indexOf('>开发中</td>')).toBeGreaterThan(0)
@@ -354,7 +357,7 @@ describe('GET /<slug>/progress（ticket_mirror 状态聚合）', () => {
   })
 
   it('example-corp（无 ledger）：如实显示无台账数据', async () => {
-    const { status, html } = await htmlOf('/example-corp/progress')
+    const { status, html } = await htmlOf('/legacy/example-corp/progress')
     expect(status).toBe(200)
     expect(html).toContain('无台账数据')
     expect(html).toContain('（无台账）')
@@ -363,9 +366,9 @@ describe('GET /<slug>/progress（ticket_mirror 状态聚合）', () => {
 
 // ————————————————————————— 财务（有台账 / 无台账降级） —————————————————————————
 
-describe('GET /<slug>/finance（三口径分列 + LLM 按日）', () => {
+describe('GET /legacy/<slug>/finance（三口径分列 + LLM 按日——旧版面）', () => {
   it('corp-b：reserve 8.5(3 笔)/settle 1.75(2)/refusal 0.75(1)/净额 6.75；本司 scope 集外全排除；分列口径文案', async () => {
-    const { status, html } = await htmlOf('/corp-b/finance')
+    const { status, html } = await htmlOf('/legacy/corp-b/finance')
     expect(status).toBe(200)
     expect(html).toContain('分列不相加')
     expect(html).toContain('<td>reserve（预留）</td><td>3</td><td>8.5</td>')
@@ -378,13 +381,13 @@ describe('GET /<slug>/finance（三口径分列 + LLM 按日）', () => {
     const dayBase = Math.floor(T0 / DAY_MS) * DAY_MS
     const day1 = new Date(dayBase).toISOString().slice(0, 10)
     const day2 = new Date(dayBase + DAY_MS).toISOString().slice(0, 10)
-    const { html } = await htmlOf('/corp-b/finance')
+    const { html } = await htmlOf('/legacy/corp-b/finance')
     expect(html).toContain(`<tr><td>${day1}</td><td>2</td><td>0.75</td></tr>`)
     expect(html).toContain(`<tr><td>${day2}</td><td>1</td><td>1.25</td></tr>`)
   })
 
   it('example-corp（无 ledger）：如实显示无台账数据', async () => {
-    const { status, html } = await htmlOf('/example-corp/finance')
+    const { status, html } = await htmlOf('/legacy/example-corp/finance')
     expect(status).toBe(200)
     expect(html).toContain('无台账数据')
   })

@@ -112,23 +112,27 @@ ${body}
 `
 }
 
-/** tab 导航（当前页高亮；只列本刀已落地的读面 tab，未落地不臆造） */
-function navTabs(slug: string, here: string): string {
+/**
+ * tab 导航（当前页高亮；只列本刀已落地的读面 tab，未落地不臆造）。
+ * basePath：链接前缀（''=规范路径；'/legacy'=旧版回滚面——DEV-12 换装后旧树内部链接
+ * 保持树内可达，不自跳出到换装面）。
+ */
+function navTabs(slug: string, here: string, basePath = ''): string {
   const tabs: ReadonlyArray<readonly [key: string, label: string, href: string]> = [
-    ['overview', '概览', `/${escapePath(slug)}/`],
-    ['org', '组织', `/${escapePath(slug)}/org`],
-    ['people', '人事', `/${escapePath(slug)}/people`],
-    ['progress', '进度', `/${escapePath(slug)}/progress`],
-    ['finance', '财务', `/${escapePath(slug)}/finance`],
+    ['overview', '概览', `${basePath}/${escapePath(slug)}/`],
+    ['org', '组织', `${basePath}/${escapePath(slug)}/org`],
+    ['people', '人事', `${basePath}/${escapePath(slug)}/people`],
+    ['progress', '进度', `${basePath}/${escapePath(slug)}/progress`],
+    ['finance', '财务', `${basePath}/${escapePath(slug)}/finance`],
   ]
   const links = tabs
     .map(([key, label, href]) => `<a href="${href}"${key === here ? ' class="here"' : ''}>${escapeHtml(label)}</a>`)
     .join('')
-  return `<nav>${links}<a href="/">↑ 公司清单</a></nav>`
+  return `<nav>${links}<a href="${basePath}/">↑ 公司清单</a></nav>`
 }
 
-/** 404 页（未注册 slug / 未知工号 / 未知子路径共用） */
-export function renderNotFoundPage(what: string): string {
+/** 404 页（未注册 slug / 未知工号 / 未知子路径共用；basePath 同 navTabs——规范面 ''/旧版面 '/legacy'） */
+export function renderNotFoundPage(what: string, basePath = ''): string {
   return page(
     '404 · Studio Next 公司概览',
     `<h1>Studio Next 公司概览（:8789）</h1>
@@ -136,7 +140,7 @@ export function renderNotFoundPage(what: string): string {
 <section>
   <h2>404 未找到</h2>
   <p class="empty">${escapeHtml(what)} 不在概览面（未注册的 slug / 未知工号 / 未知子路径——docs/04-§七：路由按公司目录 slug，未知名 404）。</p>
-  <p><a href="/">← 返回公司清单</a></p>
+  <p><a href="${basePath}/">← 返回公司清单</a></p>
 </section>`,
   )
 }
@@ -412,12 +416,12 @@ export function buildFinanceSnapshot(input: {
 
 // —— 各页 HTML 渲染 ——
 
-/** 根路径：公司清单（docs/04-§七：多公司时根路径列公司清单） */
-export function renderCompanyListPage(entries: ReadonlyArray<{ slug: string; snapshot: CompanySnapshot }>): string {
+/** 根路径：公司清单（docs/04-§七：多公司时根路径列公司清单；basePath 见 navTabs） */
+export function renderCompanyListPage(entries: ReadonlyArray<{ slug: string; snapshot: CompanySnapshot }>, basePath = ''): string {
   const rows = entries
     .map(
       (e) =>
-        `<tr><td><a href="/${escapePath(e.slug)}/">${escapeHtml(e.snapshot.name)}</a></td>` +
+        `<tr><td><a href="${basePath}/${escapePath(e.slug)}/">${escapeHtml(e.snapshot.name)}</a></td>` +
         `<td>${escapeHtml(e.slug)}</td><td>L${String(e.snapshot.level)}</td>` +
         `<td>${String(e.snapshot.departments.length)}</td><td>${String(e.snapshot.people.length)}</td>` +
         `<td>${escapeHtml(e.snapshot.platform.platform)}</td></tr>`,
@@ -442,13 +446,14 @@ export function renderCompanyPage(
   slug: string,
   snapshot: CompanySnapshot,
   mission: string | undefined,
+  basePath = '',
 ): string {
   const missionText = mission === undefined ? '（未提供——契约 CompanySnapshot 暂无 mission 字段，注入位见 server.ts 头注拟稿）' : mission
   return page(
     `${snapshot.name} · 概览`,
     `<h1>${escapeHtml(snapshot.name)}（概览）</h1>
 <div id="meta">slug ${escapeHtml(slug)} · L${String(snapshot.level)} 公司 · 平台绑定 ${escapeHtml(snapshot.platform.platform)}</div>
-${navTabs(slug, 'overview')}
+${navTabs(slug, 'overview', basePath)}
 <section>
   <h2>公司卡</h2>
   <dl>
@@ -465,14 +470,14 @@ ${navTabs(slug, 'overview')}
   )
 }
 
-/** 组织页：嵌套树 + 悬空/成环诚实标记 */
-export function renderOrgPage(slug: string, snapshot: CompanySnapshot): string {
+/** 组织页：嵌套树 + 悬空/成环诚实标记（basePath 见 navTabs） */
+export function renderOrgPage(slug: string, snapshot: CompanySnapshot, basePath = ''): string {
   const tree = buildOrgTree(snapshot.departments)
   return page(
     `${snapshot.name} · 组织`,
     `<h1>${escapeHtml(snapshot.name)}（组织）</h1>
 <div id="meta">slug ${escapeHtml(slug)} · ${String(snapshot.departments.length)} 个部门 · 嵌套深度=部门层级（04-§二）</div>
-${navTabs(slug, 'org')}
+${navTabs(slug, 'org', basePath)}
 <section>
   <h2>组织树</h2>
   ${renderOrgTree(tree)}
@@ -485,11 +490,12 @@ export function renderPeoplePage(
   slug: string,
   snapshot: CompanySnapshot,
   hasBody: (personId: string) => boolean,
+  basePath = '',
 ): string {
   const rows = snapshot.people
     .map((p) => {
       const link = hasBody(p.id)
-        ? `<a href="/${escapePath(slug)}/people/${escapePath(p.id)}">档案正文</a>`
+        ? `<a href="${basePath}/${escapePath(slug)}/people/${escapePath(p.id)}">档案正文</a>`
         : '<span class="empty">（无档案正文）</span>'
       return (
         `<tr><td>${escapeHtml(p.id)}</td><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.login)}</td>` +
@@ -501,7 +507,7 @@ export function renderPeoplePage(
     `${snapshot.name} · 人事`,
     `<h1>${escapeHtml(snapshot.name)}（人事）</h1>
 <div id="meta">slug ${escapeHtml(slug)} · ${String(snapshot.people.length)} 人 · 工号=档案文件名=永不变主键（01-C2-04）</div>
-${navTabs(slug, 'people')}
+${navTabs(slug, 'people', basePath)}
 <section>
   <h2>花名册</h2>
   <table><thead><tr><th>工号</th><th>姓名</th><th>login</th><th>等级</th><th>部门</th><th>档案</th></tr></thead>
@@ -517,6 +523,7 @@ export function renderPersonPage(
   slug: string,
   person: PersonRef,
   body: string | undefined,
+  basePath = '',
 ): string {
   const bodyBlock =
     body === undefined
@@ -526,7 +533,7 @@ export function renderPersonPage(
     `${person.id} ${person.name} · 档案`,
     `<h1>${escapeHtml(person.name)}（${escapeHtml(person.id)}）档案</h1>
 <div id="meta">slug ${escapeHtml(slug)} · ${escapeHtml(person.login)} · L${String(person.level)} · ${escapeHtml(person.dept)}</div>
-${navTabs(slug, 'people')}
+${navTabs(slug, 'people', basePath)}
 <section>
   <h2>档案正文（md 原文）</h2>
   ${bodyBlock}
@@ -535,7 +542,7 @@ ${navTabs(slug, 'people')}
 }
 
 /** 进度页（有台账：状态聚合表；无台账：如实降级面） */
-export function renderProgressPage(slug: string, snapshot: CompanySnapshot, progress: ProgressSnapshot | undefined): string {
+export function renderProgressPage(slug: string, snapshot: CompanySnapshot, progress: ProgressSnapshot | undefined, basePath = ''): string {
   const section =
     progress === undefined
       ? `<section>
@@ -554,13 +561,13 @@ ${progress.byState.map((s) => `<tr><td>${escapeHtml(s.state)}</td><td>${String(s
     `${snapshot.name} · 进度`,
     `<h1>${escapeHtml(snapshot.name)}（进度）</h1>
 <div id="meta">slug ${escapeHtml(slug)} · basis=${progress === undefined ? '（无台账）' : progress.basis}</div>
-${navTabs(slug, 'progress')}
+${navTabs(slug, 'progress', basePath)}
 ${section}`,
   )
 }
 
 /** 财务页（有台账：三口径分列 + LLM 按日；无台账：如实降级面） */
-export function renderFinancePage(slug: string, snapshot: CompanySnapshot, finance: FinanceSnapshot | undefined): string {
+export function renderFinancePage(slug: string, snapshot: CompanySnapshot, finance: FinanceSnapshot | undefined, basePath = ''): string {
   const section =
     finance === undefined
       ? `<section>
@@ -605,7 +612,7 @@ ${finance.monthly
     `${snapshot.name} · 财务`,
     `<h1>${escapeHtml(snapshot.name)}（财务）</h1>
 <div id="meta">slug ${escapeHtml(slug)} · basis=${finance === undefined ? '（无台账）' : finance.basis}</div>
-${navTabs(slug, 'finance')}
+${navTabs(slug, 'finance', basePath)}
 ${section}`,
   )
 }

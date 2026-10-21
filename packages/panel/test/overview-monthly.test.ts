@@ -138,7 +138,7 @@ describe('buildFinanceSnapshot（月报行纯函数面）', () => {
 
 describe('GET /<slug>/finance（月报段渲染）', () => {
   it('corp-m：四行月报（升序）；可读行出工时/成本/交付；坏快照行如实「快照不可读」；口径与引用可见', async () => {
-    const res = await app.request('/corp-m/finance')
+    const res = await app.request('/legacy/corp-m/finance')
     expect(res.status).toBe(200)
     const html = await res.text()
     expect(html).toContain('月报（reports 表）')
@@ -156,7 +156,7 @@ describe('GET /<slug>/finance（月报段渲染）', () => {
   })
 
   it('corp-n（无 readReportFile 注入）：行在、指标列如实「快照不可读」；他司（corp-m）行不计', async () => {
-    const res = await app.request('/corp-n/finance')
+    const res = await app.request('/legacy/corp-n/finance')
     expect(res.status).toBe(200)
     const html = await res.text()
     expect(html).toContain('月报（reports 表）')

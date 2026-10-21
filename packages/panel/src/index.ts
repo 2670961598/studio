@@ -13,11 +13,13 @@
  *     旧单页迁 /legacy 保回滚）、/vendor/:file 与 /ui/*（静态面，static.ts）。
  *     数据全部读 SQLite 台账（WAL 单写多读，panel 零写）；漂移告警待 daemon 侧判据冻结。
  *
- *   :8789 公司概览（老板的公司，制作人/内部）—— v0.7 首刀（读面，独立入口 ./overview——
- *     packages/panel/src/overview/，不另开包：沿 16-§一 九包结构）：
+ *   :8789 公司概览（老板的公司，制作人/内部）—— v0.7 首刀 + DEV-12 换装刀二（读面，独立入口
+ *     ./overview——packages/panel/src/overview/，不另开包：沿 16-§一 九包结构）：
  *     路由 /<slug>/…（04-§七：按挂载公司目录 slug，未出名 404，根路径列公司清单）；
- *     概览/组织/人事/进度/财务五读面（全 GET 只读、服务端渲染零前端依赖）；
- *     项目/报表 tab 与编辑中心（草稿→批示→写回）归后续刀。
+ *     概览/组织/人事/进度/财务五读面（全 GET 只读）；刀二起换装同套 :8787（Naive UI +
+ *     ECharts，单壳多页 + /api/overview/* JSON 读面），旧服务端渲染面整组迁 /legacy 作回滚面；
+ *     热重载双能力（reload.ts）：快照时间标注（snapshotMeta 随 JSON 读面透出）+ 公司目录
+ *     fs.watch(recursive) 防抖热重载（重载失败保旧图）。项目/报表 tab 与编辑中心归后续刀。
  *
  *   :8788 对外 API（外部 AI 的面，对外）—— v0.9 首刀（信息/触发骨架，独立入口 ./external）：
  *     信息端点全 GET 全公开（D5：company/org/people/projects/issues/finance/reports）；
@@ -38,6 +40,9 @@
  *   [x] :8789 slug 路由 + 公司清单页（v0.7 首刀，./overview）
  *   [x] 组织/人事/进度/财务读面 tab（服务端聚合，不整树前端渲染；v0.7 首刀）
  *   [x] daemon bin 子命令 `studio-next overview --company <目录>… [--db <库路径>] [--port 8789]`
+ *   [x] :8789 换装刀二（DEV-12）：同套 :8787 换装（ui/overview/* + shell.ts 复用刀一 vendor/
+ *       importmap/主题件）+ /api/overview/* JSON 读面 + 热重载（快照时间标注 + 目录监听，
+ *       reload.ts mountHotCompanySource——bin overview 接线）；旧五读面整组迁 /legacy
  *   [x] :8788 对外 API 信息/触发端点骨架 + agent-card（v0.9 首刀，./external——独立入口）
  *   [ ] 漂移告警卡（17-§8 另半张：模型行为/成本漂移判据未冻结，待 daemon 机制落地）
  *   [ ] budgets 全量读面（store 现 only queryBudgets by-scope——panel 以镜像枚举 scope

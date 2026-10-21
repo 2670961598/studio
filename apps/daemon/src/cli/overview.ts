@@ -1,8 +1,9 @@
 // ✦ DEV-45 结构刀（studio-dev-78）：本文件自 apps/daemon/src/bin.ts L1129-L1250 逐字节拆出（纯移动零功能变更；核验=对 git 历史旧路径对应行区间字节一致，仅增本行头注、import 头与 export 关键字）。
 import path from 'node:path'
 import { loadCompanyDirectory, readDirectoryFiles } from '@studio-next/company'
-import { serveOverview } from '@studio-next/panel/overview'
-import type { OverviewCompanySource } from '@studio-next/panel/overview'
+import type { CompanySnapshot } from '@studio-next/contract'
+import { mountHotCompanySource, serveOverview } from '@studio-next/panel/overview'
+import type { HotCompanyHandle, OverviewCompanySource } from '@studio-next/panel/overview'
 import { USAGE } from './usage.ts'
 import { errText, parseArgv } from './argv.ts'
 
@@ -34,8 +35,10 @@ function extractMission(orgConfigSrc: string | undefined): string | undefined {
 /**
  * overview 子命令：:8789 公司概览面薄壳（语义全在 @studio-next/panel/overview）。
  * 挂载语义：逐目录 readDirectoryFiles → loadCompanyDirectory（校验不过拒绝挂载——04-§九）；
- * 快照挂载时装载并缓存（目录变更=重新挂载；热更归 daemon 后续刀）；档案正文按文件名=工号
- * 建映射（校验器保证文件名与 front-matter id 一致）。默认只绑本机。
+ * DEV-12 刀二起挂「热」源（mountHotCompanySource）：快照带装载时间标注（JSON 读面
+ * snapshotMeta），公司目录 fs.watch(recursive) 防抖热重载——目录变更下一请求即见，
+ * 重载失败保旧图（lastError 亮在页面上）。档案正文按文件名=工号建映射（校验器保证
+ * 文件名与 front-matter id 一致）。默认只绑本机。
  */
 export async function cmdOverview(argv: string[]): Promise<number> {
   const parsed = parseArgv(argv, new Set(['company', 'db', 'port']), new Set(['company']))
@@ -65,6 +68,7 @@ export async function cmdOverview(argv: string[]): Promise<number> {
   }
 
   const companies: OverviewCompanySource[] = []
+  const hotHandles: HotCompanyHandle[] = []
   for (const dir of companyDirs) {
     const resolved = path.resolve(dir)
     let files: Record<string, string>
@@ -80,22 +84,39 @@ export async function cmdOverview(argv: string[]): Promise<number> {
       for (const issue of mounted.issues) console.error(`  ${issue.file}:${issue.line} [${issue.rule}] ${issue.fix}`)
       return 1
     }
-    const snapshot = mounted.snapshot
-    const personFiles = new Map<string, string>()
-    for (const [p, content] of Object.entries(files)) {
-      const m = PERSON_FILE_RE.exec(p)
-      if (m !== null && m[1] !== undefined) personFiles.set(m[1], content)
+    const makeSource = (loaded: Record<string, string>, snapshot: CompanySnapshot): OverviewCompanySource => {
+      const personFiles = new Map<string, string>()
+      for (const [p, content] of Object.entries(loaded)) {
+        const m = PERSON_FILE_RE.exec(p)
+        if (m !== null && m[1] !== undefined) personFiles.set(m[1], content)
+      }
+      const mission = extractMission(loaded['org-config.yaml'])
+      return {
+        slug: snapshot.slug,
+        snapshotProvider: () => snapshot,
+        ...(mission !== undefined ? { mission } : {}),
+        readPersonFile: (personId) => personFiles.get(personId),
+        // 报表快照（reports/<…>.json）：目录读面已全量在手——loaded[ref] 直查（DEV-36 月报段；
+        // 热源重载后新报即可见，无需重启进程）
+        readReportFile: (jsonRef) => loaded[jsonRef],
+      }
     }
-    const mission = extractMission(files['org-config.yaml'])
-    companies.push({
-      slug: snapshot.slug,
-      snapshotProvider: () => snapshot,
-      ...(mission !== undefined ? { mission } : {}),
-      readPersonFile: (personId) => personFiles.get(personId),
-      // 报表快照（reports/<…>.json）：目录读面已全量在手——files[ref] 直查（DEV-36 月报段；
-      // daemon 产报落盘后 overview 进程需重挂载才见新报——热更归 daemon 后续刀，同快照口径）
-      readReportFile: (jsonRef) => files[jsonRef],
+    const hot = mountHotCompanySource({
+      directory: resolved,
+      initial: makeSource(files, mounted.snapshot),
+      reload: async () => {
+        const fresh = await readDirectoryFiles(resolved)
+        const remounted = loadCompanyDirectory(fresh)
+        if (!remounted.ok) {
+          throw new Error(
+            `公司目录校验不通过（保旧图，docs/04-§九）：${remounted.issues.map((i) => `${i.file}:${i.line} [${i.rule}]`).join('；')}`,
+          )
+        }
+        return makeSource(fresh, remounted.snapshot)
+      },
     })
+    hotHandles.push(hot)
+    companies.push(hot.source)
   }
 
   let handle
@@ -108,14 +129,16 @@ export async function cmdOverview(argv: string[]): Promise<number> {
   }
   console.log(`[overview] :8789 公司概览面已监听 → http://${handle.hostname}:${String(handle.port)}/（只读，Ctrl-C 退出）`)
   console.log(`[overview] 已挂载：${companies.map((c) => c.slug).join('、')}${parsed.flags.db !== undefined ? `；台账：${path.resolve(parsed.flags.db)}（零写）` : '；无台账（progress/finance 页如实显示无台账数据）'}`)
-  console.log('[overview] 端面：/ 公司清单｜/<slug>/ 概览｜/<slug>/org 组织｜/<slug>/people 人事｜/<slug>/people/<工号> 档案｜/<slug>/progress 进度｜/<slug>/finance 财务')
+  console.log('[overview] 热重载：目录监听中（fs.watch recursive，防抖 150ms——目录变更下一请求即见；重载失败保旧图）/api/overview/* JSON 带 snapshotMeta 快照标注')
+  console.log('[overview] 端面：/ 换装页（Naive UI+ECharts，SPA）｜/legacy 旧版只读面｜/api/overview/* JSON｜/<slug>/ 概览｜/<slug>/org|people|progress|finance 各 tab｜/<slug>/people/<工号> 档案')
   await new Promise<void>((resolve) => {
     const stop = (): void => resolve()
     process.once('SIGINT', stop)
     process.once('SIGTERM', stop)
   })
   await handle.close()
-  console.log('[overview] 已优雅关闭')
+  for (const hot of hotHandles) hot.close()
+  console.log('[overview] 已优雅关闭（含目录监听器）')
   return 0
 }
 
