@@ -1275,6 +1275,58 @@
           "category": "EXTERNAL_REJECT"
         }
       }
+    },
+    {
+      "id": "C-plat-009",
+      "domain": "plat",
+      "docs": "25-§6-2",
+      "title": "provision 重跑收敛：同 map 二次 provision 正常返回（幂等判重不误报 CONFIG_INVALID；studio-dev-126 B 轴——三适配器统一证明义务）",
+      "input": {
+        "op": "fields.provision.rerun",
+        "map": {
+          "fields": {
+            "state": "State",
+            "type": "类型"
+          },
+          "states": [
+            "新单",
+            "已派发",
+            "已交付"
+          ],
+          "stateFlow": {}
+        }
+      },
+      "expected": {
+        "out": {
+          "converged": true
+        }
+      }
+    },
+    {
+      "id": "C-plat-010",
+      "domain": "plat",
+      "docs": "25-§6-2",
+      "title": "provision 并发收敛：两写者同拍同 map 竞争（TOCTOU 判重窗口）双双正常返回，不误报 CONFIG_INVALID（studio-dev-126 B 轴）",
+      "input": {
+        "op": "fields.provision.concurrent",
+        "map": {
+          "fields": {
+            "state": "State",
+            "type": "类型"
+          },
+          "states": [
+            "新单",
+            "已派发",
+            "已交付"
+          ],
+          "stateFlow": {}
+        }
+      },
+      "expected": {
+        "out": {
+          "converged": true
+        }
+      }
     }
   ]
 }

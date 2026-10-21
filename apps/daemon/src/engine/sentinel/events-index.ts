@@ -39,6 +39,16 @@ export interface EventIndex {
    * `UNKNOWN_STATUS;status=<name>` 派生——每漂移状态名只告一次。
    */
   statusSetDriftAlarmed: ReadonlySet<string>
+  /**
+   * C2 声明缺失向已告状态名集（studio-dev-126）：ESCALATE note 携
+   * `DECLARED_STATUS_MISSING;status=<name>` 派生——每状态名只告一次。
+   */
+  declaredStatusMissingAlarmed: ReadonlySet<string>
+  /**
+   * C2 平台额外向已告状态名集（studio-dev-126）：ESCALATE note 携
+   * `PLATFORM_STATUS_EXTRA;status=<name>` 派生——每状态名只告一次。
+   */
+  platformStatusExtraAlarmed: ReadonlySet<string>
 }
 
 /** note 分号对解析（PATROL intent= 键同法）：取 `k=` 值，无则 undefined */
@@ -55,6 +65,8 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
   const patrolKeys = new Set<string>()
   const unknownStateAlarmed = new Set<string>()
   const statusSetDriftAlarmed = new Set<string>()
+  const declaredStatusMissingAlarmed = new Set<string>()
+  const platformStatusExtraAlarmed = new Set<string>()
   const stallStrikes = new Map<TicketId, number>()
   for (const e of events) {
     if (e.event === 'DISPATCH') {
@@ -87,6 +99,12 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
       } else if (e.note?.startsWith('UNKNOWN_STATUS;') === true) {
         const st = noteField(e.note, 'status')
         if (st !== undefined) statusSetDriftAlarmed.add(st)
+      } else if (e.note?.startsWith('DECLARED_STATUS_MISSING;') === true) {
+        const st = noteField(e.note, 'status')
+        if (st !== undefined) declaredStatusMissingAlarmed.add(st)
+      } else if (e.note?.startsWith('PLATFORM_STATUS_EXTRA;') === true) {
+        const st = noteField(e.note, 'status')
+        if (st !== undefined) platformStatusExtraAlarmed.add(st)
       }
     } else if (e.event === 'STALL' && (lastDispatch.get(e.issue) ?? { ts: 0 }).ts < e.ts) {
       // DEV-44 咬合阈计数：在工期（最近 DISPATCH 后）STALL 告警逐次累计——
@@ -111,5 +129,7 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
     patrolKeys,
     unknownStateAlarmed,
     statusSetDriftAlarmed,
+    declaredStatusMissingAlarmed,
+    platformStatusExtraAlarmed,
   }
 }

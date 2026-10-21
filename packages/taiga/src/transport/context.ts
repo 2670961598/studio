@@ -6,11 +6,39 @@
  *
  * 缓存（懒加载，实例生命周期内信任）：项目 id+成员、状态集、自定义属性集。
  * 换绑/热更不在首刀范围（重造实例即可，语义显式）。
+ *
+ * studio-dev-126 T1（长实例缓存失稳三面）：
+ *   - 传输层**不再反向引入**领域面 fieldmap.ts（BC-T1 门禁钉死）：本文件只声明
+ *     结构面 FieldMapLike，TaigaFieldMap 结构满足即注入（鸭子型，测试桩同权）；
+ *   - invalidateMembers()：成员写面（hr-sync 邀请/注册/移除）后的写通作废——
+ *     成员内嵌在 by_slug 响应里，故 projectId 与 memberList 必须一起作废；
+ *   - 抛错型查找（statusIdByName/statusNameById/attributeIdByName/idByUsername）
+ *     带**一次有界自愈**：缓存 miss → 作废重读真源一次 → 仍缺才如实抛
+ *     （bound=1——不无限重拉；返回 undefined 的查找不自愈，防读放大无界）。
  */
 import type { TaigaClient } from './http.ts'
 import type { EntityDescriptor } from './entities.ts'
-import type { TaigaFieldMap } from '../fieldmap.ts'
 import { TaigaPlatformError } from './errors.ts'
+
+/**
+ * 字段映射结构面（T1）：transport 层对「业务字段↔平台名翻译器」的全部消费面。
+ * 只收成员签名、不引领域类型——TaigaFieldMap（fieldmap.ts）结构满足即兼容；
+ * 测试桩/替代实现同权注入（结构型依赖倒置，BC-T1 的正面表达）。
+ */
+export interface FieldMapLike {
+  /** 类型收件态（typeInbox[type] > states[0]，DEV-40 解析序） */
+  initialStateFor(type: string | undefined): string | undefined
+  /** 业务字段名 → 平台属性名（未映射=undefined） */
+  toPlatform(business: string): string | undefined
+  /** 业务字段名 → 平台属性名（未映射=抛错面：requirePlatform） */
+  requirePlatform(business: string): string
+  /** 业务值 → 平台属性值（写编码） */
+  encode(business: string, value: unknown): string | number
+  /** 平台属性值 → 业务值（读解码） */
+  decode(business: string, raw: string): string | number
+  /** 业务字段 → 端口字段型（schema 面；值域=fieldmap.ts PORT_TYPES，此处按结构内联——零反向 import） */
+  typeOf(business: string): 'string' | 'int' | 'enum' | 'date' | 'text'
+}
 import { asArray, asObject, optAttrValues, optNumberNull, optString, optStringNull, reqNumber, reqString } from './shape.ts'
 
 export interface MemberInfo {
@@ -91,13 +119,13 @@ export class TaigaContext {
   readonly client: TaigaClient
   readonly desc: EntityDescriptor
   readonly projectSlug: string
-  readonly fieldMap: TaigaFieldMap
+  readonly fieldMap: FieldMapLike
   private projectId: number | null = null
   private memberList: MemberInfo[] | null = null
   private statusList: StatusInfo[] | null = null
   private attrList: AttributeInfo[] | null = null
 
-  constructor(client: TaigaClient, desc: EntityDescriptor, projectSlug: string, fieldMap: TaigaFieldMap) {
+  constructor(client: TaigaClient, desc: EntityDescriptor, projectSlug: string, fieldMap: FieldMapLike) {
     this.client = client
     this.desc = desc
     this.projectSlug = projectSlug
@@ -166,26 +194,48 @@ export class TaigaContext {
     this.attrList = null
   }
 
+  /**
+   * 作废「项目 id+成员」缓存（studio-dev-126 T1/T5 写通面：hr-sync 邀请/注册/移除
+   * 改了平台成员集后调用）。成员内嵌在 GET /projects/by_slug 响应里、与 projectId
+   * 一次解析（N11），故两者必须一起作废——下次 members()/idByUsername() 回真源。
+   */
+  invalidateMembers(): void {
+    this.projectId = null
+    this.memberList = null
+  }
+
   async statusIdByName(name: string): Promise<number> {
-    const hit = (await this.statuses()).find((s) => s.name === name)
+    let hit = (await this.statuses()).find((s) => s.name === name)
     if (hit === undefined) {
-      throw new TaigaPlatformError('CONFIG_INVALID', 'unknown-state', `项目 ${this.projectSlug} 无状态「${name}」（状态集：${(await this.statuses()).map((s) => s.name).join('、')}）`)
+      this.statusList = null // T1 一次有界自愈：长实例缓存可能落后平台真源（他人 provision/平台侧手改）
+      hit = (await this.statuses()).find((s) => s.name === name)
+    }
+    if (hit === undefined) {
+      throw new TaigaPlatformError('CONFIG_INVALID', 'unknown-state', `项目 ${this.projectSlug} 无状态「${name}」（缓存已重读真源仍缺——先 fields.provision 建档；状态集：${(await this.statuses()).map((s) => s.name).join('、')}）`)
     }
     return hit.id
   }
 
   async statusNameById(id: number): Promise<string> {
-    const hit = (await this.statuses()).find((s) => s.id === id)
+    let hit = (await this.statuses()).find((s) => s.id === id)
     if (hit === undefined) {
-      throw new TaigaPlatformError('CONFIG_INVALID', 'issue-missing-state', `状态 id ${String(id)} 不在状态集内（状态集被改？重建适配器实例）`)
+      this.statusList = null // T1 一次有界自愈（同上：状态集被平台侧改掉的窗口）
+      hit = (await this.statuses()).find((s) => s.id === id)
+    }
+    if (hit === undefined) {
+      throw new TaigaPlatformError('CONFIG_INVALID', 'issue-missing-state', `状态 id ${String(id)} 不在状态集内（缓存已重读真源仍缺——平台侧状态集真缺该态：检查出厂态退役/状态集变更记录）`)
     }
     return hit.name
   }
 
   async attributeIdByName(name: string): Promise<number> {
-    const hit = (await this.attributes()).find((a) => a.name === name)
+    let hit = (await this.attributes()).find((a) => a.name === name)
     if (hit === undefined) {
-      throw new TaigaPlatformError('CONFIG_INVALID', 'unknown-attribute', `项目 ${this.projectSlug} 无自定义属性「${name}」`)
+      this.attrList = null // T1 一次有界自愈
+      hit = (await this.attributes()).find((a) => a.name === name)
+    }
+    if (hit === undefined) {
+      throw new TaigaPlatformError('CONFIG_INVALID', 'unknown-attribute', `项目 ${this.projectSlug} 无自定义属性「${name}」（缓存已重读真源仍缺——先 fields.provision 建档）`)
     }
     return hit.id
   }
@@ -200,9 +250,13 @@ export class TaigaContext {
   }
 
   async idByUsername(username: string): Promise<number> {
-    const hit = (await this.members()).find((m) => m.username === username)
+    let hit = (await this.members()).find((m) => m.username === username)
     if (hit === undefined) {
-      throw new TaigaPlatformError('CONFIG_INVALID', 'unknown-user', `项目成员中无用户 ${username}`)
+      this.invalidateMembers() // T1 一次有界自愈：hr-sync 建号/邀请后的成员集变化窗口
+      hit = (await this.members()).find((m) => m.username === username)
+    }
+    if (hit === undefined) {
+      throw new TaigaPlatformError('CONFIG_INVALID', 'unknown-user', `项目成员中无用户 ${username}（缓存已重读真源仍缺——成员不在位：检查 hr-sync 入场是否完成/项目成员页）`)
     }
     return hit.id
   }

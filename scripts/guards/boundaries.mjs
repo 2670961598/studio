@@ -250,6 +250,24 @@ export function checkSizes(files, read, r = rules) {
   return v;
 }
 
+// ── 检查器五：包内反向静态边（BC-T1；studio-dev-126 T7——目录树内禁用 spec 表） ──
+
+export function checkIntraReverse(files, read, r = rules) {
+  const v = [];
+  for (const f of files) {
+    if (!inScope(f, r) || !isCodeFile(f, r)) continue;
+    for (const ent of r.forbiddenImportSpecs ?? []) {
+      if (!f.startsWith(ent.under)) continue;
+      for (const spec of extractImportSpecs(read(f))) {
+        if (ent.specs.includes(spec)) {
+          v.push(violation(ent.rule, f, `→ ${spec}：${ent.why}`));
+        }
+      }
+    }
+  }
+  return v;
+}
+
 // ── 总装 ──────────────────────────────────────────────────────────────────────
 
 /** 全检。read=文件读取函数（测试面可注入内存实现）。返回 { violations, stats }。 */
@@ -260,6 +278,7 @@ export function runGuard(root, r = rules, read = (f) => fs.readFileSync(path.joi
     ...checkHorizontal(files, read, root, r),
     ...checkPlanes(files, r),
     ...checkSizes(files, read, r),
+    ...checkIntraReverse(files, read, r),
   ].sort((a, b) => a.rule.localeCompare(b.rule) || a.file.localeCompare(b.file));
   const stats = {
     scannedFiles: files.length,

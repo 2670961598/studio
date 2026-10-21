@@ -9,6 +9,7 @@ import { rules as prodRules, lineBaseline } from "./boundary-rules.mjs";
 import {
   checkDaemonVertical,
   checkHorizontal,
+  checkIntraReverse,
   checkPlanes,
   checkSizes,
   countLines,
@@ -61,6 +62,7 @@ function guard(fixture, override = {}) {
     ...checkHorizontal(list, read, fixture.root, r),
     ...checkPlanes(list, r),
     ...checkSizes(list, read, r),
+    ...checkIntraReverse(list, read, r),
   ];
 }
 
@@ -254,5 +256,38 @@ describe("本仓自检（分层宪法在真仓上的终态断言——双机制�
       expect(now).toBeLessThanOrEqual(cap);
       expect(cap).toBeGreaterThan(600);
     }
+  });
+});
+
+// ── BC-T1 包内反向静态边（studio-dev-126 T7——spec 字面量表逐条背书） ──────────
+
+describe("BC-T1 包内反向边（taiga transport 不得反向引 fieldmap）", () => {
+  it("绿：transport 引同域/低层自由，fieldmap 引 transport（正向）不红", () => {
+    const fx = makeFixture((files) => ({
+      ...files,
+      "packages/taiga/src/transport/http.ts": `export const http = 1\n`,
+      "packages/taiga/src/transport/context.ts": `import { http } from './http.ts'\nexport const ctx = http\n`,
+      "packages/taiga/src/fieldmap.ts": `import { http } from './transport/http.ts'\nexport const fm = http\n`,
+    }));
+    expect(guard(fx).filter((x) => x.rule === "BC-T1")).toEqual([]);
+  });
+
+  it("红：transport/context.ts 引 '../fieldmap.ts'=反向静态边（spec 字面量命中）", () => {
+    const fx = makeFixture((files) => ({
+      ...files,
+      "packages/taiga/src/transport/context.ts": `import type { TaigaFieldMap } from '../fieldmap.ts'\nexport const ctx = 1\n`,
+    }));
+    const v = guard(fx).filter((x) => x.rule === "BC-T1");
+    expect(v).toHaveLength(1);
+    expect(v[0].file).toBe("packages/taiga/src/transport/context.ts");
+    expect(v[0].detail).toContain("../fieldmap.ts");
+  });
+
+  it("域内例外不扩面：非 transport 树引 './fieldmap.ts' 不红（规则只钉 transport→fieldmap 反向边）", () => {
+    const fx = makeFixture((files) => ({
+      ...files,
+      "packages/taiga/src/platform.ts": `import { fm } from './fieldmap.ts'\nimport { ctx } from './transport/context.ts'\nexport const p = fm + ctx\n`,
+    }));
+    expect(guard(fx).filter((x) => x.rule === "BC-T1")).toEqual([]);
   });
 });

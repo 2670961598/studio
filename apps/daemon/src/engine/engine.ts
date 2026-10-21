@@ -271,28 +271,24 @@ export interface EngineConfig {
   /** dispose() 优雅杀宽限（ms） */
   killGraceMs: number
   /**
-   * 镜像对账重决策节流（DEV-42 ①，2026-10-20 哨查）：每 N 拍把非闭环（未 CLOSE）
-   * mirror 单全量补进决策候选——活动驱动候选只看「有新活动」的单，被三闸顺延且活动
-   * 已被游标消费的单会永久搁置（实测 studio-dev-45..53 零事件滞留数小时）。issues.list
-   * 全量每拍已取（镜像 upsert 用），补进候选零额外平台 IO；N=节流闸（防 noop 决策
-   * 日志面无界放大——serve 每拍为每个 noop 决策落一行）。0=关（负对照/测试隔离用）；
-   * 缺省 30（tickMs=1s 时最坏 30 秒救回延迟）。
+   * 镜像对账重决策节流（DEV-42 ①）：每 N 拍把非闭环 mirror 单补进决策候选——活动
+   * 驱动候选只看「有新活动」，被三闸顺延且活动已被游标消费的单会永久搁置（实测
+   * studio-dev-45..53 滞留数小时）。list 全量每拍已取=补进零额外平台 IO；N=节流闸
+   * （防 noop 决策日志无界放大）。0=关；缺省 30。
    */
   mirrorRescanEveryTicks?: number
   /**
-   * 状态集巡逻核节流（DEV-49 A4，2026-10-20 出厂态根治，docs/52-§十）：每 N 拍核对
-   * 「平台状态集 − 有效流表声明集 = ∅」（C1-08 看门狗口径）——出厂态回流/新模板重拷
-   * 的回归哨；不成立即对心跳哨兵单 ESCALATE（每状态名一次，事件派生键去重）。
-   * 节流原因=platform.fields.schema() 不是免单（每拍拉=平台读放大）；0=关（负对照/
-   * 测试隔离用）；缺省 30（tickMs=1s 时最坏 30 秒回归发现延迟）。
+   * 状态集巡逻核节流（DEV-49 A4，docs/52-§十）：每 N 拍核对「平台状态集−有效流表
+   * 声明集=∅」（C1-08 口径），不成立对心跳哨兵单 ESCALATE（事件派生键去重）。
+   * 节流=schema() 读放大；0=关；缺省 30（最坏 30 秒回归发现延迟）。
    */
   statusSetPatrolEveryTicks?: number
+  /** C2 声明态面（studio-dev-126，wire.ts 单源计算）；缺省=面关 */
+  provisionDeclaredStates?: readonly string[]
   /**
-   * 收割尾对账步节流（P3，studio-dev-100 提案 §4.3-1，2026-10-21 全批）：每 N 拍对
-   * PATROL job= 锚的收割成功单跑「jobs[].output 声明落点 × 公司目录实际文件」对账——
-   * 缺归档=REPORT_MISSING 事件+内容哈希幂等补收（先事件后搬运；异哈希转人工绝不覆盖）。
-   * 节流原因=全量事件扫描（与 buildEventIndex 同量级，量级口径同 mirrorRescan）；
-   * companyDir 未注入=面未开零行为；0=关（负对照/测试隔离用）；缺省 30。
+   * 收割尾对账步节流（P3，studio-dev-100 提案 §4.3-1，全批）：每 N 拍对收割成功单跑
+   * 「jobs[].output 声明落点×公司目录实际文件」对账——缺归档=REPORT_MISSING+哈希
+   * 幂等补收（异哈希转人工不覆盖）。companyDir 未注入=面未开；0=关；缺省 30。
    */
   harvestReconEveryTicks?: number
   /**
@@ -1340,11 +1336,13 @@ export function createEngine(deps: EngineDeps): Engine {
     // 键派生=events-index.ts）——流外态单/出厂态回流不再只走 NOOP 静默观测链：ESCALATE
     // 落账（词表既有名）；哨计 mutations（RESUME 同口径）——有哨账的拍不落心跳。
     const index = buildEventIndex(ledger.queryEvents())
-    const { alarmed: unknownStateAlarmed, drift: statusSetDrift } = await runDev49Sentinels({
+    const { alarmed: unknownStateAlarmed, drift: statusSetDrift, declaredMissing: declaredStatusMissing, declaredExtra: platformStatusExtra } = await runDev49Sentinels({
       issues,
       flowOf,
       alarmedKeys: index.unknownStateAlarmed,
       driftKeys: index.statusSetDriftAlarmed,
+      missingKeys: index.declaredStatusMissingAlarmed,
+      extraKeys: index.platformStatusExtraAlarmed,
       attemptOf: index.attemptOf,
       emit: (issue, attempt, note) => {
         makeEvent('ESCALATE', issue, attempt, tickEvents, { note })
@@ -1354,6 +1352,7 @@ export function createEngine(deps: EngineDeps): Engine {
         every: config.statusSetPatrolEveryTicks ?? 30,
         schema: () => platform.fields.schema(),
         ...(config.flows === undefined ? {} : { flows: config.flows }),
+        ...(config.provisionDeclaredStates === undefined ? {} : { declared: config.provisionDeclaredStates }),
         heartbeatIssue: config.heartbeatIssue,
         deptFallback: config.deptFallback,
         at: startedAt,
@@ -1362,7 +1361,7 @@ export function createEngine(deps: EngineDeps): Engine {
         errors.push(msg)
       },
     })
-    mutations += unknownStateAlarmed + statusSetDrift
+    mutations += unknownStateAlarmed + statusSetDrift + declaredStatusMissing + platformStatusExtra
 
     // —— 相位 2 state-diff：受影响单逐个 decide（每单至多一动作；provisionalActions 供三闸） ——
     const dispatchQ: Array<{ action: Extract<Action, { type: 'dispatch' }>; intentKey: string }> = []
@@ -1782,6 +1781,8 @@ export function createEngine(deps: EngineDeps): Engine {
           cursorAfter: cursor,
           unknownStateAlarmed,
           statusSetDrift,
+          declaredStatusMissing,
+          platformStatusExtra,
         },
         stateDiff: { candidates: candidates.length, decisions, reopened, rescanned },
         dispatch: {

@@ -29,9 +29,9 @@
 import type { LinkType, TicketId } from '@studio-next/contract'
 import type { TaigaContext, EntityRaw } from './transport/context.ts'
 import { TaigaPlatformError } from './transport/errors.ts'
+import { LIST_PAGE_SIZE } from './transport/entities.ts'
 import { asArray, asObject, optNumber, reqNumber } from './transport/shape.ts'
 
-const LIST_PAGE_SIZE = 100
 
 /** 单号升序（ref 数值序；TicketId 形见 context.ticketId） */
 function compareByRef(a: TicketId, b: TicketId): number {

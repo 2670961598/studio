@@ -86,12 +86,16 @@ describe('建单落流程初态（DEV-40，2026-10-20 哨查事故防复发；do
     expect(rec.state).toBe('新单') // 正断言：流程初态落位
     expect(rec.state).not.toBe('New') // 负断言：不再是平台默认态（观察黑洞源）
     expect((await p.issues.get(rec.id)).state).toBe('新单') // 平台权威态已迁移
-    // 落位通道：POST 建（平台默认 status）后补一次 PATCH 迁移（status 端点定版）
-    const statusWrites = fake.calls.filter(
+    // 落位通道（studio-dev-126 C3 一步化，S3 真机定案 docs/32-§九）：POST 建单体直带
+    // {status}（真机实测生效——回显+by_ref 双复核）；不再有建后 PATCH 迁移补写
+    //（原两步通道的崩溃窗口：建已落默认态、迁移前进程死=单永驻错态无账可对）。
+    const createPosts = fake.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/userstories'))
+    expect(createPosts).toHaveLength(1)
+    expect(createPosts[0]?.body).toMatchObject({ status: 10 })
+    const statusPatches = fake.calls.filter(
       (c) => c.method === 'PATCH' && c.path.includes('userstories') && typeof (c.body as Record<string, unknown> | undefined)?.['status'] === 'number',
     )
-    expect(statusWrites).toHaveLength(1)
-    expect(statusWrites[0]?.body).toMatchObject({ status: 10 })
+    expect(statusPatches).toHaveLength(0) // 零迁移补写：一步原子落位
   })
 
   it('显式 initialState 优先于 provision 初态（解析序：入参 > states[0] > 平台默认）', async () => {

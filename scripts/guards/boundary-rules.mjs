@@ -175,6 +175,24 @@ export const lineBaseline = {
   "packages/store/test/v5-candidates.test.ts": 602,
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 四、包内反向静态边（studio-dev-126 T7=BC-T1，studio-dev-104 提案 §1-A①；
+//     2026-10-21 制作人全批——判据类资产新增随提案落地）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 指定目录树内禁用的 import spec（字面量匹配，含 .ts 扩展——仓内引用惯例全显式扩展）。
+ * 与横轴（包间）正交：本表管**包内**子目录间的方向面——高层域可引低层域，反向=违例。
+ */
+export const forbiddenImportSpecs = [
+  {
+    rule: "BC-T1",
+    under: "packages/taiga/src/transport/",
+    specs: ["../fieldmap.ts"],
+    why: "transport（传输域）不得反向依赖 fieldmap（域映射域）——fieldmap→transport 合法、transport→fieldmap=反向静态边；域映射口以结构化类型（FieldMapLike，transport/context.ts）注入，依赖面与实例缓存解耦（§十五.二同则的包内面）",
+  },
+];
+
 /** 汇总导出（引擎消费的完整规则集）。 */
 export const rules = {
   scopeDirs,
@@ -191,4 +209,5 @@ export const rules = {
   maxFilesPerDirectory,
   maxLinesPerFile,
   lineBaseline,
+  forbiddenImportSpecs,
 };

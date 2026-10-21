@@ -20,6 +20,10 @@ export interface TickPhaseCollect {
   unknownStateAlarmed: number
   /** DEV-49 A4 状态集巡逻核漂移态名数 */
   statusSetDrift: number
+  /** studio-dev-126 C2 声明态漂移：provision 声明在档而平台已无的态名数（节流拍才有） */
+  declaredStatusMissing: number
+  /** studio-dev-126 C2 声明态漂移：平台在位而声明未收的态名数（节流拍才有） */
+  platformStatusExtra: number
   mirrorSynced: number
   cursorBefore: string | null
   cursorAfter: string | null

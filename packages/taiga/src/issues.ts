@@ -30,8 +30,7 @@ import type { TaigaContext, EntityRaw } from './transport/context.ts'
 import { parseEntity, parseEntityList } from './transport/context.ts'
 import { TaigaPlatformError } from './transport/errors.ts'
 import { asObject } from './transport/shape.ts'
-
-export const LIST_PAGE_SIZE = 100
+import { LIST_PAGE_SIZE } from './transport/entities.ts'
 
 /** 自定义维（经 FieldProvisionMap 映射后可见可写） */
 const CUSTOM_BUSINESS_DIMS = ['type', 'dept', 'level', 'lane'] as const
@@ -148,6 +147,13 @@ export async function createIssue(ctx: TaigaContext, input: IssueCreate): Promis
   const body: Record<string, unknown> = { project: projectId, subject: input.title }
   if (input.description !== undefined) body['description'] = input.description
   if (input.assignee !== undefined) body['assigned_to'] = await ctx.idByUsername(input.assignee)
+  // 建单落位一步化（studio-dev-126 C3，S3 真机定案 docs/32-§九：POST {status:<id>}
+  // 真机生效——回显+by_ref 双复核；坏 id 吃 400「Invalid pk」）。原两步通道（建后补
+  // PATCH 迁移）存在崩溃窗口：建单已落平台默认态、迁移 PATCH 前进程死=单永驻错态且
+  // 无账可对（哨兵只看状态集不看单落位）。一步=原子落位，坏目标态在 IO 前即拒
+  //（不产半吊子单）。解析序不变：显式入参 > typeInbox[type] > states[0] > 平台默认。
+  const target = input.initialState ?? ctx.fieldMap.initialStateFor(input.type)
+  if (target !== undefined) body['status'] = await ctx.statusIdByName(target)
   const res = await ctx.client.request({ method: 'POST', path: `/${ctx.desc.collection}`, body })
   const created = parseEntity(asObject(res.json, 'create'), 'create')
   // 自定义维落值（映射了且入参给了才写；PATCH 值端点形状见 context.patchAttrValues 头注）
@@ -164,14 +170,10 @@ export async function createIssue(ctx: TaigaContext, input: IssueCreate): Promis
   if (Object.keys(attributes).length > 0) {
     await ctx.patchAttrValues(created.id, attributes)
   }
-  // 建单落位（docs/25-§3.2 IssueCreate.initialState + DEV-43 docs/18-§2.1.1）：解析序=
-  // 显式入参 > typeInbox[type]（provision 按单据类型查收件态）> states[0]（流程初态）
-  // > 平台默认态。Taiga 建单恒落平台默认 status（New），若目标落位不同则补一次
-  // transition（幂等：已在目标态不重放写）。目标态平台不认识 → transition 内部显式
-  // 报错（unknown-state），不静默回落默认态。
+  // 落位复核（兜底零写）：POST {status} 已原子落位（上注）；目标态在场而回显不符时
+  // 才补一次 transition（幂等：已在目标态不重放写）——真机不触发，防御平台变体。
   const landed =
     Object.keys(attributes).length > 0 ? await getIssue(ctx, ctx.ticketId(created.ref)) : await toIssueRecord(ctx, created)
-  const target = input.initialState ?? ctx.fieldMap.initialStateFor(input.type)
   if (target !== undefined && landed.state !== target) {
     return transitionIssue(ctx, ctx.ticketId(created.ref), target)
   }

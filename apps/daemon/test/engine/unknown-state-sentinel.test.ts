@@ -15,6 +15,9 @@
  *      schema）；0=关；漂移治理后（schema 归零）不再告
  *   3. 哨计 mutations：有哨账的拍不落 HEARTBEAT（RESUME 同口径）
  *   4. TickReport 观测：collect.unknownStateAlarmed / collect.statusSetDrift 计数
+ *   5. C2 双向漂移（studio-dev-126）：provision 声明面注入后——声明在档平台已无 →
+ *      DECLARED_STATUS_MISSING（事前哨：建单/流转将吃 unknown-state 假红）；平台
+ *      在位声明未收 → PLATFORM_STATUS_EXTRA；缺省不注入=面关零行为（面关负对照）。
  */
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -36,7 +39,7 @@ interface TestStack {
   clock: { now(): number; advance(ms: number): void }
 }
 
-function buildStack(id: string, schemaStates?: string[], patrolEvery?: number): TestStack {
+function buildStack(id: string, schemaStates?: string[], patrolEvery?: number, declared?: string[]): TestStack {
   const ledger = openLedger(path.join(root, `${id}.sqlite`))
   let t = Date.UTC(2026, 9, 20, 0, 0, 0)
   const clock = { now: (): number => t, advance: (ms: number): void => { t += ms } }
@@ -67,6 +70,7 @@ function buildStack(id: string, schemaStates?: string[], patrolEvery?: number): 
       deptFallback: 'departments/工程部',
       defaultLane: 'core',
       ...(patrolEvery === undefined ? {} : { statusSetPatrolEveryTicks: patrolEvery }),
+      ...(declared === undefined ? {} : { provisionDeclaredStates: declared }),
     },
     people: DEMO_SNAPSHOT.people,
   })
@@ -184,6 +188,64 @@ describe('状态集巡逻核：schema 状态集 − 声明集 ≠∅ → 心跳�
     const r1: TickReport = await stack.engine.tick()
     expect(r1.phases.collect.statusSetDrift).toBe(0)
     // 心跳哨兵单（'-'）上只可能有 HEARTBEAT（零动作拍例行），不得有 ESCALATE
+    expect(stack.ledger.queryEvents({ issue: '-' }).filter((e) => e.event === 'ESCALATE')).toHaveLength(0)
+    await stack.engine.dispose()
+    stack.ledger.close()
+  })
+})
+
+describe('C2 声明态漂移哨（studio-dev-126）：provision 声明面 × 平台真态双向比对', () => {
+  const CLEAN = ['新单', '已派发', '证据就绪', '复验通过', '已交付'] // 与流表全等=零 UNKNOWN_STATUS 噪声
+
+  it('声明在档、平台已无 → DECLARED_STATUS_MISSING；次巡逻拍不重告', async () => {
+    const stack = buildStack('c2-missing', CLEAN, 1, [...CLEAN, '幽灵态'])
+    stack.clock.advance(1000)
+    const r1: TickReport = await stack.engine.tick()
+    expect(r1.phases.collect.declaredStatusMissing).toBe(1)
+    expect(r1.phases.collect.platformStatusExtra).toBe(0)
+    const notes = stack.ledger.queryEvents({ issue: '-' }).filter((e) => e.event === 'ESCALATE').map((e) => e.note)
+    expect(notes).toEqual(['DECLARED_STATUS_MISSING;status=幽灵态'])
+    // 去重：次巡逻拍同名不重告
+    stack.clock.advance(1000)
+    const r2: TickReport = await stack.engine.tick()
+    expect(r2.phases.collect.declaredStatusMissing).toBe(0)
+    expect(stack.ledger.queryEvents({ issue: '-' }).filter((e) => e.event === 'ESCALATE')).toHaveLength(1)
+    await stack.engine.dispose()
+    stack.ledger.close()
+  })
+
+  it('平台在位、声明未收 → PLATFORM_STATUS_EXTRA（与 UNKNOWN_STATUS 流表面并存：两问两哨）', async () => {
+    const stack = buildStack('c2-extra', [...CLEAN, '手加态'], 1, CLEAN)
+    stack.clock.advance(1000)
+    const r1: TickReport = await stack.engine.tick()
+    expect(r1.phases.collect.declaredStatusMissing).toBe(0)
+    expect(r1.phases.collect.platformStatusExtra).toBe(1)
+    const notes = stack.ledger.queryEvents({ issue: '-' }).filter((e) => e.event === 'ESCALATE').map((e) => e.note).sort()
+    // 手加态两哨齐告：流表面（不可用）+ 声明面（provision 事实源不一致）——问的是两件事
+    expect(notes).toEqual(['PLATFORM_STATUS_EXTRA;status=手加态', expect.stringMatching(/^UNKNOWN_STATUS;status=手加态;declared=\d+$/)])
+    await stack.engine.dispose()
+    stack.ledger.close()
+  })
+
+  it('面关负对照：不注入 declared（localfile/fake 部署形态）→ 双向计数恒 0、零新事件', async () => {
+    const stack = buildStack('c2-off', [...CLEAN, '手加态'], 1) // 平台有额外态但不注入声明面
+    stack.clock.advance(1000)
+    const r1: TickReport = await stack.engine.tick()
+    expect(r1.phases.collect.declaredStatusMissing).toBe(0)
+    expect(r1.phases.collect.platformStatusExtra).toBe(0)
+    // 流表面照常工作（既有行为零变化——只多了面关的两键恒 0）
+    expect(r1.phases.collect.statusSetDrift).toBe(1)
+    await stack.engine.dispose()
+    stack.ledger.close()
+  })
+
+  it('恰等收口：声明面=平台真态 → 双向计数恒 0（零漂移=收口正断言）', async () => {
+    const stack = buildStack('c2-equal', CLEAN, 1, CLEAN)
+    stack.clock.advance(1000)
+    const r1: TickReport = await stack.engine.tick()
+    expect(r1.phases.collect.declaredStatusMissing).toBe(0)
+    expect(r1.phases.collect.platformStatusExtra).toBe(0)
+    expect(r1.phases.collect.statusSetDrift).toBe(0)
     expect(stack.ledger.queryEvents({ issue: '-' }).filter((e) => e.event === 'ESCALATE')).toHaveLength(0)
     await stack.engine.dispose()
     stack.ledger.close()

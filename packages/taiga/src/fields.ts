@@ -139,6 +139,30 @@ export async function fieldSchema(ctx: TaigaContext): Promise<FieldSchema[]> {
   return out
 }
 
+/**
+ * POST 400 读回验证吸收（studio-dev-126 T3，B 轴幂等收口）：provision 的建档 POST
+ * 在并发 TOCTOU 窗口（两写者同拍 GET 判重 miss → 都 POST → 后到者吃 400 重名拒收）
+ * 收敛为**幂等成功**而非误报 CONFIG_INVALID。判据零文案耦合——真机实测重名 400 文案
+ * 至少两种（statuses=「Duplicated name」/attributes=「Already exists one with the
+ * same name.」，docs/32-§九 S3-②），只认 http.ts mapStatusToError 的 400 统一归口
+ * （CONFIG_INVALID×bad-request）+ **读回在场**；读回不在场=真 400（体形状坏等），
+ * 原错误如实再抛——吸收面只吃「并发窗口已收敛」这一件事，不吞真错。
+ */
+async function postOrAbsorbDuplicate(
+  ctx: TaigaContext,
+  path: string,
+  body: Record<string, unknown>,
+  existsAfter: () => Promise<boolean>,
+): Promise<void> {
+  try {
+    await ctx.client.request({ method: 'POST', path, body })
+  } catch (err) {
+    if (!(err instanceof TaigaPlatformError)) throw err
+    if (err.category !== 'CONFIG_INVALID' || err.subcause !== 'bad-request') throw err
+    if (!(await existsAfter())) throw err
+  }
+}
+
 export async function provisionFields(ctx: TaigaContext, map: FieldProvisionMap): Promise<void> {
   validateProvisionMap(map)
   ctx.invalidateMeta() // 判重前作废缓存：以平台现值为准（上次 provision/他人改动都要看见）
@@ -148,7 +172,10 @@ export async function provisionFields(ctx: TaigaContext, map: FieldProvisionMap)
   const haveStatus = new Set((await ctx.statuses()).map((s) => s.name))
   for (const name of map.states) {
     if (haveStatus.has(name)) continue
-    await ctx.client.request({ method: 'POST', path: `/${ctx.desc.statuses}`, body: { project: projectId, name } })
+    await postOrAbsorbDuplicate(ctx, `/${ctx.desc.statuses}`, { project: projectId, name }, async () => {
+      ctx.invalidateMeta() // 读回必须真源：判重缓存可能正落后于并发写者
+      return (await ctx.statuses()).some((s) => s.name === name)
+    })
     haveStatus.add(name)
   }
 
@@ -165,7 +192,11 @@ export async function provisionFields(ctx: TaigaContext, map: FieldProvisionMap)
     )
     for (const name of profile.states) {
       if (have.has(name)) continue
-      await ctx.client.request({ method: 'POST', path: `/${d.statuses}`, body: { project: projectId, name } })
+      await postOrAbsorbDuplicate(ctx, `/${d.statuses}`, { project: projectId, name }, async () => {
+        // 实体状态集无实例缓存（逐次真读，factory statusListOf 同源）——直接重 GET
+        const r = await ctx.client.request({ method: 'GET', path: `/${d.statuses}`, query: { project: String(projectId) } })
+        return asArray(r.json, d.statuses).some((x) => reqString(asObject(x, d.statuses), 'name', d.statuses) === name)
+      })
       have.add(name)
     }
   }
@@ -185,10 +216,9 @@ export async function provisionFields(ctx: TaigaContext, map: FieldProvisionMap)
       }
       continue
     }
-    await ctx.client.request({
-      method: 'POST',
-      path: `/${ctx.desc.attributes}`,
-      body: { project: projectId, name: platform, type: portTypeToTaiga(wanted) },
+    await postOrAbsorbDuplicate(ctx, `/${ctx.desc.attributes}`, { project: projectId, name: platform, type: portTypeToTaiga(wanted) }, async () => {
+      ctx.invalidateMeta() // 读回必须真源（同 states 位理由）
+      return (await ctx.attributes()).some((a) => a.name === platform)
     })
     haveAttr.set(platform, { id: -1, name: platform, type: portTypeToTaiga(wanted) }) // 本轮判重（幂等：同名映射两业务字段只建一次）
   }
