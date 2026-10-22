@@ -341,6 +341,70 @@ export function judgeAwareResolver(base: AdapterResolver = builtinResolver): Ada
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// 模型档注册位（studio-dev-196，制作人 2026-10-22 三档定调：大/中/小）：`<family>-<tier>`
+// ---------------------------------------------------------------------------
+
+/**
+ * 模型档位后缀（`dsh-low`/`dsh-mid`/`dsh-high` 一类——家族名 + 档位后缀）。
+ * 档位枚举与 contract `ModelTier['tier']` 同源（high/mid/low，docs/17-§4 三档冻结）。
+ */
+export const MODEL_TIER_SUFFIXES = ['-high', '-mid', '-low'] as const
+
+/** 模型档注册位的档位名（=后缀去连线；contract ModelTier.tier 的镜像枚举） */
+export type ModelTierSuffix = 'high' | 'mid' | 'low'
+
+/** 判定名是否模型档注册位 */
+export function isModelTierExecutorName(name: string): boolean {
+  return tierOfExecutorName(name) !== undefined
+}
+
+/**
+ * 模型档注册位 → {family, tier}（`dsh-high`→{family:'dsh', tier:'high'}）；非档位形态
+ * 或家族不存在 → undefined。裸家族名（`dsh`）不是档位——undefined（现役语义不变）。
+ * 家族表=BUILTIN_FACTORIES 键（四家）——未配置家族的档位由 resolver 明报，不静默。
+ */
+export function tierOfExecutorName(name: string): { family: ExecutorFamily; tier: ModelTierSuffix } | undefined {
+  for (const suffix of MODEL_TIER_SUFFIXES) {
+    if (!name.endsWith(suffix)) continue
+    const family = name.slice(0, -suffix.length)
+    if (family === '') return undefined // 裸 `-high` 一类：无家族前缀，非档位名
+    return Object.hasOwn(BUILTIN_FACTORIES, family)
+      ? { family: family as ExecutorFamily, tier: suffix.slice(1) as ModelTierSuffix }
+      : undefined
+  }
+  return undefined
+}
+
+/** 家族名 + 档位 → 注册位名（`('dsh','high')`→`dsh-high`；tierOfExecutorName 的反函数） */
+export function tierExecutorName(family: string, tier: ModelTierSuffix): string {
+  return `${family}-${tier}`
+}
+
+/**
+ * 模型档感知解析器：四家名走 base（缺省 builtinResolver）；`<family>-<tier>` 走该家族
+ * 工厂并以档位名注册（studio-dev-196：档位是**全功能派工位**——同家族不同档=不同 cmd
+ * `--patch` overlay 绑定不同 agent-default-model，17-§4「cmd=配置覆盖注入位」）。
+ *
+ * 与 judgeAwareResolver 的语义差（勿混）：**patches 透传**——档位的
+ * `patches['agent-default-model']` 是模型留痕镜像（132-§6.1 单A，ResultStats.model 注入
+ * 源），resolve 时必须连同 cmd 一起交给家族工厂；judge 位不透传（判断位镜像无意义）。
+ * 档位**可标 default**（`dsh-mid: default` 即缺省主力位——档位是派工泳道，与 judge 位
+ * 「不得标 default」相反；wireRegistry 无档位特设闸，配置自证）。
+ */
+export function tierAwareResolver(base: AdapterResolver = builtinResolver): AdapterResolver {
+  return (name: string): AdapterFactory | undefined => {
+    const tierFamily = tierOfExecutorName(name)
+    if (tierFamily !== undefined) {
+      const familyFactory = BUILTIN_FACTORIES[tierFamily.family] as AdapterFactory
+      return (cmd: readonly string[] | undefined, patches?: Readonly<Record<string, unknown>>): ExecutorAdapter =>
+        renameExecutor(familyFactory(cmd, patches), name)
+    }
+    return base(name)
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 内部工具（纯函数）
 // ---------------------------------------------------------------------------

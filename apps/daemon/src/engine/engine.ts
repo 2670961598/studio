@@ -217,6 +217,7 @@ import {
 } from '@studio-next/core'
 import type { ExecutorRegistry } from '@studio-next/adapters'
 import type { Ledger } from '@studio-next/store'
+import { modelTierDispatchFace, resolveModelTier, type TierId } from './tier/model-tier.ts'
 import { gateDispatch, settleDispatch, type BudgetGateDeps } from './budget-gate.ts'
 import { createLaneRegistry } from './lanes/registry.ts'
 import { foldHarvestCost, writeThroughHarvestUsage } from './cost-guard/harvest.ts'
@@ -469,6 +470,15 @@ export interface EngineConfig {
    * `personInflightOverrides: P-1=2;P-2=3` 扁平分号对——matrixRoles 先例）。
    */
   personInflightOverrides?: Readonly<Record<string, number>>
+  /**
+   * 模型档路由面（studio-dev-196，制作人 2026-10-22 三档定调）：modelTierByRole=
+   * models.yaml roles 直录（岗位→档；**注入即开面**——缺省不注入=面关，派发行为
+   * 与本单之前逐字节一致）；modelTierTickets=daemon.yaml modelTierTickets 显式
+   * 单级覆盖（`TICKET=high;…` 分号对，org-config 规范位/单据字段=登记债务）。
+   * 解析序与派发面语义见 src/engine/model-tier.ts 头注（单>岗>角色三级）。
+   */
+  modelTierByRole?: Readonly<Record<string, TierId>>
+  modelTierTickets?: Readonly<Record<string, TierId>>
   /**
    * 制作人置顶单集（129-§6.2-R4：pinned=+∞ 恒首）。daemon.yaml `pinnedTickets:`
    * 逗号清单（平面字段写通道归刀B，登记在案）；现算不入携带态——改配置即刻生效。
@@ -882,10 +892,33 @@ export function createEngine(deps: EngineDeps): Engine {
     if (person === undefined) {
       return fail('人员索引为空（people 未注入）——不派工')
     }
+    // 模型档选位（studio-dev-196）：单>岗>角色三级解析（model-tier.ts）；面关（models.yaml
+    // 未装载）=tierFace undefined，选位与现行为逐字节一致。档面在 resume 面前：resume 不可
+    // 续的 fallback=档位适配器（降级新派不降档——接力同档）。
+    const tierResolve = resolveModelTier(
+      {
+        ticket,
+        assignee: fresh.assignee,
+        people,
+        jobAnchor: index.jobAnchorOf(ticket),
+        jobTierOf: (id) => ledger.getJob(id)?.model_tier,
+      },
+      config,
+    )
+    const tierFallback = registry.pick()
+    const tierFace =
+      tierResolve !== undefined && tierFallback !== undefined
+        ? modelTierDispatchFace(registry, tierResolve.tier, tierFallback)
+        : undefined
     // resume 面（129-E 单E）：指名解析优先（同一家原生续跑），不可续=明报降级走 pick 新派
-    //（resumeDispatchFace 一次取齐适配器/观测锚/装配入参——faces 件，语义源 relay-resume.ts）
-    const resumeFace = resumePlan !== undefined ? resumeDispatchFace(registry, resumePlan, registry.pick()) : undefined
-    const adapter = resumeFace !== undefined && resumeFace.adapter !== undefined ? resumeFace.adapter : registry.pick()
+    //（resumeDispatchFace 一次取齐适配器/观测锚/装配入参——faces 件，语义源 relay-resume.ts；
+    // fallback=档位适配器——tier 面选位先于 resume 判定，见上）
+    const resumeFace =
+      resumePlan !== undefined ? resumeDispatchFace(registry, resumePlan, tierFace?.adapter ?? registry.pick()) : undefined
+    const adapter =
+      resumeFace !== undefined && resumeFace.adapter !== undefined
+        ? resumeFace.adapter
+        : (tierFace?.adapter ?? registry.pick())
     if (adapter === undefined) {
       return fail('注册表无存活 executor（registry.pick 空）')
     }
@@ -1058,7 +1091,7 @@ export function createEngine(deps: EngineDeps): Engine {
         size: Buffer.byteLength(assembled.agentsMd.text, 'utf8'),
         payload_hash: `sha256:${createHash('sha256').update(assembled.agentsMd.text, 'utf8').digest('hex')}`,
         ...(resumeFace !== undefined ? { causation_id: resumeFace.causationId } : {}),
-        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${minted !== undefined ? `;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=${minted.nonce}` : ''}${action.breakerProbe === true ? `;breaker=half-open-probe（冷却窗过——单次试探：成功即复位，失败回全开续冷却，DEV-46）` : ''}${queueAnchor}${resumeFace?.noteAnchor ?? ''}`,
+        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version}${tierFace?.noteAnchor ?? ''};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${minted !== undefined ? `;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=${minted.nonce}` : ''}${action.breakerProbe === true ? `;breaker=half-open-probe（冷却窗过——单次试探：成功即复位，失败回全开续冷却，DEV-46）` : ''}${queueAnchor}${resumeFace?.noteAnchor ?? ''}`,
       })
       // 派发成功即出队（129-§6.2）：携带条删——GATE_FAIL 回滚再入队走 touchQueueCarry
       // 新钟（attempt 轮次可区分，队列等待观测口径=每誓一钟，不跨轮累计）。

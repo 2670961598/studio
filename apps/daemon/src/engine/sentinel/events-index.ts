@@ -93,6 +93,12 @@ export interface EventIndex {
    * 5a submit_approval 回弹抑制（打回/拆单/搁置站立期不自动呈批）。
    */
   directiveStandingOf(ticket: TicketId): DirectiveVerb | null
+  /**
+   * 岗单锚（studio-dev-196 模型档执行面）：单据 PATROL note 携 `job=<id>`（jobs
+   * 物化口径，jobs-sources jobTickets 同法）→ 该岗 id；非岗单/未物化=undefined。
+   * 消费面：模型档解析第 2 级（岗单随行 model_tier 落档——ledger.getJob 读面）。
+   */
+  jobAnchorOf(ticket: TicketId): string | undefined
 }
 
 /** note 分号对解析（PATROL intent= 键同法）：取 `k=` 值，无则 undefined */
@@ -115,6 +121,7 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
   const stallStrikes = new Map<TicketId, number>()
   const directiveKeys = new Set<string>()
   const directiveStanding = new Map<TicketId, DirectiveVerb>()
+  const jobAnchors = new Map<TicketId, string>()
   for (const e of events) {
     if (e.event === 'DISPATCH') {
       dispatchCount.set(e.issue, (dispatchCount.get(e.issue) ?? 0) + 1)
@@ -140,6 +147,10 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
       // 与 DISPATCH 键的「结论后释放」语义相反（定时触发=markRan 已记账，重投不得重跑）
       const key = noteField(e.note, 'intent')
       if (key !== undefined) patrolKeys.add(key)
+      // 岗单锚（studio-dev-196）：PATROL note 携 job=<id> 即岗物化单——last-write-wins
+      //（jobs-sources jobTickets 同口径；每岗每拍恒同单号，覆盖幂等）
+      const job = noteField(e.note, 'job')
+      if (job !== undefined) jobAnchors.set(e.issue, job)
     } else if (e.event === 'FOREIGN_KNOWN') {
       // 127-C 州表卫生白名单态观察键（append-only 不释放）：note 携 FOREIGN_KNOWN;state=<s>
       const st = noteField(e.note, 'state')
@@ -220,5 +231,6 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
     platformStatusExtraAlarmed,
     directiveKeys,
     directiveStandingOf: (ticket: TicketId): DirectiveVerb | null => directiveStanding.get(ticket) ?? null,
+    jobAnchorOf: (ticket: TicketId): string | undefined => jobAnchors.get(ticket),
   }
 }
