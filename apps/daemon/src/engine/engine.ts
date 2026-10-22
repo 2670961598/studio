@@ -300,6 +300,7 @@ import { ageBoostTier, type QueueRanker } from '@studio-next/core'
 import { consumePricingPublish, runPricingStaleCheck, type PricingStaleTickReport } from './pricing/pricing.ts'
 import { costCloseDeps, runCostCloseTick } from './cost-close/close.ts'
 import type { TickActionResult, TickDecisionEntry, TickPhaseDispatchBudget, TickPhaseHarvest, TickReport } from './tick-report/types.ts'
+import { personViewOf, type QueueJudgeCandidate, type QueueJudgeHook } from './judge/sites129.ts' // 160-B 两址接线体（studio-dev-182）
 export type { TickDecisionEntry, TickReport } from './tick-report/types.ts'
 
 // ————————————————————————— 配置 —————————————————————————
@@ -553,6 +554,12 @@ export interface EngineDeps {
    * note 记「notify=未接线」（登记位语义非承诺投递）；v0 serve 接 daemon log 行。
    */
   notify?: (notice: CostThresholdNotice) => void
+  /**
+   * 队列小模型精序钩子（160-B·studio-dev-182，judge/sites129.ts）：pick/interrupt 两址
+   * 挂队列定序后、派发决策前的相位边缘；缺省不注入=规则缺省档行为零变（beginTick
+   * 随拍清判断拍闸计数）。
+   */
+  judge?: QueueJudgeHook
 }
 
 // ————————————————————————— TickReport（17-§2「tick 返回结构化 actions」；各面类型驻 tick-report/types.ts） —————————————————————————
@@ -1483,6 +1490,7 @@ export function createEngine(deps: EngineDeps): Engine {
     seq += 1
     ledger.kvSet(TICK_SEQ_KEY, String(seq))
     const startedAt = now()
+    deps.judge?.beginTick(`tick-${seq}`) // 160-B：判断拍闸计数随拍清零（invoke.ts 单B 挂主循环拍）
     const tickEvents: EventRecord[] = []
     const decisions: TickDecisionEntry[] = []
     const decidedActions: Action[] = []
@@ -1813,7 +1821,51 @@ export function createEngine(deps: EngineDeps): Engine {
       return issue !== undefined && queueMembership(issue, flowOf(issue)) !== false
     }
     const metaOf = (ticket: TicketId) => queueCandidateMeta(queueCarry, ticket, pinnedSet.has(ticket), startedAt, queueAgeStepMs)
-    const orderedCandidates = orderCandidates(candidates, memberOf, metaOf, config.queueRanker)
+    let orderedCandidates = orderCandidates(candidates, memberOf, metaOf, config.queueRanker)
+    // —— 相位 2 前置④：队列小模型精序（160-B·studio-dev-182；体=judge/sites129.ts）——
+    // pick/interrupt 两址挂触钟定序后、派发决策前的相位边缘（160 §6.3）：只在非置顶队列
+    // 候选内纯置换（置顶恒首·生命周期段不触·在工单结构性无入面）；降级=规则档原序。
+    // 判断结果=C7「state 装配输入」口径——decide 签名零改；投影表仍走冻结公式（可重建面）。
+    let judgeTick: TickReport['phases']['stateDiff']['judge']
+    if (deps.judge !== undefined) {
+      const queueItems = orderedCandidates.filter((c) => memberOf(c.ticket))
+      const lifecycleItems = orderedCandidates.filter((c) => !memberOf(c.ticket))
+      const queueViews: QueueJudgeCandidate[] = []
+      for (const c of queueItems) {
+        const issue = issueById.get(c.ticket)
+        const meta = metaOf(c.ticket)
+        if (issue === undefined) continue
+        queueViews.push({
+          ticket: c.ticket,
+          type: issue.type ?? 'task',
+          state: issue.state,
+          level: issue.level ?? 0,
+          priority: meta.priority,
+          pinned: meta.pinned,
+          boostTier: meta.boostTier,
+          waitMs: startedAt - meta.firstSeenAt,
+        })
+      }
+      // 本拍高优到达：priority≥2 的意图且种钟首见本拍（schedule=2/escalate=3 既有口径）
+      const arrivals = candidates
+        .filter((c) => (c.intent.priority ?? 0) >= 2 && !pinnedSet.has(c.ticket) && memberOf(c.ticket) && queueCarry.get(c.ticket)?.firstSeenAt === startedAt)
+        .map((c) => ({ ticket: c.ticket, kind: c.intent.kind, priority: c.intent.priority ?? 0, source: c.intent.source }))
+      const inflightViews = [...inflight.values()].map((w) => ({ ticket: w.ticket, person: w.personId, dispatchedTicksAgo: seq - w.dispatchedAtSeq }))
+      const headTicket = queueViews.find((v) => !v.pinned)?.ticket
+      const headIssue = headTicket !== undefined ? issueById.get(headTicket) : undefined
+      const refined = await deps.judge.refine({
+        queueOrdered: queueViews,
+        arrivals,
+        inflight: inflightViews,
+        person: headIssue !== undefined ? personViewOf(resolvePerson(headIssue)) : null,
+        dispatchWindowOpen: config.limits.maxActionsPerTick > 0 && inflight.size < config.limits.maxInflight,
+      })
+      const candByTicket = new Map(queueItems.map((c) => [c.ticket, c]))
+      const permuted = refined.queueOrdered.map((v) => candByTicket.get(v.ticket))
+      if (permuted.every((c) => c !== undefined)) orderedCandidates = [...lifecycleItems, ...permuted]
+      else errors.push('judge 精序违背纯置换契约（候选集异动）——按规则档原序派发')
+      if (refined.pick !== undefined || refined.interrupt !== undefined) judgeTick = { ...(refined.pick !== undefined ? { pick: refined.pick } : {}), ...(refined.interrupt !== undefined ? { interrupt: refined.interrupt } : {}) }
+    }
     // 本拍已排队派发的人位占用（两段式先决后执——人闸快照折算面，dispatch 即记入）
     const dispatchPersons = new Map<TicketId, string>()
     for (const cand of orderedCandidates) {
@@ -2205,7 +2257,7 @@ export function createEngine(deps: EngineDeps): Engine {
           platformStatusExtra,
           directives: directiveReport,
         },
-        stateDiff: { candidates: candidates.length, decisions, reopened, rescanned, queue: { rows: todoQueueRows.length, persons: queuePersons } },
+        stateDiff: { candidates: candidates.length, decisions, reopened, rescanned, queue: { rows: todoQueueRows.length, persons: queuePersons }, ...(judgeTick !== undefined ? { judge: judgeTick } : {}) },
         dispatch: {
           dispatched,
           approvals,

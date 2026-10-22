@@ -67,7 +67,8 @@
 import { createRegistry, isJudgeExecutorName, loadAgentConfig, wireRegistry, builtinResolver } from '@studio-next/adapters'
 import { AIWS_DIR, ensureAiwsTree } from '@studio-next/company'
 import { assertJudgeRoleLow, createModelCatalog, fingerprint, parseModelsYaml, DEFAULT_FLOW_TABLE } from '@studio-next/core'
-import { dshJudgeAdapterFactory } from '../engine/judge/invoke.ts'
+import { dshJudgeAdapterFactory, createJudgeRuntime } from '../engine/judge/invoke.ts'
+import { createQueueJudge, parseJudgeSites, type QueueJudgeHook } from '../engine/judge/sites129.ts'
 import { configInvalid } from '@studio-next/contract'
 import { createGateway, CONTROL_TICKET } from '@studio-next/gateway'
 import type { SignatureContext } from '@studio-next/gateway'
@@ -248,11 +249,9 @@ export interface ServeConfig extends HrServeConfig {
    */
   sla: boolean
   /**
-   * 成本警戒源开关（132-§6.4 单C·studio-dev-177；缺省关）：true 时注册
-   * cost-threshold 源——tick 驱动扫当日用量投影+在途预留，达档产 escalate 意图 +
-   * ESCALATE 落账（src/engine/cost-guard/source.ts）。配置真源=公司目录
-   * org-config cost_guard 段（快照装载——本开关只控注册面；段不声明=源空转零唤醒）。
-   * 扫描轮询复用 jobPollMs。
+   * 成本警戒源开关（132-§6.4 单C·studio-dev-177；缺省关）：true 时注册 cost-threshold 源
+   * （tick 扫当日投影+预留，达档产 escalate+落账——cost-guard/source.ts）；配置真源=org-config
+   * cost_guard 段（快照装载，本开关只控注册面）；轮询复用 jobPollMs。
    */
   costGuard: boolean
   /**
@@ -300,6 +299,8 @@ export interface ServeConfig extends HrServeConfig {
    * （登记在案），配置面改了即刻生效。
    */
   pinnedTickets?: string
+  /** 队列小模型址开关（160-B·studio-dev-182）：逗号清单 mj-129-pick/mj-129-interrupt；缺省空=两址全关（规则缺省档）；未知址名启动即拒；开关需 judge 注册位+价目表在场 */
+  judgeSites?: string
   /**
    * 网关写收口开关（17-§7「一切平台写入经 wkey 网关」；src/engine/gated-platform.ts）：
    * 缺省开——demo fake 平台也过真闸（同 secret 同验签链路）证明收口面；false=裸 platform
@@ -332,11 +333,9 @@ export interface ServeConfig extends HrServeConfig {
    */
   taigaAuth?: 'password' | 'token'
   /**
-   * Taiga 字段映射文件（platform: taiga 时可选；JSON 文件装 FieldProvisionMap 形状
-   * {fields:{业务名→平台属性名}, types?, states, stateFlow}——扁平 YAML 子集不收嵌套故
-   * 旁挂 JSON）。缺省=无映射：state/title/description/assignee 原生可用，type/dept/
-   * level/lane 等自定义维读不见、写显式报错 unmapped-field。同一份文件也是迁移期
-   * fields.provision 的输入（单一事实源，见 deliverables/migration.md）。
+   * Taiga 字段映射文件（taiga 时可选；JSON 装 FieldProvisionMap{fields,types?,states,
+   * stateFlow}——扁平 YAML 不收嵌套故旁挂 JSON）。缺省=无映射（自定义维读不见、写报
+   * unmapped-field）；同文件也是迁移期 fields.provision 输入（单一事实源）。
    */
   taigaFieldsFile?: string
   /**
@@ -496,6 +495,10 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       }
       case 'pinnedTickets':
         cfg.pinnedTickets = str(value, key)
+        break
+      case 'judgeSites': // 址开关清单（160-B）：解析即验（未知址名启动拒——fail-closed）
+        cfg.judgeSites = str(value, key)
+        parseJudgeSites(cfg.judgeSites)
         break
       case 'tickMs':
         cfg.tickMs = num(value, key)
@@ -710,13 +713,10 @@ function realGateMode(config: ServeConfig): boolean {
 }
 
 /**
- * Taiga 凭据供给（token 供给面）：daemon.yaml 只配形态（taigaAuth: password|token），
- * 值一律经进程 env——TAIGA_USERNAME+TAIGA_PASSWORD（密码态：JWT 自动登录，401 自动
- * 刷新/重登，http.ts）或 TAIGA_TOKEN+TAIGA_REFRESH（token 态：预换 token，有 refresh
- * 才可续）。凭据值永不入 daemon.yaml/日志/台账（红名单，与 gatewaySecret 纪律同源）；
- * 缺键=fail-closed CONFIG_INVALID，只报缺哪个键名、不打印值。文件形态（0600 token
- * 文件，docs/32 冒烟惯例）归部署面装载（systemd EnvironmentFile / docker secrets
- * → env），daemon 只认 env。
+ * Taiga 凭据供给：daemon.yaml 只配形态（taigaAuth: password|token），值一律经 env——
+ * USERNAME+PASSWORD（JWT 自动登录 401 刷新，http.ts）或 TOKEN+REFRESH（预换 token）。
+ * 凭据值永不入 yaml/日志/台账（红名单，同 gatewaySecret 纪律）；缺键=fail-closed 只报
+ * 键名。文件形态（0600，docs/32）归部署面装载（EnvironmentFile/docker secrets→env）。
  */
 
 /**
@@ -727,15 +727,11 @@ function realGateMode(config: ServeConfig): boolean {
  */
 
 /**
- * 平台接线：localfile=@studio-next/localplatform（docs/23 LocalFile 协作平台——真单首跑
- * 用本地文件平台，不依赖 Taiga/YouTrack 写面）；taiga=@studio-next/taiga（docs/30 推荐
- * + docs/32 真机试点——构造期公司作用域绑定 baseUrl/project/entity/字段映射/凭据；
- * 状态集/自定义属性经 fields.provision 建档后才可 transition/setField，缺档
- * unknown-state/unknown-attribute 明报）；fake=demo 内存平台。
- * LocalFile 根=platformDir（缺省 <rootDir>/platform）。**provision（初始态=流表首态）不在此
- * 做**：字段/状态 provision 是公司装载面的一次性运营动作（platform.fields.provision），
- * daemon 不代写——建单初始态定格在 created 事件（packages/localplatform/issues.ts 头注）。
- * taiga 同理：provision 归迁移/onboard 脚本（deliverables/migration.md），daemon 只消费。
+ * 平台接线：localfile=@studio-next/localplatform（docs/23——真单首跑本地文件平台）；
+ * taiga=@studio-next/taiga（docs/30/§32——构造期绑定 baseUrl/project/entity/映射/凭据；
+ * 状态集/属性经 fields.provision 建档后才可 transition/setField，缺档明报）；fake=demo
+ * 内存平台。LocalFile 根=platformDir。**provision 不在此做**：字段/状态建档是公司装载
+ * 面一次性运营动作，daemon 不代写（建单初始态定格 created 事件；taiga 同理归迁移脚本）。
  */
 
 /**
@@ -793,12 +789,10 @@ export interface SeedJobsResult {
 }
 
 /**
- * 快照 jobs → 台账 jobs 表播种（jobs: true 时 serve 启动调用；18-§三「定时岗全部来自
- * 公司目录配置」的 daemon 侧落点——现行入口=快照 jobs，公司目录 jobs 段装载归
- * packages/company 后续单，见文件头注 v0 边界）。
- * 语义：新岗 next_run_at=cron 下一槽（不立即抢跑）；**既有行 next_run_at 原样保留**
- * ——重启不清欠账：错过槽位由调度器首拍补跑一次（coalesce，18-§三）；last_run_at
- * 不在 upsert 更新列（store 契约）——跑史恒真。坏 cron=now+隔离窗（调度器统一隔离）。
+ * 快照 jobs → 台账 jobs 表播种（jobs: true 时启动调用；18-§三 daemon 侧落点——现行
+ * 入口=快照 jobs，公司目录 jobs 段装载归 packages/company 后续单）。新岗 next_run_at=
+ * cron 下一槽不抢跑；**既有行原样保留**——重启不清欠账，错过槽位首拍补跑一次
+ * （coalesce）；last_run_at 不在 upsert 列（store 契约）跑史恒真；坏 cron=now+隔离窗。
  */
 export function seedJobs(
   ledger: Ledger,
@@ -956,11 +950,9 @@ export function buildServeRuntime(
   // daemon 网关身份（共享活对象——reload 时 mutate ctx 三字段，署名跟随新组织）
   const identity = daemonIdentity(config, snapshot)
 
-  // —— .AIWS 员工工作区树（DEV-28，docs/43-§五+§十9）：建司即建+存量对账 ——
-  //    根推导（单一规则）：显式 aiwsRoot > dirname(companyDir)/.AIWS（公司根——与公司
-  //    git 目录/var 平级，生产形态）> <rootDir>/.AIWS（demo 无公司目录，daemon 自管面内）。
-  //    per-company 不并树：根归属标记异 slug → CONFIG_INVALID 拒启动（fail-closed）；
-  //    增量同步=扩编建目录/缩编归档不删（aiws.ts）；启动对账后热重载 apply 段随拍增量
+  // —— .AIWS 员工工作区树（DEV-28，docs/43-§五+§十9）：建司即建+存量对账——根推导
+  //    单一规则：显式 aiwsRoot > dirname(companyDir)/.AIWS > <rootDir>/.AIWS；per-company
+  //    不并树（异 slug 拒启动）；增量同步=扩编建目录/缩编归档不删（aiws.ts）+热重载增量。
   const aiwsRoot = path.resolve(
     config.aiwsRoot ??
       (config.companyDir !== undefined
@@ -992,9 +984,8 @@ export function buildServeRuntime(
   }
 
   // —— dsh bridge 插件 provisioning（v1.5#1 通道装载自动化）：注册表含 bridge 通道
-  //    executor（agents_md≠native）时启动生成 overlay（<rootDir>/tmp/dsh-bridge-overlay.yml，
-  //    instructions-store.ts——装载法 B，34-§3.1）；挂载归 agent.yaml cmd --patch；未挂载
-  //    则 STUDIO_NEXT_INSTRUCTIONS 无消费者（明报不拒启动）——
+  //    注册表含 bridge 通道 executor（agents_md≠native）时生成 overlay（装载法 B，34-§3.1，
+  //    instructions-store.ts）；挂载归 agent.yaml cmd --patch；未挂载=env 无消费者（明报不拒启动）。
   const bridgeChannelUsers = registry.list().filter((e) => e.capabilities.agents_md !== 'native')
   if (bridgeChannelUsers.length > 0) {
     const overlay = provisionDshBridgeOverlay(path.resolve(config.rootDir))
@@ -1043,6 +1034,25 @@ export function buildServeRuntime(
     }
     assertJudgeRoleLow(modelRoles ?? {})
     log(`[serve] judge 注册位：${judgeRegs.map((r) => r.name).join('、')}（v1=dsh 家派发面；三帽缺省 $0.01/次+$0.50/址/日+$5/公司/日）`)
+  }
+
+  // —— 队列小模型两址开关（160-B·studio-dev-182）：judgeSites 非空 → 组装 JudgeDeps
+  //    + serve 常驻 rt（engine 每拍 beginTick）+ 两址编排器注入 EngineDeps.judge；空/未配
+  //    =零装配零注入，规则缺省档行为零变（register 面 org-config 通用注册表归后续单）。
+  const judgeSites = config.judgeSites !== undefined ? parseJudgeSites(config.judgeSites) : undefined
+  let judgeHook: QueueJudgeHook | undefined
+  const judgeReg = judgeRegs[0]
+  if (judgeSites !== undefined && (judgeSites.pick || judgeSites.interrupt)) {
+    if (judgeReg === undefined || catalog === undefined) {
+      configInvalid('judge/no-face', 'judgeSites 开关在场但 judge 注册位/价目表缺席——判断调用要派发面+三帽价目（studio-dev-160 §6.3/§6.4）')
+    }
+    judgeHook = createQueueJudge({
+      rt: createJudgeRuntime(),
+      deps: { company: config.company, ledger, catalog, makeAdapter: dshJudgeAdapterFactory(judgeReg), now: clock },
+      sites: judgeSites,
+    })
+    const on = [judgeSites.pick ? 'mj-129-pick' : '', judgeSites.interrupt ? 'mj-129-interrupt' : ''].filter((s) => s !== '').join('、')
+    log(`[serve] 队列小模型两址：${on}（拍闸缺省 1/址/拍+2/公司/拍+12s 墙钟；降级=规则档原序）`)
   }
 
   // data-change 路由登记位（129-A）：坏形态 CONFIG_INVALID 明报拒启动（解析件在 engine/intents/taxonomy.ts）
@@ -1112,9 +1122,8 @@ export function buildServeRuntime(
   const rawPlatform = wirePlatform(config)
 
   // —— 人事同步器装配（DEV-48，docs/52-§九；hrSync: true 时）：三面执行体 + 消化器 ——
-  //    注入位=EngineDeps.hrSync（engine 相位 7 尾 drain，行为缝不在引擎内）；hrSync 关
-  //    =零装配零注入，既有行为字节不变。装配体收口在 assembly/hrsync/assemble.ts
-  //    （启动期台账镜像接线 syncCompany + 断电复位 + Taiga/Matrix 面接线——docs/52-§六/§七/§九）。
+  //    注入位=EngineDeps.hrSync（相位 7 尾 drain）；关=零装配零注入行为零变；装配体收口
+  //    assembly/hrsync/assemble.ts（台账镜像+断电复位+两平台面接线——52-§六/§七/§九）。
   const hrDigester = assembleHrSync({
     config,
     ...(opts?.hrMatrixFace !== undefined ? { hrMatrixFace: opts.hrMatrixFace } : {}),
@@ -1139,6 +1148,7 @@ export function buildServeRuntime(
     ...(roomFace !== undefined ? { rooms: roomFace } : {}),
     ledger,
     registry,
+    ...(judgeHook !== undefined ? { judge: judgeHook } : {}), // 160-B 两址精序（缺省不注入=规则缺省档）
     assembler: makeAssembler(),
     // 闸门双形态（v0.5 真单刀）：真单模式=真验收闸门（逐条真执行冻结验收命令，
     // workspace cwd、超时杀进程组）；demo=占位闸门（exit0 模拟）——行为与既有测试面一致
@@ -1234,9 +1244,8 @@ export function buildServeRuntime(
   if (roomFace !== undefined) startChannelSupply(roomFace, log)
 
   // —— L1 配置热重载执行体（docs/38-§2 L1 / §4 R-A；companyDir 给定时装配）——
-  //    apply 段（校验绿后调用，幂等可重入）：调度岗播种/移除（jobs: true 时——与启动同一
-  //    闸门）→ 快照持有者替换 → engine.applyCompanyUpdate（people/装配器/三派生键）→
-  //    署名上下文 mutate。在途单/泳道/指令文件不动（拍边界结构性保证，hot-reload.ts 头注）。
+  //    apply 段（校验绿后调用，幂等可重入）：岗播种/移除→快照替换→engine.applyCompanyUpdate
+  //    →署名上下文 mutate；在途单/泳道/指令文件不动（拍边界结构性保证——hot-reload.ts 头注）。
   let hotReload: HotReload | undefined
   if (config.companyDir !== undefined) {
     hotReload = createHotReload({
@@ -1263,9 +1272,8 @@ export function buildServeRuntime(
           )
         }
         // —— 人事同步入队（DEV-48，docs/52-§5.2 步2-3/§9.1）：diff 分类→三面任务入队
-        //    （哨兵票；diff 基=台账镜像现值，零平台 IO；hrSync 关=零动作）——实现体在
-        //    assembly/hrsync/assemble.ts（hrApplySegment）；抛错=apply 整体失败保持旧
-        //    态（fail-closed，与上同面）。
+        //    （哨兵票；diff 基=台账镜像现值零平台 IO；hrSync 关=零动作）——体=hrApplySegment；
+        //    抛错=apply 整体失败保持旧态（fail-closed）。
         const hr = hrApplySegment({ enabled: config.hrSync, ledger, prev: companyState.snapshot, next, company: config.company, clock, makeId: makeUlid, log, ...(peopleChangePublish !== undefined ? { publish: peopleChangePublish } : {}) })
         if (config.jobs) {
           // 台账段先行（幂等可重入——seedJobs 逐岗独立 upsert；失败重试下一形态自愈）
@@ -1358,26 +1366,16 @@ export interface InflightTakeoverResult {
 }
 
 /**
- * serve 启动例行接管 work_records running（DEV-13 R-B；docs/38-§2「在途接管收口」/
- * docs/38-§4 分期表 R-B 行：崩溃注入测试语义转正为生产面——crash-injection ③ 的重启
- * 恢复语义即本函数；此前冻结边界「孤儿留 running、接管归后续刀」就此清偿）。
- *
- * 语义边界（与 docs/17-§2/§3/§6 的关系）：
- *   - **启动例行，非第八相位**（17-§2 主循环七相位不动）：进程边界一次面，tick 内
- *     零行为；启动时本进程 inflight 恒空——库上一切 running 行都是前命孤儿（daemon
- *     单写者前提，daemon_kv 同款），收口无歧义。
- *   - **接管≠收割**（17-§6 四要件）：handle 已失、流不可续——四要件无据不判（不落
- *     GATE_FAIL、不结算预算 settle、不烧断路连击）；收口=interrupted 终态行
- *     （EndWorkRecord.status 值域 v0 不锁——'interrupted'=前命中断，既不冒认 done
- *     也不误报 failed）。重派照旧走新意图（活动/镜像重决策，DEV-42①）→ 新 attempt
- *     → 预算沿用未结预留（adopt 不双落，crash-injection ③ 冻结语义原样）。
- *   - **零平台 IO / 零事件落账**：接管是台账卫生面（panel workers 投影「异常死亡
- *     未收割单永远留在聚合」的已知误差由此收口，views.ts 头注）；事件词表（17-§3
- *     冻结）无 WORKER_DEAD 名——观测面=启动日志行 + 终态行本身；加名走 SCHEMA_EVOLVE
- *     批示流，本刀不擅动契约。
- *   - **幂等**：过滤面（status='running' 且 ended_at 空）先于收口面（endWorkRecord
- *     已收口再收=CONFIG_INVALID）——二次接管恒零收口；优雅停（dispose 杀 handle 留
- *     running）与硬杀（SIGKILL）殊途同归，重启即收口。
+ * serve 启动例行接管 work_records running（DEV-13 R-B；38-§2/§4 R-B——crash-injection ③
+ * 重启恢复语义转正；旧冻结边界「孤儿留 running」就此清偿）。语义边界：
+ *   - 启动例行非第八相位（17-§2 七相位不动）：进程边界一次面；启动时本进程 inflight
+ *     恒空——库上 running 行皆前命孤儿（单写者前提），收口无歧义。
+ *   - 接管≠收割（17-§6 四要件）：handle 已失流不可续——无据不判（不落 GATE_FAIL、不
+ *     settle、不烧断路）；收口=interrupted 终态行；重派走新意图→新 attempt→预算沿用
+ *     未结预留（adopt 不双落，crash-injection ③ 冻结语义）。
+ *   - 零平台 IO/零事件落账：台账卫生面（panel workers 投影已知误差由此收口）；词表无
+ *     WORKER_DEAD 名（加名走 SCHEMA_EVOLVE）——观测面=启动日志+终态行本身。
+ *   - 幂等：过滤面先于收口面（已收再收=CONFIG_INVALID）；优雅停与硬杀殊途同归，重启即收口。
  */
 export function takeOverRunningWorkRecords(ledger: Ledger, now: number): InflightTakeoverResult {
   const items: Array<{ id: string; issue: string; attempt: number }> = []
@@ -1428,10 +1426,8 @@ export async function runServe(
   const ledger: Ledger = openLedger(path.resolve(config.db))
 
   // —— 在途接管（DEV-13 R-B，docs/38-§2）：serve 启动例行接管 work_records running ——
-  //    前命孤儿（硬杀 SIGKILL / 优雅停 dispose 留 running 同款）收口 interrupted；
-  //    接管≠收割（四要件无据不判），重派走新 attempt、预算沿用未结预留（adopt）。
-  //    最早落位（先于公司装载/探针/装配）：纯台账面零平台 IO——后续启动段即使失败，
-  //    前命在途账也已收口（单写者前提下无条件正确）。
+  //    前命孤儿（硬杀/优雅停留 running 同款）收口 interrupted；接管≠收割（四要件无据不
+  //    判），重派新 attempt、预算沿用未结预留（adopt）；最早落位=纯台账面零平台 IO。
   const takeover = takeOverRunningWorkRecords(ledger, Date.now())
   console.log(
     takeover.takenOver > 0
@@ -1462,9 +1458,8 @@ export async function runServe(
   }
 
   // —— Taiga 启动探针（fail-fast，platform: taiga 时）：一次只读 fields.schema() 拉通
-  //    网络→auth→项目解析→状态集四层（任一不通=启动期明报 exit 1，不等首拍 tick 才炸；
-  //    探针实例只读即弃、置于装配前——失败时引擎/源不构造；engine 实例的平台经
-  //    buildServeRuntime→wirePlatform 独立构造，网关收口不受影响）。 ——
+  //    网络→auth→项目解析→状态集四层任一不通=启动期明报 exit 1（不等首拍炸）；探针只读
+  //    即弃、置于装配前；engine 平台独立构造（网关收口不受影响）。
   if (config.platform === 'taiga') {
     try {
       const schema = await wirePlatform(config).fields.schema()
@@ -1534,9 +1529,8 @@ export async function runServe(
       answeredRequestId = answerReloadNoCompanyDir(path.resolve(config.rootDir), config.company, answeredRequestId)
     }
     // —— 控制面停机通道（DEV-9 顺带项，src/control/stop-channel.ts；DEV-41 重启失忆修复）：reload
-    //    应答在前（停机前不悬空积压请求），停机请求在后；按 id 去重——去重位跨重启双保险：
-    //    ① 先落 daemon_kv（改名前崩的窗口由重启读回兜底）② 再原子改名 .consume（live 面
-    //    清空，新进程见无请求即正常起）。拍边界纪律不变（docs/17-§2——停机也是拍收口面） ——
+    //    应答在前、停机请求在后；按 id 去重双保险：①先落 daemon_kv（改名前崩由重启读回
+    //    兜底）②原子改名 .consume。拍边界纪律不变（17-§2——停机也是拍收口面）。
     const stopRequest = readStopRequest(path.resolve(config.rootDir))
     if (stopRequest !== undefined && stopRequest.id !== stopLastSeenId) {
       stopLastSeenId = stopRequest.id

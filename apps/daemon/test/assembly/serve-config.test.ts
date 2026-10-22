@@ -258,3 +258,22 @@ describe('daemon.yaml 队列键配置面（129-§6.2 R3/R4）', () => {
     expect(() => parseDaemonConfig(`${BASE_YAML}\npersonInflightOverrides: AGENT-1=0`)).toThrow(/正整数/)
   })
 })
+
+// —— 队列小模型址开关配置面（160-B·studio-dev-182：judgeSites 逗号清单） ——
+
+describe('daemon.yaml judgeSites 配置面（160-B 两址开关）', () => {
+  it('缺省不注入=两址全关（规则缺省档——行为零变）', () => {
+    const cfg = parseDaemonConfig(BASE_YAML)
+    expect(cfg.judgeSites).toBeUndefined()
+  })
+
+  it('合法值装载：两址/单址（关=不写键——扁平 YAML 不收空值，与全键同规）', () => {
+    expect(parseDaemonConfig(`${BASE_YAML}\njudgeSites: mj-129-pick,mj-129-interrupt`).judgeSites).toBe('mj-129-pick,mj-129-interrupt')
+    expect(parseDaemonConfig(`${BASE_YAML}\njudgeSites: mj-129-pick`).judgeSites).toBe('mj-129-pick')
+    expect(() => parseDaemonConfig(`${BASE_YAML}\njudgeSites: `)).toThrow(/value 为空/) // 通用空值规（非本键特设）
+  })
+
+  it('未知址名拒绝（fail-closed 不静默忽略——登记表外的名字是配置错误）', () => {
+    expect(() => parseDaemonConfig(`${BASE_YAML}\njudgeSites: mj-129-pick,mj-999-x`)).toThrow(/judgeSites 段「mj-999-x」不是已登记的小模型判断址/)
+  })
+})
