@@ -185,6 +185,7 @@ import { createHash } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import type {
+  CostGuardConfig,
   DeptNode,
   EventRecord,
   ExecutorAdapter,
@@ -217,6 +218,9 @@ import {
 import type { ExecutorRegistry } from '@studio-next/adapters'
 import type { Ledger } from '@studio-next/store'
 import { gateDispatch, settleDispatch, type BudgetGateDeps } from './budget-gate.ts'
+import { createLaneRegistry } from './lanes/registry.ts'
+import { foldHarvestCost, writeThroughHarvestUsage } from './cost-guard/harvest.ts'
+import { personDayGateInput } from './cost-guard/fold.ts'
 import { crashHook } from './crash-points.ts'
 // 意图分类学消费件（mention=105-刀A ｜ webhook｜data-change=129-A studio-dev-166 拆出，
 // 20-§十五 尺寸门「先拆再增」）：契约面/指纹/路由解析/落单渲染+消费工厂；noteSafe 同源
@@ -521,6 +525,8 @@ export interface EngineDeps {
   directives?: DirectiveGateDeps
   /** 单据房间义务面（130-P3/DEV-20 P9-P10，src/engine/rooms/room-duty.ts）：派发/CLOSE 相位钩；缺省不注入=零行为变更 */
   rooms?: RoomDuty
+  /** cost_guard 段（132-§6.4 单C）：快照装载面——闸四联动（R6）与源评估的配置源；缺省不注入=面关零行为 */
+  costGuard?: CostGuardConfig
 }
 
 // ————————————————————————— TickReport（17-§2「tick 返回结构化 actions」；各面类型驻 tick-report/types.ts） —————————————————————————
@@ -564,11 +570,8 @@ interface Inflight {
   foldTerminalError?: string
 }
 
-/** 泳道租约（进程内 v0：holder=单号；TTL 到期视同无主——decide laneFree 同语义） */
-interface LaneLease {
-  holder: TicketId
-  expiresAt: number
-}
+/** 泳道租约簿（进程内 v0：holder=单号；TTL 到期视同无主——decide laneFree 同语义；
+ * 体拆至 lanes.ts——20-§十五.三 先拆再增，studio-dev-177 单C 让位 cost-guard 缝） */
 
 // ————————————————————————— 引擎本体 —————————————————————————
 
@@ -626,6 +629,8 @@ export interface CompanyRuntimeUpdate {
    * （保持启动装配；面未开时传值也不开面——面的开闭随启动装配定）。
    */
   directives?: ReadonlyMap<string, string>
+  /** cost_guard 段热换（132-§6.4 单C）：恒传（undefined=摘段关面——安全面热换即时生效） */
+  costGuard: CostGuardConfig | undefined
 }
 
 const CURSOR_KEY = 'activity.cursor'
@@ -644,6 +649,7 @@ export function createEngine(deps: EngineDeps): Engine {
   // people/assembler 被 resolvePerson/executeDispatch 闭包引用，let 化后热替换即生效
   let assembler = deps.assembler
   let people = deps.people
+  let costGuard = deps.costGuard // cost_guard 绑定（132-§6.4 单C）：applyCompanyUpdate 恒换（含 undefined=关面）
 
   // 批示归一层绑定（studio-dev-171，docs/18-§2.5）：peopleRef 闭包取活名册（L1 热替换
   // 即随换——防陈旧名册放行）；defaultAssignee 与 resolvePerson 回退链同源。
@@ -663,7 +669,7 @@ export function createEngine(deps: EngineDeps): Engine {
 
   // —— 进程内状态（持久化边界见文件头注「v0 占位」） ——
   let breaker: BreakerState = emptyBreakerState()
-  const lanes = new Map<string, LaneLease>()
+  const lanes = createLaneRegistry(config.laneTtlMs)
   const inflight = new Map<TicketId, Inflight>()
   const intentQueue: InvokeIntent[] = []
   const splitQueue: SplitDirectiveInput[] = []
@@ -767,21 +773,6 @@ export function createEngine(deps: EngineDeps): Engine {
   }
 
   /** 泳道租约状态（过期=死主视同无主——decide laneFree 同语义；过期判定归 decide 入参时钟） */
-  function laneState(lane: string): { lane: string; holder: string | null; expiresAt?: number } {
-    const lease = lanes.get(lane)
-    if (lease === undefined) return { lane, holder: null }
-    return { lane, holder: lease.holder, expiresAt: lease.expiresAt }
-  }
-
-  function acquireLane(lane: string, ticket: TicketId, at: number): void {
-    lanes.set(lane, { holder: ticket, expiresAt: at + config.laneTtlMs })
-  }
-
-  function releaseLane(lane: string, ticket: TicketId): void {
-    const lease = lanes.get(lane)
-    if (lease !== undefined && lease.holder === ticket) lanes.delete(lane)
-  }
-
   function resolvePerson(issue: { assignee?: string }): PersonRef | undefined {
     return (
       (issue.assignee !== undefined ? people.find((p) => p.id === issue.assignee) : undefined) ??
@@ -815,7 +806,7 @@ export function createEngine(deps: EngineDeps): Engine {
     const ticket = action.ticket
     // state-diff 排队时已占泳道（决策即占用）——任何失败路径都必须归还，不留死锁
     const fail = (detail: string): TickActionResult => {
-      releaseLane(action.lane, ticket)
+      lanes.release(action.lane, ticket)
       inflight.delete(ticket)
       return { ticket, actionType: action.type, ok: false, detail }
     }
@@ -915,6 +906,7 @@ export function createEngine(deps: EngineDeps): Engine {
       // 判定 → 过闸=双行落账（issue 先 person 后；落账与 launch 之间失败=不派，异常
       // 上抛本 catch→DISPATCH_FAIL）；超帽=refusal 行落账+不派；duplicate=沿用未结预留
       // （失败保留重派语义）。拟稿待批点清单见 src/engine/budget-gate.ts 头注。
+      const personDay = personDayGateInput(costGuard, person, ledger, at) // 闸四·人日 hard 线（R6）：段声明且有 gate 档才带
       const gate = await gateDispatch(budgetDeps, {
         ticket,
         personId: person.id,
@@ -923,6 +915,7 @@ export function createEngine(deps: EngineDeps): Engine {
         briefChars: assembled.brief.text.length,
         ...(config.budgetTicketCapUsd !== undefined ? { fallbackTicketCapUsd: config.budgetTicketCapUsd } : {}),
         ...(config.budgetPersonCapUsd !== undefined ? { personCapUsd: config.budgetPersonCapUsd } : {}),
+        ...(personDay !== undefined ? { personDay } : {}),
         now: at,
       })
       if (gate.kind === 'refused') {
@@ -952,7 +945,7 @@ export function createEngine(deps: EngineDeps): Engine {
       }
       launched = await adapter.launch(launchBrief)
       crashHook('dispatch-launched') // 崩溃注入②（F3-11）：launch 已返回、work_records 在途落账前——受控测试缝，默认零行为
-      acquireLane(action.lane, ticket, at)
+      lanes.acquire(action.lane, ticket, at)
       const transitioned = await platform.issues.transition(ticket, action.toState)
       const workRecordId = makeId(at)
       ledger.insertWorkRecord({
@@ -1133,6 +1126,8 @@ export function createEngine(deps: EngineDeps): Engine {
     const fresh = await platform.issues.get(ticket)
     const flow = flowOf(fresh)
     const stats = await adapter.resultStats(entry.handle)
+    // 132-§6.4 单C R4 即时折算：native>0 直用；否则当日取价 provisional——三面共值（缝体=cost-guard/harvest.ts）
+    const harvestCost = foldHarvestCost(ledger, config.company, stats, deps.catalog !== undefined ? deps.catalog.tiers() : undefined, now())
     // —— P3-② stat 兜底（studio-dev-100 §4.3-2，治 E12）：收账面可达性体检——REPORT/
     //    deliverables 不可读即 HARVEST_DENIED 事件不静默。四要件语义冻结不动（denied 不
     //    改判 GATE_PASS/FAIL，只补可见性）；umask 前移后此面应为零，非零即残险如实上账 ——
@@ -1152,10 +1147,11 @@ export function createEngine(deps: EngineDeps): Engine {
     if (fourOk) {
       const anchors = flowAnchors(flow)
       const transitioned = await platform.issues.transition(ticket, anchors.evidenceReady)
+      const endedAt = now()
       ledger.endWorkRecord(entry.workRecordId, {
-        ended_at: now(),
+        ended_at: endedAt,
         status: 'done',
-        cost_usd: stats.cost.usd,
+        cost_usd: harvestCost.usd,
         tokens: stats.tokens,
         ...(stats.model !== undefined ? { model: stats.model } : {}),
         ...(gate.reportExists ? { report_ref: gate.reportPath } : {}),
@@ -1171,7 +1167,7 @@ export function createEngine(deps: EngineDeps): Engine {
         const settled = settleDispatch(budgetDeps, {
           ticket,
           personId: entry.personId,
-          actual: stats.cost,
+          actual: { usd: harvestCost.usd }, // R4：结算实际=即时折算值（三面共值）
           now: now(),
         })
         budgetNote = `;budget=settle 冲销 $${settled.released.toFixed(4)} 实际 $${settled.actualUsd.toFixed(4)}`
@@ -1217,12 +1213,17 @@ export function createEngine(deps: EngineDeps): Engine {
         },
         onError: (message) => errors.push(message),
       }).noteSuffix
+      // 相位尾缝·usage_daily write-through（132-§6.4 单C R1）：done 一格增量投影；失败不回滚（缝体=cost-guard/harvest.ts）
+      const usageNote = writeThroughHarvestUsage({
+        ledger, company: config.company, personId: entry.personId, workRecordId: entry.workRecordId,
+        model: stats.model, tokens: stats.tokens, endedAt, makeId, onError: (message) => errors.push(message),
+      })
       makeEvent('GATE_PASS', transitioned, entry.attempt, tickEvents, {
         tokens: tokenBuckets(stats),
-        cost_usd: stats.cost.usd,
+        cost_usd: harvestCost.usd,
         duration_ms: stats.duration,
         // model 留痕走 note 后缀（132-§6.1 单A：events 列集冻结不动——`model=…` 尾缀）
-        note: `四要件齐（completed/非空/REPORT/exit0）；report=${gate.reportPath}${gate.summaryPath !== undefined ? `;summary=${gate.summaryPath}` : ''}${budgetNote}${account.noteSuffix}${pricingNote}${account.sidecarSuffix}${sentinelNote}${stats.model !== undefined ? `;model=${stats.model}` : ''}`,
+        note: `四要件齐（completed/非空/REPORT/exit0）；report=${gate.reportPath}${gate.summaryPath !== undefined ? `;summary=${gate.summaryPath}` : ''}${budgetNote}${harvestCost.noteSuffix}${usageNote}${account.noteSuffix}${pricingNote}${account.sidecarSuffix}${sentinelNote}${stats.model !== undefined ? `;model=${stats.model}` : ''}`,
       })
       // bridge 通道指令临时文件：保留至收割完成→此刻删（v1.5#1 清理策略；内容指纹已在
       // DISPATCH note/payload_hash 落账——证据不依赖文件存活）
@@ -1259,7 +1260,7 @@ export function createEngine(deps: EngineDeps): Engine {
     const signature = `harvest:${verdict.completed ? 'c' : '-'}${verdict.nonEmptyOutput ? 'o' : '-'}${verdict.reportExists ? 'r' : '-'}${verdict.exit0 ? 'g' : '-'}`
     ledger.endWorkRecord(entry.workRecordId, { status: 'failed', ended_at: now() })
     inflight.delete(ticket)
-    releaseLane(entry.lane, ticket)
+    lanes.release(entry.lane, ticket)
     if (flow !== undefined) {
       // 回首批位（DEFAULT_ROLLBACK_EDGES：已派发→新单；断路器停重派语义，breaker.ts 头注）
       const rolled = await platform.issues.transition(ticket, flowAnchors(flow).fresh)
@@ -1396,7 +1397,7 @@ export function createEngine(deps: EngineDeps): Engine {
       }
       ledger.endWorkRecord(entry.workRecordId, { status: 'interrupted', ended_at: now() })
       inflight.delete(ticket)
-      releaseLane(entry.lane, ticket)
+      lanes.release(entry.lane, ticket)
       let rolled: IssueRecord | undefined
       if (freshAnchor !== undefined) {
         rolled = await platform.issues.transition(ticket, freshAnchor)
@@ -1441,7 +1442,7 @@ export function createEngine(deps: EngineDeps): Engine {
         ledger.endWorkRecord(rec.id, { status: 'failed', ended_at: now() })
       }
     }
-    releaseLane(fresh.lane ?? config.defaultLane, ticket)
+    lanes.release(fresh.lane ?? config.defaultLane, ticket)
     await strikeBreakerAndMaybeTrip(ticket, fresh, workAttempt, 'stall:worker-dead', detail, tickEvents)
     return { ticket, actionType: action.type, ok: true, detail: `咬合（消亡面）第${nth}/${threshold}次：GATE_FAIL WORKER_DEAD 收口` }
   }
@@ -1856,7 +1857,7 @@ export function createEngine(deps: EngineDeps): Engine {
       const verbNow = directiveVerbNow.get(ticket) ?? index.directiveStandingOf(ticket)
       const out = decide({
         issue,
-        laneLease: laneState(lane),
+        laneLease: lanes.state(lane),
         ...(personGate !== undefined ? { personGate } : {}),
         // 在途计数=已落工位 + 本拍已排队派发（两段式「先决后执」下三闸仍须拍内即时生效）
         inflightCount: inflight.size + dispatchQ.length,
@@ -1900,7 +1901,7 @@ export function createEngine(deps: EngineDeps): Engine {
           if (personId !== undefined) dispatchPersons.set(ticket, personId)
           // 决策即占用泳道（两段式先决后执：后续候选的 decide 须看到本拍已派的占用；
           // 执行失败时 executeDispatch 的 catch 负责释放）
-          acquireLane(action.lane, ticket, startedAt)
+          lanes.acquire(action.lane, ticket, startedAt)
           break
         case 'submit_approval':
           approvalQ.push(action)
@@ -2070,7 +2071,7 @@ export function createEngine(deps: EngineDeps): Engine {
       try {
         const fresh = await platform.issues.get(action.ticket)
         const lane = fresh.lane ?? config.defaultLane
-        releaseLane(lane, action.ticket)
+        lanes.release(lane, action.ticket)
         // 17-§7「关单即吊销，杜绝归档后仍有效」：CLOSE 是 wkey 生命周期的收口点
         // （GATE_PASS 后 key 存续到此处——验收/复验窗口内 worker 仍可署名回执）。
         // 工位=**原位**归档（DEV-28，docs/43-§五）：tickets/<单号>/att<N> 证据不动（台账
@@ -2261,6 +2262,7 @@ export function createEngine(deps: EngineDeps): Engine {
       // 拍边界（serve 主循环）；本方法自身纯赋值不抛，失败面归调用方前置校验
       people = update.people
       assembler = update.assembler
+      costGuard = update.costGuard // 恒换（132-§6.4 单C）：摘段即关面
       config.defaultPersonId = update.defaultPersonId
       config.deptFallback = update.deptFallback
       config.defaultLane = update.defaultLane

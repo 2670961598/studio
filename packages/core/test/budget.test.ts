@@ -45,6 +45,7 @@ function rsvInput(o: Partial<ReserveInput> & { id: string; ticket: string; perso
     estimated: o.estimated ?? usd(10),
     ...(o.ticketCap !== undefined ? { ticketCap: o.ticketCap } : {}),
     ...(o.personCap !== undefined ? { personCap: o.personCap } : {}),
+    ...(o.personDay !== undefined ? { personDay: o.personDay } : {}), // 闸四·人日硬线（132-§6.4 单C）
     now: o.now ?? T0,
   }
 }
@@ -343,6 +344,75 @@ describe('reserve：超帽 refusal（refusal 也是一条账）', () => {
   it('无帽 → 不设限（调用方责任；daemon 至少传一帽）', () => {
     const r = reserve(emptyBudgetLedger(), rsvInput({ id: 'a', ticket: 'T-1', person: 'P-1', estimated: usd(1e9) }))
     expect(r.ok).toBe(true)
+  })
+})
+
+describe('reserve：闸四·人日硬线（132-§6.4 单C R6，studio-dev-177）', () => {
+  it('已结实际+跨票在途+估算 > hard 线 → 拒 over-person-cap，inflight=spent+reserved 合计', () => {
+    const r = reserve(
+      emptyBudgetLedger(),
+      rsvInput({
+        id: 'a', ticket: 'T-9', person: 'P-1', estimated: usd(2),
+        personDay: { spentUsd: 8.5, capUsd: 10 }, // 8.5 已结 + 0 在途 + 2 估算 = 10.5 > 10
+      }),
+    )
+    expect(r).toMatchObject({ ok: false, reason: 'over-person-cap', cap: usd(10), inflight: 8.5 })
+  })
+
+  it('已结实际+跨票在途+估算 == hard 线 → 通过（严格大于才拒）', () => {
+    const r = reserve(
+      emptyBudgetLedger(),
+      rsvInput({ id: 'a', ticket: 'T-9', person: 'P-1', estimated: usd(1.5), personDay: { spentUsd: 8.5, capUsd: 10 } }),
+    )
+    expect(r.ok).toBe(true)
+  })
+
+  it('在途计入：他票未结预留吃掉日额度（spent 5 + reserved 4 + est 2 > 10 → 拒）', () => {
+    let state = emptyBudgetLedger()
+    state = reserve(state, rsvInput({ id: 'a', ticket: 'T-1', person: 'P-1', estimated: usd(4) })).newState
+    const r = reserve(
+      state,
+      rsvInput({ id: 'b', ticket: 'T-2', person: 'P-1', estimated: usd(2), personDay: { spentUsd: 5, capUsd: 10 } }),
+    )
+    expect(r).toMatchObject({ ok: false, reason: 'over-person-cap', inflight: 9 }) // 5 已结 + 4 在途
+  })
+
+  it('闸序冻结：票帽+人日同超 → over-ticket-cap 先判（四闸序不动）', () => {
+    const r = reserve(
+      emptyBudgetLedger(),
+      rsvInput({
+        id: 'a', ticket: 'T-9', person: 'P-1', estimated: usd(99),
+        ticketCap: usd(10), personDay: { spentUsd: 0, capUsd: 10 },
+      }),
+    )
+    expect(r).toMatchObject({ ok: false, reason: 'over-ticket-cap' })
+  })
+
+  it('人帽通过而人日拒：三帽并存时日线独立生效', () => {
+    const r = reserve(
+      emptyBudgetLedger(),
+      rsvInput({
+        id: 'a', ticket: 'T-9', person: 'P-1', estimated: usd(2),
+        personCap: usd(100), personDay: { spentUsd: 9, capUsd: 10 },
+      }),
+    )
+    expect(r).toMatchObject({ ok: false, reason: 'over-person-cap', cap: usd(10) })
+  })
+
+  it('缺席=不判（cost_guard 段未声明/无 gate 档 → 面恒关）', () => {
+    const r = reserve(emptyBudgetLedger(), rsvInput({ id: 'a', ticket: 'T-9', person: 'P-1', estimated: usd(1e9) }))
+    expect(r.ok).toBe(true)
+  })
+
+  it('入参闸：spentUsd/capUsd 负数或非有限 → CONFIG_INVALID', () => {
+    expectConfigInvalid(
+      () => reserve(emptyBudgetLedger(), rsvInput({ id: 'a', ticket: 'T-9', person: 'P-1', estimated: usd(1), personDay: { spentUsd: -1, capUsd: 10 } })),
+      'budget/reserve:bad-person-day',
+    )
+    expectConfigInvalid(
+      () => reserve(emptyBudgetLedger(), rsvInput({ id: 'a', ticket: 'T-9', person: 'P-1', estimated: usd(1), personDay: { spentUsd: 1, capUsd: Number.NaN } })),
+      'budget/reserve:bad-person-day',
+    )
   })
 })
 

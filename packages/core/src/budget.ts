@@ -223,6 +223,13 @@ export interface ReserveInput {
   ticketCap?: Money
   /** 岗级预算帽（04-§四）：该人在途净预留（跨票合计）+估算 ≤ 帽 */
   personCap?: Money
+  /**
+   * 人日硬线（132-§6.4 单C·R6，studio-dev-177）：今日已结实际（spentUsd）+在途净
+   * 预留+估算 ≤ capUsd（hard 线=人日预算×route='gate' 档 at_pct%）。可选缺席=现状
+   * 行为零变化；reason 归 'over-person-cap'（人档帽家族的日粒度成员——R6「既有
+   * refusal 行落账，不静默不封死」）。
+   */
+  personDay?: { spentUsd: number; capUsd: number }
   /** 时钟入参（epoch ms） */
   now: number
 }
@@ -249,7 +256,10 @@ export type ReserveResult =
       reason: 'over-ticket-cap' | 'over-person-cap'
       /** 触发拒绝的帽（usd） */
       cap: Money
-      /** 比较时该作用域的在途净预留（票帽=该票；人帽=该人跨票合计） */
+      /**
+       * 比较时该作用域的在途净预留（票帽=该票；人帽=该人跨票合计；人日硬线=该人
+       * 今日已结实际+跨票在途合计——132-§6.4「日累计（含在途）」口径）。
+       */
       inflight: number
       /** 本次估算 */
       estimated: Money
@@ -284,11 +294,22 @@ function assertReserveInput(input: ReserveInput): void {
   assertMoney('budget/reserve', 'estimated', input.estimated)
   if (input.ticketCap !== undefined) assertMoney('budget/reserve', 'ticketCap', input.ticketCap)
   if (input.personCap !== undefined) assertMoney('budget/reserve', 'personCap', input.personCap)
+  if (input.personDay !== undefined) {
+    for (const [field, v] of [
+      ['personDay.spentUsd', input.personDay.spentUsd],
+      ['personDay.capUsd', input.personDay.capUsd],
+    ] as const) {
+      if (!Number.isFinite(v) || v < 0) {
+        budgetInvalid('budget/reserve:bad-person-day', `${field}=${String(v)} 须为非负有限数`)
+      }
+    }
+  }
 }
 
 /**
  * 预留判定（纯）：重复预留拒（同票已有未结预留）；超帽拒并产 refusal 行。
- * 判定顺序冻结：duplicate → ticketCap → personCap（确定性，同输入必同输出）。
+ * 判定顺序冻结：duplicate → ticketCap → personCap → personDay（132-§6.4 单C 末位
+ * 追加日粒度闸——既有三闸序不动；确定性，同输入必同输出）。
  * 拒绝路径不落 reserve（不派）；refusal 行交调用方落账后 newState 才生效于持久面。
  */
 export function reserve(state: BudgetLedgerState, input: ReserveInput): ReserveResult {
@@ -309,6 +330,21 @@ export function reserve(state: BudgetLedgerState, input: ReserveInput): ReserveR
   const personView = budgetView(state, 'person', input.person)
   if (input.personCap !== undefined && personView.reserved + input.estimated.usd > input.personCap.usd) {
     return refusedReserve(state, input, 'over-person-cap', input.personCap, personView.reserved)
+  }
+
+  // 闸四（132-§6.4 单C·R6）：人日硬线——今日已结实际+跨票在途+估算 ≤ hard 线
+  //（缺席=不判——cost_guard 段未声明/无 route='gate' 档的面恒关）
+  if (
+    input.personDay !== undefined &&
+    input.personDay.spentUsd + personView.reserved + input.estimated.usd > input.personDay.capUsd
+  ) {
+    return refusedReserve(
+      state,
+      input,
+      'over-person-cap',
+      { usd: input.personDay.capUsd },
+      input.personDay.spentUsd + personView.reserved,
+    )
   }
 
   // 过闸：双行落账（issue 档 + person 档，同 ts 同额；见头注拟稿点）

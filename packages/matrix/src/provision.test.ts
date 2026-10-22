@@ -166,6 +166,7 @@ function inputOf(over: Partial<ChannelMapInput> = {}): ChannelMapInput {
       { id: 'eng', dept: 'departments/研发部', name: '研发部-工程组', members: ['ENG-6'] },
       { id: 'qa', dept: 'departments/研发部', name: '研发部-质检组', members: ['QA-1'] },
     ],
+    invitePaceMs: 0,
     deptSlugs: { 'departments/研发部': 'rd' },
     botMxid: BOT,
     producerMxid: PRODUCER,
@@ -176,11 +177,11 @@ function inputOf(over: Partial<ChannelMapInput> = {}): ChannelMapInput {
 // ————————————————————————— PL 基线（DEV-20 §5.3 照录） —————————————————————————
 
 describe('powerLevelTarget（§5.3 三列基线照录）', () => {
-  it('大厅/告警列：redact=100、无 50 槽、bot+producer=100、结构性事件全 100', () => {
+  it('大厅/告警列：redact=100、无 50 槽、producer=100（creator 隐含）、结构性事件全 100', () => {
     const t = powerLevelTarget('hall', { botMxid: BOT, producerMxid: PRODUCER })
     expect(t).toEqual({
       users_default: 0,
-      users: { [BOT]: 100, [PRODUCER]: 100 },
+      users: { [PRODUCER]: 100 }, // creator(bot) 隐含 PL100 不列（2026-10-23 修正——Synapse 禁列 creator）
       events_default: 0,
       state_default: 100,
       invite: 100,
@@ -209,7 +210,7 @@ describe('powerLevelTarget（§5.3 三列基线照录）', () => {
   it('单据房间列：redact=100、无 50 槽', () => {
     const t = powerLevelTarget('ticket', { botMxid: BOT, producerMxid: PRODUCER })
     expect(t.redact).toBe(100)
-    expect(Object.keys(t.users)).toHaveLength(2)
+    expect(Object.keys(t.users)).toHaveLength(1) // 仅 producer——creator 隐含不列
   })
 })
 
@@ -256,7 +257,8 @@ describe('planChannelMap（§6.7.1 八类地图＋父空间）', () => {
   })
 
   it('部门缺 deptSlugs 映射：落 problems 软失败（该房不供给，其余照供）', () => {
-    const plan = planChannelMap(inputOf({ deptSlugs: {} }))
+    const plan = planChannelMap(inputOf({ invitePaceMs: 0,
+    deptSlugs: {} }))
     expect(plan.channels.every((c) => c.kind !== 'dept' && c.kind !== 'group')).toBe(true)
     expect(plan.problems.some((p) => p.includes('departments/研发部') && p.includes('deptSlugs'))).toBe(true)
   })

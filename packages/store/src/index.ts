@@ -182,6 +182,17 @@ export {
   type PerfEventCounts,
   type PerfPersonRow,
 } from './perf.ts'
+// v11 人×模型×日用量投影面（132-§6.1 单C·studio-dev-177）：增量并格 upsert（收割
+// 相位尾缝 write-through）+ 全量替换 replace（重建面）+ 读面 listUsageDaily
+export {
+  type ReplaceUsageDailyResult,
+  type UsageDailyQuery,
+  type UsageDailyRecord,
+  type UsageFace,
+} from './usage.ts'
+
+// probes_runs 探针跑分面（BC-S2 拆分件·studio-dev-177：自 ledger.ts 原样拆出零行为变更）
+export { createProbesFace, type ProbeRunQuery, type ProbesFace } from './probes.ts'
 
 // work_records / sessions + v2 五表 + v3 jobs + v4 收口面 + v5 candidates + v6 报表三表
 // + v7 hr_sync_log 记录形状（store 层临时闸，contract schema 落地后替换）

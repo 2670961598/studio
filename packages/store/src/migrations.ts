@@ -494,6 +494,36 @@ const MIGRATIONS: readonly Migration[] = [
       '',
     ].join('\n'),
   },
+  {
+    // v11：132-C 成本警戒刀·记录面（studio-dev-177，132-§6.1/§6.4·制作人 2026-10-22 全批）：
+    //   usage_daily 投影表——人×模型×日用量（132-§4 DDL 直译）。
+    //   - open 可刷新投影（冻结语义在 cost_daily=单D）：无 append-only 触发器，写面=
+    //     增量 upsert（相位尾缝 write-through，R1 落账日=ended_at 本地日）+全量替换
+    //     （重建面，C8 投影纪律：随时从 work_records 全量重算，非第二事实源）；
+    //   - 自然键 (company, person_id, model, usage_date) 唯一=upsert 冲突锚；
+    //   - runs_count 含 failed/interrupted（R3 全量不分 status——先决=记录面带 tokens，
+    //     单A 冻结口径下 fail 路径不带 tokens，投影如实消费带量行，申报偏差见单C plan）；
+    //   - 申报偏差①：加 idx_usage_daily_date(company, usage_date) 扫描索引——cost-
+    //     threshold 源每拍按公司+日查行，自然键唯一索引尾列非 usage_date 不覆盖该扫。
+    version: 11,
+    name: '132-C 成本警戒刀：usage_daily 人×模型×日投影（studio-dev-177）',
+    sql: [
+      'CREATE TABLE usage_daily (',
+      '  id TEXT PRIMARY KEY,                -- ULID（首插由 daemon 生成；upsert 冲突沿用原 id）',
+      '  company TEXT NOT NULL, person_id TEXT NOT NULL,',
+      "  model TEXT NOT NULL,                -- 'provider/model' 归一形（132-A ResultStats.model）",
+      "  usage_date TEXT NOT NULL,           -- 'YYYY-MM-DD' 本地时区，按 ended_at 归属（R1）",
+      '  tokens_in INTEGER NOT NULL DEFAULT 0, tokens_out INTEGER NOT NULL DEFAULT 0,',
+      '  cache_read INTEGER NOT NULL DEFAULT 0, cache_creation INTEGER NOT NULL DEFAULT 0,',
+      '  runs_count INTEGER NOT NULL DEFAULT 0,        -- 归并的 work_record 数（含 failed/interrupted R3）',
+      '  first_ts INTEGER, last_ts INTEGER,',
+      '  updated_at INTEGER NOT NULL',
+      ');',
+      'CREATE UNIQUE INDEX idx_usage_daily_nat ON usage_daily(company, person_id, model, usage_date);',
+      'CREATE INDEX idx_usage_daily_date ON usage_daily(company, usage_date);',
+      '',
+    ].join('\n'),
+  },
 ]
 
 /** 内置迁移的最高版本（0 = 无迁移可用，仅占位防呆） */

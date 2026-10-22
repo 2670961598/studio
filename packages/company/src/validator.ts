@@ -41,6 +41,7 @@ import { applyStateHygieneToSnapshot, stateHygieneRules } from './state-hygiene.
 import { typeInboxRules } from './type-inbox.ts'
 import { groupCrossRules, OrgGroupSchema, toGroups } from './groups.ts'
 import { hooksCrossRules, OrgHooksSchema, toHooks } from './hooks.ts'
+import { CostGuardSectionSchema, costGuardRules, PersonCostCapsSchema, toCostGuard } from './cost-guard.ts'
 import { toJobs } from './jobs.ts'
 import { ORG_CONFIG_SCHEMA_LITERALS, lineOfPath, multifileRules, zodIssuesToDirectoryIssues } from './multifile.ts'
 
@@ -273,6 +274,9 @@ const OrgConfigSchema = z.strictObject({
     status: z.string().optional(),
     executor: z.string().optional(),
     file: z.string().optional(),
+    // 132-§6.4 单C（studio-dev-177）：人日预算覆盖帽（cost_guard.daily_budget_usd.
+    // per_person_default 的按人覆盖位）——缺省键不落，snapshot 侧 costCaps 条件展开
+    cost_caps: PersonCostCapsSchema.optional(),
   })).min(1),
   // 04-§三 D9 定时岗（v0.1-M4：结构收紧并装载进 snapshot.jobs——条目 schema 与映射表见 OrgJobSchema 头注）
   jobs: z.array(OrgJobSchema).optional(),
@@ -284,6 +288,9 @@ const OrgConfigSchema = z.strictObject({
   // 130-P3 频道供给扩展（130 提案 §6.7.1/C4）：组群声明（可选；不声明=无小组频道供给）
   groups: z.array(OrgGroupSchema).optional(),
   hooks: OrgHooksSchema.optional(), // 129-C（129-§6.1①）：事件钩子声明（v0 只开 data_change.routes——形状在 hooks.ts）
+  // 132-§6.4 单C（studio-dev-177）：成本警戒段（可选；不声明=面关=现状零变化——
+  // 结构闸/内容规则 CG-1..CG-3/装载拆至 cost-guard.ts）
+  cost_guard: CostGuardSectionSchema.optional(),
   // 03/N1：YouTrack 项目与字段/状态流映射覆盖（公司可整体替换的默认模板）
   yt: z.record(z.string(), z.unknown()).optional(),
   // 06-§三：executor 偏好覆盖（缺省继承框架级 agent.yaml）
@@ -343,6 +350,8 @@ function crossRules(doc: ReturnType<typeof parseDocument>, lc: LineCounter, org:
   // 组群声明引用完整性（130-P3，130 提案 §6.7.1/C4）——规则体拆至 groups.ts
   out.push(...groupCrossRules(doc, lc, org, deptPaths, peopleIds))
   out.push(...hooksCrossRules(doc, lc, org, peopleIds))
+  // 成本警戒段内容规则 CG-1..CG-3（132-§6.4 单C）——规则体拆至 cost-guard.ts
+  out.push(...costGuardRules(doc, lc, org.cost_guard))
   return out
 }
 
@@ -510,6 +519,8 @@ function toSnapshot(org: OrgConfig): CompanySnapshot {  const departments: DeptN
   }))
   const people: PersonRef[] = org.people.map((p) => ({ // status/role 可选携带（DEV-48，docs/52-§5.1）；skills 同款（130-P2，studio-dev-173：供拆单候选打分，提案 §6.5.2）：缺省键不落显式 undefined
     id: p.id, name: p.name, login: p.login, level: p.level, dept: p.dept, ...(p.status !== undefined ? { status: p.status } : {}), ...(p.role !== undefined ? { role: p.role } : {}), ...(p.skills !== undefined ? { skills: [...p.skills] } : {}),
+    // cost_caps（132-§6.4 单C）：costCaps 条件展开同款（缺省键不落）
+    ...(p.cost_caps !== undefined ? { costCaps: { dailyUsd: p.cost_caps.daily_usd } } : {}),
   }))
   const snap: CompanySnapshot = {
     slug: org.company.slug,
@@ -526,6 +537,8 @@ function toSnapshot(org: OrgConfig): CompanySnapshot {  const departments: DeptN
   // 组群声明装载（130-P3，130 提案 §6.7.1/C4）——装载体拆至 groups.ts
   if (org.groups !== undefined) snap.groups = toGroups(org.groups)
   if (org.hooks !== undefined) snap.hooks = toHooks(org.hooks) // 事件钩子装载（129-C，129-§6.1①）——装载体拆至 hooks.ts
+  // 成本警戒段装载（132-§6.4 单C，studio-dev-177）——装载体拆至 cost-guard.ts
+  if (org.cost_guard !== undefined) snap.costGuard = toCostGuard(org.cost_guard)
   // 州表卫生双层装载（127-C，studio-dev-127 §4.7）：state-hygiene.ts 单一实现
   applyStateHygieneToSnapshot(snap, org.yt)
   return snap

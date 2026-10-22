@@ -93,6 +93,9 @@ export * from './queue.ts'
 // 定价面纯逻辑（132-§6.2 单B·studio-dev-169：附件解析/覆盖校验/取价规则/四桶折算/
 // stale 报告/models.yaml 桥——price_snapshots store v9 的消费地基）
 export * from './pricing.ts'
+// 成本警戒纯逻辑（132-§6.4 单C·studio-dev-177：本地日键/档位判定/usage_daily
+// 投影折叠与格价折算——cost-threshold 源+hard 线联动的纯地基）
+export * from './costguard.ts'
 
 /** 包名常量 */
 export const PACKAGE_NAME = '@studio-next/core'

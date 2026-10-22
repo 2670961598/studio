@@ -102,8 +102,12 @@ import {
 import { openSqlite } from './driver.ts'
 import { createHrSyncQueue } from './hr-sync-queue.ts'
 import type { HrSyncQueueFace } from './hr-sync-queue.ts'
+import { createProbesFace } from './probes.ts'
+import type { ProbesFace } from './probes.ts'
 import { createPricingFace } from './pricing.ts'
 import type { PricingFace } from './pricing.ts'
+import { createUsageFace } from './usage.ts'
+import type { UsageFace } from './usage.ts'
 import { assertRecord, optNum, optStr, str, type SqlRow } from './row-helpers.ts'
 import { currentVersion, migrate } from './migrations.ts'
 import {
@@ -117,7 +121,6 @@ import {
   LedgerEntrySchema,
   PersonRecordSchema,
   PersonnelEventRecordSchema,
-  ProbeRunSchema,
   REPORT_TYPE_VALUES,
   ReportRecordSchema,
   SessionRecordSchema,
@@ -135,7 +138,6 @@ import {
   type LedgerKind,
   type PersonRecord,
   type PersonnelEventRecord,
-  type ProbeRunRecord,
   type ReportRecord,
   type ReportType,
   type SessionRecord,
@@ -220,7 +222,7 @@ export type PersonnelTimelineEntry =
   | { source: 'session'; ts: number; record: SessionRecord }
 
 /** 台账句柄：daemon 持有；db 暴露 DatabaseSync 标准面（引擎切换只动 driver.ts） */
-export interface Ledger extends HrSyncQueueFace, PricingFace {
+export interface Ledger extends HrSyncQueueFace, PricingFace, UsageFace, ProbesFace {
   db: DatabaseSync
   close(): void
   /** 当前 schema 版本（schema_version 表 MAX(version)；0=无迁移记录） */
@@ -353,16 +355,6 @@ export interface Ledger extends HrSyncQueueFace, PricingFace {
   getReport(id: string): ReportRecord | undefined
   /** 报表行列表（date, id 升序）；company / node / type 可选过滤（type 枚举外值拒） */
   listReports(query?: { company?: string; node?: string; type?: ReportType }): ReportRecord[]
-  /**
-   * probes_runs 探针跑分 append（append-only——触发器拦 UPDATE/DELETE 机制兜底）：
-   * 同 id 全列一致 → 幂等跳过（appended=false，F2-13 回填口径）；同 id 内容不一致 →
-   * CONFIG_INVALID（appendEvent 同规则）。
-   */
-  appendProbeRun(record: unknown): AppendResult
-  /** 按 id 取跑分行；无此行=undefined */
-  getProbeRun(id: string): ProbeRunRecord | undefined
-  /** 跑分行列表（ts, id 升序）；executor / probe_id / since/until（ts 闭区间）可选过滤 */
-  listProbeRuns(query?: { executor?: string; probe_id?: string; since?: number; until?: number }): ProbeRunRecord[]
 }
 
 /** tokens 四桶 canonical 序（F2-04 列名序）：同内容恒同字节串 */
@@ -1467,35 +1459,6 @@ export function openLedger(path: string): Ledger {
     json_ref: str(row, 'json_ref'),
   })
 
-  const rowToProbeRun = (row: SqlRow): ProbeRunRecord => {
-    const rec: ProbeRunRecord = {
-      id: str(row, 'id'),
-      executor: str(row, 'executor'),
-      model: str(row, 'model'),
-      probe_id: str(row, 'probe_id'),
-      pass: Number(row['pass']) === 1,
-      ts: Number(row['ts']),
-    }
-    const costUsd = optNum(row, 'cost_usd')
-    if (costUsd !== undefined) rec.cost_usd = costUsd
-    const durationMs = optNum(row, 'duration_ms')
-    if (durationMs !== undefined) rec.duration_ms = durationMs
-    return rec
-  }
-
-  function sameProbeRun(a: ProbeRunRecord, b: ProbeRunRecord): boolean {
-    return (
-      a.id === b.id &&
-      a.executor === b.executor &&
-      a.model === b.model &&
-      a.probe_id === b.probe_id &&
-      a.pass === b.pass &&
-      a.cost_usd === b.cost_usd &&
-      a.duration_ms === b.duration_ms &&
-      a.ts === b.ts
-    )
-  }
-
   const upsertLedgerEntry = (record: unknown): LedgerEntryRecord => {
     const r = assertRecord(LedgerEntrySchema, record, 'store/ledger-entry:invalid')
     const bodyJson = serializeLedgerBody(r.body, r.issue, r.kind)
@@ -1617,60 +1580,6 @@ export function openLedger(path: string): Ledger {
     return (db.prepare(sql).all(...params) as SqlRow[]).map(rowToReport)
   }
 
-  const appendProbeRun = (record: unknown): AppendResult => {
-    const r = assertRecord(ProbeRunSchema, record, 'store/probe-run:invalid')
-    // 幂等规则：同 id 全列一致跳过，不一致抛错（F2-13 回填幂等；append-only 拒覆盖语义）
-    const existing = db.prepare('SELECT * FROM probes_runs WHERE id = ?').get(r.id) as SqlRow | undefined
-    if (existing !== undefined) {
-      if (sameProbeRun(rowToProbeRun(existing), r)) return { id: r.id, appended: false }
-      configInvalid(
-        'store/probe-run:duplicate-id',
-        `跑分 id=${r.id} 已存在且内容不一致（append-only，拒绝覆盖语义的重复入账）`,
-      )
-    }
-    db.prepare('INSERT INTO probes_runs (id, executor, model, probe_id, pass, cost_usd, duration_ms, ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
-      r.id,
-      r.executor,
-      r.model,
-      r.probe_id,
-      r.pass ? 1 : 0,
-      r.cost_usd ?? null,
-      r.duration_ms ?? null,
-      r.ts,
-    )
-    return { id: r.id, appended: true }
-  }
-
-  const getProbeRun = (id: string): ProbeRunRecord | undefined => {
-    const row = db.prepare('SELECT * FROM probes_runs WHERE id = ?').get(id) as SqlRow | undefined
-    return row === undefined ? undefined : rowToProbeRun(row)
-  }
-
-  const listProbeRuns = (query: { executor?: string; probe_id?: string; since?: number; until?: number } = {}): ProbeRunRecord[] => {
-    const where: string[] = []
-    const params: Array<string | number> = []
-    if (query.executor !== undefined) {
-      where.push('executor = ?')
-      params.push(query.executor)
-    }
-    if (query.probe_id !== undefined) {
-      where.push('probe_id = ?')
-      params.push(query.probe_id)
-    }
-    if (query.since !== undefined) {
-      where.push('ts >= ?')
-      params.push(query.since)
-    }
-    if (query.until !== undefined) {
-      where.push('ts <= ?')
-      params.push(query.until)
-    }
-    let sql = 'SELECT * FROM probes_runs'
-    if (where.length > 0) sql += ` WHERE ${where.join(' AND ')}`
-    sql += ' ORDER BY ts ASC, id ASC'
-    return (db.prepare(sql).all(...params) as SqlRow[]).map(rowToProbeRun)
-  }
-
   return {
     db,
     close: () => db.close(),
@@ -1732,12 +1641,14 @@ export function openLedger(path: string): Ledger {
       return row === undefined ? undefined : rowToReport(row)
     },
     listReports,
-    appendProbeRun,
-    getProbeRun,
-    listProbeRuns,
+    // probes_runs 面（BC-S2 拆分：probes.ts——studio-dev-177 增 v11 usage 面时清偿）
+    ...createProbesFace(db),
     ...createHrSyncQueue(db),
     // v9 定价快照面（132-§6.2 单B：published_at 取库侧时钟——append 时刻的事实）
     ...createPricingFace(db, () => Date.now()),
+    // v11 用量投影面（132-§6.1 单C：id/updated_at 归 daemon——投影刷新时刻由
+    // 调用方（收割相位尾缝）供，与 append 面事实时刻口径不同）
+    ...createUsageFace(db),
   }
 }
 
