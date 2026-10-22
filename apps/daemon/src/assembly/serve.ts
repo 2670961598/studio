@@ -244,6 +244,26 @@ export interface ServeConfig extends HrServeConfig {
   /** 岗级预算帽缺省（USD；04-§四；仅价目表态 A 生效） */
   budgetPersonCapUsd?: number
   /**
+   * 人闸每人并发缺省帽（129-§6.2-R3 第四闸，studio-dev-167 单B）：人同时在工上限，
+   * 缺省 1（串行）；批量执行岗走 personInflightOverrides 单独放宽。
+   */
+  maxInflightPerPerson?: number
+  /**
+   * 队列 ageBoost 步长 ms（129-§6.2-R4 排序键）：wait/step 取档两档封顶；缺省
+   * 60min（引擎侧 DEFAULT_QUEUE_AGE_STEP_MS 单一源）。
+   */
+  queueAgeStepMs?: number
+  /**
+   * 人闸覆盖表（129-§6.2-R3）：`工号=N` 分号对（matrixRoles 先例），批量执行岗才可
+   * 配 >1——坏形态启动即拒（CONFIG_INVALID 语义，不静默忽略段）。
+   */
+  personInflightOverrides?: string
+  /**
+   * 制作人置顶单集（129-§6.2-R4：pinned=+∞ 恒首）：逗号清单；平台字段写通道归刀B
+   * （登记在案），配置面改了即刻生效。
+   */
+  pinnedTickets?: string
+  /**
    * 网关写收口开关（17-§7「一切平台写入经 wkey 网关」；src/engine/gated-platform.ts）：
    * 缺省开——demo fake 平台也过真闸（同 secret 同验签链路）证明收口面；false=裸 platform
    * （仅测试/对照用，生产不得关——头注警告）。
@@ -369,6 +389,8 @@ export function parseDaemonConfig(text: string): ServeConfig {
 
 // daemon.yaml 标量强制件拆在 assembly/serveconfig/coerce.ts（129-A 接线时腾位，零行为漂移）
 import { bool, num, str } from './serveconfig/coerce.ts'
+// 员工待办队列配置解析件（129-§6.2，studio-dev-167 单B——engine/todoqueue 域件同源）
+import { parsePersonInflightOverrides, parsePinnedTickets } from '../engine/todoqueue/queue.ts'
 
 function coerceServeConfig(raw: Record<string, string | number | boolean>): ServeConfig {
   const cfg: ServeConfig = { ...DEFAULT_SERVE_CONFIG }
@@ -407,6 +429,32 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         break
       case 'budgetPersonCapUsd':
         cfg.budgetPersonCapUsd = num(value, key)
+        break
+      case 'maxInflightPerPerson': {
+        // 人闸缺省帽（129-§6.2-R3）：正整数——0/负数在闸内 Math.max(1,·) 兜底，但配置
+        // 面就明报（fail-closed 纪律：坏配置不猜意图）
+        const v = num(value, key)
+        if (!Number.isInteger(v) || v < 1) throw new Error(`daemon.yaml：maxInflightPerPerson 须为正整数（实得 ${v}）`)
+        cfg.maxInflightPerPerson = v
+        break
+      }
+      case 'queueAgeStepMs': {
+        // ageBoost 步长（129-§6.2-R4）：正毫秒——core ageBoostTier 对 ≤0 fail-closed 归 0 档，
+        // 配置面同样明报（步长 0=加龄永不升档，几乎必是配置错）
+        const v = num(value, key)
+        if (!Number.isInteger(v) || v < 1) throw new Error(`daemon.yaml：queueAgeStepMs 须为正整数毫秒（实得 ${v}）`)
+        cfg.queueAgeStepMs = v
+        break
+      }
+      case 'personInflightOverrides': {
+        // 覆盖表（129-§6.2-R3）：解析即验（坏段启动拒——不静默忽略）；空值=未配（面关）
+        const v = str(value, key)
+        parsePersonInflightOverrides(v)
+        cfg.personInflightOverrides = v
+        break
+      }
+      case 'pinnedTickets':
+        cfg.pinnedTickets = str(value, key)
         break
       case 'tickMs':
         cfg.tickMs = num(value, key)
@@ -972,6 +1020,13 @@ export function buildServeRuntime(
 
   // data-change 路由登记位（129-A）：坏形态 CONFIG_INVALID 明报拒启动（解析件在 engine/intents/taxonomy.ts）
   const dataChangeRoutes = parseDataChangeRoutes(config.dataChangeRoutes)
+  // 人闸覆盖表解析（129-§6.2-R3，studio-dev-167 单B）：coerce 阶段已验过形态，此处取
+  // Map 注入引擎（缺省不注入=表空，人闸走 maxInflightPerPerson 缺省帽）
+  const personInflightOverrides = config.personInflightOverrides !== undefined
+    ? parsePersonInflightOverrides(config.personInflightOverrides)
+    : undefined
+  // 置顶单集解析（129-§6.2-R4）：逗号清单→数组（引擎侧每拍现算 Set——改配置即刻生效）
+  const pinnedTickets = config.pinnedTickets !== undefined ? parsePinnedTickets(config.pinnedTickets) : undefined
 
   const engineConfig: EngineConfig = {
     ...ENGINE_CONFIG_DEFAULTS,
@@ -984,7 +1039,18 @@ export function buildServeRuntime(
     ...(dataChangeRoutes !== undefined ? { dataChangeRoutes } : {}), // 129-A 路由登记位（未配=闸面 fail-closed）
     deptFallback: snapshot.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback,
     defaultLane: snapshot.departments[0]?.lanes[0] ?? ENGINE_CONFIG_DEFAULTS.defaultLane,
-    limits: { maxActionsPerTick: config.maxActionsPerTick, maxInflight: config.maxInflight },
+    limits: {
+      maxActionsPerTick: config.maxActionsPerTick,
+      maxInflight: config.maxInflight,
+      // 人闸缺省帽（129-§6.2-R3）：缺省不注入=引擎兜底 1（串行）；批量执行岗走覆盖表
+      ...(config.maxInflightPerPerson !== undefined ? { maxInflightPerPerson: config.maxInflightPerPerson } : {}),
+    },
+    // 员工待办队列面（129-§6.2，studio-dev-167 单B）：步长/覆盖表/置顶集/排序器注入位
+    ...(config.queueAgeStepMs !== undefined ? { queueAgeStepMs: config.queueAgeStepMs } : {}),
+    ...(personInflightOverrides !== undefined && personInflightOverrides.size > 0
+      ? { personInflightOverrides: Object.fromEntries(personInflightOverrides) }
+      : {}),
+    ...(pinnedTickets !== undefined && pinnedTickets.length > 0 ? { pinnedTickets } : {}),
     stallAfterMs: config.stallAfterMs,
     stallKillAfterAlarms: config.stallKillAfterAlarms,
     harvestSliceMs: config.harvestSliceMs,

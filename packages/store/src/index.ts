@@ -180,6 +180,7 @@ export {
   SessionRecordSchema,
   TERMINAL_CANDIDATE_STATUS_VALUES,
   TicketMirrorRecordSchema,
+  TodoQueueRecordSchema,
   WorkRecordSchema,
 } from './records.ts'
 export type {
@@ -205,6 +206,7 @@ export type {
   SessionRecord,
   TerminalCandidateStatus,
   TicketMirrorRecord,
+  TodoQueueRecord,
   WorkRecord,
 } from './records.ts'
 

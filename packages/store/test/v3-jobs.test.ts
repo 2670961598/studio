@@ -63,7 +63,7 @@ function makeJob(patch: Record<string, unknown> = {}): Record<string, unknown> {
 
 describe('v3 迁移（jobs 表 + 补跑/公司两索引）', () => {
   it('建库即到最新版（v7）：jobs 表在库、idx_jobs_next_run_at / idx_jobs_company 在库', () => {
-    expect(ledger.version()).toBe(8)
+    expect(ledger.version()).toBe(9)
     const tables = (
       ledger.db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as Array<{ name: unknown }>
     ).map((r) => String(r.name))
@@ -74,11 +74,11 @@ describe('v3 迁移（jobs 表 + 补跑/公司两索引）', () => {
     expect(indexes).toEqual(['idx_jobs_company', 'idx_jobs_next_run_at'])
   })
 
-  it('重开库 migrate 幂等：version 不涨、schema_version 恰七行、v3 不重放', () => {
+  it('重开库 migrate 幂等：version 不涨、schema_version 恰九行、v3 不重放', () => {
     const again = openLedger(path.join(root, 'jobs.db'))
-    expect(again.version()).toBe(8)
+    expect(again.version()).toBe(9)
     const rows = again.db.prepare('SELECT COUNT(*) AS c FROM schema_version').get() as { c?: unknown }
-    expect(Number(rows.c)).toBe(8)
+    expect(Number(rows.c)).toBe(9)
     again.close()
   })
 
@@ -97,7 +97,7 @@ describe('v3 迁移（jobs 表 + 补跑/公司两索引）', () => {
 
     // ② v2 库重开（openLedger 全量迁移）→ v4（v3 jobs + v4 daemon_kv 逐版本补齐），v2 数据原样可读，jobs 表补齐且可写
     const upgraded = openLedger(p)
-    expect(upgraded.version()).toBe(8)
+    expect(upgraded.version()).toBe(9)
     expect(upgraded.queryEvents().map((e) => e.id)).toEqual(['01ARZ3NDEKTSV4RRFFQ69G5FAV'])
     expect(upgraded.upsertJob({ ...makeJob(), job_id: 'job-after-upgrade', next_run_at: T0 + 5000 })).toBe('job-after-upgrade')
     expect(upgraded.dueJobs(T0).map((j) => j.job_id)).toEqual([]) // 该岗 next=T0+5000 未到点

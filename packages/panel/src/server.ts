@@ -26,6 +26,9 @@
  *                            事件按 (issue,错误签名) 聚合——见 views.aggregateBreakers 头注
  *   GET /api/costs?days=     成本趋势卡（近 N 天可配缺省 7 上限 90）：LLM 岛(events)/收割
  *                            (work_records)/预算三类(budgets) 三口径按 UTC 日分列——docs/26 C1
+ *   GET /api/inbox?company=&limit=
+ *                            收件箱卡（129-§6.2 R2/R5）：todo_queue 投影读序化——行序=核心
+ *                            排序键（置顶恒首→score 降→FIFO→单号）；limit 缺省 100 上限 100
  *
  * 只读纪律：panel 对 SQLite **零写**。台账 WAL（单写多读）使 panel 与 daemon 写进程同库并存
  * 天然安全（store/driver.ts journal_mode=WAL）。注意 openLedger 对不存在的路径会建库迁移
@@ -49,6 +52,7 @@ import { streamSSE } from 'hono/streaming'
 import { configInvalid, isEventName, type EventRecord } from '@studio-next/contract'
 import { openLedger, type Ledger } from '@studio-next/store'
 import { PANEL_LEGACY_ROUTE, renderDashboardShell } from './shell.ts'
+import { buildInboxSnapshot, INBOX_MAX_ROWS } from './inbox.ts'
 import { VENDOR_FILES, mountPanelStatic } from './static.ts'
 import {
   DEFAULT_BREAKER_DAYS,
@@ -230,6 +234,17 @@ export function createPanelApp(opts: PanelAppOptions): PanelApp {
   app.get('/api/costs', (c) =>
     c.json(buildCostsSnapshot(getLedger(), { days: clampDays(c.req.query('days'), DEFAULT_COSTS_DAYS, MAX_COSTS_DAYS) })),
   )
+
+  // 收件箱卡（129-§6.2 R2/R5）：todo_queue 投影只读呈现——行序=核心排序键读面镜像
+  app.get('/api/inbox', (c) => {
+    const company = c.req.query('company')
+    return c.json(
+      buildInboxSnapshot(getLedger(), {
+        ...(company !== undefined ? { company } : {}),
+        limit: clampLimit(c.req.query('limit'), INBOX_MAX_ROWS),
+      }),
+    )
+  })
 
   app.get('/api/snapshot', (c) => c.json(buildDashboardSnapshot(getLedger(), { recentRuns: pageSize })))
 

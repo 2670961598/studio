@@ -19,7 +19,10 @@
  *     status 归人事流与后续扩展写面，镜像同步不动它们（不清空、不覆盖）。单事务原子：
  *     预校验全部行后整体落库，任一行非法/重复整批拒。personnel_events 不在此写面
  *     （镜像同步≠人事变动：变动必挂单走 appendPersonnelEvent，F2-06）。
- *   - upsertTicketMirror：YouTrack 镜像，last-write-wins（权威源在 YouTrack，本表随时可重建）。
+ *   - upsertTicketMirror：YouTrack 镜像，last-write-wins（权威源在 YouTrack，本表随时可重建；
+ *     v8 起 carry assignee——129-B 按人重导投影所需）。
+ *   - replaceTodoQueue / listTodoQueue / recentDispatchWaitsMs（v8，129-§6.2-R2 单B）：
+ *     todo_queue 投影全量重投/读面/派发等待观测——可重建投影非事实源，决策永不读表。
  *   - appendBudget / queryBudgets：预算三节点（reserve/settle/refusal）落账与 scope 查询；
  *     listBudgets 全量读面（无 scope 维，since/until 闭区间 + kinds 子集过滤——panel 成本卡
  *     「scope 枚举近似」缺口的库侧清偿，panel 消费接线归后续微单）。
@@ -118,6 +121,7 @@ import {
   SessionRecordSchema,
   TERMINAL_CANDIDATE_STATUS_VALUES,
   TicketMirrorRecordSchema,
+  TodoQueueRecordSchema,
   WorkRecordSchema,
   type BudgetRecord,
   type CandidateRow,
@@ -134,6 +138,7 @@ import {
   type ReportType,
   type SessionRecord,
   type TicketMirrorRecord,
+  type TodoQueueRecord,
   type WorkRecord,
 } from './records.ts'
 
@@ -239,6 +244,18 @@ export interface Ledger extends HrSyncQueueFace {
   upsertTicketMirror(record: unknown): string
   getTicketMirror(issue: string): TicketMirrorRecord | undefined
   listTicketMirrors(): TicketMirrorRecord[]
+  /**
+   * todo_queue 投影全量重投（129-§6.2-R2，v8）：单事务 DELETE+INSERT 整公司换——
+   * 可重建投影非事实源（单写者=daemon 每拍末调，diff 判定归引擎侧）；决策永不读表。
+   */
+  replaceTodoQueue(company: string, rows: readonly unknown[]): number
+  /** todo_queue 读面（company 维；行序 person→first_seen_at→ticket——面板/测试用） */
+  listTodoQueue(company?: string): TodoQueueRecord[]
+  /**
+   * 最近派发等待序列（schedule-to-start 观测面，129-B）：近 N 条 DISPATCH 事件 note
+   * `wait=<ms>` 解析（17-§3 note 结构化先例：fp=/budget= 同款）；无 wait 锚的旧事件跳过。
+   */
+  recentDispatchWaitsMs(company: string, limit: number): number[]
   /** 预算三节点落账（append-only，同 id 幂等规则对齐 appendEvent） */
   appendBudget(record: unknown): AppendResult
   queryBudgets(scope: BudgetScope): BudgetRecord[]
@@ -773,6 +790,27 @@ export function openLedger(path: string): Ledger {
     if (parent !== undefined) rec.parent = parent
     const lane = optStr(row, 'lane')
     if (lane !== undefined) rec.lane = lane
+    const assignee = optStr(row, 'assignee')
+    if (assignee !== undefined) rec.assignee = assignee
+    return rec
+  }
+
+  const rowToTodoQueue = (row: SqlRow): TodoQueueRecord => {
+    const rec: TodoQueueRecord = {
+      company: str(row, 'company'),
+      ticket: str(row, 'ticket'),
+      person: str(row, 'person'),
+      priority: Number(row['priority']),
+      pinned: Number(row['pinned']),
+      boost_tier: Number(row['boost_tier']),
+      first_seen_at: Number(row['first_seen_at']),
+      ready_state: str(row, 'ready_state') === 'awaiting_approval' ? 'awaiting_approval' : 'ready',
+      updated_at: Number(row['updated_at']),
+    }
+    const lastBoost = optNum(row, 'last_boost_at')
+    if (lastBoost !== undefined) rec.last_boost_at = lastBoost
+    const why = optStr(row, 'why')
+    if (why !== undefined) rec.why = why
     return rec
   }
 
@@ -864,12 +902,13 @@ export function openLedger(path: string): Ledger {
     const r = assertRecord(TicketMirrorRecordSchema, record, 'store/ticket-mirror:invalid')
     db.prepare(
       `INSERT INTO ticket_mirror (
-         issue, company, created, updated, state, type, dept, level, dispatcher, parent, lane
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         issue, company, created, updated, state, type, dept, level, dispatcher, parent, lane, assignee
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(issue) DO UPDATE SET
          company = excluded.company, created = excluded.created, updated = excluded.updated,
          state = excluded.state, type = excluded.type, dept = excluded.dept, level = excluded.level,
-         dispatcher = excluded.dispatcher, parent = excluded.parent, lane = excluded.lane`,
+         dispatcher = excluded.dispatcher, parent = excluded.parent, lane = excluded.lane,
+         assignee = excluded.assignee`,
     ).run(
       r.issue,
       r.company,
@@ -882,6 +921,7 @@ export function openLedger(path: string): Ledger {
       r.dispatcher,
       r.parent ?? null,
       r.lane ?? null,
+      r.assignee ?? null,
     )
     return r.issue
   }
@@ -893,6 +933,78 @@ export function openLedger(path: string): Ledger {
 
   const listTicketMirrors = (): TicketMirrorRecord[] =>
     (db.prepare('SELECT * FROM ticket_mirror ORDER BY updated ASC, issue ASC').all() as SqlRow[]).map(rowToTicketMirror)
+
+  // —— v8 todo_queue 投影读写面（129-§6.2-R2，studio-dev-167 单B） ——
+
+  const insertTodoQueue = db.prepare(
+    `INSERT INTO todo_queue (
+       company, ticket, person, priority, pinned, boost_tier, first_seen_at, last_boost_at, ready_state, why, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+
+  const replaceTodoQueue = (company: string, rows: readonly unknown[]): number => {
+    const parsed = rows.map((row) => {
+      const r = assertRecord(TodoQueueRecordSchema, row, 'store/todo-queue:invalid')
+      if (r.company !== company) {
+        configInvalid('store/todo-queue:company-mismatch', `行 company=${r.company} 与重投目标 company=${company} 不一致（整换按公司维，拒跨维写入）`)
+      }
+      return r
+    })
+    db.exec('BEGIN')
+    try {
+      db.prepare('DELETE FROM todo_queue WHERE company = ?').run(company)
+      for (const r of parsed) {
+        insertTodoQueue.run(
+          r.company,
+          r.ticket,
+          r.person,
+          r.priority,
+          r.pinned,
+          r.boost_tier,
+          r.first_seen_at,
+          r.last_boost_at ?? null,
+          r.ready_state,
+          r.why ?? null,
+          r.updated_at,
+        )
+      }
+      db.exec('COMMIT')
+    } catch (err) {
+      db.exec('ROLLBACK')
+      throw err
+    }
+    return parsed.length
+  }
+
+  const listTodoQueue = (company?: string): TodoQueueRecord[] => {
+    const rows =
+      company === undefined
+        ? (db.prepare('SELECT * FROM todo_queue ORDER BY company ASC, person ASC, first_seen_at ASC, ticket ASC').all() as SqlRow[])
+        : (db
+            .prepare('SELECT * FROM todo_queue WHERE company = ? ORDER BY person ASC, first_seen_at ASC, ticket ASC')
+            .all(company) as SqlRow[])
+    return rows.map(rowToTodoQueue)
+  }
+
+  /** DISPATCH note wait 锚解析（`;wait=123` 尾缀段——17-§3 note 结构化先例；无锚跳过） */
+  const dispatchWaitOfNote = (note: string | undefined): number | undefined => {
+    if (note === undefined) return undefined
+    const m = /(?:^|[; ])wait=(\d+)/.exec(note)
+    return m === null ? undefined : Number(m[1])
+  }
+
+  const recentDispatchWaitsMs = (company: string, limit: number): number[] => {
+    const rows = db
+      .prepare('SELECT note FROM events WHERE company = ? AND event = ? ORDER BY ts DESC, id DESC LIMIT ?')
+      .all(company, 'DISPATCH', limit) as Array<{ note: unknown }>
+    const waits: number[] = []
+    for (const row of rows) {
+      const note = typeof row['note'] === 'string' ? row['note'] : undefined
+      const wait = dispatchWaitOfNote(note)
+      if (wait !== undefined) waits.push(wait)
+    }
+    return waits
+  }
 
   const appendBudget = (record: unknown): AppendResult => {
     const r = assertRecord(BudgetRecordSchema, record, 'store/budget:invalid')
@@ -1586,6 +1698,9 @@ export function openLedger(path: string): Ledger {
     upsertTicketMirror,
     getTicketMirror,
     listTicketMirrors,
+    replaceTodoQueue,
+    listTodoQueue,
+    recentDispatchWaitsMs,
     appendBudget,
     queryBudgets,
     listBudgets,

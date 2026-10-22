@@ -65,6 +65,25 @@ export interface TickPhaseDispatchBudget {
   budgetRefused: number
 }
 
+/**
+ * 派发等待观测（129-§6.2-R5，studio-dev-167 单B）：DISPATCH note wait 锚派生
+ * （ledger.recentDispatchWaitsMs 近 50 次）——调度→开工挂钟，面板 inbox 同源可见。
+ */
+export interface TickDispatchScheduleToStart {
+  count: number
+  avgMs: number
+  maxMs: number
+}
+
+/**
+ * todo_queue 投影汇报（129-§6.2-R2）：rows=本拍投影行数（diff 才写表，行数恒全量）、
+ * persons=去重人数（面板 inbox 分组数）。
+ */
+export interface TickQueueProjection {
+  rows: number
+  persons: number
+}
+
 /** 一拍全量汇报（JSON 可序列化；actions=结构化动作原体，actionResults=执行面，events=本拍新账） */
 export interface TickReport {
   seq: number
@@ -78,8 +97,10 @@ export interface TickReport {
       reopened: number
       /** 本拍镜像对账扫描补进候选的单数（DEV-42①：非节流拍恒 0） */
       rescanned: number
+      /** todo_queue 投影快照（129-§6.2-R2：行数/人数——面板 inbox 观测面） */
+      queue: TickQueueProjection
     }
-    dispatch: { dispatched: number; approvals: number; results: readonly TickActionResult[] } & TickPhaseDispatchBudget
+    dispatch: { dispatched: number; approvals: number; results: readonly TickActionResult[] } & TickPhaseDispatchBudget & { scheduleToStart: TickDispatchScheduleToStart }
     harvest: TickPhaseHarvest
     merge: { merged: number }
     recycle: { recycled: number }

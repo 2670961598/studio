@@ -253,6 +253,23 @@ import { heartbeatSentinelRecord, runDev49Sentinels } from './sentinel/sentinels
 import { mintWorkerKey, workerKeyCredentials, workerKeyGuidance, WORKER_WKEY_ENV_KEY } from './worker-key.ts'
 import type { WorkerKeyDeps } from './worker-key.ts'
 import type { HrSyncTickReport } from './hrsync/hrsync.ts'
+// 员工待办队列域件（129-§6.2，studio-dev-167 单B，20-§十五「先拆再增」自 engine.ts 拆出）：
+// 排序键/携带态/成员资格/投影/配置解析全在域件；engine 只留相位缝（候选定序/人闸快照/
+// 派发 note wait 锚/相位 7 尾投影重投）。
+import {
+  dropQueueCarry,
+  orderCandidates,
+  projectTodoQueue,
+  queueCandidateMeta,
+  queueMembership,
+  seedQueueCarry,
+  todoQueueDiffers,
+  touchQueueCarry,
+  type QueueCarry,
+  type QueueMemberSource,
+  DEFAULT_QUEUE_AGE_STEP_MS,
+} from './todoqueue/queue.ts'
+import { ageBoostTier, type QueueRanker } from '@studio-next/core'
 import type { TickActionResult, TickDecisionEntry, TickPhaseDispatchBudget, TickPhaseHarvest, TickReport } from './tick-report/types.ts'
 export type { TickDecisionEntry, TickReport } from './tick-report/types.ts'
 
@@ -383,6 +400,29 @@ export interface EngineConfig {
    * 不派工，纪律 3），派发失败明报，不静默降档。
    */
   readBlindAcceptance?: readonly string[]
+  /**
+   * 队列 ageBoost 步长 ms（129-§6.2-R4 排序键：wait/step 取档、两档封顶）：
+   * 缺省 60min（core DEFAULT_QUEUE_AGE_STEP_MS 单一源）。档=tier→score 加成：
+   * 排队 1 步=+1、2 步及以上=+2 封顶（饥饿防线——低优老单最终压过高优新单，
+   * 但永不全额压制 3 级紧急单）。
+   */
+  queueAgeStepMs?: number
+  /**
+   * 人闸每人并发覆盖表（129-§6.2-R3 第四闸）：工号→在工帽。缺省帽=limits.
+   * maxInflightPerPerson（缺省 1）；**只有批量执行岗**可配 >1（daemon.yaml
+   * `personInflightOverrides: P-1=2;P-2=3` 扁平分号对——matrixRoles 先例）。
+   */
+  personInflightOverrides?: Readonly<Record<string, number>>
+  /**
+   * 制作人置顶单集（129-§6.2-R4：pinned=+∞ 恒首）。daemon.yaml `pinnedTickets:`
+   * 逗号清单（平面字段写通道归刀B，登记在案）；现算不入携带态——改配置即刻生效。
+   */
+  pinnedTickets?: readonly string[]
+  /**
+   * 队列排序器注入位（129-§6.2-R1 升级位）：缺省不注入=core rankQueue 规则缺省档
+   * （冻结公式）；160-B 小模型档接线时注入（接口面已冻结，本单不实现）。
+   */
+  queueRanker?: QueueRanker
 }
 
 /** 缺省引擎配置（demo/测试可直接改写；serve 侧由 daemon.yaml 覆盖） */
@@ -408,6 +448,7 @@ export const ENGINE_CONFIG_DEFAULTS: EngineConfig = {
   mirrorRescanEveryTicks: 30,
   statusSetPatrolEveryTicks: 30,
   harvestReconEveryTicks: 30,
+  queueAgeStepMs: DEFAULT_QUEUE_AGE_STEP_MS,
 }
 
 /**
@@ -639,6 +680,35 @@ export function createEngine(deps: EngineDeps): Engine {
   const seqSeed = Number.parseInt(ledger.kvGet(TICK_SEQ_KEY) ?? '0', 10)
   if (Number.isInteger(seqSeed) && seqSeed > 0) seq = seqSeed
 
+  // —— 员工待办队列携带态（129-§6.2，studio-dev-167 单B）——
+  // 首见钟是「非事件可导携带列」（jobs.last_run_at 先例）：事件面只有 DISPATCH（出队锚）
+  // 无入队锚，FIFO 钟只能携带。启动从 todo_queue 表种子（seqSeed 同款恢复面——投影可
+  // 重建，表即恢复源）；拍内 touch（种钟/抬峰）/drop（派发成功即出队）；GC 收口在
+  // projectTodoQueue（离队单删条）。回滚再入队=新钟（attempt 轮次已可区分，不跨轮持久）。
+  const queueCarry: QueueCarry = seedQueueCarry(ledger.listTodoQueue())
+  const queueAgeStepMs = config.queueAgeStepMs ?? DEFAULT_QUEUE_AGE_STEP_MS
+  const pinnedTicketSet = (): ReadonlySet<TicketId> => new Set(config.pinnedTickets ?? [])
+  const personOverrides = config.personInflightOverrides ?? {}
+  /** 人闸帽（129-§6.2-R3）：覆盖表 > limits.maxInflightPerPerson 缺省（引擎侧兜底 1——
+   * decide 侧 Math.max(1,limit) 再兜一次，双层 fail-closed）；批量执行岗才可 >1。 */
+  function personLimitFor(person: string): number {
+    return personOverrides[person] ?? config.limits.maxInflightPerPerson ?? 1
+  }
+  /** 人闸携带快照（129-§6.2-R3：第四闸插在泳道后每拍前——decide passGates 序冻结）。
+   * 在工计数=内存 Inflight + 本拍已排队派发（两段式「先决后执」拍内即时生效——
+   * inflightCount 同款折算面）。人不可解析=不注 gate（闸面跳过，人索引空时不误伤）。 */
+  function personGateSnapshot(person: string | undefined, dispatchPersons: ReadonlyMap<TicketId, string>):
+    | { inflightCount: number; limit: number }
+    | undefined {
+    if (person === undefined) return undefined
+    let inflightCount = 0
+    for (const entry of inflight.values()) if (entry.personId === person) inflightCount += 1
+    for (const p of dispatchPersons.values()) if (p === person) inflightCount += 1
+    return { inflightCount, limit: personLimitFor(person) }
+  }
+  // 投影写缓存（canonical JSON——diff 才写；todo_queue 是可重建投影，写面节流观测项）
+  let lastProjectedTodoQueue: string | undefined
+
   // ————————————————— 小构件 —————————————————
 
   /** 时钟（一切时刻经注入 clock——core 纪律在 daemon 侧的同形落点） */
@@ -724,6 +794,9 @@ export function createEngine(deps: EngineDeps): Engine {
       dispatcher: config.actor,
       ...(issue.parent !== undefined ? { parent: issue.parent } : {}),
       ...(issue.lane !== undefined ? { lane: issue.lane } : {}),
+      // 队列归属键（129-§6.2-R3：assignee 复用不新建）——todo_queue 投影 person 列的
+      // 镜像源（store v8 列）；派发侧 resolvePerson 同源链（assignee→defaultPersonId）
+      ...(issue.assignee !== undefined ? { assignee: issue.assignee } : {}),
     })
   }
 
@@ -743,7 +816,7 @@ export function createEngine(deps: EngineDeps): Engine {
     if (lease !== undefined && lease.holder === ticket) lanes.delete(lane)
   }
 
-  function resolvePerson(issue: IssueRecord): PersonRef | undefined {
+  function resolvePerson(issue: { assignee?: string }): PersonRef | undefined {
     return (
       (issue.assignee !== undefined ? people.find((p) => p.id === issue.assignee) : undefined) ??
       people.find((p) => p.id === config.defaultPersonId) ??
@@ -751,7 +824,7 @@ export function createEngine(deps: EngineDeps): Engine {
     )
   }
 
-  function flowOf(issue: IssueRecord) {
+  function flowOf(issue: { type?: string; level?: number }) {
     // DEV-43（docs/18-§2.1.1 解析序）：T:<type> 优先 → L:<level> 回退（与 decide 步2
     // 同函数——两处定流永不漂移）。保留词 bug/task 判定器不收 T 键（W-9）——断路单
     // 不定级回 NOOP_UNKNOWN_FLOW（待人定级后派）、岗单恒落 L0，现状语义保持。
@@ -936,11 +1009,24 @@ export function createEngine(deps: EngineDeps): Engine {
         ...(instructionsPath !== undefined ? { instructionsPath } : {}),
       })
       syncMirror(transitioned)
+      // 队列等待锚（129-§6.2-R4，studio-dev-167 单B）：DISPATCH note 尾携 wait/prio/boost
+      // ——面板 scheduleToStart 观测面（store.recentDispatchWaitsMs 按此锚解析，正则
+      // `wait=(\d+)`）；队列外直派（携带无条目——rescan 前的极端面）不携锚不误报。
+      const queueEntryAtDispatch = queueCarry.get(ticket)
+      const queueWaitMs =
+        queueEntryAtDispatch !== undefined ? Math.max(0, at - queueEntryAtDispatch.firstSeenAt) : undefined
+      const queueAnchor =
+        queueEntryAtDispatch !== undefined
+          ? `;wait=${queueWaitMs};prio=${queueEntryAtDispatch.priority};boost=${ageBoostTier(queueWaitMs ?? 0, queueAgeStepMs)}`
+          : ''
       makeEvent('DISPATCH', transitioned, attempt, tickEvents, {
         size: Buffer.byteLength(assembled.agentsMd.text, 'utf8'),
         payload_hash: `sha256:${createHash('sha256').update(assembled.agentsMd.text, 'utf8').digest('hex')}`,
-        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${minted !== undefined ? `;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=${minted.nonce}` : ''}${action.breakerProbe === true ? `;breaker=half-open-probe（冷却窗过——单次试探：成功即复位，失败回全开续冷却，DEV-46）` : ''}`,
+        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${minted !== undefined ? `;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=${minted.nonce}` : ''}${action.breakerProbe === true ? `;breaker=half-open-probe（冷却窗过——单次试探：成功即复位，失败回全开续冷却，DEV-46）` : ''}${queueAnchor}`,
       })
+      // 派发成功即出队（129-§6.2）：携带条删——GATE_FAIL 回滚再入队走 touchQueueCarry
+      // 新钟（attempt 轮次可区分，队列等待观测口径=每誓一钟，不跨轮累计）。
+      if (queueEntryAtDispatch !== undefined) dropQueueCarry(queueCarry, [ticket])
       return {
         ticket,
         actionType: action.type,
@@ -1686,7 +1772,26 @@ export function createEngine(deps: EngineDeps): Engine {
         rescanned += 1
       }
     }
+    // —— 队列候选触钟+定序（129-§6.2，studio-dev-167 单B）——
+    // 触钟（touchQueueCarry）：队列成员候选首见种 FIFO 锚、重复意图只抬峰不重种；
+    // 定序（orderCandidates）：生命周期候选（收割/合并/回收链）原序在前，队列候选
+    // 全局排序在后（收割回收先于新派发；每拍上限约束下高分者先过闸——129 plan §3）。
+    // 镜像集外的候选（平台取不到）不触钟——拍内快照面，下一拍活动/rescan 兜底再进。
+    const pinnedSet = pinnedTicketSet()
     for (const cand of candidates) {
+      const issue = issueById.get(cand.ticket)
+      if (issue === undefined) continue
+      if (queueMembership(issue, flowOf(issue)) !== false) touchQueueCarry(queueCarry, cand.ticket, cand.intent, startedAt)
+    }
+    const memberOf = (ticket: TicketId): boolean => {
+      const issue = issueById.get(ticket)
+      return issue !== undefined && queueMembership(issue, flowOf(issue)) !== false
+    }
+    const metaOf = (ticket: TicketId) => queueCandidateMeta(queueCarry, ticket, pinnedSet.has(ticket), startedAt, queueAgeStepMs)
+    const orderedCandidates = orderCandidates(candidates, memberOf, metaOf, config.queueRanker)
+    // 本拍已排队派发的人位占用（两段式先决后执——人闸快照折算面，dispatch 即记入）
+    const dispatchPersons = new Map<TicketId, string>()
+    for (const cand of orderedCandidates) {
       const ticket = cand.ticket
       const issue = issueById.get(ticket) ?? (await platform.issues.get(ticket).catch(() => undefined))
       if (issue === undefined) {
@@ -1705,9 +1810,16 @@ export function createEngine(deps: EngineDeps): Engine {
       const candFlow = flowOf(issue)
       const ownSeenKey = candFlow === undefined ? null : index.seenKeyOf(ticket)
       const inWork = candFlow !== undefined && issue.state === flowAnchors(candFlow).dispatched
+      // 人闸快照（129-§6.2-R3 第四闸——decide passGates 序冻结：断路 > 泳道 > 人 > 每拍 >
+      // 在途）：在工计数=内存 Inflight + 本拍已排队派发（两段式先决后执拍内即时生效）；
+      // 人不可解析（索引空/工号未知）=不注 gate 闸面跳过——人员配置错不是停摆理由，
+      // 派发面的 resolvePerson 同源失败才拒派（fail 点收口在 executeDispatch）。
+      const personId = resolvePerson(issue)?.id
+      const personGate = personGateSnapshot(personId, dispatchPersons)
       const out = decide({
         issue,
         laneLease: laneState(lane),
+        ...(personGate !== undefined ? { personGate } : {}),
         // 在途计数=已落工位 + 本拍已排队派发（两段式「先决后执」下三闸仍须拍内即时生效）
         inflightCount: inflight.size + dispatchQ.length,
         tickActionCount: provisionalActions,
@@ -1738,6 +1850,10 @@ export function createEngine(deps: EngineDeps): Engine {
         case 'dispatch':
           dispatchQ.push({ action, intentKey })
           provisionalActions += 1
+          // 人位占用记账（同拍后续候选的人闸快照须看到——泳道占用同款决策即生效；
+          // 执行失败时 executeDispatch fail() 不清 dispatchPersons——dispatchQ 派发循环
+          // 即结束、下拍重算，无泄漏面）
+          if (personId !== undefined) dispatchPersons.set(ticket, personId)
           // 决策即占用泳道（两段式先决后执：后续候选的 decide 须看到本拍已派的占用；
           // 执行失败时 executeDispatch 的 catch 负责释放）
           acquireLane(action.lane, ticket, startedAt)
@@ -1957,6 +2073,46 @@ export function createEngine(deps: EngineDeps): Engine {
       }
     }
 
+    // —— 相位 7 尾·todo_queue 投影重投（129-§6.2-R2，studio-dev-167 单B）——
+    // 成员源=镜像表∩本拍平台活集（拍内迁态后 syncMirror 已落=投影看到拍末真态；
+    // 平台消失单的镜像残行不产幽灵队行）。投影纯函数与判负线⑦读回核对同源（域件
+    // projectTodoQueue）；diff 才写（canonical JSON——updated_at 同拍恒等，跨拍仅
+    // 成员/键变才落 replaceTodoQueue 整批换）。携带 GC 也在纯函数内（离队删条）。
+    const liveTickets = new Set<TicketId>(issues.map((i) => i.id))
+    const todoQueueMembers = ledger
+      .listTicketMirrors()
+      .filter((r) => r.company === config.company && liveTickets.has(r.issue))
+      .map((r): QueueMemberSource => ({
+        id: r.issue,
+        state: r.state,
+        type: r.type,
+        level: r.level,
+        ...(r.assignee !== undefined ? { assignee: r.assignee } : {}),
+      }))
+    const todoQueueRows = projectTodoQueue({
+      members: todoQueueMembers,
+      flowResolve: flowOf,
+      personOf: (m) => resolvePerson(m)?.id,
+      carry: queueCarry,
+      pinnedTickets: pinnedSet,
+      ageStepMs: queueAgeStepMs,
+      now: now(),
+      company: config.company,
+    })
+    if (todoQueueDiffers(lastProjectedTodoQueue, todoQueueRows)) {
+      ledger.replaceTodoQueue(config.company, todoQueueRows)
+      lastProjectedTodoQueue = JSON.stringify(todoQueueRows)
+    }
+    // 派发等待观测（129-§6.2-R5）：DISPATCH note wait 锚 SQL 读回（近 50 次）——
+    // scheduleToStart 进 tick 报告（面板 inbox 挂钟观测面）。
+    const scheduleWaits = ledger.recentDispatchWaitsMs(config.company, 50)
+    const scheduleToStart = {
+      count: scheduleWaits.length,
+      avgMs: scheduleWaits.length > 0 ? Math.round(scheduleWaits.reduce((a, b) => a + b, 0) / scheduleWaits.length) : 0,
+      maxMs: scheduleWaits.length > 0 ? Math.max(...scheduleWaits) : 0,
+    }
+    const queuePersons = new Set(todoQueueRows.map((r) => r.person)).size
+
     return {
       seq,
       ts: { start: startedAt, end: now() },
@@ -1973,13 +2129,14 @@ export function createEngine(deps: EngineDeps): Engine {
           declaredStatusMissing,
           platformStatusExtra,
         },
-        stateDiff: { candidates: candidates.length, decisions, reopened, rescanned },
+        stateDiff: { candidates: candidates.length, decisions, reopened, rescanned, queue: { rows: todoQueueRows.length, persons: queuePersons } },
         dispatch: {
           dispatched,
           approvals,
           results: actionResults.filter((r) => r.actionType === 'dispatch' || r.actionType === 'submit_approval'),
           budgetReserved: budget.budgetReserved,
           budgetRefused: budget.budgetRefused,
+          scheduleToStart,
         },
         harvest,
         merge: { merged },

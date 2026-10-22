@@ -203,3 +203,43 @@ describe('daemon.yaml hrSync 配置面（DEV-48）', () => {
     expect(() => parseDaemonConfig(`${BASE_YAML}\nhrSync: true\nhrTaigaInvitePolls: 0`)).toThrow(/hrTaigaInvitePolls/)
   })
 })
+
+// —— 队列闸/排序键配置面（129-§6.2，studio-dev-167 单B：人闸+todo_queue+ageBoost） ——
+
+describe('daemon.yaml 队列键配置面（129-§6.2 R3/R4）', () => {
+  it('缺省：四键全不注入（人闸走引擎缺省帽 1；ageBoost 走 60min 步长；无置顶无覆盖）', () => {
+    const cfg = parseDaemonConfig(BASE_YAML)
+    expect(cfg.maxInflightPerPerson).toBeUndefined()
+    expect(cfg.queueAgeStepMs).toBeUndefined()
+    expect(cfg.personInflightOverrides).toBeUndefined()
+    expect(cfg.pinnedTickets).toBeUndefined()
+  })
+
+  it('合法值装载：maxInflightPerPerson / queueAgeStepMs / personInflightOverrides / pinnedTickets', () => {
+    const cfg = parseDaemonConfig(
+      [
+        BASE_YAML,
+        'maxInflightPerPerson: 2',
+        'queueAgeStepMs: 60000',
+        'personInflightOverrides: AGENT-1=2;AGENT-2=3',
+        'pinnedTickets: T-1,T-2',
+      ].join('\n'),
+    )
+    expect(cfg.maxInflightPerPerson).toBe(2)
+    expect(cfg.queueAgeStepMs).toBe(60000)
+    expect(cfg.personInflightOverrides).toBe('AGENT-1=2;AGENT-2=3')
+    expect(cfg.pinnedTickets).toBe('T-1,T-2')
+  })
+
+  it('数值键坏值拒绝（maxInflightPerPerson/queueAgeStepMs 非正整数）', () => {
+    expect(() => parseDaemonConfig(`${BASE_YAML}\nmaxInflightPerPerson: 0`)).toThrow(/maxInflightPerPerson 须为正整数/)
+    expect(() => parseDaemonConfig(`${BASE_YAML}\nmaxInflightPerPerson: x`)).toThrow(/maxInflightPerPerson/)
+    // -1 会被扁平 YAML 视作列表行（嵌套值拒绝在前）——0 是标量，走本键的正整数闸
+    expect(() => parseDaemonConfig(`${BASE_YAML}\nqueueAgeStepMs: 0`)).toThrow(/queueAgeStepMs 须为正整数/)
+  })
+
+  it('personInflightOverrides 坏形态拒绝（坏段不静默忽略——写面黑洞防御）', () => {
+    expect(() => parseDaemonConfig(`${BASE_YAML}\npersonInflightOverrides: AGENT-1`)).toThrow(/工号=N/)
+    expect(() => parseDaemonConfig(`${BASE_YAML}\npersonInflightOverrides: AGENT-1=0`)).toThrow(/正整数/)
+  })
+})

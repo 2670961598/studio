@@ -29,15 +29,15 @@ afterAll(async () => {
 
 describe('v8 迁移面：work_records.model 列（132-§6.1 单A）', () => {
   it('版本号：LATEST_VERSION=8（单调 +1——v9 为 132 提案期五单合计投影序号，偏差已申报）', () => {
-    expect(LATEST_VERSION).toBe(8)
+    expect(LATEST_VERSION).toBe(9)
   })
 
   it('新库直达 v8：currentVersion=8；model 列存在（TEXT、可空、无默认）且居表尾（ALTER 追加）', () => {
     const db = new DatabaseSync(dbPath)
     try {
       const applied = migrate(db)
-      expect(applied).toBe(8)
-      expect(currentVersion(db)).toBe(8)
+      expect(applied).toBe(9)
+      expect(currentVersion(db)).toBe(9)
       const cols = db.prepare('PRAGMA table_info(work_records)').all() as Array<{ name: string; type: string; notnull: number; dflt_value: unknown }>
       const modelCol = cols.find((c) => c.name === 'model')
       expect(modelCol).toMatchObject({ type: 'TEXT', notnull: 0, dflt_value: null })

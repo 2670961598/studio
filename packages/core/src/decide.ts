@@ -5,7 +5,9 @@
  *   - docs/17-§2 主循环七相位：采集 → state-diff → 派发 → 收割 → 合并 → 回收 → 落账/心跳。
  *     本函数即 state-diff 相位：输入镜像态与闸况，输出**单个**结构化 Action——
  *     同一 tick 内一单至多一动作由调用方（每单调一次 decide）结构性保证。
- *   - docs/17-§2 并发三闸：泳道租约（TTL+续租+死主回收）/ 每拍上限 / 全局在途上限，
+ *   - docs/17-§2 并发四闸（129-§6.2-R3，studio-dev-167 单B）：断路 > 泳道租约
+ *     （TTL+续租+死主回收）> 人闸（缺省 1/人，HOLD_PERSON_BUSY 顺延不丢——批量执行岗
+ *     可配并发覆盖，org-config queue_prefs 面=批示⑦拆单E）> 每拍上限 > 全局在途上限，
  *     超限=hold 带理由码，触顶顺延不丢（F1-05）。
  *   - docs/22-§三.2 意图幂等：同 (source, kind, company, ticket??dedupKey) 重复意图 → noop，
  *     100 个重复意图只唤起一次（已处理键集合由 daemon 落账后回灌入参）。
@@ -15,7 +17,7 @@
  * Action 语义与七相位的对应（每动作附理由码 decision code，供落账与 golden trace）：
  *   - dispatch        派发相位：launch worker + 平台迁入「已派发」（F1-03：由状态/等级/租约唯一决定）
  *   - submit_approval 派发前置：呈批迁移（新单→待批 / 复验通过→待批，L1/L2）
- *   - hold            三闸未过/断路开/意图异常——留待下拍（顺延不丢）
+ *   - hold            四闸未过/断路开/意图异常——留待下拍（顺延不丢）
  *   - wait_evidence   已派发在工，等收割四要件（终态事件+输出非空+REPORT 落盘+闸门 exit=0，17-§6）
  *   - collect         收割相位：证据就绪，收 REPORT/闸门/账目
  *   - merge           合并相位：复验通过（或交付批已准），持租约切本单分支后合并交付
@@ -56,9 +58,11 @@ import {
 
 /**
  * 理由码全清单（落账 + golden trace 的稳定标识；冻结后禁改，升 contract 走进化管线）：
- *   DISPATCH               泳道空闲三闸全过，派发
+ *   DISPATCH               泳道空闲四闸全过，派发
  *   SUBMIT_APPROVAL        呈批迁移（新单→待批 / 复验通过→待批）
  *   HOLD_LANE_BUSY         泳道租约有主且未过期
+ *   HOLD_PERSON_BUSY       人闸：派发对象在工数已达该人并发帽（缺省 1/人；批量执行岗可
+ *                          配覆盖——129-§6.2-R3 第四闸，顺延不丢，在工单自然收口后放行）
  *   HOLD_TICK_LIMIT        本拍动作上限已满（顺延不丢）
  *   HOLD_INFLIGHT_LIMIT    全局在途上限已满（顺延不丢）
  *   HOLD_BREAKER_OPEN      断路器熔断且冷却窗未过，停重派（F1-10；DEV-46：窗过放半开试探）
@@ -81,6 +85,7 @@ export type DecisionCode =
   | 'DISPATCH'
   | 'SUBMIT_APPROVAL'
   | 'HOLD_LANE_BUSY'
+  | 'HOLD_PERSON_BUSY'
   | 'HOLD_TICK_LIMIT'
   | 'HOLD_INFLIGHT_LIMIT'
   | 'HOLD_BREAKER_OPEN'
@@ -135,6 +140,7 @@ export interface HoldAction extends ActionBase {
   type: 'hold'
   code:
     | 'HOLD_LANE_BUSY'
+    | 'HOLD_PERSON_BUSY'
     | 'HOLD_TICK_LIMIT'
     | 'HOLD_INFLIGHT_LIMIT'
     | 'HOLD_BREAKER_OPEN'
@@ -202,7 +208,7 @@ export type ActionType = Action['type']
 
 // ————————————————————————— 输入（拟升 contract）—————————————————————————
 
-/** 泳道租约状态（并发三闸之一；docs/17-§2：TTL+续租+死主回收，锁名不含 pid） */
+/** 泳道租约状态（并发四闸之一；docs/17-§2：TTL+续租+死主回收，锁名不含 pid） */
 export interface LaneLeaseState {
   lane: string
   /** 当前持有人；null=无主可派 */
@@ -211,12 +217,31 @@ export interface LaneLeaseState {
   expiresAt?: number
 }
 
-/** 并发三闸阈值（随公司可配，纯入参；docs/17-§2） */
+/** 并发四闸阈值（随公司可配，纯入参；docs/17-§2；129-§6.2-R3 人闸入序） */
 export interface ConcurrencyLimits {
   /** 每拍动作上限（超限顺延不丢） */
   maxActionsPerTick: number
   /** 全局在途 worker 上限 */
   maxInflight: number
+  /**
+   * 人闸缺省帽：每人并发在工上限（129-§6.2-R3，studio-dev-167 单B）。
+   * 缺省 1（引擎/decide 侧回退）；按人覆盖（批量执行岗=2）由引擎解析进
+   * personGate 快照——decide 只吃快照不读覆盖表（覆盖面=daemon.yaml
+   * personInflightOverrides，org-config queue_prefs=拆单E）。
+   */
+  maxInflightPerPerson?: number
+}
+
+/**
+ * 人闸快照（第四闸；129-§6.2-R3）：引擎拍内解析的单人闸况——count 含已落在工 +
+ * 本拍已排队派发（两段式「先决后执」拍内即时生效，inflightCount 同款口径）；
+ * limit=按人覆盖 ?? maxInflightPerPerson ?? 1。
+ */
+export interface PersonGateState {
+  /** 该人当前在工数（含本拍已排队派发） */
+  inflightCount: number
+  /** 该人并发帽（≥1；<1 视同 1——fail-closed 到最保守） */
+  limit: number
 }
 
 /** 断路器快照（decide 只读连击数/阈值/熔断时刻；状态本体在 src/breaker.ts） */
@@ -250,8 +275,14 @@ export interface DecisionInput {
   inflightCount: number
   /** 本拍已发出动作计数 */
   tickActionCount: number
-  /** 三闸阈值 */
+  /** 四闸阈值（docs/17-§2 并发四闸） */
   limits: ConcurrencyLimits
+  /**
+   * 人闸快照（129-§6.2-R3 第四闸）：**缺省不提供=闸开**——人不可解析（assignee 空+
+   * people 空引擎侧无目标）或旧调用面不启用时省略，既有 golden 旧迹/旧测试字节不变。
+   * 提供且 inflightCount ≥ limit → HOLD_PERSON_BUSY（顺延不丢，不抢占在工）。
+   */
+  personGate?: PersonGateState
   /** 唤起意图（docs/25-§3.4 InvokeIntent；v0 只用其身份参与去重键，kind/priority 留后续刀） */
   intent: InvokeIntent
   /** 已处理意图键集合（daemon 落账后回灌；幂等去重依据） */
@@ -298,9 +329,10 @@ export function intentKeyOf(intent: InvokeIntent): string {
  *   4. 停摆检查：已派发+静默超阈值 → stall_alarm
  *   5. 状态机推演（锚点+边）：
  *      后继含待批 → submit_approval；待批态 → 批否分流（dispatch/merge/等批）；
- *      后继含已派发 → dispatch 过三闸；已派发 → wait_evidence；证据就绪 → collect；
+ *      后继含已派发 → dispatch 过四闸；已派发 → wait_evidence；证据就绪 → collect；
  *      复验通过→已交付 → merge；已交付 → recycle；其余自定义中间态 → noop
- *   三闸序：断路 > 泳道 > 每拍 > 在途（断路最高：F1-10 断路后零新 DISPATCH）
+ *   四闸序：断路 > 泳道 > 人 > 每拍 > 在途（断路最高：F1-10 断路后零新 DISPATCH；人闸
+ *   129-§6.2-R3：派发对象在工达帽即顺延，不抢占在工）
  */
 export function decide(input: DecisionInput): DecisionOutput {
   const { issue, intent } = input
@@ -372,7 +404,7 @@ export function decide(input: DecisionInput): DecisionOutput {
     return { intentKey, action: noop(issue.id, 'NOOP_IDLE') }
   }
 
-  // 5c. 派发就绪（后继含已派发：L0 新单）：过三闸
+  // 5c. 派发就绪（后继含已派发：L0 新单）：过四闸
   if (successors.includes(anchors.dispatched)) {
     return { intentKey, action: passGates(input, anchors.dispatched) }
   }
@@ -440,7 +472,9 @@ export function breakerCooled(b: BreakerSnapshot, now: number): boolean {
 }
 
 /**
- * 三闸（断路 > 泳道 > 每拍 > 在途）：全过=dispatch；任一未过=hold 带理由（顺延不丢）。
+ * 四闸（断路 > 泳道 > 人 > 每拍 > 在途；129-§6.2-R3 冻结序）：全过=dispatch；
+ * 任一未过=hold 带理由（顺延不丢）。人闸插在泳道后每拍前——同拍内先到先得
+ * （候选定序已按排序键排好：队列首者先过闸先占人位），人忙=顺延不抢占。
  * 断路面（DEV-46 半开）：熔断开且冷却窗未过=HOLD_BREAKER_OPEN；窗过=放行**一次**
  * 试探派发（dispatch 携 breakerProbe 锚——同拍单只一动作结构性保证「一次」；试探在工
  * 期间该单不重决策派发，试探失败回全开续冷却再压制）。
@@ -453,6 +487,10 @@ function passGates(input: DecisionInput, dispatched: string): Action {
   const probe = breakerTripped(breaker)
   if (!laneFree(laneLease, now)) {
     return hold(issue.id, 'HOLD_LANE_BUSY')
+  }
+  const gate = input.personGate
+  if (gate !== undefined && gate.inflightCount >= Math.max(1, gate.limit)) {
+    return hold(issue.id, 'HOLD_PERSON_BUSY')
   }
   if (input.tickActionCount >= limits.maxActionsPerTick) {
     return hold(issue.id, 'HOLD_TICK_LIMIT')
