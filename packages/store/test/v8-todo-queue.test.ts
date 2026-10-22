@@ -45,7 +45,7 @@ afterAll(async () => {
 
 describe('建库即 v8（todo_queue 表 + idx_todo_queue_person）', () => {
   it('version=8、表与索引在库', () => {
-    expect(ledger.version()).toBe(11)
+    expect(ledger.version()).toBe(12)
     const tables = (
       ledger.db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as Array<{ name: unknown }>
     ).map((r) => String(r.name))

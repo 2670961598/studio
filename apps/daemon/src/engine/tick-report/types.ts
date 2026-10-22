@@ -11,6 +11,7 @@ import type { Action, DecisionCode } from '@studio-next/core'
 import type { HrSyncTickReport } from '../hrsync/hrsync.ts'
 import type { HarvestReconResult } from '../jobs/harvest-recon.ts'
 import type { PricingStaleTickReport } from '../pricing/pricing.ts'
+import type { CostCloseTickReport } from '../cost-close/close.ts'
 
 /** 采集相位汇报 */
 export interface TickPhaseCollect {
@@ -119,6 +120,8 @@ export interface TickReport {
       hrSync?: HrSyncTickReport
       /** 定价 stale 检查（132-§6.2 单B：相位 7 尾日锚步——一日一跑，checked=0 未到窗/已跑） */
       pricingStale?: PricingStaleTickReport
+      /** 日终收口工序（132-§6.3 单D·studio-dev-179：19:55 后收 D-1——ran=false 未到窗/已收讫） */
+      costClose?: CostCloseTickReport
     }
   }
   actions: readonly Action[]

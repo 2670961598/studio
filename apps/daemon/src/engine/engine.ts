@@ -292,6 +292,7 @@ import {
 } from './todoqueue/queue.ts'
 import { ageBoostTier, type QueueRanker } from '@studio-next/core'
 import { consumePricingPublish, runPricingStaleCheck, type PricingStaleTickReport } from './pricing/pricing.ts'
+import { costCloseDeps, runCostCloseTick } from './cost-close/close.ts'
 import type { TickActionResult, TickDecisionEntry, TickPhaseDispatchBudget, TickPhaseHarvest, TickReport } from './tick-report/types.ts'
 export type { TickDecisionEntry, TickReport } from './tick-report/types.ts'
 
@@ -2185,6 +2186,7 @@ export function createEngine(deps: EngineDeps): Engine {
       const msg = err instanceof Error ? err.message : String(err)
       errors.push(`定价 stale 检查失败：${msg}`)
     }
+    const costClose = runCostCloseTick(costCloseDeps({ ledger, config, tiers: deps.catalog !== undefined ? deps.catalog.tiers() : undefined, now, makeId, makeEvent, tickEvents, errors, heartbeatSentinelRecord, bumpMutations: (n) => { mutations += n } })) // 相位7尾·日终收口 132-§6.3 单D
 
     return {
       seq,
@@ -2221,6 +2223,7 @@ export function createEngine(deps: EngineDeps): Engine {
           heartbeat,
           ...(hrSync !== undefined ? { hrSync } : {}),
           ...(pricingStale !== undefined ? { pricingStale } : {}),
+          ...(costClose.ran ? { costClose } : {}),
         },
       },
       actions: decidedActions,

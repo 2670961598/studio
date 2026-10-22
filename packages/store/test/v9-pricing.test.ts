@@ -54,14 +54,14 @@ function baseInput(over: Record<string, unknown> = {}): Record<string, unknown> 
 
 describe('v9 迁移面：price_snapshots（132-§6.2 单B）', () => {
   it('版本号：LATEST_VERSION=10（v8 顺延——后续单依合入序顺取 v10+）', () => {
-    expect(LATEST_VERSION).toBe(11)
+    expect(LATEST_VERSION).toBe(12)
   })
 
   it('新库直达 v10：表/双 UNIQUE 索引/查询索引/双触发器齐', () => {
     const db = new DatabaseSync(dbPath)
     try {
-      expect(migrate(db)).toBe(11)
-      expect(currentVersion(db)).toBe(11)
+      expect(migrate(db)).toBe(12)
+      expect(currentVersion(db)).toBe(12)
       const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='price_snapshots'").all()
       expect(tables).toHaveLength(1)
       const idx = (db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='price_snapshots'").all() as Array<{ name: string }>).map(r => r.name)
@@ -84,7 +84,7 @@ describe('v9 迁移面：price_snapshots（132-§6.2 单B）', () => {
     db.close()
     const ledger: Ledger = openLedger(legacyPath)
     try {
-      expect(ledger.version()).toBe(11)
+      expect(ledger.version()).toBe(12)
       const r = ledger.appendPriceSnapshot(baseInput())
       expect(r.appended).toBe(true)
     } finally {

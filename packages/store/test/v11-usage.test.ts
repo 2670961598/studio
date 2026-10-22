@@ -55,7 +55,7 @@ function delta(over: Record<string, unknown> = {}): Record<string, unknown> {
 
 describe('v11 迁移面：usage_daily（132-§6.1 单C）', () => {
   it('版本号：LATEST_VERSION=11（v10 顺延——后续单依合入序顺取 v12+）', () => {
-    expect(LATEST_VERSION).toBe(11)
+    expect(LATEST_VERSION).toBe(12)
   })
 
   it('新库直达 v11：自然键 UNIQUE 索引+日期查询索引齐', () => {
