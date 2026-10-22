@@ -57,7 +57,7 @@ export interface DrainDeps {
   departments?: ReadonlyArray<{ path: string; lanes: readonly string[] }>
   costGuard: () => CostGuardConfig | undefined
   notify?: (notice: CostThresholdNotice) => void
-  /** 队列峰值优先级登记位（P0-B「priority=3 置顶」——escalate 消费件注入面） */
+  /** 队列峰值优先级登记位（P0-B「priority=3 置顶」——escalate/schedule 两消费件注入面，129-D） */
   touch: (ticket: TicketId, intent: InvokeIntent) => void
   onMutation: () => void
   /** 明报面（tick errors） */
@@ -118,6 +118,14 @@ export async function drainIntents(deps: DrainDeps): Promise<RelayResumeFaces> {
       })
       deps.onMutation()
       drainSeen.add(intentKey)
+      // 队列峰值优先级登记（studio-dev-200）：schedule 意图 priority=2 只活在物化拍
+      // 候选面——物化拍 issueById 快照先于物化（相位 1 取数），触钟环对拍内新单盲
+      // 视；本拍派发若被闸顺延（泳道占道等），意图即耗尽、p2 随拍蒸发，单回落
+      // activity(p1)/mirror(p0) 意图重进队列、FIFO 锚最年轻——排全队尾（190/194
+      // 实证 +9~11h 饥饿）。修法=129-D 延拍落地机制复用（escalate 消费件同款——
+      // intents/escalate.ts）：touch 登记 pending，成员资格落地拍并入携带峰
+      //（129-§6.2 R4「高优意图只改下一拍派发顺序」——不抢占语义不动）。
+      deps.touch(created.id, intent)
       candidates.push({ ticket: created.id, intent })
     } catch (err) {
       errors.push(`意图消费：job ${job.job_id} 岗单据物化失败：${err instanceof Error ? err.message : String(err)}`)

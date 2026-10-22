@@ -289,7 +289,16 @@ export function settlePendingQueuePriority(input: SettlePendingPriorityInput): v
   for (const [ticket, pending] of [...input.pending]) {
     if (memberIds.has(ticket)) {
       const entry = input.carry.get(ticket)
-      if (entry !== undefined) entry.priority = clampPriority(Math.max(entry.priority, pending.priority))
+      if (entry !== undefined) {
+        entry.priority = clampPriority(Math.max(entry.priority, pending.priority))
+      } else {
+        // 种钟补全（studio-dev-200）：成员拍若候选面缺位（零活动平台且未逢 rescan 拍
+        // ——Taiga 真机常态），携带条目未种而 pending 直删=峰值丢在地板上。以
+        // pending.since（物化拍时刻）为 FIFO 锚种入——129-D「成员资格落地拍并入
+        // 携带峰」的落地面补全（escalate/schedule 两源同受益；非成员面投影 GC
+        // 原样兜底——离队单种后即删，净零）。
+        input.carry.set(ticket, { firstSeenAt: pending.since, priority: clampPriority(pending.priority) })
+      }
       input.pending.delete(ticket)
       continue
     }
