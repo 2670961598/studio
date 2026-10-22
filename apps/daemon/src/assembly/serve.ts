@@ -64,11 +64,12 @@
  *     authorize（assertChangeAuthorized ∘ 台账候选全集），unauthorized 如实报告（日志+ESCALATE）
  *     **不阻断启动**；空库首启跳过。真单刀接阻断模式+资产面扩展（头注冻结边界）。
  */
-import { createRegistry, isJudgeExecutorName, loadAgentConfig, wireRegistry, builtinResolver } from '@studio-next/adapters'
+import { createRegistry, isJudgeExecutorName, judgeAwareResolver, loadAgentConfig, tierAwareResolver, wireRegistry } from '@studio-next/adapters'
 import { AIWS_DIR, ensureAiwsTree } from '@studio-next/company'
-import { assertJudgeRoleLow, createModelCatalog, fingerprint, parseModelsYaml, DEFAULT_FLOW_TABLE } from '@studio-next/core'
+import { assertJudgeRoleLow, createModelCatalog, fingerprint, parseModelsYaml, DEFAULT_FLOW_TABLE, type TierId } from '@studio-next/core'
 import { dshJudgeAdapterFactory, createJudgeRuntime } from '../engine/judge/invoke.ts'
 import { createQueueJudge, parseJudgeSites, type QueueJudgeHook } from '../engine/judge/sites129.ts'
+import { checkTierPositionDeclarations, parseModelTierTickets, provisionModelTierOverlays } from '../engine/tier/model-tier.ts'
 import { configInvalid } from '@studio-next/contract'
 import { createGateway, CONTROL_TICKET } from '@studio-next/gateway'
 import type { SignatureContext } from '@studio-next/gateway'
@@ -308,6 +309,13 @@ export interface ServeConfig extends HrServeConfig {
   /** 队列小模型址开关（160-B·studio-dev-182）：逗号清单 mj-129-pick/mj-129-interrupt；缺省空=两址全关（规则缺省档）；未知址名启动即拒；开关需 judge 注册位+价目表在场 */
   judgeSites?: string
   /**
+   * 模型档显式单级覆盖（studio-dev-196）：`单号=档` 分号对（档∈ high/mid/low，
+   * 如 `STUDIO-196-H=high;STUDIO-196-L=low`）——解析即验（坏段/未知档/重复单号启动
+   * 拒，CONFIG_INVALID fail-closed）。缺省=无覆盖（只靠角色映射路由；org-config
+   * 规范位/单据字段=登记债务）。路由面开合随 models: 段（价目表）。
+   */
+  modelTierTickets?: string
+  /**
    * 网关写收口开关（17-§7「一切平台写入经 wkey 网关」；src/engine/gated-platform.ts）：
    * 缺省开——demo fake 平台也过真闸（同 secret 同验签链路）证明收口面；false=裸 platform
    * （仅测试/对照用，生产不得关——头注警告）。
@@ -508,6 +516,10 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'judgeSites': // 址开关清单（160-B）：解析即验（未知址名启动拒——fail-closed）
         cfg.judgeSites = str(value, key)
         parseJudgeSites(cfg.judgeSites)
+        break
+      case 'modelTierTickets': // 档显式覆盖表（studio-dev-196）：解析即验（坏段/未知档启动拒——fail-closed）
+        cfg.modelTierTickets = str(value, key)
+        parseModelTierTickets(cfg.modelTierTickets)
         break
       case 'tickMs':
         cfg.tickMs = num(value, key)
@@ -996,7 +1008,10 @@ export function buildServeRuntime(
   if (config.agentYaml !== undefined) {
     const agentText = readFileSync(path.resolve(config.agentYaml), 'utf8')
     agentConf = loadAgentConfig(agentText)
-    wireRegistry(registry, agentConf, builtinResolver)
+    // resolver 组合（studio-dev-196）：judge 外包 tier——`<family>-<tier>` 档位（patches
+    // 透传，agentconfig.ts）+ `<family>-judge` 判断位两层都可注册（此前裸 builtinResolver
+    // 对两形态都 unknown-executor——judge 位从未真正可装配的潜伏缺口随本单一并闭合）
+    wireRegistry(registry, agentConf, judgeAwareResolver(tierAwareResolver()))
     log(
       `[serve] executor 注册（agent.yaml=${config.agentYaml}）：${registry.list().map((e) => `${e.name}${e.default ? '(default)' : ''}`).join('、')}`,
     )
@@ -1033,16 +1048,31 @@ export function buildServeRuntime(
   // （态 A）；缺省不装载=态 B 降级——**不拷贝 models.example.yaml**（示例价入账=伪依据）。
   // fingerprint 启动日志呈现；台账事件锚归后续 daemon 单。装载失败 → CONFIG_INVALID 拒启动。
   let catalog: ModelCatalog | undefined
-  let modelRoles: Readonly<Record<string, string>> | undefined
+  let modelRoles: Readonly<Record<string, TierId>> | undefined
   if (config.models !== undefined) {
     const text = readFileSync(path.resolve(config.models), 'utf8')
     const parsed = parseModelsYaml(text)
     catalog = createModelCatalog(parsed)
     modelRoles = parsed.roles
     log(`[serve] 价目表装载：${config.models}（fingerprint=${fingerprint(parsed)}；估算态 A：estimateCost 校准+双帽）`)
+    // —— 模型档执行面（studio-dev-196，制作人 2026-10-22 三档定调）：低/高档 dsh overlay
+    //    生成（mid=现役缺省不生成）+ 档位声明一致性闸（agent.yaml 档位镜像 vs tiers 漂移
+    //    =启动拒——三面同源纪律，见 src/engine/model-tier.ts 头注）。
+    const tierOverlays = provisionModelTierOverlays(path.resolve(config.rootDir), parsed)
+    if (agentConf !== undefined) checkTierPositionDeclarations(agentConf.executors, parsed)
+    const overlayDesc = Object.entries(tierOverlays)
+      .map(([t, p]) => `${t}=${p}`)
+      .join('、')
+    log(
+      `[serve] 模型档执行面开（tier→executor 路由：单级覆盖>岗单锚>角色映射）：overlay ${overlayDesc !== '' ? overlayDesc : '（无——低/高档 tier 缺失）'}；中档=现役 profile 缺省（现役即中档）；agent.yaml 档位 cmd 追加 --patch <该路径> 即挂载`,
+    )
   } else {
-    log('[serve] 无价目表：预算闸态 B 降级（估算=适配器自报、仅票级帽——见 src/engine/budget-gate.ts 头注两态）')
+    log('[serve] 无价目表：预算闸态 B 降级（估算=适配器自报、仅票级帽——见 src/engine/budget-gate.ts 头注两态）；模型档路由面关（派发行为不变）')
   }
+  // 显式单级覆盖（studio-dev-196）：daemon.yaml modelTierTickets（解析即验在装载 case 面；
+  // 此处装配期转 map——空串=空表合法：面开但只靠角色映射路由）
+  const modelTierTicketsMap =
+    config.modelTierTickets !== undefined ? parseModelTierTickets(config.modelTierTickets) : undefined
 
   // —— judge 注册位启动闸（studio-dev-164，红队 1 机制点）：agent.yaml 有 <family>-judge
   //    位时三查：①家族=v1 冻结面 dsh ②价目表在场（三帽要价目）③roles.micro_judge
@@ -1098,6 +1128,11 @@ export function buildServeRuntime(
       ...(config.maxInflightPerPerson !== undefined ? { maxInflightPerPerson: config.maxInflightPerPerson } : {}),
     },
     ...queueServeOverrides(config), // 队列面三键（129-§6.2 单B：步长/人闸覆盖表/置顶集——解析件 todoqueue/queue.ts）
+    // 模型档路由面（studio-dev-196）：modelTierByRole 注入即开面（models.yaml 未装载=
+    // 不注入=面关，派发行为与本单之前一致）；显式单级覆盖表装配期转 map（解析即验在
+    // 装载 case 面——serve/model-tier-tickets fail-closed）
+    ...(modelRoles !== undefined ? { modelTierByRole: modelRoles } : {}),
+    ...(modelTierTicketsMap !== undefined ? { modelTierTickets: modelTierTicketsMap } : {}),
     stallAfterMs: config.stallAfterMs,
     stallKillAfterAlarms: config.stallKillAfterAlarms,
     harvestSliceMs: config.harvestSliceMs,
