@@ -198,6 +198,22 @@ export function parseDataChangeRoutes(raw: string | undefined): Record<string, s
   return Object.keys(routes).length > 0 ? routes : undefined
 }
 
+/**
+ * 路由表合并（129-C，studio-dev-178）：org-config `hooks.data_change.routes`（规范位
+ * ——组织事实源，随公司目录装载）+ daemon.yaml `dataChangeRoutes`（部署级逃生位——
+ * 逐键覆盖，129-A 既有面不破）。合并空=undefined（引擎路由闸 fail-closed 语义不变：
+ * 未配即 data-change 意图明报拒收，不猜默认）。
+ */
+export function mergeDataChangeRoutes(
+  orgHooks: { data_change?: { routes: Record<string, string> } } | undefined,
+  daemonRoutes: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  const orgRoutes = orgHooks?.data_change?.routes
+  if (orgRoutes === undefined) return daemonRoutes
+  if (daemonRoutes === undefined) return { ...orgRoutes }
+  return { ...orgRoutes, ...daemonRoutes }
+}
+
 // ————————————————————————— 渲染件：标题/描述构造 —————————————————————————
 
 /** PATROL note 动态字段净化：分号/换行替换（键值分隔符与 note 行结构不可被外部内容注入） */

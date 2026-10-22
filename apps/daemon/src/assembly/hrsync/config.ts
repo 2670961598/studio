@@ -50,6 +50,14 @@ export interface HrServeConfig {
   /** 令牌日志轮询次数（缺省 10）/间隔毫秒（缺省 500）——窗口内抓不到=任务回队重试 */
   hrTaigaInvitePolls: number
   hrTaigaInvitePollMs: number
+  /**
+   * people-change 唤起源开关（129-§6.1①/§6.3 P0-A，studio-dev-178 单C；缺省关）：
+   * true 时挂 hr-sync 分类器出口双写 data-change 意图（零重复分类——diff 变更清单
+   * 经 enqueueHrBatch 产物回传，源本体 engine/hrsync/people-change-source.ts）。
+   * **前置 hrSync: true**（分类器在 hr-sync apply 段内——无 hrSync 即无 diff 出口，
+   * cross 校验 CONFIG_INVALID）；路由表=org-config hooks.data_change.routes（规范位）。
+   */
+  hrPeopleWatch: boolean
 }
 
 /** hr* 配置缺省（docs/52-§九 缺省关——既有部署字节不变；DEFAULT_SERVE_CONFIG 展开本件） */
@@ -62,6 +70,7 @@ export const HR_SERVE_DEFAULTS: HrServeConfig = {
   hrMatrix: false,
   hrTaigaInvitePolls: 10,
   hrTaigaInvitePollMs: 500,
+  hrPeopleWatch: false,
 }
 
 /** hr* 键全集（coerceServeConfig 大 switch 的 case 组=本表键集——测试面同引单一源） */
@@ -75,6 +84,7 @@ export const HR_SERVE_KEYS = [
   'hrTaigaInviteLog',
   'hrTaigaInvitePolls',
   'hrTaigaInvitePollMs',
+  'hrPeopleWatch',
 ] as const
 
 /**
@@ -130,6 +140,9 @@ export function coerceHrServeKey(
       cfg.hrTaigaInvitePollMs = v
       return true
     }
+    case 'hrPeopleWatch':
+      cfg.hrPeopleWatch = h.bool(value, key)
+      return true
     default:
       return false
   }
@@ -142,6 +155,7 @@ export function validateHrServeCross(cfg: {
   hrTaigaInviteLog?: string
   hrMatrix: boolean
   hrMatrixRooms?: string
+  hrPeopleWatch: boolean
 }): void {
   if (cfg.hrSync) {
     if (cfg.platform === 'taiga' && (cfg.hrTaigaInviteLog === undefined || cfg.hrTaigaInviteLog === '')) {
@@ -152,6 +166,11 @@ export function validateHrServeCross(cfg: {
         throw new Error('daemon.yaml：hrMatrix: true 需配 hrMatrixRooms 且含 company= 项（`company=#co:srv;研发部=#rd:srv` 形——docs/52-§7.2 房间面）')
       }
     }
+  }
+  // people-change 源前置（129-C，studio-dev-178）：源挂 hr-sync 分类器出口——
+  // hrSync 关即无 diff 出口，开 watch 是结构性空转，CONFIG_INVALID 明报不静默
+  if (cfg.hrPeopleWatch && !cfg.hrSync) {
+    throw new Error('daemon.yaml：hrPeopleWatch: true 需 hrSync: true（people-change 源挂 hr-sync peopleDiff 分类器出口双写——无 hrSync 即无 diff 出口；129-§6.1① 注册模式）')
   }
 }
 

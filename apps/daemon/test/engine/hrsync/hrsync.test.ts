@@ -167,6 +167,8 @@ describe('enqueueHrBatch（apply 段入队——零平台 IO）', () => {
     const r = enqueueHrBatch(ledger, { prev: PREV, next: NEXT, company: 'demo', batchId, ts: 5000 })
     expect(r.summary).toBe('入1；升1；停1')
     expect(r.enqueued).toBe(7)
+    // 129-C：changes 全量回传（people-change 源双写源料——分类器只跑一次，零重复分类）
+    expect(r.changes.map((c) => `${c.kind}:${c.personId}`)).toEqual(['升:AGENT-1', '停:AGENT-2', '入:AGENT-3'])
     expect(ledger.kvGet(`hr.batch.${batchId}.summary`)).toBe('入1；升1；停1')
     const replay = enqueueHrBatch(ledger, { prev: PREV, next: NEXT, company: 'demo', batchId, ts: 5100 })
     expect(replay.enqueued).toBe(0) // op_key 幂等：任意态命中即跳
@@ -177,7 +179,7 @@ describe('enqueueHrBatch（apply 段入队——零平台 IO）', () => {
 
   it('无变动：batchId=null 零任务（镜像同步≠人事变动）', () => {
     const r = enqueueHrBatch(ledger, { prev: NEXT, next: NEXT, company: 'demo', batchId: '01HRNOCHANGE0000000000', ts: 6000 })
-    expect(r).toEqual({ batchId: null, summary: '无人事变动', enqueued: 0 })
+    expect(r).toEqual({ batchId: null, summary: '无人事变动', enqueued: 0, changes: [] }) // changes=129-C 双写源料（无变动=[]）
   })
 })
 

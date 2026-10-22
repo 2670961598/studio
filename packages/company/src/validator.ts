@@ -40,6 +40,7 @@ import { expandCadence, parseJobDuration } from './cadence.ts'
 import { applyStateHygieneToSnapshot, stateHygieneRules } from './state-hygiene.ts'
 import { typeInboxRules } from './type-inbox.ts'
 import { groupCrossRules, OrgGroupSchema, toGroups } from './groups.ts'
+import { hooksCrossRules, OrgHooksSchema, toHooks } from './hooks.ts'
 import { toJobs } from './jobs.ts'
 import { ORG_CONFIG_SCHEMA_LITERALS, lineOfPath, multifileRules, zodIssuesToDirectoryIssues } from './multifile.ts'
 
@@ -282,6 +283,7 @@ const OrgConfigSchema = z.strictObject({
   workflows: WorkflowsSchema.optional(),
   // 130-P3 频道供给扩展（130 提案 §6.7.1/C4）：组群声明（可选；不声明=无小组频道供给）
   groups: z.array(OrgGroupSchema).optional(),
+  hooks: OrgHooksSchema.optional(), // 129-C（129-§6.1①）：事件钩子声明（v0 只开 data_change.routes——形状在 hooks.ts）
   // 03/N1：YouTrack 项目与字段/状态流映射覆盖（公司可整体替换的默认模板）
   yt: z.record(z.string(), z.unknown()).optional(),
   // 06-§三：executor 偏好覆盖（缺省继承框架级 agent.yaml）
@@ -340,6 +342,7 @@ function crossRules(doc: ReturnType<typeof parseDocument>, lc: LineCounter, org:
   })
   // 组群声明引用完整性（130-P3，130 提案 §6.7.1/C4）——规则体拆至 groups.ts
   out.push(...groupCrossRules(doc, lc, org, deptPaths, peopleIds))
+  out.push(...hooksCrossRules(doc, lc, org, peopleIds))
   return out
 }
 
@@ -522,6 +525,7 @@ function toSnapshot(org: OrgConfig): CompanySnapshot {  const departments: DeptN
   if (wf !== undefined) snap.workflows = wf
   // 组群声明装载（130-P3，130 提案 §6.7.1/C4）——装载体拆至 groups.ts
   if (org.groups !== undefined) snap.groups = toGroups(org.groups)
+  if (org.hooks !== undefined) snap.hooks = toHooks(org.hooks) // 事件钩子装载（129-C，129-§6.1①）——装载体拆至 hooks.ts
   // 州表卫生双层装载（127-C，studio-dev-127 §4.7）：state-hygiene.ts 单一实现
   applyStateHygieneToSnapshot(snap, org.yt)
   return snap

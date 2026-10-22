@@ -139,6 +139,22 @@ export interface OrgGroupDecl {
   members: PersonId[]
 }
 
+/**
+ * org-config hooks 段（129-§6.1① / §6.3 P0-A，studio-dev-178 单C）：公司级事件
+ * 唤起钩子声明面。v0 只开 `data_change.routes`——data-change 意图的路由表
+ * （变更类型 → 联动单 assignee 工号；入/退/调→对账岗〔docs/52-§13 C1-08 口径〕，
+ * 升/降→规划线，由各公司自配）。类型值域（人事事件七值）归引擎路由闸 fail-closed
+ * （129-A 纪律：值域不复制进 company 校验器）；装载面只做形状闸+目标工号悬空检。
+ */
+export interface OrgHooksDecl {
+  /**
+   * 数据变更路由表：变更类型 → 联动单 assignee 工号（P0-A 验收样板：
+   * 新人入司 → 路由命中者的收件箱自动出现对账单，零手工派单）。
+   * daemon.yaml `dataChangeRoutes` 为逐键覆盖位（部署级逃生——合并面在装配层）。
+   */
+  data_change?: { routes: Record<string, string> }
+}
+
 export interface CompanySnapshot {
   slug: CompanySlug
   name: string
@@ -150,6 +166,12 @@ export interface CompanySnapshot {
   jobs: ScheduledJob[]
   /** 单据类型流声明（DEV-43；不声明=undefined=等级流现状行为） */
   workflows?: TicketWorkflows
+  /**
+   * 事件钩子声明（129-§6.1①，studio-dev-178 单C；不声明=undefined=引擎路由闸
+   * fail-closed 现状行为）。可选=快照向后兼容（workflows/groups 同款扩法）；
+   * 装载面交叉校验 route 目标工号在册。
+   */
+  hooks?: OrgHooksDecl
   /**
    * 组群声明（130-P3，130 提案 §6.7.1/C4；不声明=undefined=无小组频道供给）。
    * 可选=快照向后兼容（workflows 同款扩法）；装载面交叉校验（dept 存在/工号在册）。
