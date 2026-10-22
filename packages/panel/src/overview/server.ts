@@ -10,7 +10,7 @@
  *   —— 换装面（DEV-12 刀二，同套 :8787 Naive UI + ECharts：单壳多页，路径即路由）——
  *   GET /                        公司清单（换装壳；SPA 按 pathname 切页）
  *   GET /<slug>/  | /<slug>      概览 tab（换装壳；未知 slug 404 HTML）
- *   GET /<slug>/org|people|progress|finance   对应 tab（换装壳）
+ *   GET /<slug>/org|people|progress|finance|reports   对应 tab（换装壳）
  *   GET /<slug>/people/<工号>    档案（换装壳；未知工号 404 HTML）
  *   —— JSON 读面（换装页的数据源；快照时间标注=asOf+snapshotMeta 双时间戳）——
  *   GET /api/overview/companies            公司清单 payload
@@ -20,6 +20,9 @@
  *   GET /api/overview/<slug>/people/<工号> 档案 payload（body=null=在册但正文缺失）
  *   GET /api/overview/<slug>/progress      单据状态聚合 payload（无台账=null）
  *   GET /api/overview/<slug>/finance       三口径分列+LLM 按日 payload（无台账=null）
+ *   GET /api/overview/<slug>/reports       报表聚合 v1 payload（127-B：metadata-only 清单
+ *                                         ＋新鲜度灯＋公司级汇总——台账事件为源、目录
+ *                                         大小/mtime 仅辅助列；正文端点待批示不绕开）
  *   —— 旧版回滚面（v0.7 首刀服务端渲染五读面整组迁此，换装验证期保留，退役评估归后续刀）——
  *   GET /legacy 与 /legacy/<slug>/…（路径与旧版同构：/ /<slug>/ /org /people /people/<工号>
  *     /progress /finance）
@@ -32,7 +35,10 @@
  * snapshotProvider 注入（() => CompanySnapshot，wiring 侧用 loadCompanyDirectory 装载），
  * 档案正文经 readPersonFile 注入，报表快照经 readReportFile 注入（json_ref → JSON 正文），
  * 台账经 openLedger 工厂注入（懒调恰一次并缓存，句柄归注入方）。
- * 无 ledger 的公司：progress/finance 两页如实显示「无台账数据」，不臆造空聚合。
+ * 无 ledger 的公司：progress/finance 两页如实显示「无台账数据」，不臆造空聚合；reports
+ * 页同款如实降级（灯全 none＋清单退目录件，127-B reports.ts 降级旗标）。
+ * 报表目录元数据（127-B）：listReportFiles 注入（wiring 侧 stat 公司目录 reports/ 树——
+ * 大小/mtime 仅辅助列；panel 不碰磁盘）。
  *
  * 热重载（DEV-12：快照时间标注或目录监听——两条都落，IO 归 wiring 侧 reload.ts）：
  * snapshotProvider 每请求直调（读面无缓存语义——wiring 给静态闭包则页面恒旧、给热源则
@@ -65,7 +71,9 @@ import {
   buildPeoplePayload,
   buildPersonPayload,
   buildProgressPayload,
+  buildReportsPayload,
 } from './api.ts'
+import { buildReportsSnapshot, type ReportFileMeta } from './reports.ts'
 import {
   buildFinanceSnapshot,
   buildProgressSnapshot,
@@ -93,6 +101,12 @@ export interface OverviewCompanySource {
   readReportFile?: ((jsonRef: string) => string | undefined) | undefined
   /** 台账工厂（懒调恰一次并缓存；句柄归注入方管）；缺省=无台账（progress/finance 降级面） */
   openLedger?: (() => Ledger) | undefined
+  /**
+   * 报表目录元数据扫描（127-B v1）：公司目录相对路径+大小+mtime——wiring 侧 stat
+   * reports/ 树而来。缺省=目录读面未挂（reports 清单退台账事件件、不判缺失——读面
+   * 缺位≠归档缺失）。只读扫描，panel 不碰磁盘。
+   */
+  listReportFiles?: (() => ReportFileMeta[]) | undefined
   /**
    * 快照装载信息（DEV-12 快照时间标注）：at=装载时刻、version=代数、watching=目录监听态、
    * lastError=最近热重载失败。热源（reload.ts mountHotCompanySource）自动注入；静态挂载
@@ -258,6 +272,21 @@ export function createOverviewApp(opts: OverviewAppOptions): OverviewApp {
     }),
   )
 
+  app.get('/api/overview/:slug/reports', (c) => {
+    const slug = c.req.param('slug')
+    return apiCompany(c, (r) => {
+      // 127-B v1：台账事件为源（R2 新鲜度＋P3 对账＋GATE_PASS output= 落位）＋目录
+      // 大小/mtime 辅助列；无台账=灯全 none＋清单退目录件（降级旗标如实，不臆造）
+      const reports = buildReportsSnapshot({
+        jobs: r.snapshot.jobs,
+        events: r.ledger === undefined ? [] : r.ledger.queryEvents({ company: r.source.slug }),
+        ledgerAvailable: r.ledger !== undefined,
+        ...(r.source.listReportFiles !== undefined ? { files: r.source.listReportFiles() } : {}),
+      })
+      return c.json(buildReportsPayload(slug, reports, Date.now(), infoOf(r.source)))
+    })
+  })
+
   // ———— 旧版回滚面（v0.7 首刀服务端渲染五读面整组迁此；退役评估归后续刀） ————
 
   app.get('/legacy', (c) => {
@@ -355,7 +384,7 @@ export function createOverviewApp(opts: OverviewAppOptions): OverviewApp {
     return r.notFound ? c.html(r.html, 404) : c.html(r.html)
   })
 
-  // tab 页同壳（org/people/progress/finance；未知 slug 404 HTML——路径即路由，SPA 自取数）
+  // tab 页同壳（org/people/progress/finance/reports；未知 slug 404 HTML——路径即路由，SPA 自取数）
   const shellTab = (c: Context, slug: string): Response => {
     const r = shellCard(slug)
     return r.notFound ? c.html(r.html, 404) : c.html(r.html)
@@ -364,6 +393,7 @@ export function createOverviewApp(opts: OverviewAppOptions): OverviewApp {
   app.get('/:slug/people', (c) => shellTab(c, c.req.param('slug')))
   app.get('/:slug/progress', (c) => shellTab(c, c.req.param('slug')))
   app.get('/:slug/finance', (c) => shellTab(c, c.req.param('slug')))
+  app.get('/:slug/reports', (c) => shellTab(c, c.req.param('slug')))
 
   // 档案页同壳（未知工号 404 HTML——与旧版同判）
   app.get('/:slug/people/:personId', (c) => {
@@ -401,6 +431,8 @@ export type OverviewHandle = HonoShellHandle
 /**
  * 台账注入代理：活转发各字段（spread 会把热源的可选字段冻结成装载瞬间的值——
  * mission/档案映射须随热重载换新；openLedger 恒指向本壳打开的库，句柄归本壳）。
+ * readReportFile/listReportFiles 同为热源可选位——127-B 补齐转发（前值漏转 readReportFile，
+ * --db 起壳时 finance 月报行会错报「快照不可读」，同函数同性质顺手修复）。
  */
 function withLedger(source: OverviewCompanySource, ledger: Ledger): OverviewCompanySource {
   return {
@@ -413,6 +445,12 @@ function withLedger(source: OverviewCompanySource, ledger: Ledger): OverviewComp
     },
     get readPersonFile() {
       return source.readPersonFile
+    },
+    get readReportFile() {
+      return source.readReportFile
+    },
+    get listReportFiles() {
+      return source.listReportFiles
     },
     get snapshotInfo() {
       return source.snapshotInfo

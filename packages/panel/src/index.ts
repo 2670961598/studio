@@ -16,10 +16,12 @@
  *   :8789 公司概览（老板的公司，制作人/内部）—— v0.7 首刀 + DEV-12 换装刀二（读面，独立入口
  *     ./overview——packages/panel/src/overview/，不另开包：沿 16-§一 九包结构）：
  *     路由 /<slug>/…（04-§七：按挂载公司目录 slug，未出名 404，根路径列公司清单）；
- *     概览/组织/人事/进度/财务五读面（全 GET 只读）；刀二起换装同套 :8787（Naive UI +
+ *     概览/组织/人事/进度/财务/报表六读面（全 GET 只读）；刀二起换装同套 :8787（Naive UI +
  *     ECharts，单壳多页 + /api/overview/* JSON 读面），旧服务端渲染面整组迁 /legacy 作回滚面；
  *     热重载双能力（reload.ts）：快照时间标注（snapshotMeta 随 JSON 读面透出）+ 公司目录
- *     fs.watch(recursive) 防抖热重载（重载失败保旧图）。项目/报表 tab 与编辑中心归后续刀。
+ *     fs.watch(recursive) 防抖热重载（重载失败保旧图）。报表 tab=127-B v1
+ *     （metadata-only 清单＋新鲜度灯＋公司级汇总——台账事件为源，正文端点待批示后开）。
+ *     项目 tab 与编辑中心归后续刀。
  *
  *   :8788 对外 API（外部 AI 的面，对外）—— v0.9 首刀（信息/触发骨架，独立入口 ./external）：
  *     信息端点全 GET 全公开（D5：company/org/people/projects/issues/finance/reports）；
@@ -48,7 +50,11 @@
  *   [ ] budgets 全量读面（store 现 only queryBudgets by-scope——panel 以镜像枚举 scope
  *       近似，见 views.COSTS_BUDGETS_BASIS_NOTE；store 增 listBudgets 后替换）
  *   [ ] workers 真源切换（daemon 内存态，v0.4 接管后台账近似口径整体替换）
- *   [ ] :8789 项目/报表 tab（v0.7 后续刀）
+ *   [x] :8789 报表 tab v1（127-B，studio-dev-176）：/api/overview/:slug/reports JSON 读面＋
+ *       换装 tab（ui/overview ReportsCard）——metadata-only 清单（部门分组＋最新件优先＋
+ *       大小/mtime 辅助列）＋新鲜度灯（台账事件为源：R2 新鲜度＋P3 对账＋GATE_PASS
+ *       output= 落位）＋公司级汇总；正文端点与口径待批示后开（v2 登记位已留）
+ *   [ ] :8789 项目 tab（v0.7 后续刀——原「项目/报表 tab」待办的另半张）
  *   [ ] 编辑中心：草稿态 → 批示 → 写回链路（带前值快照可逐字 diff；daemon 单点写回）
  *   [ ] :8788 SSE 订阅真实现（events.subscribe 语义归后续刀——现 501 占位）
  *   [ ] :8788 触发端点扩面（explore/tasks/intel，17-§8 端面）与对外 MCP server（25-§4.2）
