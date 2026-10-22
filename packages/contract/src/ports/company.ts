@@ -124,6 +124,19 @@ export interface CompanySnapshot {
   jobs: ScheduledJob[]
   /** 单据类型流声明（DEV-43；不声明=undefined=等级流现状行为） */
   workflows?: TicketWorkflows
+  /**
+   * 州表卫生·白名单层（127-C，studio-dev-127 §4.7）：已知外来态（org-config
+   * `yt.known_foreign_states`）——引擎哨兵对其降 FOREIGN_KNOWN 观察级（不升
+   * ESCALATE），巡逻核公式并集吸收；不声明=undefined=哨兵现状全灵敏度。
+   */
+  knownForeignStates?: readonly string[]
+  /**
+   * 州表卫生·映射层（127-C，studio-dev-127 §4.7）：外来态→公司态统计映射
+   * （org-config `yt.state_mapping`；装载面已过 `yt.state_mapping_audited` 全键
+   * 盖戳校验——启用前置审计 fail-closed）。**仅统计视图**（面板进度聚合）——
+   * 不动 decide/状态机，不迁移平台状态（daemon 单点写纪律）。不声明=不映射。
+   */
+  stateMapping?: Readonly<Record<string, string>>
 }
 
 /** 校验器输出：结构不合法给 文件:行 + 修法（04-§九） */

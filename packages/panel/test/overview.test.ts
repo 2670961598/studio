@@ -444,6 +444,36 @@ describe('buildProgressSnapshot（纯函数直测）', () => {
     ])
     expect(snap.basis).toBe('ticket-mirror')
   })
+
+  it('127-C 州表卫生映射层：外来态按 stateMapping 并入公司态统计；note 透明声明映射口径', () => {
+    const mirrors = [
+      makeMirror({ issue: 'A', state: 'Archived' }),
+      makeMirror({ issue: 'B', state: 'Archived' }),
+      makeMirror({ issue: 'C', state: '已交付' }),
+      makeMirror({ issue: 'D', state: '新单' }), // 非映射键原样计（映射不吞未声明态）
+      makeMirror({ issue: 'X', company: 'other', state: 'Archived' }), // 他司不计（映射在 scope 滤后）
+    ]
+    const snap = buildProgressSnapshot(mirrors, 'corp-b', { Archived: '已交付' })
+    expect(snap.total).toBe(4)
+    expect(snap.byState).toEqual([
+      { state: '已交付', count: 3 }, // 2 映射 + 1 原生
+      { state: '新单', count: 1 },
+    ])
+    expect(snap.note).toContain('州表卫生映射')
+  })
+
+  it('127-C 负对照：不传映射/空映射=现状口径零变化（note 无映射段）', () => {
+    const mirrors = [makeMirror({ issue: 'A', state: 'Archived' }), makeMirror({ issue: 'B', state: '已交付' })]
+    const noMapping = buildProgressSnapshot(mirrors, 'corp-b')
+    expect(noMapping.byState).toEqual([
+      { state: 'Archived', count: 1 },
+      { state: '已交付', count: 1 },
+    ])
+    expect(noMapping.note).not.toContain('州表卫生映射')
+    const emptyMapping = buildProgressSnapshot(mirrors, 'corp-b', {})
+    expect(emptyMapping.byState).toEqual(noMapping.byState)
+    expect(emptyMapping.note).not.toContain('州表卫生映射')
+  })
 })
 
 describe('buildFinanceSnapshot（纯函数直测：与页面同源对账）', () => {

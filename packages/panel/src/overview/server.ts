@@ -236,7 +236,8 @@ export function createOverviewApp(opts: OverviewAppOptions): OverviewApp {
   app.get('/api/overview/:slug/progress', (c) => {
     const slug = c.req.param('slug')
     return apiCompany(c, (r) => {
-      const progress = r.ledger === undefined ? null : buildProgressSnapshot(r.ledger.listTicketMirrors(), slug)
+      // 州表卫生映射层（127-C）：快照携带（yt.state_mapping 审计盖戳后装载）——仅统计视图
+      const progress = r.ledger === undefined ? null : buildProgressSnapshot(r.ledger.listTicketMirrors(), slug, r.snapshot.stateMapping)
       return c.json(buildProgressPayload(slug, progress, Date.now(), infoOf(r.source)))
     })
   })
@@ -308,7 +309,8 @@ export function createOverviewApp(opts: OverviewAppOptions): OverviewApp {
     const slug = c.req.param('slug')
     const resolved = resolveCompany(slug)
     if (resolved === undefined) return c.html(renderNotFoundPage(`/${slug}/progress`, OVERVIEW_LEGACY_BASE), 404)
-    const progress = resolved.ledger === undefined ? undefined : buildProgressSnapshot(resolved.ledger.listTicketMirrors(), slug)
+    // 州表卫生映射层（127-C）：与 /api 面同源注入（统计视图两读面不漂移）
+    const progress = resolved.ledger === undefined ? undefined : buildProgressSnapshot(resolved.ledger.listTicketMirrors(), slug, resolved.snapshot.stateMapping)
     return c.html(renderProgressPage(slug, resolved.snapshot, progress, OVERVIEW_LEGACY_BASE))
   })
 

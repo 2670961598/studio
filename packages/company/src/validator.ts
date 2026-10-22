@@ -30,11 +30,14 @@
  * escalate 四段——形状闸在本文件，档位/时长解析面与 daemon 读视图在 src/cadence.ts，daemon
  * 侧两新唤起源（cadence 档位展开器 + SLA/升级计时器）消费 payload。oncall/subscribe 值守面
  * 与 notify 发送端下刀（35-§4 矩阵两 ☐ 归后续单）。
+ *
+ * 127-C 州表卫生（studio-dev-127 §4.7 全批）：yt 双层键内容闸+装载=state-hygiene.ts 单一实现。
  */
 import { LineCounter, parseDocument } from 'yaml'
 import { z } from 'zod'
 import type { CompanySnapshot, DeptNode, DirectoryIssue, MountResult, PersonRef, RoleName, ScheduledJob, TicketWorkflows } from '@studio-next/contract'
 import { expandCadence, parseJobDuration } from './cadence.ts'
+import { applyStateHygieneToSnapshot, stateHygieneRules } from './state-hygiene.ts'
 import { ORG_CONFIG_SCHEMA_LITERALS, lineOfPath, multifileRules, zodIssuesToDirectoryIssues } from './multifile.ts'
 
 const ORG_CONFIG_FILE = 'org-config.yaml'
@@ -538,6 +541,7 @@ function workflowRules(doc: ReturnType<typeof parseDocument>, lc: LineCounter, o
   return out
 }
 
+
 /** workflows 装载（→ contract TicketWorkflows；states 归一为对象形进快照） */
 function toWorkflows(org: OrgConfig): TicketWorkflows | undefined {
   if (org.workflows === undefined) return undefined
@@ -578,6 +582,8 @@ function toSnapshot(org: OrgConfig): CompanySnapshot {  const departments: DeptN
   }
   const wf = toWorkflows(org)
   if (wf !== undefined) snap.workflows = wf
+  // 州表卫生双层装载（127-C，studio-dev-127 §4.7）：state-hygiene.ts 单一实现
+  applyStateHygieneToSnapshot(snap, org.yt)
   return snap
 }
 
@@ -628,6 +634,7 @@ export function loadCompanyDirectory(files: Record<string, string>, opts?: Mount
   const issues = [
     ...crossRules(doc, lc, parsed.data),
     ...workflowRules(doc, lc, parsed.data),
+    ...stateHygieneRules(doc, lc, parsed.data.yt),
     ...(opts?.strictFiles === false ? [] : multifileRules(files, parsed.data, doc, lc)),
   ]
   if (issues.length > 0) return { ok: false, issues }

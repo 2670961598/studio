@@ -18,6 +18,8 @@ export interface TickPhaseCollect {
   affectedTickets: number
   /** DEV-49 A4 未知态哨：本拍进入哨键的单数（docs/52-§十） */
   unknownStateAlarmed: number
+  /** 州表卫生白名单态本拍新观察数（127-C FOREIGN_KNOWN 事件；无白名单恒 0） */
+  foreignKnown: number
   /** DEV-49 A4 状态集巡逻核漂移态名数 */
   statusSetDrift: number
   /** studio-dev-126 C2 声明态漂移：provision 声明在档而平台已无的态名数（节流拍才有） */

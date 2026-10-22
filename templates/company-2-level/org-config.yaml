@@ -81,6 +81,10 @@ yt:
   starting_number: 1 # 单号起始
   fields: {} # 例：{ state: State, dept: 部门, level: 等级, dispatcher: 派单人 }
   flows: {} # 状态流覆盖；为空则走框架默认的 flow_by_level 模板（docs/18-§二）
+  # 州表卫生双层声明（127-C，studio-dev-127 §4.7——可选，不声明=哨兵全灵敏度/不映射）：
+  # known_foreign_states: [New, Ready]   # 白名单层：已知外来态（平台历史/英文名态）——哨兵降 FOREIGN_KNOWN 观察级
+  # state_mapping: { Archived: 已交付 }  # 映射层：外来态→公司态统计映射（仅统计视图，不动状态机）
+  # state_mapping_audited: { Archived: 2026-01-01 }  # 启用前置审计戳：state_mapping 全键盖戳才挂载（fail-closed）
 
 # executor 偏好覆盖（按部门/等级覆盖框架级 agent.yaml 的默认值；此处按岗位在 people[].executor 上）
 executors: {}

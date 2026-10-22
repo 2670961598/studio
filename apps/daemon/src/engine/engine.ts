@@ -372,6 +372,14 @@ export interface EngineConfig {
   /** C2 声明态面（studio-dev-126，wire.ts 单源计算）；缺省=面关 */
   provisionDeclaredStates?: readonly string[]
   /**
+   * 州表卫生白名单（127-C，studio-dev-127 §4.7：org-config yt.known_foreign_states →
+   * CompanySnapshot.knownForeignStates，serve 装配+热重载注入）：已知外来态——DEV-49
+   * 单级哨不升 ESCALATE 降 FOREIGN_KNOWN 观察级（每单每态一条），巡逻核公式
+   * 「平台状态集−(声明集∪白名单)=∅」并集吸收；未声明新漂移仍 ESCALATE（负对照
+   * 保护）。缺省=无白名单=哨兵现状全灵敏度（面关零行为变化）。
+   */
+  knownForeignStates?: readonly string[]
+  /**
    * 收割尾对账步节流（P3，studio-dev-100 提案 §4.3-1，全批）：每 N 拍对收割成功单跑
    * 「jobs[].output 声明落点×公司目录实际文件」对账——缺归档=REPORT_MISSING+哈希
    * 幂等补收（异哈希转人工不覆盖）。companyDir 未注入=面未开；0=关；缺省 30。
@@ -601,6 +609,13 @@ export interface CompanyRuntimeUpdate {
    * （保持现表）；serve 侧显式传 undefined 语义=回内置缺省表由调用方用条件展开表达。
    */
   flows?: FlowTable
+  /**
+   * 州表卫生白名单热换（127-C）：缺省=不换（保持现值）；serve 挂载公司目录时**恒传
+   * 显式数组**（snapshot.knownForeignStates ?? []——摘白名单=传空数组=哨兵回到全灵
+   * 敏度，与 flows N1 的「缺省不换」边缘不同：白名单滞留会静默吞告警，安全面须热换
+   * 即时生效）。
+   */
+  knownForeignStates?: readonly string[]
 }
 
 const CURSOR_KEY = 'activity.cursor'
@@ -1504,16 +1519,21 @@ export function createEngine(deps: EngineDeps): Engine {
     // 键派生=events-index.ts）——流外态单/出厂态回流不再只走 NOOP 静默观测链：ESCALATE
     // 落账（词表既有名）；哨计 mutations（RESUME 同口径）——有哨账的拍不落心跳。
     const index = buildEventIndex(ledger.queryEvents())
-    const { alarmed: unknownStateAlarmed, drift: statusSetDrift, declaredMissing: declaredStatusMissing, declaredExtra: platformStatusExtra } = await runDev49Sentinels({
+    const { alarmed: unknownStateAlarmed, foreignKnown, drift: statusSetDrift, declaredMissing: declaredStatusMissing, declaredExtra: platformStatusExtra } = await runDev49Sentinels({
       issues,
       flowOf,
       alarmedKeys: index.unknownStateAlarmed,
+      foreignKnownKeys: index.foreignKnownAlarmed,
       driftKeys: index.statusSetDriftAlarmed,
       missingKeys: index.declaredStatusMissingAlarmed,
       extraKeys: index.platformStatusExtraAlarmed,
       attemptOf: index.attemptOf,
+      ...(config.knownForeignStates === undefined ? {} : { knownForeignStates: config.knownForeignStates }),
       emit: (issue, attempt, note) => {
         makeEvent('ESCALATE', issue, attempt, tickEvents, { note })
+      },
+      emitForeignKnown: (issue, attempt, note) => {
+        makeEvent('FOREIGN_KNOWN', issue, attempt, tickEvents, { note })
       },
       patrol: {
         seq,
@@ -1529,7 +1549,7 @@ export function createEngine(deps: EngineDeps): Engine {
         errors.push(msg)
       },
     })
-    mutations += unknownStateAlarmed + statusSetDrift + declaredStatusMissing + platformStatusExtra
+    mutations += unknownStateAlarmed + foreignKnown + statusSetDrift + declaredStatusMissing + platformStatusExtra
 
     // —— 相位 2 state-diff：受影响单逐个 decide（每单至多一动作；provisionalActions 供三闸） ——
     const dispatchQ: Array<{ action: Extract<Action, { type: 'dispatch' }>; intentKey: string }> = []
@@ -2125,6 +2145,7 @@ export function createEngine(deps: EngineDeps): Engine {
           cursorBefore,
           cursorAfter: cursor,
           unknownStateAlarmed,
+          foreignKnown,
           statusSetDrift,
           declaredStatusMissing,
           platformStatusExtra,
@@ -2190,6 +2211,8 @@ export function createEngine(deps: EngineDeps): Engine {
       // 流表热换（DEV-43 N1）：缺省不换（保持现表）；换表后下一拍 decide/flowOf 对
       // 新表重解析（含在途单——跨边界未知态走既有 NOOP_UNKNOWN_STATE 纪律）
       if (update.flows !== undefined) config.flows = update.flows
+      // 州表卫生白名单热换（127-C）：显式传值即换（含空数组=摘白名单——哨兵回全灵敏度）
+      if (update.knownForeignStates !== undefined) config.knownForeignStates = update.knownForeignStates
     },
     dispose,
     get config(): EngineConfig {

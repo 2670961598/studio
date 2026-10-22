@@ -18,6 +18,11 @@
  *   5. C2 双向漂移（studio-dev-126）：provision 声明面注入后——声明在档平台已无 →
  *      DECLARED_STATUS_MISSING（事前哨：建单/流转将吃 unknown-state 假红）；平台
  *      在位声明未收 → PLATFORM_STATUS_EXTRA；缺省不注入=面关零行为（面关负对照）。
+ *   6. 州表卫生白名单（127-C，studio-dev-127 §4.7）：yt.known_foreign_states 白名单态
+ *      → 单级哨降 FOREIGN_KNOWN 观察级（每单每态一次，独立键集；计 mutations 抑心跳）；
+ *      巡逻核公式=平台状态集−(声明集∪白名单)=∅（白名单态不进漂移集）；**负对照**：
+ *      未白名单新流外态仍 ESCALATE——白名单吞不掉新漂移；白名单面不触 C2 两哨
+ *      （DECLARED_STATUS_MISSING/PLATFORM_STATUS_EXTRA 与白名单正交）。
  */
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -39,7 +44,7 @@ interface TestStack {
   clock: { now(): number; advance(ms: number): void }
 }
 
-function buildStack(id: string, schemaStates?: string[], patrolEvery?: number, declared?: string[]): TestStack {
+function buildStack(id: string, schemaStates?: string[], patrolEvery?: number, declared?: string[], known?: string[]): TestStack {
   const ledger = openLedger(path.join(root, `${id}.sqlite`))
   let t = Date.UTC(2026, 9, 20, 0, 0, 0)
   const clock = { now: (): number => t, advance: (ms: number): void => { t += ms } }
@@ -71,6 +76,7 @@ function buildStack(id: string, schemaStates?: string[], patrolEvery?: number, d
       defaultLane: 'core',
       ...(patrolEvery === undefined ? {} : { statusSetPatrolEveryTicks: patrolEvery }),
       ...(declared === undefined ? {} : { provisionDeclaredStates: declared }),
+      ...(known === undefined ? {} : { knownForeignStates: known }),
     },
     people: DEMO_SNAPSHOT.people,
   })
@@ -247,6 +253,99 @@ describe('C2 声明态漂移哨（studio-dev-126）：provision 声明面 × 平
     expect(r1.phases.collect.platformStatusExtra).toBe(0)
     expect(r1.phases.collect.statusSetDrift).toBe(0)
     expect(stack.ledger.queryEvents({ issue: '-' }).filter((e) => e.event === 'ESCALATE')).toHaveLength(0)
+    await stack.engine.dispose()
+    stack.ledger.close()
+  })
+})
+
+describe('127-C 州表卫生白名单（studio-dev-127 §4.7）：FOREIGN_KNOWN 观察级 + 巡逻核并集', () => {
+  const KNOWN = ['New', 'In progress', 'Ready for test', 'Done', 'Archived'] // 六英文态子集（Ready 留作漂移负对照）
+
+  it('白名单态单降 FOREIGN_KNOWN（每单每态一次、计 mutations 抑心跳）；ESCALATE 零新告', async () => {
+    const stack = buildStack('whitelist-observe', undefined, undefined, undefined, KNOWN)
+    const a = await stack.platform.issues.create({ title: '出厂态单', type: 'task', level: 0, initialState: 'New' })
+    stack.clock.advance(1000)
+    const r1: TickReport = await stack.engine.tick()
+    expect(r1.phases.collect.foreignKnown).toBe(1)
+    expect(r1.phases.collect.unknownStateAlarmed).toBe(0)
+    const evA = stack.ledger.queryEvents({ issue: a.id })
+    expect(evA).toHaveLength(1)
+    expect(evA[0]).toMatchObject({ event: 'FOREIGN_KNOWN', issue: a.id })
+    // note 与 UNKNOWN_STATE 同字段集（state/type/level——events-index noteField 派生同法）
+    expect(evA[0]?.note).toBe('FOREIGN_KNOWN;state=New;type=task;level=0')
+    // 观察级也计 mutations：有哨账的拍不落 HEARTBEAT
+    expect(r1.phases.account.heartbeat).toBe(false)
+
+    // 次拍：FOREIGN_KNOWN 键去重（每单每态一次——观察级不刷屏）
+    stack.clock.advance(1000)
+    const r2: TickReport = await stack.engine.tick()
+    expect(r2.phases.collect.foreignKnown).toBe(0)
+    expect(r2.phases.account.heartbeat).toBe(true)
+
+    // 同单换新白名单态 = 新键 = 再观察一次（换非白名单态走 ESCALATE 见负对照用例）
+    await stack.platform.issues.transition(a.id, 'Archived')
+    stack.clock.advance(1000)
+    const r3: TickReport = await stack.engine.tick()
+    expect(r3.phases.collect.foreignKnown).toBe(1)
+    expect(stack.ledger.queryEvents({ issue: a.id })).toHaveLength(2)
+    await stack.engine.dispose()
+    stack.ledger.close()
+  })
+
+  it('负对照：未白名单新流外态仍 ESCALATE——白名单吞不掉新漂移', async () => {
+    const stack = buildStack('whitelist-negative', undefined, undefined, undefined, KNOWN)
+    const a = await stack.platform.issues.create({ title: '白名单态单', type: 'task', level: 0, initialState: 'New' })
+    const b = await stack.platform.issues.create({ title: '新漂移单（不在白名单）', type: 'task', level: 0, initialState: 'Ready' })
+    stack.clock.advance(1000)
+    const r1: TickReport = await stack.engine.tick()
+    expect(r1.phases.collect.foreignKnown).toBe(1) // New → 观察级
+    expect(r1.phases.collect.unknownStateAlarmed).toBe(1) // Ready → 照旧告警
+    expect(stack.ledger.queryEvents({ issue: a.id }).filter((e) => e.event === 'FOREIGN_KNOWN')).toHaveLength(1)
+    const evB = stack.ledger.queryEvents({ issue: b.id })
+    expect(evB).toHaveLength(1)
+    expect(evB[0]?.event).toBe('ESCALATE')
+    expect(evB[0]?.note).toBe('UNKNOWN_STATE;state=Ready;type=task;level=0')
+    await stack.engine.dispose()
+    stack.ledger.close()
+  })
+
+  it('巡逻核并集吸收：schema 白名单态不进漂移集；未白名单出厂态照旧告', async () => {
+    // schema 含五公司态 + New/In progress（白名单）+ Ready（未白名单）→ 漂移仅 Ready
+    const stack = buildStack('whitelist-patrol', ['新单', '已派发', '证据就绪', '复验通过', '已交付', 'New', 'In progress', 'Ready'], 1, undefined, KNOWN)
+    stack.clock.advance(1000)
+    const r1: TickReport = await stack.engine.tick()
+    expect(r1.phases.collect.statusSetDrift).toBe(1)
+    const notes = stack.ledger.queryEvents({ issue: '-' }).filter((e) => e.event === 'ESCALATE').map((e) => e.note)
+    expect(notes).toEqual([expect.stringMatching(/^UNKNOWN_STATUS;status=Ready;declared=\d+$/)])
+
+    // 次巡逻拍：漂移键去重保持（并集吸收不改变每状态名一次语义）
+    stack.clock.advance(1000)
+    const r2: TickReport = await stack.engine.tick()
+    expect(r2.phases.collect.statusSetDrift).toBe(0)
+    await stack.engine.dispose()
+    stack.ledger.close()
+  })
+
+  it('白名单面不触 C2 两哨：声明面漂移照常双向告（两问两哨正交）', async () => {
+    const stack = buildStack('whitelist-c2-orthogonal', ['新单', '已派发', '证据就绪', '复验通过', '已交付', 'New'], 1, ['新单', '已派发', '证据就绪', '复验通过', '已交付'], KNOWN)
+    stack.clock.advance(1000)
+    const r1: TickReport = await stack.engine.tick()
+    // New 白名单吸收 → 巡逻核漂移 0；但声明面平台额外向（New 在平台不在声明面）照告
+    expect(r1.phases.collect.statusSetDrift).toBe(0)
+    expect(r1.phases.collect.platformStatusExtra).toBe(1)
+    const notes = stack.ledger.queryEvents({ issue: '-' }).filter((e) => e.event === 'ESCALATE').map((e) => e.note)
+    expect(notes).toEqual(['PLATFORM_STATUS_EXTRA;status=New'])
+    await stack.engine.dispose()
+    stack.ledger.close()
+  })
+
+  it('面关负对照：不注入白名单（缺省）→ 哨兵现状全灵敏度零变化（既有用例已锁，此处锁计数位）', async () => {
+    const stack = buildStack('whitelist-off')
+    await stack.platform.issues.create({ title: '出厂态单', type: 'task', level: 0, initialState: 'New' })
+    stack.clock.advance(1000)
+    const r1: TickReport = await stack.engine.tick()
+    expect(r1.phases.collect.foreignKnown).toBe(0)
+    expect(r1.phases.collect.unknownStateAlarmed).toBe(1)
     await stack.engine.dispose()
     stack.ledger.close()
   })

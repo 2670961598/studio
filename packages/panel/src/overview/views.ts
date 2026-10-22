@@ -245,6 +245,10 @@ export const PROGRESS_NOTE =
   '进度口径：ticket_mirror（YouTrack 镜像，可重建投影）按 state 聚合计数，只计本司单据；' +
   '状态名以镜像行为准（YouTrack 状态流是权威源）'
 
+/** 州表卫生映射层口径说明（127-C：state_mapping 应用时并入 note——统计视图透明可审计） */
+export const PROGRESS_MAPPING_NOTE =
+  '；州表卫生映射（127-C）：外来态按 org-config yt.state_mapping（启用前置审计全键盖戳）并入公司态统计——仅统计视图，不改平台状态'
+
 /** 进度快照（/progress 的数据形状） */
 export interface ProgressSnapshot {
   basis: 'ticket-mirror'
@@ -255,19 +259,26 @@ export interface ProgressSnapshot {
   byState: Array<{ state: string; count: number }>
 }
 
-/** 镜像行 → 本司进度聚合（company=slug 过滤在 server 侧已做或在此做均可——此处全量入、按 slug 滤） */
-export function buildProgressSnapshot(mirrors: TicketMirrorRecord[], slug: string): ProgressSnapshot {
+/**
+ * 镜像行 → 本司进度聚合（company=slug 过滤在 server 侧已做或在此做均可——此处全量入、按 slug 滤）。
+ * stateMapping（127-C 州表卫生映射层，可选）：外来态→公司态统计映射（CompanySnapshot.
+ * stateMapping——装载面已过 yt.state_mapping_audited 全键盖戳校验）；**仅统计视图**——
+ * 聚合计数先映射后计数，镜像行与 byState 原生态名口径不变（映射透明进 note）。
+ */
+export function buildProgressSnapshot(mirrors: TicketMirrorRecord[], slug: string, stateMapping?: Readonly<Record<string, string>>): ProgressSnapshot {
   const counts = new Map<string, number>()
   let total = 0
   for (const m of mirrors) {
     if (m.company !== slug) continue
     total += 1
-    counts.set(m.state, (counts.get(m.state) ?? 0) + 1)
+    const state = stateMapping?.[m.state] ?? m.state
+    counts.set(state, (counts.get(state) ?? 0) + 1)
   }
   const byState = [...counts.entries()]
     .map(([state, count]) => ({ state, count }))
     .sort((a, b) => b.count - a.count || a.state.localeCompare(b.state))
-  return { basis: 'ticket-mirror', note: PROGRESS_NOTE, total, byState }
+  const applied = stateMapping !== undefined && Object.keys(stateMapping).length > 0
+  return { basis: 'ticket-mirror', note: PROGRESS_NOTE + (applied ? PROGRESS_MAPPING_NOTE : ''), total, byState }
 }
 
 // —— 财务（/finance：budgets 三口径分列 + 事件 LLM 成本按日） ——
