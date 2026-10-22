@@ -19,15 +19,15 @@
  *   - session-id 收存（v1.5 三件套之二，docs/31-§5-6）：stream() 从流首 session 事件
  *     捕获 dsh 侧 session-<uuid> 写入 Handle.executorSessionId（续跑/对账）
  *   - resumeWithSession 接线：--session-id 透传进 argv 旗标区（P-05 真机形态）+ 空串拒收
- *   - AGENTS.md 通道（v1.5 三件套之一）：user_level/append → STUDIO_NEXT_INSTRUCTIONS=
+ *   - AGENTS.md 通道（v1.5 三件套之一）→ 已拆至 dsh-agents-md-channel.test.ts
+ *     （BC-S2 先拆再增——studio-dev-186）：user_level/append → STUDIO_NEXT_INSTRUCTIONS=
  *     target（由 packages/dsh-bridge studio-next-bridge 插件消费——插件面测试归 dsh-bridge
- *     包；本套只断言 env 注入）；native → 不注入（真机原生发现通道）
+ *     包）；native → 不注入（真机原生发现通道）+ F-1 宿主 env 串扰回归钉（128 审计）
  *   - 孙进程杀灭（execa 10 killDescendants 兑现面，docs/27-§4.3 案 A）：对照组裸 spawn
  *     直杀父 pid 证孙存活可检出（9.x 直杀语义）→ 整树软杀父孙同死 → 孙吞 TERM 由宽限
  *     到点的整组 SIGKILL 扫尾收口（kill() 父退即返回，不等满宽限）
  *   - detect：未安装（假 cmd / PATH 清空）明报不静默；可解析时版本+未锁版本 gap
  *   - estimate 冒烟（拟稿：v0.6 前细化）
- *   - AGENTS.md 通道 env 注入（映射已证伪留占位——见 dsh.ts 头注）
  *   - parseLine 单行导出与 parseStream 全文等价（streams 既有行为不改的旁证）
  *
  * env 注入说明：适配器 spawn env 已收封闭允许集（docs/43-附录A-1，filterWorkerEnv +
@@ -648,59 +648,6 @@ describe('estimate（拟稿：预算估算模型 v0——v0.6 前细化）', () 
     )
     expect(r.estimated.usd).toBe(0.05)
     expect(r.confidence).toBe(0.2)
-  })
-})
-
-describe('AGENTS.md 通道 env 注入（v1.5 三件套之一：插件通道——STUDIO_NEXT_INSTRUCTIONS 由 packages/dsh-bridge studio-next-bridge 消费；docs/31-A1/§5-5 裁决 docs/25-§3.1 v1.5#1）', () => {
-  // cmd 注入 node -e 回显目标 env：值经 stdout 以 log 事件回流断言
-  const echoAdapter = (varName: string): DshAdapter =>
-    new DshAdapter([
-      process.execPath,
-      '-e',
-      `process.stdout.write(process.env.${varName} ?? '<unset>')`,
-    ])
-
-  it('user_level 通道 → STUDIO_NEXT_INSTRUCTIONS=target 透传', async () => {
-    const target = join(workdir, 'agents-user-level.md')
-    const adapter = echoAdapter('STUDIO_NEXT_INSTRUCTIONS')
-    const h = await adapter.launch(makeBrief({ AGENTS_MD: { channel: 'user_level', target } }))
-    const collected: StreamEvent[] = []
-    for await (const ev of adapter.stream(h)) collected.push(ev)
-    expect(collected).toStrictEqual([{ type: 'log', text: target }])
-  })
-
-  it('append_system_prompt 通道 → STUDIO_NEXT_INSTRUCTIONS=target 透传（dsh 无 append 专道，两通道汇一）', async () => {
-    const target = join(workdir, 'agents-append.md')
-    const adapter = echoAdapter('STUDIO_NEXT_INSTRUCTIONS')
-    const h = await adapter.launch(
-      makeBrief({ AGENTS_MD: { channel: 'append_system_prompt', target } }),
-    )
-    const collected: StreamEvent[] = []
-    for await (const ev of adapter.stream(h)) collected.push(ev)
-    expect(collected).toStrictEqual([{ type: 'log', text: target }])
-  })
-
-  it('native 通道 → 不注入通道变量（真机原生发现：launch cwd 向上扫 AGENTS.md，P-07 实证）', async () => {
-    const adapter = echoAdapter('STUDIO_NEXT_INSTRUCTIONS')
-    const h = await adapter.launch(
-      makeBrief({ AGENTS_MD: { channel: 'native', target: join(workdir, 'AGENTS.md') } }),
-    )
-    const collected: StreamEvent[] = []
-    for await (const ev of adapter.stream(h)) collected.push(ev)
-    // 无换行残行回流为 log：'<unset>' 证明未注入
-    expect(collected).toStrictEqual([{ type: 'log', text: '<unset>' }])
-  })
-
-  it('证伪变量已移除：DSH_AGENTS_MD / DSH_APPEND_SYSTEM_PROMPT_FILE 全通道零注入', async () => {
-    for (const channel of ['user_level', 'append_system_prompt'] as const) {
-      const adapter = echoAdapter('DSH_AGENTS_MD')
-      const h = await adapter.launch(
-        makeBrief({ AGENTS_MD: { channel, target: join(workdir, 'agents-x.md') } }),
-      )
-      const collected: StreamEvent[] = []
-      for await (const ev of adapter.stream(h)) collected.push(ev)
-      expect(collected).toStrictEqual([{ type: 'log', text: '<unset>' }])
-    }
   })
 })
 
