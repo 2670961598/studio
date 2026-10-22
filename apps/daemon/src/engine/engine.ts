@@ -194,7 +194,6 @@ import type {
   IssueRecord,
   ModelCatalog,
   PersonRef,
-  ResultStats,
   StreamEvent,
   TaskBrief,
   TicketId,
@@ -243,13 +242,27 @@ export {
 } from './intents/taxonomy.ts'
 import { createSplitMaterializer, type SplitDirectiveInput } from './split/materialize.ts' // 拆单物化件（130-P2 studio-dev-173；提案 §6.2.2/§6.2.3-R2）：批示:拆单→子单物化＋父单立案收口
 import { buildEventIndex, STALL_KILL_CLOSE_ANCHOR, type EventIndex } from './sentinel/events-index.ts'
+// 事件四要素形状＋人闸快照投影（自本件抽件——20-§十五「先拆再增」；BC-S2 清偿）
+import { evtDept, evtLevel, personGateSnapshot, tokenBuckets } from './sentinel/shape.ts'
+// 增量泵驻留竞速（DEV-9 P1 冻结修复件抽件——同上）
+import { parkRace, PARKED } from './harvest/park.ts'
+// 批示归一层（studio-dev-171，docs/18-§2.5；特性域 directive/＝parse/qualify 纯核＋
+// wire 接线体＋serve 装配缝——20-§十五 contrib 模式子文件夹，BC-V3）
+import {
+  buildDirectiveAuthorizer,
+  reboundSuppressed,
+  runDirectiveLayer,
+  type DirectiveAuthorizer,
+  type DirectiveGateDeps,
+  type DirectiveVerb,
+} from './directive/index.ts'
 import type { GateRunner } from './gate.ts'
 import { accountJobOutput } from './jobs/output-account.ts'
 import { sentinelBriefBlock, sentinelDutyForTicket, verifySidecarSentinelAtPath } from './jobs/sentinel.ts'
 import { deliverablesOf, reconIssueRecord, runHarvestRecon, statHarvestDenial, WORKSPACE_UMASK, type HarvestReconResult } from './jobs/harvest-recon.ts'
 import { makeUlid } from './tools/id.ts'
 import { instructionsTarget, removeInstructions, writeInstructions } from './instructions-store.ts'
-import type { PromptAssembler } from './prompt-assembly.ts'
+import { aiwsWorkspaceOf, type PromptAssembler } from './prompt-assembly.ts'
 import { blindArtifactPaths, createView, resolveReadTier, roleOfAssignee } from './read-tiers.ts'
 import type { ReadTier } from './read-tiers.ts'
 import { heartbeatSentinelRecord, runDev49Sentinels } from './sentinel/sentinels.ts'
@@ -463,20 +476,6 @@ export const ENGINE_CONFIG_DEFAULTS: EngineConfig = {
   queueAgeStepMs: DEFAULT_QUEUE_AGE_STEP_MS,
 }
 
-/**
- * .AIWS 工位路径（docs/43-§五，DEV-28）：`<aiwsRoot>/<部门路径>/<工号>/tickets/<单号>/att<N>`
- * ——部门路径逐段展开（person.dept 是 '/' 分隔路径串）；派工对象的家+tickets+attempt。
- * 纯函数（serve 日志与测试断言同源；engine 内 executeDispatch 消费）。
- */
-export function aiwsWorkspaceOf(
-  aiwsRoot: string,
-  person: { dept: string; id: string },
-  ticket: TicketId,
-  attempt: number,
-): string {
-  return path.join(aiwsRoot, ...person.dept.split('/'), person.id, 'tickets', ticket, `att${attempt}`)
-}
-
 // ————————————————————————— 依赖注入 —————————————————————————
 
 /** 引擎依赖：全注入（platform 泳道的 @studio-next/localplatform 接入点=此处 FlowPlatform
@@ -513,6 +512,12 @@ export interface EngineDeps {
    * 装配与配置门（hrSync/hrMatrix 开关、known-secrets 脱敏闭包）见 serve.ts。
    */
   hrSync?: { drain(): Promise<HrSyncTickReport> }
+  /**
+   * 批示归一层（可选注入；缺省=面关行为零变更——studio-dev-171，docs/18-§2.5）：
+   * 相位 1 采集尾拉评论→词表 v1 解析→角色校验→站立/打回，实现=engine/directive/
+   *（wire.ts 头注）；departments 热重载经 applyCompanyUpdate 整组换。
+   */
+  directives?: DirectiveGateDeps
 }
 
 // ————————————————————————— TickReport（17-§2「tick 返回结构化 actions」；各面类型驻 tick-report/types.ts） —————————————————————————
@@ -612,39 +617,21 @@ export interface CompanyRuntimeUpdate {
    * 即时生效）。
    */
   knownForeignStates?: readonly string[]
+  /**
+   * 批示归一层部门表热换（studio-dev-171，docs/18-§2.5）：path→leader 整组换——
+   * 组织变动（换 leader/撤部）fail-closed 生效，防陈旧 leader 批示面。缺省=不换
+   * （保持启动装配；面未开时传值也不开面——面的开闭随启动装配定）。
+   */
+  directives?: ReadonlyMap<string, string>
 }
 
 const CURSOR_KEY = 'activity.cursor'
 const TICK_SEQ_KEY = 'tick.seq'
 
-// —— 增量泵收运行件（DEV-9 P1 冻结修复，docs/17-§2 拍有界） ——
-
-/** 驻留哨兵：parkRace 计时器到点（本拍无事件/时间片尽）——迭代器驻留，下一拍续收 */
-const PARKED = Symbol('harvest-parked')
+// —— 增量泵收运行件（DEV-9 P1 冻结修复，docs/17-§2 拍有界；parkRace/PARKED 抽件
+//    engine/harvest/park.ts——20-§十五「先拆再增」） ——
 
 // ————————————————————————— mention 意图消费件（105-刀A A-2） —————————————————————————
-
-
-/**
- * 有界竞速：next() 就绪（含拒绝——原样传播走 WORKER_DEAD 面）则即时返回；ms 内未就绪
- * 返回 PARKED。挂起分支的拒绝由泵侧预附 catch 吞并记档（无悬空 unhandled rejection）。
- */
-function parkRace(next: Promise<IteratorResult<StreamEvent>>, ms: number): Promise<IteratorResult<StreamEvent> | typeof PARKED> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => resolve(PARKED), Math.max(1, ms))
-    timer.unref()
-    next.then(
-      (r) => {
-        clearTimeout(timer)
-        resolve(r)
-      },
-      (e) => {
-        clearTimeout(timer)
-        reject(e)
-      },
-    )
-  })
-}
 
 export function createEngine(deps: EngineDeps): Engine {
   const { platform, ledger, registry, gateRunner, clock, config } = deps
@@ -654,6 +641,14 @@ export function createEngine(deps: EngineDeps): Engine {
   // people/assembler 被 resolvePerson/executeDispatch 闭包引用，let 化后热替换即生效
   let assembler = deps.assembler
   let people = deps.people
+
+  // 批示归一层绑定（studio-dev-171，docs/18-§2.5）：peopleRef 闭包取活名册（L1 热替换
+  // 即随换——防陈旧名册放行）；defaultAssignee 与 resolvePerson 回退链同源。
+  let directiveDeps = deps.directives
+  let directives: DirectiveAuthorizer | undefined =
+    deps.directives === undefined
+      ? undefined
+      : buildDirectiveAuthorizer(deps.directives, () => people, config.defaultPersonId)
 
   // 预算闸依赖（docs/16-§三 / 20-§六.8）：判定=core reserve/settle，落账=ledger.appendBudget，
   // 行 id=makeId（ULID，id.ts）；catalog 缺省=态 B 降级（两态见 budget-gate.ts 头注）
@@ -701,23 +696,8 @@ export function createEngine(deps: EngineDeps): Engine {
   const queueAgeStepMs = config.queueAgeStepMs ?? DEFAULT_QUEUE_AGE_STEP_MS
   const pinnedTicketSet = (): ReadonlySet<TicketId> => new Set(config.pinnedTickets ?? [])
   const personOverrides = config.personInflightOverrides ?? {}
-  /** 人闸帽（129-§6.2-R3）：覆盖表 > limits.maxInflightPerPerson 缺省（引擎侧兜底 1——
-   * decide 侧 Math.max(1,limit) 再兜一次，双层 fail-closed）；批量执行岗才可 >1。 */
-  function personLimitFor(person: string): number {
-    return personOverrides[person] ?? config.limits.maxInflightPerPerson ?? 1
-  }
-  /** 人闸携带快照（129-§6.2-R3：第四闸插在泳道后每拍前——decide passGates 序冻结）。
-   * 在工计数=内存 Inflight + 本拍已排队派发（两段式「先决后执」拍内即时生效——
-   * inflightCount 同款折算面）。人不可解析=不注 gate（闸面跳过，人索引空时不误伤）。 */
-  function personGateSnapshot(person: string | undefined, dispatchPersons: ReadonlyMap<TicketId, string>):
-    | { inflightCount: number; limit: number }
-    | undefined {
-    if (person === undefined) return undefined
-    let inflightCount = 0
-    for (const entry of inflight.values()) if (entry.personId === person) inflightCount += 1
-    for (const p of dispatchPersons.values()) if (p === person) inflightCount += 1
-    return { inflightCount, limit: personLimitFor(person) }
-  }
+  /** 人闸帽与人闸快照（129-§6.2-R3 第四闸）：抽件 sentinel/shape.ts（显式参数版） */
+  const personLimits = { overrides: personOverrides, defaultLimit: config.limits.maxInflightPerPerson ?? 1 }
   // 投影写缓存（canonical JSON——diff 才写；todo_queue 是可重建投影，写面节流观测项）
   let lastProjectedTodoQueue: string | undefined
 
@@ -726,27 +706,8 @@ export function createEngine(deps: EngineDeps): Engine {
   /** 时钟（一切时刻经注入 clock——core 纪律在 daemon 侧的同形落点） */
   const now = (): number => clock()
 
-  function evtLevel(issue: IssueRecord): number {
-    return Math.min(9, Math.max(1, issue.level ?? 1))
-  }
-
-  function evtDept(issue: IssueRecord): string {
-    return issue.dept ?? config.deptFallback
-  }
-
-  /**
-   * 四桶映射（F2-04 冻结列名；kernel.TokenCounts 四桶直通——132-§6.1 单A·studio-dev-168）：
-   * cache_read 兼容读 `cache_read ?? cached`（旧账键，读侧认——写侧一律新键在适配器钉死）；
-   * cache_creation 直通（此前采集即丢，判负线⑤ 修复）。无值桶不落键（真值直录）。
-   */
-  function tokenBuckets(stats: ResultStats): EventRecord['tokens'] {
-    const t = stats.tokens
-    const out: Record<string, number> = { input: t.input, output: t.output }
-    const cacheRead = t.cache_read ?? t.cached
-    if (cacheRead !== undefined) out.cache_read = cacheRead
-    if (t.cache_creation !== undefined) out.cache_creation = t.cache_creation
-    return out as EventRecord['tokens']
-  }
+  // 事件四要素形状（evtLevel/evtDept/tokenBuckets）：抽件 sentinel/shape.ts
+  //（20-§十五「先拆再增」）——evtDept 显式 deptFallback 参数版。
 
   /** 记账+入拍汇报（appendEvent 是 events 唯一写口——store 契约闸前置） */
   function append(evt: EventRecord, tickEvents: EventRecord[]): void {
@@ -778,7 +739,7 @@ export function createEngine(deps: EngineDeps): Engine {
       actor: config.actor,
       attempt,
       level: evtLevel(issue),
-      dept: evtDept(issue),
+      dept: evtDept(issue, config.deptFallback),
       tokens: extra?.tokens ?? { input: 0 },
       ...(extra?.cost_usd !== undefined ? { cost_usd: extra.cost_usd } : {}),
       ...(extra?.duration_ms !== undefined ? { duration_ms: extra.duration_ms } : {}),
@@ -801,7 +762,7 @@ export function createEngine(deps: EngineDeps): Engine {
       updated: safe,
       state: issue.state,
       type: issue.type ?? 'task',
-      dept: evtDept(issue),
+      dept: evtDept(issue, config.deptFallback),
       level: evtLevel(issue),
       dispatcher: config.actor,
       ...(issue.parent !== undefined ? { parent: issue.parent } : {}),
@@ -1366,7 +1327,7 @@ export function createEngine(deps: EngineDeps): Engine {
       title: `[bug] ${ticket} 断路熔断（同签名 ${result.action.strikes} 连击：${signature}）`,
       description: detail,
       type: 'bug',
-      dept: evtDept(fresh),
+      dept: evtDept(fresh, config.deptFallback),
       // 不定级：未定级单无状态流（decide NOOP_UNKNOWN_FLOW 明报不动），bug 单待人定级后派
     })
     await platform.links.link(bug.id, ticket, 'relates-to').catch(() => undefined)
@@ -1579,6 +1540,29 @@ export function createEngine(deps: EngineDeps): Engine {
       },
     })
     mutations += unknownStateAlarmed + foreignKnown + statusSetDrift + declaredStatusMissing + platformStatusExtra
+
+    // —— 相位 1 尾：批示归一层（studio-dev-171，docs/18-§2.5；接线体=engine/directive/
+    //    wire.ts——解析/校验/站立/打回过渡、幂等与 fail-closed 语义见该件头注）。
+    const dLayer =
+      directives === undefined
+        ? undefined
+        : await runDirectiveLayer({
+            platform,
+            gate: directives,
+            affected,
+            issueById,
+            consumedKeys: index.directiveKeys,
+            attemptOf: (t) => index.attemptOf(t),
+            flowOf,
+            afterTransition: syncMirror,
+            emit: (event, issue, attempt, note) => makeEvent(event, issue, attempt, tickEvents, { note }),
+            onError: (msg) => {
+              errors.push(msg)
+            },
+          })
+    const directiveReport = dLayer?.report ?? { tickets: 0, consumed: 0, rejected: 0 }
+    const directiveVerbNow: ReadonlyMap<TicketId, DirectiveVerb> = dLayer?.verbsNow ?? new Map()
+    mutations += dLayer?.mutations ?? 0
 
     // —— 相位 2 state-diff：受影响单逐个 decide（每单至多一动作；provisionalActions 供三闸） ——
     const dispatchQ: Array<{ action: Extract<Action, { type: 'dispatch' }>; intentKey: string }> = []
@@ -1870,7 +1854,11 @@ export function createEngine(deps: EngineDeps): Engine {
       // 人不可解析（索引空/工号未知）=不注 gate 闸面跳过——人员配置错不是停摆理由，
       // 派发面的 resolvePerson 同源失败才拒派（fail 点收口在 executeDispatch）。
       const personId = resolvePerson(issue)?.id
-      const personGate = personGateSnapshot(personId, dispatchPersons)
+      const personGate = personGateSnapshot(personId, dispatchPersons, inflight, personLimits)
+      // 批示站立（studio-dev-171，docs/18-§2.5）：本拍归一动词优先，否则事件索引派生
+      //（APPROVE verb 置位/DISPATCH 清零）；approved 入参=D4 清偿点：autoApprove 恒批
+      //（demo 语义保持）∥批准站立=真实批示驱动（生产 autoApprove:false 正主通道）
+      const verbNow = directiveVerbNow.get(ticket) ?? index.directiveStandingOf(ticket)
       const out = decide({
         issue,
         laneLease: laneState(lane),
@@ -1893,12 +1881,18 @@ export function createEngine(deps: EngineDeps): Engine {
             ...(config.breakerCooldownMs !== undefined ? { cooldownMs: config.breakerCooldownMs } : {}),
           }
         })(),
-        ...(config.autoApprove ? { approved: true } : {}),
+        ...(config.autoApprove || verbNow === '批准' ? { approved: true } : {}),
         ...(config.flows !== undefined ? { flows: config.flows } : {}),
         now: startedAt,
         stallAfterMs: config.stallAfterMs,
       })
       const { action, intentKey } = out
+      // 5a 回弹抑制（studio-dev-171，docs/18-§2.5；判定件=directive/wire.ts）：打回/
+      // 拆单/搁置站立期不自动呈批，观测面落 WAIT_APPROVAL（决策码零增删）
+      if (reboundSuppressed(verbNow, action.type)) {
+        decisions.push({ ticket, intentKey, code: 'WAIT_APPROVAL', actionType: 'noop', state: issue.state })
+        continue
+      }
       decisions.push({ ticket, intentKey, code: action.code, actionType: action.type, state: issue.state })
       decidedActions.push(action)
       switch (action.type) {
@@ -2210,6 +2204,7 @@ export function createEngine(deps: EngineDeps): Engine {
           statusSetDrift,
           declaredStatusMissing,
           platformStatusExtra,
+          directives: directiveReport,
         },
         stateDiff: { candidates: candidates.length, decisions, reopened, rescanned, queue: { rows: todoQueueRows.length, persons: queuePersons } },
         dispatch: {
@@ -2277,6 +2272,12 @@ export function createEngine(deps: EngineDeps): Engine {
       if (update.flows !== undefined) config.flows = update.flows
       // 州表卫生白名单热换（127-C）：显式传值即换（含空数组=摘白名单——哨兵回全灵敏度）
       if (update.knownForeignStates !== undefined) config.knownForeignStates = update.knownForeignStates
+      // 批示归一层部门表热换（studio-dev-171）：整组换 leader 表——组织变动
+      // fail-closed；面未开（启动未注入）不因 update 开面
+      if (update.directives !== undefined && directiveDeps !== undefined) {
+        directiveDeps = { ...directiveDeps, departments: update.directives }
+        directives = buildDirectiveAuthorizer(directiveDeps, () => people, config.defaultPersonId)
+      }
     },
     dispose,
     get config(): EngineConfig {

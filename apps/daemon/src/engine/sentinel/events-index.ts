@@ -15,8 +15,13 @@
  * 口径的本意是防同誓 replay，不是防回滚重派）。无外部活动时最长卡数小时（真机
  * 逃生门=平台侧偶发活动，机制上不保证；fake 平台 transition 产活动故既有测试
  * 面从未暴露——stall-response kill 面用例经 activity 通道逃生而绿）。
+ *
+ * studio-dev-171（批示归一层，docs/18-§2.5）：directiveKeys（批示评论消费键，
+ * append-only）+ directiveStandingOf（批示站立：APPROVE verb 置位 / DISPATCH 清零）
+ * ——批准站立喂相位 2 approved 入参；打回/拆单/搁置站立抑制 5a 自动呈批。
  */
 import type { EventRecord, TicketId } from '@studio-next/contract'
+import { DIRECTIVE_VERBS, type DirectiveVerb } from '../directive/index.ts'
 
 /**
  * STALL 咬合（kill 面）收口锚——executeStallResponse A 面 note 独有子串
@@ -74,6 +79,20 @@ export interface EventIndex {
    * `PLATFORM_STATUS_EXTRA;status=<name>` 派生——每状态名只告一次。
    */
   platformStatusExtraAlarmed: ReadonlySet<string>
+  /**
+   * 已消费批示评论键集（studio-dev-171 批示归一层，docs/18-§2.5）：APPROVE/ESCALATE
+   * note 携 `directive=<评论id>` 派生（PATROL 键同法，append-only 不释放）——每条批示
+   * 评论恰消费一次：拒/畸形也算消费（不重放不刷屏）；同单新活动重拉评论列表时
+   * 旧批示靠本键防重放（尤其 L2 交付批位防陈旧批准误批）。
+   */
+  directiveKeys: ReadonlySet<string>
+  /**
+   * 批示站立（docs/18-§2.5）：单据最近一次合法批示动词——APPROVE note `verb=<v>`
+   * 置位、DISPATCH 清零（批准被派发消费；L2 第二道待批不吃陈旧批准）。资格拒/畸形
+   * （ESCALATE）不站立。null=无站立。消费面：相位 2 approved 入参（=批准）与
+   * 5a submit_approval 回弹抑制（打回/拆单/搁置站立期不自动呈批）。
+   */
+  directiveStandingOf(ticket: TicketId): DirectiveVerb | null
 }
 
 /** note 分号对解析（PATROL intent= 键同法）：取 `k=` 值，无则 undefined */
@@ -94,6 +113,8 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
   const declaredStatusMissingAlarmed = new Set<string>()
   const platformStatusExtraAlarmed = new Set<string>()
   const stallStrikes = new Map<TicketId, number>()
+  const directiveKeys = new Set<string>()
+  const directiveStanding = new Map<TicketId, DirectiveVerb>()
   for (const e of events) {
     if (e.event === 'DISPATCH') {
       dispatchCount.set(e.issue, (dispatchCount.get(e.issue) ?? 0) + 1)
@@ -101,6 +122,9 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
       lastDispatch.set(e.issue, { ts: e.ts, key })
       // 新 attempt 开工：STALL 连击归零（attempt 作用域计数——DEV-44 咬合阈）
       stallStrikes.set(e.issue, 0)
+      // 批示站立清零（studio-dev-171，docs/18-§2.5）：批准被派发消费——L2 第二道
+      // 待批（同状态名复现）不吃陈旧批准；打回/拆单站立经派发自然翻篇（重派=新誓）
+      directiveStanding.delete(e.issue)
     } else if (e.event === 'GATE_PASS' || e.event === 'GATE_FAIL') {
       lastOutcome.set(e.issue, Math.max(lastOutcome.get(e.issue) ?? 0, e.ts))
     } else if (e.event === 'CLOSE') {
@@ -120,7 +144,24 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
       // 127-C 州表卫生白名单态观察键（append-only 不释放）：note 携 FOREIGN_KNOWN;state=<s>
       const st = noteField(e.note, 'state')
       if (st !== undefined) foreignKnownAlarmed.add(`${e.issue}|${st}`)
+    } else if (e.event === 'APPROVE') {
+      // 批示消费锚（studio-dev-171，docs/18-§2.5）：APPROVE note `DIRECTIVE;` 前缀
+      // 携 verb/directive——verb 置站立（DISPATCH 清零），directive 入消费键
+      //（append-only；拒/畸形的 ESCALATE 面同键不站立）
+      if (e.note !== undefined && e.note.startsWith('DIRECTIVE')) {
+        const id = noteField(e.note, 'directive')
+        if (id !== undefined) directiveKeys.add(id)
+        const verb = noteField(e.note, 'verb')
+        if (verb !== undefined && (DIRECTIVE_VERBS as readonly string[]).includes(verb)) {
+          directiveStanding.set(e.issue, verb as DirectiveVerb)
+        }
+      }
     } else if (e.event === 'ESCALATE') {
+      // 批示归一消费键（ESCALATE 面：资格拒/畸形/边未声明——拒也算消费不重放）
+      if (e.note !== undefined && e.note.startsWith('DIRECTIVE')) {
+        const id = noteField(e.note, 'directive')
+        if (id !== undefined) directiveKeys.add(id)
+      }
       // DEV-49 A4 哨键派生（PATROL 键同法，append-only）：未知态哨键=`ticket|state`
       // （每单每态一次）；巡逻核键=漂移状态名（每状态名一次）
       if (e.note?.startsWith('UNKNOWN_STATE;') === true) {
@@ -177,5 +218,7 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
     statusSetDriftAlarmed,
     declaredStatusMissingAlarmed,
     platformStatusExtraAlarmed,
+    directiveKeys,
+    directiveStandingOf: (ticket: TicketId): DirectiveVerb | null => directiveStanding.get(ticket) ?? null,
   }
 }

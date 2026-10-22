@@ -157,10 +157,10 @@ export const maxLinesPerFile = 600;
  * 清偿义务：每里程碑对账点核对净变化——只许净减（§十五.三.4）。
  */
 export const lineBaseline = {
-  "apps/daemon/src/engine/engine.ts": 2287, // 165 127-A 契约四件套叠加态实测（宰相亲批 2026-10-22）
+  "apps/daemon/src/engine/engine.ts": 2288, // 171 130-P0 批示消费缝+1（宰相亲批 2026-10-22）
   "packages/store/src/records.ts": 606,
   "packages/store/src/ledger.ts": 1768, // 169 132-B pricing 读写面并入(+4；前值 1764=167)
-  "apps/daemon/src/assembly/serve.ts": 1583, // 165 127-A 契约装配缝并入（宰相亲批 2026-10-22 叠加态实测）
+  "apps/daemon/src/assembly/serve.ts":     1578, // 171 130-P0 批示归一层装配缝并入（宰相亲批 2026-10-22 叠加态实测）
   "packages/company/src/repo-validate.ts": 1021,
   "apps/daemon/test/control/hot-reload.test.ts": 930,
   "apps/daemon/test/engine/scheduler.test.ts": 785,

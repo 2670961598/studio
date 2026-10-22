@@ -20,6 +20,7 @@
  *   - 冻结验收命令（L4 acceptance）来自 daemon 配置常量注入，任务书粒度的验收冻结
  *     （单据验收命令字段）归真单刀。
  */
+import path from 'node:path'
 import type {
   CompanySnapshot,
   ExecutorCapabilities,
@@ -170,4 +171,19 @@ export function createDefaultAssembler(ctx: AssemblerContext): PromptAssembler {
     }
     return { agentsMd, brief: withView }
   }
+}
+
+/**
+ * .AIWS 工位路径（docs/43-§五，DEV-28）：`<aiwsRoot>/<部门路径>/<工号>/tickets/<单号>/att<N>`
+ * ——部门路径逐段展开（person.dept 是 '/' 分隔路径串）；派工对象的家+tickets+attempt。
+ * 纯函数（serve 日志与测试断言同源；engine 内 executeDispatch 消费）。自 engine.ts
+ * 抽件——20-§十五「先拆再增」，workspace 落点属装配关注。
+ */
+export function aiwsWorkspaceOf(
+  aiwsRoot: string,
+  person: { dept: string; id: string },
+  ticket: string,
+  attempt: number,
+): string {
+  return path.join(aiwsRoot, ...person.dept.split('/'), person.id, 'tickets', ticket, `att${attempt}`)
 }

@@ -27,6 +27,12 @@ export interface TickPhaseCollect {
   declaredStatusMissing: number
   /** studio-dev-126 C2 声明态漂移：平台在位而声明未收的态名数（节流拍才有） */
   platformStatusExtra: number
+  /**
+   * 批示归一层汇报（studio-dev-171，docs/18-§2.5；面关时全零）：tickets=本拍拉过
+   * 评论的受影响单数、consumed=消费批示/畸形数（恰一次——append-only 键）、
+   * rejected=畸形+资格拒+边未声明数（忽略+ESCALATE 面）。
+   */
+  directives: { tickets: number; consumed: number; rejected: number }
   mirrorSynced: number
   cursorBefore: string | null
   cursorAfter: string | null

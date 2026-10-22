@@ -89,11 +89,10 @@ import {
   parseDataChangeRoutes,
   type Engine,
   type EngineConfig,
-  type TickDecisionEntry,
-  type TickReport,
 } from '../engine/engine.ts'
 import { runEvolveStartupSelfCheck, type EvolveSelfCheckReport, type FrozenAsset } from '../evolve/evolve-guard.ts'
 import { createFakeAdapter } from '../engine/fakes.ts'
+import { buildServeDirectiveDeps, parseWhitelistSpec } from '../engine/directive/index.ts'
 import { createGatedPlatform } from '../engine/tools/gated-platform.ts'
 import { createDefaultGateRunner, createAcceptanceGateRunner } from '../engine/gate.ts'
 import { answerReloadNoCompanyDir, createHotReload, type HotReload, type HotReloadApplyReport } from '../control/hot-reload.ts'
@@ -175,6 +174,11 @@ export interface ServeConfig extends HrServeConfig {
   mirrorRescanEveryTicks: number
   /** demo 自动批（真制作人批准信号经网关动作词归一） */
   autoApprove: boolean
+  /** 批示归一层·制作人账号（studio-dev-171，docs/18-§2.5）：批示豁免位（§2.3 任意
+   * 介入不受限——含派单律）；缺省=未知 actor 面 fail-closed 拒 */
+  directiveProducer?: string
+  /** 批示归一层·组织锚白名单（分号分隔工号/账号）：部长外的固定白名单位；缺省=仅部长面 */
+  directiveWhitelist?: string
   /** 定时岗调度开关（v0.4，16-§四）：true=scheduler + engine 同栈起（demo 样例岗见 DEMO_SNAPSHOT）。
    *  v0.8 地基起 jobs 兼作 scheduler 源开关（22-§一/§二：注册表注册并随 startAll 起） */
   jobs: boolean
@@ -501,6 +505,14 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'autoApprove':
         cfg.autoApprove = bool(value, key)
         break
+      case 'directiveProducer':
+        cfg.directiveProducer = str(value, key)
+        break
+      case 'directiveWhitelist': {
+        const v = str(value, key)
+        if (parseWhitelistSpec(v) !== undefined) cfg.directiveWhitelist = v
+        break
+      }
       case 'jobs':
         cfg.jobs = bool(value, key)
         break
@@ -1141,6 +1153,12 @@ export function buildServeRuntime(
     config: engineConfig,
     people: snapshot.people, departments: snapshot.departments, // 130-P2（studio-dev-173）：部门索引随快照注入——父单立案 leader 解析
     ...(catalog !== undefined ? { catalog } : {}),
+    // 批示归一层（studio-dev-171，docs/18-§2.5）：恒注入（装配缝=engine/directive/
+    // serve-config.ts——leader 表随快照，热重载整组换）
+    directives: buildServeDirectiveDeps(
+      { producer: config.directiveProducer, whitelist: config.directiveWhitelist },
+      snapshot.departments,
+    ),
   })
 
   // —— 唤起源注册表（22-§一）：三源按配置接入，emit 统一进 engine.ingest（runServe 接线） ——
@@ -1290,6 +1308,9 @@ export function buildServeRuntime(
           // 州表卫生白名单热换（127-C）：恒显式（摘声明=空数组=哨兵回全灵敏度——
           // 白名单滞留会静默吞告警，安全面须热换即时生效）
           knownForeignStates: next.knownForeignStates ?? [],
+          // 批示归一层 leader 表热换（studio-dev-171）：组织变动 fail-closed（换 leader/
+          // 撤部即生效——防离任 leader 批示面残留）
+          directives: new Map(next.departments.map((d) => [d.path, d.leader])),
         })
         identity.ctx.company = next.name
         identity.ctx.dept = next.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback
@@ -1376,36 +1397,10 @@ export function takeOverRunningWorkRecords(ledger: Ledger, now: number): Infligh
 
 // ————————————————————————— 主循环 —————————————————————————
 
-/** 一拍心跳日志行（serve 运行面观测；事件面账目在台账） */
-function renderTick(report: TickReport): string {
-  const p = report.phases
-  return (
-    `tick#${report.seq} actions=${report.actions.length} dispatched=${p.dispatch.dispatched} ` +
-    `budget=${p.dispatch.budgetReserved}reserved/${p.dispatch.budgetRefused}refused ` +
-    `harvest=${p.harvest.completed}/${p.harvest.checked}/p${p.harvest.pending} merged=${p.merge.merged} recycled=${p.recycle.recycled} ` +
-    `events=${p.account.eventsAppended} inflight=${report.inflightAfter} cursor=${p.collect.cursorAfter ?? '-'}${
-      p.stateDiff.reopened > 0 ? ` reopened=${p.stateDiff.reopened}` : ''
-    }${p.stateDiff.rescanned > 0 ? ` rescan=+${p.stateDiff.rescanned}` : ''}${p.account.heartbeat ? ' [heartbeat]' : ''}`
-  )
-}
-
-/**
- * noop 决策观测行（docs/17-§2 state-diff 相位；导出纯函数供测试）。
- * noop（NOOP_UNKNOWN_STATE/NOOP_UNKNOWN_FLOW/NOOP_IDLE/WAIT_APPROVAL/DEDUP_NOOP）
- * 不落台账事件（事件词表冻结）也不改平台——若再无日志行即成观察黑洞：单据静默卡死
- * 无处可见（2026-10-20 哨查事故：14 张 P0/P1 单落 New 态被 NOOP_UNKNOWN_STATE
- * 静默跳过 2 小时，靠台账缺席+镜像态反推才定位）。故 serve 运行面每拍为每个 noop
- * 决策落一行：单号+原因码+决策时平台态。行量有界：候选=活动驱动 + 镜像对账扫描拍
- * （每 mirrorRescanEveryTicks 拍一轮，DEV-42①——节流闸即 noop 行量闸）。
- */
-export function renderNoopDecision(seq: number, entry: TickDecisionEntry): string {
-  return `[serve] tick#${seq} noop：${entry.ticket} code=${entry.code} state=${entry.state}（noop 无台账事件，此行=唯一观测面）`
-}
-
-/** 一拍全部 noop 决策观测行（actionType=noop 的决策逐条可见） */
-export function noopLinesOf(report: TickReport): string[] {
-  return report.phases.stateDiff.decisions.filter((d) => d.actionType === 'noop').map((d) => renderNoopDecision(report.seq, d))
-}
+// 拍日志行抽件 render/tick.ts（20-§十五「先拆再增」）；公面经本文件 re-export 保持
+// 既有导入面（noop-observability.test.ts 同源）
+export { renderNoopDecision, noopLinesOf } from './render/tick.ts'
+import { noopLinesOf, renderTick } from './render/tick.ts'
 
 export interface ServeResult {
   ticks: number
