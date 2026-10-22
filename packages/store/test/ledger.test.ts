@@ -63,8 +63,8 @@ function expectConfigInvalid(fn: () => unknown, subcausePrefix: string, messageC
 }
 
 describe('建库与迁移（schema_version 薄 runner）', () => {
-  it('建库即迁移：首刀三表 + v2 五表 + v3 jobs + v4 daemon_kv + v5 candidates + v6 报表三表 + v7 hr_sync_log + 索引 + schema_version 落七行，version=7', () => {
-    expect(ledger.version()).toBe(7)
+  it('建库即迁移：首刀三表 + v2 五表 + v3 jobs + v4 daemon_kv + v5 candidates + v6 报表三表 + v7 hr_sync_log + v8 work_records.model（132-§6.1 单A）+ 索引 + schema_version 落八行，version=8', () => {
+    expect(ledger.version()).toBe(8)
     const tables = (
       ledger.db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as Array<{
         name: unknown
@@ -97,7 +97,7 @@ describe('建库与迁移（schema_version 薄 runner）', () => {
       'idx_work_records_issue',
     ])
     const rows = ledger.db.prepare('SELECT version, sha8 FROM schema_version').all() as Array<{ version: unknown; sha8: unknown }>
-    expect(rows.length).toBe(7)
+    expect(rows.length).toBe(8)
     for (const row of rows) expect(String(row.sha8)).toMatch(/^[0-9a-f]{8}$/)
   })
 
@@ -110,9 +110,9 @@ describe('建库与迁移（schema_version 薄 runner）', () => {
 
   it('重开库 migrate 幂等：版本不变、schema_version 不重复落行', () => {
     const again = openLedger(path.join(root, 'ledger.db'))
-    expect(again.version()).toBe(7)
+    expect(again.version()).toBe(8)
     const rows = again.db.prepare('SELECT COUNT(*) AS c FROM schema_version').get() as { c?: unknown }
-    expect(Number(rows.c)).toBe(7)
+    expect(Number(rows.c)).toBe(8)
     again.close()
   })
 })
@@ -196,7 +196,7 @@ describe('queryEvents 查询面（恒升序 + 过滤）', () => {
 })
 
 describe('work_records / sessions 读写面', () => {
-  it('insert → get/list 全字段往返（可选字段含空/满两端）', () => {
+  it('insert → get/list 全字段往返（可选字段含空/满两端；model 列+tokens 四桶=132-§6.1 单A v8 面）', () => {
     const id = ledger.insertWorkRecord({
       id: 'wr-1',
       issue: 'STUDIO-200',
@@ -205,7 +205,7 @@ describe('work_records / sessions 读写面', () => {
       started_at: 1760000100000,
       ended_at: 1760000200000,
       cost_usd: 0.5,
-      tokens: { input: 100, output: 50, cached: 10 },
+      tokens: { input: 100, output: 50, cache_read: 10, cache_creation: 5 },
       attempt: 2,
       status: 'done',
       report_ref: 'reports/STUDIO-200/REPORT.md',
@@ -214,6 +214,7 @@ describe('work_records / sessions 读写面', () => {
       branch: 'feature/x',
       session_id: 'sess-1',
       instance_id: 'inst-1',
+      model: 'glm/GLM-5.3',
     })
     expect(id).toBe('wr-1')
     const got = ledger.getWorkRecord('wr-1')
@@ -229,11 +230,12 @@ describe('work_records / sessions 读写面', () => {
       started_at: 1760000100000,
       ended_at: 1760000200000,
       cost_usd: 0.5,
-      tokens: { input: 100, output: 50, cached: 10 },
+      tokens: { input: 100, output: 50, cache_read: 10, cache_creation: 5 },
       attempt: 2,
       status: 'done',
       report_ref: 'reports/STUDIO-200/REPORT.md',
       summary_ref: 'reports/STUDIO-200/summary.json',
+      model: 'glm/GLM-5.3',
     })
 
     ledger.insertWorkRecord({ id: 'wr-2', issue: 'STUDIO-201', person_id: 'AGENT-2', executor: 'claude', started_at: 1760000300000, attempt: 1, status: 'running' })

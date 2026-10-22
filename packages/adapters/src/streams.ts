@@ -174,9 +174,11 @@ function parseDshStatus(v: Record<string, unknown>, line: string): StreamEvent[]
 
 /**
  * dsh 专属 usage 归一（camelCase——docs/31-§3.2 实测；与三家的 snake_case 面互不相干，
- * toUsage 不动）：input=inputTokens、output=outputTokens、cached=cacheReadTokens；
- * totalTokens/cacheWriteTokens/reasoningTokens 契约 TokenCounts 无位——弃（docs/31-§5-3）。
- * input/output 缺任一则整条弃用（宁缺毋假，与「不完整则整条省略」同构）。
+ * toUsage 不动）：input=inputTokens、output=outputTokens、cache_read=cacheReadTokens、
+ * cache_creation=cacheWriteTokens（132-§6.1 单A·studio-dev-168 四桶直译——不再单桶坍缩，
+ * cache 写桶此前采集即丢=缺陷 C2/判负线⑤）；totalTokens/reasoningTokens 契约 TokenCounts
+ * 无位——弃（docs/31-§5-3）。input/output 缺任一则整条弃用（宁缺毋假，与「不完整则
+ * 整条省略」同构）。写侧一律新键（cached 兼容键只在读侧认，kernel.TokenCounts 接口注）。
  */
 function toUsageDsh(v: unknown): TokenCounts | undefined {
   const r = asRecord(v)
@@ -184,8 +186,14 @@ function toUsageDsh(v: unknown): TokenCounts | undefined {
   const input = asFiniteNumber(r['inputTokens'])
   const output = asFiniteNumber(r['outputTokens'])
   if (input === undefined || output === undefined) return undefined
-  const cached = asFiniteNumber(r['cacheReadTokens'])
-  return { input, output, ...(cached !== undefined ? { cached } : {}) }
+  const cacheRead = asFiniteNumber(r['cacheReadTokens'])
+  const cacheCreation = asFiniteNumber(r['cacheWriteTokens'])
+  return {
+    input,
+    output,
+    ...(cacheRead !== undefined ? { cache_read: cacheRead } : {}),
+    ...(cacheCreation !== undefined ? { cache_creation: cacheCreation } : {}),
+  }
 }
 
 /**
@@ -349,9 +357,12 @@ function asBoolean(v: unknown): boolean | undefined {
 }
 
 /**
- * usage 归一：各家字段名统一到 TokenCounts。
+ * usage 归一：各家字段名统一到 TokenCounts（snake_case 面——claude/kimi/codex）。
  * 取值顺序（先命中先用）：input=input_tokens|input；output=output_tokens|output；
- * cached=cached_tokens|cache_read_input_tokens|cached。input/output 缺任一则整条弃用。
+ * cache_read=cached_tokens|cache_read_input_tokens|cached（三家源均为**读缓存命中**语义
+ * ——写桶三家现网事件无源，探针升级前 cache_creation 恒缺）。input/output 缺任一则
+ * 整条弃用。产出键=新键 cache_read（132-§6.1 单A「写侧一律新键」，治 G7 桶键统一：
+ * 源字段拼写 `cached_tokens`/`cached` 是 wire 面，不等于契约面产旧键）。
  */
 function toUsage(v: unknown): TokenCounts | undefined {
   const r = asRecord(v)
@@ -363,27 +374,28 @@ function toUsage(v: unknown): TokenCounts | undefined {
     r['output_tokens'] !== undefined ? r['output_tokens'] : r['output'],
   )
   if (input === undefined || output === undefined) return undefined
-  const cached = asFiniteNumber(
+  const cacheRead = asFiniteNumber(
     r['cached_tokens'] !== undefined
       ? r['cached_tokens']
       : r['cache_read_input_tokens'] !== undefined
         ? r['cache_read_input_tokens']
         : r['cached'],
   )
-  return { input, output, ...(cached !== undefined ? { cached } : {}) }
+  return { input, output, ...(cacheRead !== undefined ? { cache_read: cacheRead } : {}) }
 }
 
 /**
  * wire.jsonl 逐轮 usage 求和（kimi 伴生文件里多条记录=多轮，合计才是 turn 总账）。
- * v0.3 新增导出（kimi 适配器 stream() 会话结束后读 wire 合流复用）——函数体与
- * parseKimi 既有行为一概不动。注意 docs/25-§3.1 裁决#4：「逐轮求和=turn 总账」是
- * 假设，真实 wire 验证待办仍在（探针前不改本口径）。
+ * v0.3 新增导出（kimi 适配器 stream() 会话结束后读 wire 合流复用）——求和口径不动，
+ * 仅产出键随 132-§6.1 单A 升新键 cache_read（写侧一律新键，治 G7）。注意 docs/25-§3.1
+ * 裁决#4：「逐轮求和=turn 总账」是假设，真实 wire 验证待办仍在（探针前不改本口径）。
  */
 export function sumWireUsage(wireJsonlText: string): TokenCounts | undefined {
   let input = 0
   let output = 0
-  let cached = 0
+  let cacheRead = 0
   let seen = false
+  let seenRead = false
   for (const line of lines(wireJsonlText)) {
     const v = parseJson(line)
     if (!isRecord(v) || v['type'] !== 'usage') continue
@@ -392,9 +404,13 @@ export function sumWireUsage(wireJsonlText: string): TokenCounts | undefined {
     seen = true
     input += u.input
     output += u.output
-    cached += u.cached ?? 0
+    if (u.cache_read !== undefined) {
+      seenRead = true
+      cacheRead += u.cache_read
+    }
   }
-  return seen ? { input, output, cached } : undefined
+  if (!seen) return undefined
+  return { input, output, ...(seenRead ? { cache_read: cacheRead } : {}) }
 }
 
 /** 从 claude/kimi 的 assistant message 里拼接 text 块（tool_use 等非文本块忽略） */

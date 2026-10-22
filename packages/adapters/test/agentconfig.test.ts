@@ -15,20 +15,26 @@
  * 临时注入、finally 还原（withFakeEnv，与 dsh.test.ts 同款），不污染其他用例。
  */
 import { fileURLToPath } from 'node:url'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { ClassifiedError } from '@studio-next/contract'
 import {
   builtinResolver,
+  dshModelFromPatches,
   loadAgentConfig,
   registerBuiltins,
   wireRegistry,
 } from '../src/agentconfig.ts'
 import type { AdapterResolver } from '../src/agentconfig.ts'
 import { ClaudeAdapter } from '../src/claude.ts'
+import { DshAdapter } from '../src/dsh.ts'
 import { KimiAdapter } from '../src/kimi.ts'
 import { createRegistry } from '../src/registry.ts'
 
 const fakeCli = fileURLToPath(new URL('./fake-cli/fake-cli.mjs', import.meta.url))
+const join = path.join
 
 /** 临时注入 FAKE_* 旋钮到 process.env（适配器 detect 时展开），结束还原 */
 async function withFakeEnv(kvs: Record<string, string>, fn: () => Promise<void>): Promise<void> {
@@ -277,6 +283,113 @@ describe('wireRegistry：配置 → 注册表接线', () => {
     )
     expect(err.subcause).toBe('executor/dup-default')
     expect(err.message).toContain('claude')
+  })
+})
+
+// —— 132-§6.1 单A·C3 model 接线（studio-dev-168）：patches['agent-default-model'] 声明
+//    镜像 → dsh 工厂 → DshAdapter.opts.model → ResultStats.model ——
+describe('dshModelFromPatches：agent-default-model 声明解析（dsh 家族专属消费）', () => {
+  it('合法声明：{config:{provider,model}} → 归一形 provider/model', () => {
+    expect(
+      dshModelFromPatches({ 'agent-default-model': { config: { provider: 'glm', model: 'GLM-5.3' } } }),
+    ).toBe('glm/GLM-5.3')
+    expect(
+      dshModelFromPatches({ 'agent-default-model': { config: { provider: 'deepseek', model: 'deepseek-flash' } } }),
+    ).toBe('deepseek/deepseek-flash')
+  })
+
+  it('缺省面：patches 缺省 / 无该键 → undefined（未声明=无从可知，不猜——legalYaml 的 prod/explore 键不消费）', () => {
+    expect(dshModelFromPatches(undefined)).toBeUndefined()
+    expect(dshModelFromPatches({})).toBeUndefined()
+    expect(dshModelFromPatches({ prod: { model: 'high' } })).toBeUndefined()
+  })
+
+  it('坏形状 → CONFIG_INVALID/agentconfig/dsh-model-patch（不静默不猜）', () => {
+    const bad = (patches: Record<string, unknown>): void => {
+      const err = captureConfigInvalid(() => dshModelFromPatches(patches))
+      expect(err.subcause).toBe('agentconfig/dsh-model-patch')
+    }
+    bad({ 'agent-default-model': 'glm' }) // 非映射
+    bad({ 'agent-default-model': ['glm'] }) // 数组
+    bad({ 'agent-default-model': {} }) // 缺 config
+    bad({ 'agent-default-model': { config: {} } }) // 缺 provider/model
+    bad({ 'agent-default-model': { config: { provider: '', model: 'GLM-5.3' } } }) // 空 provider
+    bad({ 'agent-default-model': { config: { provider: 'glm', model: 'GLM-5.3/extra' } } }) // '/' 歧义
+  })
+})
+
+describe('wireRegistry model 接线（C3 端到端：agent.yaml 声明 → 工厂 → ResultStats.model）', () => {
+  it('patches 透传：工厂第二参=该家 patches 段（generic 层不解释——解释在 dsh 家族工厂）', () => {
+    const seen = new Map<string, Readonly<Record<string, unknown>> | undefined>()
+    const spyResolver: AdapterResolver = (name) => {
+      const base = builtinResolver(name)
+      return base === undefined
+        ? undefined
+        : (cmd, patches) => {
+            seen.set(name, patches)
+            return base(cmd)
+          }
+    }
+    wireRegistry(
+      createRegistry(),
+      loadAgentConfig(
+        'executors:\n  dsh:\n    patches: { agent-default-model: { config: { provider: glm, model: GLM-5.3 } } }\n  claude: {}\n',
+      ),
+      spyResolver,
+    )
+    expect(seen.get('dsh')).toStrictEqual({
+      'agent-default-model': { config: { provider: 'glm', model: 'GLM-5.3' } },
+    })
+    expect(seen.get('claude')).toBeUndefined() // 未声明 patches 的家收 undefined
+  })
+
+  it(
+    '端到端：声明镜像经 dsh 内置工厂注入 → resultStats.model=归一形（fake CLI 全链）',
+    async () => {
+      const registry = wireRegistry(
+        createRegistry(),
+        loadAgentConfig(
+          `executors:\n  dsh:\n    default: true\n    cmd: [${process.execPath}, ${fakeCli}]\n    patches:\n      agent-default-model: { config: { provider: glm, model: GLM-5.3 } }\n`,
+        ),
+        builtinResolver,
+      )
+      const adapter = registry.resolve('dsh')
+      expect(adapter).toBeInstanceOf(DshAdapter)
+      const workdir = mkdtempSync(join(tmpdir(), 'agentconfig-model-'))
+      try {
+        const briefPath = join(workdir, 'brief.md')
+        writeFileSync(briefPath, 'TASK: model 接线探针（agent.yaml 声明镜像 → 工厂注入）')
+        // dsh 位 env 收口为 DSH_ 前缀封闭允许集（docs/43-附录A-1）——fake 旋钮走 DSH_FAKE_*
+        await withFakeEnv({ DSH_FAKE_ECHO_ARGS: '1' }, async () => {
+          const h = await adapter.launch({
+            ticket: 'TEST-MODEL',
+            attempt: 1,
+            briefPath,
+            workspace: workdir,
+            AGENTS_MD: { channel: 'native', target: join(workdir, 'AGENTS.md') },
+          })
+          for await (const ev of adapter.stream(h)) void ev
+          const stats = await adapter.resultStats(h)
+          expect(stats.model).toBe('glm/GLM-5.3')
+        })
+      } finally {
+        rmSync(workdir, { recursive: true, force: true })
+      }
+    },
+    10_000,
+  )
+
+  it('坏声明在接线期即拒（fail-fast：wireRegistry 构造适配器时校验，不待收割）', () => {
+    const err = captureConfigInvalid(() =>
+      wireRegistry(
+        createRegistry(),
+        loadAgentConfig(
+          'executors:\n  dsh:\n    patches: { agent-default-model: { config: { provider: glm } } }\n',
+        ),
+        builtinResolver,
+      ),
+    )
+    expect(err.subcause).toBe('agentconfig/dsh-model-patch')
   })
 })
 

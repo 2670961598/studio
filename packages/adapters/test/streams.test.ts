@@ -34,13 +34,13 @@ describe('dsh（0.2.0-rc.2 真机八类 NDJSON——docs/31-§3.1/§7；golden=�
       { type: 'step_start', step: '1' },
       { type: 'log', text: 'Reply exactly PROBE-OK.' },
       { type: 'log', text: 'PROBE-OK' },
-      { type: 'step_end', step: '1', usage: { input: 4510, output: 26, cached: 256 } },
+      { type: 'step_end', step: '1', usage: { input: 4510, output: 26, cache_read: 256 } },
       { type: 'turn_end', completed: true },
       { type: 'log', text: 'PROBE-OK' },
     ])
   })
 
-  it('P04 错误凭据：errorCode=AUTH 结构位 + error=message 原文（v1.5 前缀方案废除）；usage 四桶全 0（无 cached 键）；final 空不产事件', () => {
+  it('P04 错误凭据：errorCode=AUTH 结构位 + error=message 原文（v1.5 前缀方案废除）；usage 全 0（无缓存桶键）；final 空不产事件', () => {
     expect(parseStream(fixture('dsh', 'P04-错误凭据.ndjson'), 'dsh')).toStrictEqual<
       StreamEvent[]
     >([
@@ -82,7 +82,7 @@ describe('dsh（0.2.0-rc.2 真机八类 NDJSON——docs/31-§3.1/§7；golden=�
     ])
   })
 
-  it('P05 续跑面：turn:2 序号经 turn_start 原文透传留证；cacheReadTokens:4608（前缀缓存命中）→ cached', () => {
+  it('P05 续跑面：turn:2 序号经 turn_start 原文透传留证；cacheReadTokens:4608（前缀缓存命中）→ cache_read（132-§6.1 单A 新键）', () => {
     const events = parseStream(fixture('dsh', 'P05-续跑.ndjson'), 'dsh')
     expect(events).toStrictEqual<StreamEvent[]>([
       {
@@ -93,7 +93,7 @@ describe('dsh（0.2.0-rc.2 真机八类 NDJSON——docs/31-§3.1/§7；golden=�
       { type: 'step_start', step: '1' },
       { type: 'log', text: 'The user asked me to reply exactly: PROBE-OK. Answer exact string only.' },
       { type: 'log', text: 'PROBE-OK' },
-      { type: 'step_end', step: '1', usage: { input: 220, output: 37, cached: 4608 } },
+      { type: 'step_end', step: '1', usage: { input: 220, output: 37, cache_read: 4608 } },
       { type: 'turn_end', completed: true },
       { type: 'log', text: 'PROBE-OK' },
     ])
@@ -117,9 +117,54 @@ describe('dsh（0.2.0-rc.2 真机八类 NDJSON——docs/31-§3.1/§7；golden=�
       { type: 'step_start', step: '1' },
       { type: 'log', text: '4 AGENTS-CHANNEL-VERIFIED' },
       { type: 'log', text: '4 AGENTS-CHANNEL-VERIFIED' },
-      { type: 'step_end', step: '1', usage: { input: 258, output: 32, cached: 4608 } },
+      { type: 'step_end', step: '1', usage: { input: 258, output: 32, cache_read: 4608 } },
       { type: 'turn_end', completed: true },
       { type: 'log', text: '4 AGENTS-CHANNEL-VERIFIED' },
+    ])
+  })
+
+  // —— 132-§6.1 单A 四桶直译（studio-dev-168，判负线⑤）——
+  // fixtures/ 是 0.2.0-rc.2 真机探针实录（deepseek 轨，无 cacheWriteTokens 线），此处用
+  // docs/31-§3.2 五字段**形状**直构流（非探针实录，不入 fixtures 证据面）：
+  // cacheReadTokens→cache_read、cacheWriteTokens→cache_creation、totalTokens/reasoningTokens
+  // 契约无位弃置；写侧一律新键——归一结果不得含 `cached`（旧键只在读侧认）。
+  it('单A 四桶直译：cacheWriteTokens→cache_creation 不丢（判负线⑤）+ cacheReadTokens→cache_read + 无位字段弃置 + 写侧不产 cached', () => {
+    const ndjson = [
+      '{"type":"session","sessionId":"session-four-bucket","cwd":"/private/tmp"}',
+      '{"type":"status","phase":"turn_start","turn":1}',
+      '{"type":"status","phase":"step_start","turn":1,"step":1}',
+      '{"type":"status","phase":"step_end","turn":1,"step":1,"usage":{"inputTokens":1200,"outputTokens":80,"totalTokens":1280,"cacheReadTokens":512,"cacheWriteTokens":256,"reasoningTokens":64}}',
+      '{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"completed"}}',
+      '{"type":"final","text":"FOUR-BUCKET-OK"}',
+    ].join('\n')
+    const events = parseStream(ndjson, 'dsh')
+    expect(events).toStrictEqual<StreamEvent[]>([
+      { type: 'log', text: '{"type":"session","sessionId":"session-four-bucket","cwd":"/private/tmp"}' },
+      { type: 'log', text: '{"type":"status","phase":"turn_start","turn":1}' },
+      { type: 'step_start', step: '1' },
+      {
+        type: 'step_end',
+        step: '1',
+        usage: { input: 1200, output: 80, cache_read: 512, cache_creation: 256 },
+      },
+      { type: 'turn_end', completed: true },
+      { type: 'log', text: 'FOUR-BUCKET-OK' },
+    ])
+  })
+
+  it('单A 无缓存桶流：step_end usage 仅 input/output → 不落缓存桶键（不编造 0 桶）', () => {
+    const ndjson = [
+      '{"type":"status","phase":"turn_start","turn":1}',
+      '{"type":"status","phase":"step_start","turn":1,"step":1}',
+      '{"type":"status","phase":"step_end","turn":1,"step":1,"usage":{"inputTokens":10,"outputTokens":5,"totalTokens":15}}',
+      '{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"completed"}}',
+    ].join('\n')
+    const events = parseStream(ndjson, 'dsh')
+    expect(events).toStrictEqual<StreamEvent[]>([
+      { type: 'log', text: '{"type":"status","phase":"turn_start","turn":1}' },
+      { type: 'step_start', step: '1' },
+      { type: 'step_end', step: '1', usage: { input: 10, output: 5 } },
+      { type: 'turn_end', completed: true },
     ])
   })
 
@@ -166,7 +211,7 @@ describe('claude（stream-json：终态只认 result 事件——17-§6）', () 
       { type: 'log', text: 'system:init' },
       { type: 'log', text: '读取任务书，定位验收命令…' },
       { type: 'log', text: '完成：streams.ts 交付且测试全绿' },
-      { type: 'turn_end', completed: true, usage: { input: 1468, output: 233, cached: 5120 } },
+      { type: 'turn_end', completed: true, usage: { input: 1468, output: 233, cache_read: 5120 } },
     ])
   })
 
@@ -218,7 +263,7 @@ describe('kimi（stdout 无 usage，usage 在 wire.jsonl——17-§6 已知坑�
       { type: 'log', text: 'system:init' },
       { type: 'log', text: '开始实现流归一化…' },
       { type: 'log', text: '交付归一化实现与测试用例' },
-      { type: 'turn_end', completed: true, usage: { input: 4800, output: 1130, cached: 1200 } },
+      { type: 'turn_end', completed: true, usage: { input: 4800, output: 1130, cache_read: 1200 } },
     ])
   })
 

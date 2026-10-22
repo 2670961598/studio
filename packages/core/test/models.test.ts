@@ -323,8 +323,11 @@ describe('estimateCost：边界与精度口径（文件头冻结：双精度直�
     expect(cost.usd).toBeCloseTo(500 + 800, 6)
   })
 
-  it('cached 桶不计价（端口无 cachedPerM 键，扩键走批示——文件头裁定）', () => {
-    const cost = catalog.estimateCost({ input: 1_000_000, output: 0, cached: 5_000_000 }, 'high')
+  it('cache 桶不计价（四桶 cache_read/cache_creation+兼容别名 cached 均无价键，扩键走批示——文件头裁定，132-§6.1 单A）', () => {
+    const cost = catalog.estimateCost(
+      { input: 1_000_000, output: 0, cache_read: 5_000_000, cache_creation: 2_000_000, cached: 999 },
+      'high',
+    )
     expect(cost.usd).toBe(0.6)
   })
 

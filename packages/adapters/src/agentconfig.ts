@@ -17,10 +17,12 @@
  *     「配置可覆盖能力」的替代语义未获文档授权——拟稿待批点，见汇报。
  *   - cmd 是配置的**覆盖注入**位：config 有 cmd 则注入适配器工厂（测试假 CLI / 本机
  *     路径改道），无 cmd 用适配器缺省命令（17-§6 各家 launch 命令）。
- *   - version / patches / plugins 属「人事档案」字段：解析进记录但注册表不消费——
- *     version 的运行时核实归 detect()（18-§一 launch 前必跑），patches/plugins 归
- *     L5 工具层（17-§5 executor 能力声明+插件 manifest）。patches 值形状文档未定义
- *     （17-§4 示例原样省略号），按 unknown 透传不解释。
+ *   - version / patches / plugins 属「人事档案」字段：解析进记录，version 的运行时核实归
+ *     detect()（18-§一 launch 前必跑），plugins 归 L5 工具层（17-§5 executor 能力声明+
+ *     插件 manifest）。patches 值形状文档未定义（17-§4 示例原样省略号）——按 unknown
+ *     透传不解释；**唯一例外**（132-§6.1 单A，studio-dev-168）：dsh 家工厂消费
+ *     `agent-default-model` 声明注入 ResultStats.model（dshModelFromPatches——家族专属
+ *     消费，cmd 同位先例；generic 层仍不解释，其余家不读）。
  *   - capabilities 各键**可部分提供**（只比对提供的字段）；agents_md 词汇=contract
  *     冻结枚举（native/user_level/append_system_prompt）。
  *   - 缺 executors 段 / 空段 / yaml 语法错 / 形状错 → CONFIG_INVALID 明报（subcause
@@ -151,8 +153,16 @@ export function loadAgentConfig(text: string): AgentConfig {
 // 注册表接线（wireRegistry）与四家内置捷径（registerBuiltins）
 // ---------------------------------------------------------------------------
 
-/** 适配器工厂：cmd 为配置覆盖位（undefined=适配器缺省命令，17-§6） */
-export type AdapterFactory = (cmd: readonly string[] | undefined) => ExecutorAdapter
+/**
+ * 适配器工厂：cmd 为配置覆盖位（undefined=适配器缺省命令，17-§6）；patches 为该家
+ * agent.yaml patches 段透传（132-§6.1 单A·studio-dev-168——dsh 家消费
+ * `agent-default-model` 声明注入 ResultStats.model，见 dshModelFromPatches；其余家忽略）。
+ * 第二参可选：少参工厂字面量（既有测试/调用点）类型兼容零改动。
+ */
+export type AdapterFactory = (
+  cmd: readonly string[] | undefined,
+  patches?: Readonly<Record<string, unknown>>,
+) => ExecutorAdapter
 
 /** 名 → 适配器工厂的解析器（配置有而代码无时返回 undefined，wireRegistry 明报） */
 export type AdapterResolver = (name: string) => AdapterFactory | undefined
@@ -181,7 +191,8 @@ export function wireRegistry(
         `${rec.name} 是 judge 注册位（<family>-judge），不得标 default——判断位是 micro-judge 专用派发面，不是任务派工泳道（studio-dev-160 §6.3）`,
       )
     }
-    const adapter = factory(rec.cmd) // cmd 覆盖注入（无 cmd=适配器缺省命令）
+    // cmd 覆盖注入（无 cmd=适配器缺省命令）+ patches 透传（家族工厂自决消费，本层不解释）
+    const adapter = factory(rec.cmd, rec.patches)
     checkCapabilityDrift(rec, adapter.capabilities)
     registry.register(adapter, { default: rec.default })
   }
@@ -220,10 +231,53 @@ const BUILTIN_ORDER: readonly ExecutorFamily[] = ['dsh', 'claude', 'codex', 'kim
 
 /** 四家工厂表（cmd=undefined 时各自落缺省命令，17-§6） */
 const BUILTIN_FACTORIES: Readonly<Record<ExecutorFamily, AdapterFactory>> = {
-  dsh: (cmd) => new DshAdapter(cmd),
+  dsh: (cmd, patches) => {
+    const model = dshModelFromPatches(patches)
+    return new DshAdapter(cmd, model !== undefined ? { model } : undefined)
+  },
   claude: (cmd) => new ClaudeAdapter(cmd),
   codex: (cmd) => new CodexAdapter(cmd),
   kimi: (cmd) => new KimiAdapter(cmd),
+}
+
+/**
+ * dsh 家 patches['agent-default-model'] 声明解析（132-§6.1 单A·C3，studio-dev-168）：
+ * dsh 无 `--model` 旗标，模型=profile `agent-default-model` 插件配置（provider+model，
+ * docs/31-§2 表）——机器级 profile patch 是 dsh 侧事实，daemon 直读机器全局态与
+ * per-company 隔离纪律相抵（docs/31-§5-5）；agent.yaml 的 patches 段是部署对该 patch
+ * 的**声明镜像**（「capabilities 是镜像」同构——配置声明既有事实，非新增第三事实源）。
+ * 形状照录 profile patch 条目：`{config: {provider, model}}`（两非空串且不含 `/`——
+ * 归一形 `provider/model` 无歧义）；返回归一形字符串；缺该键=undefined（未声明=无从
+ * 可知，ResultStats.model 如实缺席）；键在而形状坏 → CONFIG_INVALID 明报（不静默不猜）。
+ * generic 层「patches 透传不解释」纪律维持——本解析是 dsh 家族工厂的家族专属消费
+ * （cmd 家族专属消费的同位先例），其余家不读 patches。
+ */
+export function dshModelFromPatches(patches: Readonly<Record<string, unknown>> | undefined): string | undefined {
+  if (patches === undefined || !Object.hasOwn(patches, 'agent-default-model')) return undefined
+  const entry = patches['agent-default-model']
+  const detail = (why: string): never =>
+    configInvalid(
+      'agentconfig/dsh-model-patch',
+      `executors.dsh.patches['agent-default-model'] ${why}——形状须为 {config: {provider, model}}（profile patch 条目的声明镜像，132-§6.1 单A）`,
+    )
+  if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+    detail(`形状不合（收到 ${Array.isArray(entry) ? '数组' : typeof entry}）`)
+  }
+  const config = (entry as Record<string, unknown>)['config']
+  if (typeof config !== 'object' || config === null || Array.isArray(config)) {
+    detail('缺 config 映射段')
+  }
+  const c = config as Record<string, unknown>
+  const provider = c['provider']
+  const model = c['model']
+  if (typeof provider !== 'string' || provider === '') detail('config.provider 须为非空字符串')
+  if (typeof model !== 'string' || model === '') detail('config.model 须为非空字符串')
+  const p = provider as string
+  const m = model as string
+  if (p.includes('/') || m.includes('/')) {
+    detail(`provider/model 不得含 '/'（归一形 ${JSON.stringify(`${p}/${m}`)} 有歧义）`)
+  }
+  return `${p}/${m}`
 }
 
 /**

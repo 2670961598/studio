@@ -63,7 +63,7 @@ describe('v6 迁移（ledgers / reports / probes_runs 三表）', () => {
   })
 
   it('建库即到 v7：三表在库、schema_version 恰七行；重开库 migrate 幂等（version 不涨、v6/v7 不重放）', () => {
-    expect(ledger.version()).toBe(7)
+    expect(ledger.version()).toBe(8)
     const tables = (
       ledger.db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as Array<{ name: unknown }>
     ).map((r) => String(r.name))
@@ -71,13 +71,13 @@ describe('v6 迁移（ledgers / reports / probes_runs 三表）', () => {
     expect(tables).toContain('reports')
     expect(tables).toContain('probes_runs')
     const rows = ledger.db.prepare('SELECT version, sha8 FROM schema_version ORDER BY version').all() as Array<{ version: unknown; sha8: unknown }>
-    expect(rows.length).toBe(7)
+    expect(rows.length).toBe(8)
     for (const row of rows) expect(String(row.sha8)).toMatch(/^[0-9a-f]{8}$/)
 
     const again = openLedger(path.join(root, 'ledger.db'))
-    expect(again.version()).toBe(7)
+    expect(again.version()).toBe(8)
     const count = again.db.prepare('SELECT COUNT(*) AS c FROM schema_version').get() as { c?: unknown }
-    expect(Number(count.c)).toBe(7)
+    expect(Number(count.c)).toBe(8)
     again.close()
   })
 
@@ -130,7 +130,7 @@ describe('v6 迁移（ledgers / reports / probes_runs 三表）', () => {
 
     // ② 重开（openLedger 全量迁移）→ v6：存量无损、三表面可用
     const upgraded = openLedger(p)
-    expect(upgraded.version()).toBe(7)
+    expect(upgraded.version()).toBe(8)
     expect(upgraded.queryEvents().map((e) => e.id)).toEqual(['01ARZ3NDEKTSV4RRFFQ69G5FAV'])
     expect(upgraded.getLedgerEntry('STUDIO-9', 'task')).toBeUndefined()
     expect(upgraded.listReports()).toEqual([])

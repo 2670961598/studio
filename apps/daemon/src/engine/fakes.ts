@@ -41,6 +41,7 @@ import type {
   StreamEvent,
   TaskBrief,
   TicketId,
+  TokenCounts,
 } from '@studio-next/contract'
 
 // ————————————————————————— fake FlowPlatform —————————————————————————
@@ -258,6 +259,17 @@ export interface FakeAdapterOptions {
    * 本钩子——断言「整树杀」被调（handle 归属 + graceMs 与 killGraceMs 同链）。
    */
   onKill?: (h: Handle, graceMs: number) => void
+  /**
+   * 账目桶覆盖（132-§6.1 单A·studio-dev-168 测试注入面）：缺省 {input:100,output:50}
+   * 两桶（demo 主链既有断言不动）；四桶/旧形 `cached` 形态经本钮注入——收割面
+   * （tokenBuckets 兼容读 + work_records + GATE_PASS tokens）对账用。
+   */
+  usage?: TokenCounts
+  /**
+   * 模型归一形注入（132-§6.1 单A·C3）：镜像 DshAdapterOptions.model——resultStats.model
+   * 直录本值（缺省不产 model 键=无从可知，不猜）。
+   */
+  model?: string
 }
 
 interface FakeSession {
@@ -348,12 +360,14 @@ export function createFakeAdapter(opts?: FakeAdapterOptions): ExecutorAdapter {
         return { executor: name, sessionId, pid: 0 }
       }
       if (mode !== 'empty_output') events.push({ type: 'log', text: `[${name}] 工作产出文本（非空输出——四要件之一）` })
+      // 账目桶：缺省两桶（demo 主链冻结断言）；opts.usage 覆盖（四桶/旧形注入面，132-§6.1 单A）
+      const usage: TokenCounts = opts?.usage ?? { input: 100, output: 50 }
       events.push({ type: 'step_start', step: 'work' })
-      events.push({ type: 'step_end', step: 'work', usage: { input: 100, output: 50 } })
+      events.push({ type: 'step_end', step: 'work', usage })
       events.push({
         type: 'turn_end',
         completed: mode !== 'incomplete' && mode !== 'external_error',
-        usage: { input: 100, output: 50 },
+        usage,
         // DEV-46 外部服务错误注入：错误码走 contract errorCode 位（v1.5），原文走 error——
         // daemon 收割面折进 GATE_FAIL note（turn_end.error=…），断路签名仍按四要件形态计
         ...(mode === 'external_error'
@@ -387,6 +401,8 @@ export function createFakeAdapter(opts?: FakeAdapterOptions): ExecutorAdapter {
         tokens: turnEnd?.usage ?? { input: 0, output: 0 },
         duration: 10,
         turns: 1,
+        // model 直录注入值（132-§6.1 单A·C3）：缺省不产键（exactOptionalPropertyTypes 纪律）
+        ...(opts?.model !== undefined ? { model: opts.model } : {}),
       }
     },
     async kill(h: Handle, graceMs: number): Promise<void> {

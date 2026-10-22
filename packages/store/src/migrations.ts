@@ -387,6 +387,25 @@ const MIGRATIONS: readonly Migration[] = [
       '',
     ].join('\n'),
   },
+  {
+    // v8：132-A 成本契约刀（studio-dev-168，132-§6.1 单A·制作人 2026-10-22 全批）：
+    //   work_records 增 `model TEXT` 列——收割 ResultStats.model（归一形 `provider/model`，
+    //   如 `glm/GLM-5.3`）的落账位，后续 usage_daily/price_snapshots（单B/单C）的桥接键。
+    //   - 加列走批示（17-§3 纪律）：studio-dev-132 提案（§10「本提案即批示载体」）为载体；
+    //   - 可空无默认：model 归一形非空串（写面闸 records.ts），无从可知（旧执行/部署未
+    //     声明 profile 模型）=NULL——如实缺省，不猜；
+    //   - events 列集冻结不动（F2-04）：模型留痕走本列+GATE_PASS note 后缀 `model=…`；
+    //   - 拟稿偏差申报：132-§6.1/§10 写「store 迁移 v9」系提案期对 A-E 五单合计的投影
+    //     序号；本仓 LATEST_VERSION=7 且本文件头注冻结「version 单调 +1」——本刀取 v8
+    //     （跨号即破纪律；后续单依合入序顺取 v9+）。
+    //   ALTER 加列（非重建）：SQLite 追加尾列，存量 85 行不动，读写面（ledger.ts）同步扩。
+    version: 8,
+    name: '132-A 成本契约刀：work_records.model 列（studio-dev-168）',
+    sql: [
+      'ALTER TABLE work_records ADD COLUMN model TEXT;',
+      '',
+    ].join('\n'),
+  },
 ]
 
 /** 内置迁移的最高版本（0 = 无迁移可用，仅占位防呆） */

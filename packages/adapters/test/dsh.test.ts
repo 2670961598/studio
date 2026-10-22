@@ -139,10 +139,12 @@ describe('全链：launch→stream→resultStats（golden：P01 真成功流）'
 
         const stats = await adapter.resultStats(h)
         // step_end camelCase usage 累计：inputTokens 4510 / outputTokens 26 / cacheReadTokens 256
-        expect(stats.tokens).toStrictEqual({ input: 4510, output: 26, cached: 256 })
+        // （132-§6.1 单A 新键：cacheReadTokens→cache_read，不再产旧键 cached）
+        expect(stats.tokens).toStrictEqual({ input: 4510, output: 26, cache_read: 256 })
         expect(stats.turns).toBe(1) // step_end 计数（单 turn 单 step）
         expect(stats.cost).toStrictEqual({ usd: 0 }) // cost_native=false：待价目表折算（dsh.ts 头注）
         expect(stats.duration).toBeGreaterThanOrEqual(0)
+        expect('model' in stats).toBe(false) // 未注入 model：如实缺席（无从可知，不猜）
       })
     },
     10_000,
@@ -180,6 +182,73 @@ describe('全链：launch→stream→resultStats（golden：P01 真成功流）'
       await expect(async () => {
         for await (const ev of adapter.stream(h)) void ev
       }).rejects.toThrow(/已消费/)
+    })
+  })
+})
+
+// —— 132-§6.1 单A 账目四桶 + model（studio-dev-168；docs/31-§3.2 五字段形状直构，
+//    非 fixtures/ 探针实录证据面——deepseek 轨实录无 cacheWriteTokens 线）——
+describe('账目四桶+model（132-§6.1 单A·判负线⑤：cache_creation 归并不得丢失）', () => {
+  /** 四桶形状流（两 step_end：一全桶、一仅读桶）——写入用例级临时文件，不入证据 fixtures */
+  const fourBucketFixture = join(workdir, 'four-bucket.ndjson')
+  writeFileSync(
+    fourBucketFixture,
+    [
+      '{"type":"status","phase":"turn_start","turn":1}',
+      '{"type":"status","phase":"step_start","turn":1,"step":1}',
+      '{"type":"status","phase":"step_end","turn":1,"step":1,"usage":{"inputTokens":1200,"outputTokens":80,"totalTokens":2048,"cacheReadTokens":512,"cacheWriteTokens":256,"reasoningTokens":64}}',
+      '{"type":"status","phase":"step_start","turn":1,"step":2}',
+      '{"type":"status","phase":"step_end","turn":1,"step":2,"usage":{"inputTokens":300,"outputTokens":20,"totalTokens":448,"cacheReadTokens":128}}',
+      '{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"completed"}}',
+    ].join('\n'),
+  )
+
+  it('四桶归并：cache_read/cache_creation 各自求和，cacheWriteTokens 不得归零（判负线⑤）；无位字段（total/reasoning）弃置；写侧不产 cached', async () => {
+    await withFakeEnv({ FAKE_FIXTURE: fourBucketFixture }, async () => {
+      const adapter = fakeAdapter()
+      const h = await adapter.launch(makeBrief())
+      for await (const ev of adapter.stream(h)) void ev
+      const stats = await adapter.resultStats(h)
+      // 判负线⑤ 直证：step1 cacheWriteTokens:256 → cache_creation:256（任一桶丢失=红）
+      expect(stats.tokens).toStrictEqual({
+        input: 1500, // 1200 + 300
+        output: 100, // 80 + 20
+        cache_read: 640, // 512 + 128
+        cache_creation: 256, // 256（仅 step1 携带——携带即落键）
+      })
+      expect(Object.hasOwn(stats.tokens, 'cached')).toBe(false) // 写侧一律新键（旧键只在读侧认）
+      expect(stats.turns).toBe(2)
+    })
+  })
+
+  it('仅部分 step 携带读桶：桶键仍在（携带即落键），未携带桶不编造 0', async () => {
+    const readOnlyFixture = join(workdir, 'read-only.ndjson')
+    writeFileSync(
+      readOnlyFixture,
+      [
+        '{"type":"status","phase":"turn_start","turn":1}',
+        '{"type":"status","phase":"step_start","turn":1,"step":1}',
+        '{"type":"status","phase":"step_end","turn":1,"step":1,"usage":{"inputTokens":10,"outputTokens":5,"totalTokens":15}}',
+        '{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"completed"}}',
+      ].join('\n'),
+    )
+    await withFakeEnv({ FAKE_FIXTURE: readOnlyFixture }, async () => {
+      const adapter = fakeAdapter()
+      const h = await adapter.launch(makeBrief())
+      for await (const ev of adapter.stream(h)) void ev
+      const stats = await adapter.resultStats(h)
+      // usage 全桶无人携带 → 仅主桶（真值直录，不编造 0 桶）
+      expect(stats.tokens).toStrictEqual({ input: 10, output: 5 })
+    })
+  })
+
+  it('model 注入面：opts.model 构造期注入 → resultStats 原样回传（归一形不自证——解析归 agentconfig）', async () => {
+    await withFakeEnv({ FAKE_FIXTURE: p01Fixture }, async () => {
+      const adapter = new DshAdapter([process.execPath, fakeCli], { model: 'glm/GLM-5.3' })
+      const h = await adapter.launch(makeBrief())
+      for await (const ev of adapter.stream(h)) void ev
+      const stats = await adapter.resultStats(h)
+      expect(stats.model).toBe('glm/GLM-5.3')
     })
   })
 })
@@ -377,7 +446,8 @@ describe('失败分类面（P1：docs/31-A4/§7 P-04——v1.5 起 errorCode 结
         expect(adapter.exitCode(h)).toBe(1) // 真机失败面 exit=1（证据价值）
 
         const stats = await adapter.resultStats(h)
-        expect(stats.tokens).toStrictEqual({ input: 0, output: 0, cached: 0 }) // 四桶全 0 如实入账
+        // usage 在而缓存桶字段缺席：主桶 0 如实入账，缓存桶不落键（真值直录，不编造 0 桶）
+        expect(stats.tokens).toStrictEqual({ input: 0, output: 0 })
         expect(stats.turns).toBe(1)
         // 失败面照样捕获 dsh 侧 sessionId（对账面不因失败缺席）
         expect(h.executorSessionId).toBe('session-c70a23a6-7b4f-4af8-89bf-4450515ea0b3')
