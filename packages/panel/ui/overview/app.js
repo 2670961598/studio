@@ -3,9 +3,10 @@
  *
  * 结构：NConfigProvider（暗色 + panelThemeOverrides——与 :8787 同套观感）+ NGlobalStyle
  * + 顶栏（产品名 / 公司清单入口 / 旧版回滚面链接）+ 路由视图：
- *   companies → CompaniesCard；company → 公司卡 + NTabs 五 tab（overview/org/people/
- *   progress/finance——tab 值与路径同构，切换走 pushState 不整页刷新）；person → PersonView；
- *   null → 404 视图（与服务端 HTML 404 口径一致）。
+ *   companies → CompaniesCard；company → 公司卡 + NTabs 六 tab（overview/org/people/
+ *   progress/finance/reports——tab 值与路径同构，切换走 pushState 不整页刷新；reports=
+ *   127-B v1 metadata-only 报表聚合）；person → PersonView；null → 404 视图（与服务端
+ *   HTML 404 口径一致）。
  * 路由事件：popstate + router.ROUTE_EVENT（go() 派发）→ 重解析 pathname。
  */
 import { onBeforeUnmount, onMounted, ref } from 'vue'
@@ -18,10 +19,11 @@ import PeopleCard from './components/PeopleCard.js'
 import PersonView from './components/PersonView.js'
 import ProgressCard from './components/ProgressCard.js'
 import FinanceCard from './components/FinanceCard.js'
+import ReportsCard from './components/ReportsCard.js'
 
 export default {
   name: 'OverviewApp',
-  components: { CompaniesCard, CompanyCard, OrgCard, PeopleCard, PersonView, ProgressCard, FinanceCard },
+  components: { CompaniesCard, CompanyCard, OrgCard, PeopleCard, PersonView, ProgressCard, FinanceCard, ReportsCard },
   setup() {
     const route = ref(parseOverviewPath(window.location.pathname))
 
@@ -68,6 +70,7 @@ export default {
           <n-tab name="people" tab="人事"><people-card :slug="route.slug" /></n-tab>
           <n-tab name="progress" tab="进度"><progress-card :slug="route.slug" /></n-tab>
           <n-tab name="finance" tab="财务"><finance-card :slug="route.slug" /></n-tab>
+          <n-tab name="reports" tab="报表"><reports-card :slug="route.slug" /></n-tab>
         </n-tabs>
       </n-card>
     </template>
@@ -75,7 +78,7 @@ export default {
     <person-view v-else-if="route?.view === 'person'" :slug="route.slug" :person-id="route.personId" :key="route.slug + '/' + route.personId" />
 
     <n-card v-else size="small" :bordered="true">
-      <n-result status="404" title="页面不存在" description="路径不认识（公司页/组织/人事/进度/财务——路径清单见旧版只读面）">
+      <n-result status="404" title="页面不存在" description="路径不认识（公司页/组织/人事/进度/财务/报表——路径清单见旧版只读面）">
         <template #footer>
           <n-button size="small" @click="goCompanies">回公司清单</n-button>
         </template>

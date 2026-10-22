@@ -31,8 +31,8 @@ describe('parseOverviewPath（换装页路由纯函数）', () => {
     expect(parseOverviewPath('/corp-b/')).toEqual({ view: 'company', slug: 'corp-b', tab: 'overview' })
   })
 
-  it('tab 页：org/people/progress/finance → company/<tab>', () => {
-    for (const tab of ['org', 'people', 'progress', 'finance']) {
+  it('tab 页：org/people/progress/finance/reports → company/<tab>', () => {
+    for (const tab of ['org', 'people', 'progress', 'finance', 'reports']) {
       expect(parseOverviewPath(`/corp-b/${tab}`)).toEqual({ view: 'company', slug: 'corp-b', tab })
     }
   })
@@ -67,8 +67,8 @@ describe('parseOverviewPath（换装页路由纯函数）', () => {
     expect(parseOverviewPath(123)).toEqual({ view: 'company', slug: '123', tab: 'overview' }) // 数字串=合法 slug 形状
   })
 
-  it('COMPANY_TABS 与 tab 分支一致（overview 隐含在根，其余四 tab 显式路径）', () => {
-    expect(COMPANY_TABS).toEqual(['overview', 'org', 'people', 'progress', 'finance'])
+  it('COMPANY_TABS 与 tab 分支一致（overview 隐含在根，其余五 tab 显式路径——reports=127-B v1）', () => {
+    expect(COMPANY_TABS).toEqual(['overview', 'org', 'people', 'progress', 'finance', 'reports'])
   })
 })
 
@@ -79,6 +79,7 @@ describe('tabPath（tab → 规范路径）', () => {
     expect(tabPath('corp-b', 'overview')).toBe('/corp-b/')
     expect(tabPath('corp-b', 'org')).toBe('/corp-b/org')
     expect(tabPath('corp-b', 'finance')).toBe('/corp-b/finance')
+    expect(tabPath('corp-b', 'reports')).toBe('/corp-b/reports')
   })
 })
 

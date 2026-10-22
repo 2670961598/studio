@@ -9,8 +9,8 @@
  * 无法 import 包内校验器，此处等价复刻——两侧漂移由服务端路由闸兜底）。
  */
 
-/** 路由对象：companies=公司清单页；company=公司页（tab=概览/组织/人事/进度/财务）；person=档案页 */
-export const COMPANY_TABS = ['overview', 'org', 'people', 'progress', 'finance']
+/** 路由对象：companies=公司清单页；company=公司页（tab=概览/组织/人事/进度/财务/报表）；person=档案页 */
+export const COMPANY_TABS = ['overview', 'org', 'people', 'progress', 'finance', 'reports']
 
 const SLUG = /^[a-z0-9][a-z0-9-]*$/
 const PERSON_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/
@@ -19,7 +19,8 @@ const PERSON_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/
  * pathname → 路由对象；不认识的形状返回 null（app 显示 404 视图——与服务端 HTML 404 口径一致）。
  *   '' | '/'                 → { view: 'companies' }
  *   '/<slug>' | '/<slug>/'   → { view: 'company', slug, tab: 'overview' }
- *   '/<slug>/<tab>'          → { view: 'company', slug, tab }（tab ∈ org/people/progress/finance）
+ *   '/<slug>/<tab>'          → { view: 'company', slug, tab }（tab ∈ org/people/progress/finance/reports——
+ *                              reports=127-B 报表 tab v1，与服务端路由表同构）
  *   '/<slug>/people/<工号>'   → { view: 'person', slug, personId }
  */
 export function parseOverviewPath(pathname) {
@@ -37,7 +38,7 @@ export function parseOverviewPath(pathname) {
     return null
   }
   if (third !== undefined) return null
-  if (second === 'org' || second === 'progress' || second === 'finance') {
+  if (second === 'org' || second === 'progress' || second === 'finance' || second === 'reports') {
     return { view: 'company', slug, tab: second }
   }
   return null

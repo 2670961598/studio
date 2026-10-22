@@ -16,6 +16,7 @@
  */
 import type { CompanySnapshot, PersonRef } from '@studio-next/contract'
 import type { SnapshotInfo } from './reload.ts'
+import type { ReportsSnapshot } from './reports.ts'
 import { buildOrgTree, type FinanceSnapshot, type OrgTreeNode, type ProgressSnapshot } from './views.ts'
 
 /** 快照装载信息（JSON 形状——at 同时给 epoch 与 ISO，前端展示免换算歧义） */
@@ -115,6 +116,15 @@ export interface ProgressPayload {
 export interface FinancePayload {
   slug: string
   finance: FinanceSnapshot | null
+  asOf: string
+  snapshotMeta?: SnapshotMetaJson | undefined
+}
+
+/** 报表 payload（/api/overview/:slug/reports；127-B v1 metadata-only——投影恒有形，降级旗标在 snapshot 内如实） */
+export interface ReportsPayload {
+  slug: string
+  basis: 'ledger-events+directory-aux'
+  reports: ReportsSnapshot
   asOf: string
   snapshotMeta?: SnapshotMetaJson | undefined
 }
@@ -240,6 +250,17 @@ export function buildFinancePayload(slug: string, finance: FinanceSnapshot | nul
   return {
     slug,
     finance,
+    asOf: iso(asOfMs),
+    ...(info !== undefined ? { snapshotMeta: snapshotMetaJson(info) } : {}),
+  }
+}
+
+/** 报表 payload 构造（basis 亮明数据口径：台账事件为源＋目录辅助列——P4） */
+export function buildReportsPayload(slug: string, reports: ReportsSnapshot, asOfMs: number, info?: SnapshotInfo): ReportsPayload {
+  return {
+    slug,
+    basis: 'ledger-events+directory-aux',
+    reports,
     asOf: iso(asOfMs),
     ...(info !== undefined ? { snapshotMeta: snapshotMetaJson(info) } : {}),
   }

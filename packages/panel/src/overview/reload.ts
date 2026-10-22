@@ -76,8 +76,10 @@ export interface HotCompanyHandle {
  * fs.watch 目录（recursive）→ 防抖重载（成功=换图+version+1；失败=保旧图+记 lastError；
  * reload 可 async——异步装载在防抖窗后触发）。
  *
- * 活引用纪律：source 的可选字段（mission/readPersonFile/openLedger）用 getter 活取
- * current——热重载换图后引用不变、内容随取随新（spread 拷贝会冻结值，勿改成 spread）。
+ * 活引用纪律：source 的可选字段（mission/readPersonFile/readReportFile/listReportFiles/
+ * openLedger）用 getter 活取 current——热重载换图后引用不变、内容随取随新（spread 拷贝
+ * 会冻结值，勿改成 spread）。readReportFile/listReportFiles 为 127-B 补齐转发（前值漏转
+ * readReportFile——热源下 finance 月报行误报「快照不可读」）。
  */
 export function mountHotCompanySource(opts: HotCompanySourceOptions): HotCompanyHandle {
   if (opts.initial === undefined || opts.initial === null) {
@@ -147,6 +149,12 @@ export function mountHotCompanySource(opts: HotCompanySourceOptions): HotCompany
     },
     get readPersonFile() {
       return current.readPersonFile
+    },
+    get readReportFile() {
+      return current.readReportFile
+    },
+    get listReportFiles() {
+      return current.listReportFiles
     },
     get openLedger() {
       return current.openLedger
