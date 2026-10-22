@@ -157,7 +157,7 @@ export const maxLinesPerFile = 600;
  * 清偿义务：每里程碑对账点核对净变化——只许净减（§十五.三.4）。
  */
 export const lineBaseline = {
-  "apps/daemon/src/engine/engine.ts": 2290, // 179 132-D 定型面缝并入（叠加态实测 2026-10-23）
+  "apps/daemon/src/engine/engine.ts":     2341, // 182 160-B 精序钩手工移植态实测
   "packages/store/src/records.ts": 606,
   "packages/store/src/ledger.ts": 1684, // 179 132-D 定型面缝并入（叠加态实测 2026-10-23）
   "apps/daemon/src/assembly/serve.ts": 1579, // 171+177 叠加态（批示归一层+cost_guard 装配缝）

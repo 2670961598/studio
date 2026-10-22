@@ -12,6 +12,7 @@ import type { HrSyncTickReport } from '../hrsync/hrsync.ts'
 import type { HarvestReconResult } from '../jobs/harvest-recon.ts'
 import type { PricingStaleTickReport } from '../pricing/pricing.ts'
 import type { CostCloseTickReport } from '../cost-close/close.ts'
+import type { QueueSiteJudgeReport } from '../judge/sites129.ts'
 
 /** 采集相位汇报 */
 export interface TickPhaseCollect {
@@ -94,6 +95,15 @@ export interface TickQueueProjection {
   persons: number
 }
 
+/**
+ * 队列小模型精序汇报（160-B·studio-dev-182）：pick/interrupt 两址本拍观测摘要
+ * （fired/degraded/reason/chosen——JUDGE_* 事件的对账面；两址都未产段=undefined）。
+ */
+export interface TickQueueJudgeReport {
+  pick?: QueueSiteJudgeReport
+  interrupt?: QueueSiteJudgeReport
+}
+
 /** 一拍全量汇报（JSON 可序列化；actions=结构化动作原体，actionResults=执行面，events=本拍新账） */
 export interface TickReport {
   seq: number
@@ -109,6 +119,8 @@ export interface TickReport {
       rescanned: number
       /** todo_queue 投影快照（129-§6.2-R2：行数/人数——面板 inbox 观测面） */
       queue: TickQueueProjection
+      /** 队列小模型精序（160-B·studio-dev-182：pick/interrupt 观测摘要；未注入=缺席） */
+      judge?: TickQueueJudgeReport
     }
     dispatch: { dispatched: number; approvals: number; results: readonly TickActionResult[] } & TickPhaseDispatchBudget & { scheduleToStart: TickDispatchScheduleToStart }
     harvest: TickPhaseHarvest
