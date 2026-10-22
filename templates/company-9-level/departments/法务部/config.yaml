@@ -1,0 +1,29 @@
+# 法务部 · 部门章程与规定
+#
+# 契约依据：docs/04-§二（部门领导配置 = 本文件；leader 指向工号）
+# 生成来源：company-9-level（docs/33-§3 L9 控股骨架）
+
+name: 法务部
+path: departments/法务部
+level: 9 # 部门 level=公司等级（沿 2 级模板先例）；嵌套深度看目录
+parent: null # 上级部门 path（根部门为 null）
+leader: LAW-0 # 主管工号（指向 people/ 内人事档案）
+functions: # 部门职能
+  - 法务
+lanes: # 泳道：资源标签 + 并行开发单元（一泳道一 worker 一分支）
+  - law
+reports_to: null # 汇报线：本部门向哪个节点汇报（根部门为 null）
+
+# 部门规定（部门内部规则；不得与 charter.md 的红线冲突）
+rules:
+  - 一切交付以落盘证据为准（REPORT + 闸门 exit=0）
+  - 在途单一律挂泳道租约，忙则顺延不抢锁
+  - 跨部门协作按 relations 走（relations 由公司落成后按需增补）
+
+# 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}
+relations: []
+
+# 本部门名下的定时岗（清单与 org-config.yaml 的 jobs 段保持一致）
+jobs:
+  - health-patrol-法务部
+  - daily-report-法务部 # 日报岗：每日汇总叶子节点产出（D9 通用模型的一个实例）
