@@ -431,8 +431,8 @@ export const CandidateRowSchema = z.strictObject({
 export const LEDGER_KIND_VALUES = ['task', 'progress'] as const
 export type LedgerKind = (typeof LEDGER_KIND_VALUES)[number]
 
-/** reports type 值域（04-§三 front-matter type：daily 日报 / weekly 周报 / monthly 月报——三档报表） */
-export const REPORT_TYPE_VALUES = ['daily', 'weekly', 'monthly'] as const
+/** reports type 值域（04-§三 type 三档节奏档＋perf-weekly＝部长绩效周报专用值——130-P4/批示⑥，caliber 版本化 F2-08，节点=部门 path；增补注记见 docs/04-§三 2026-10-22 段） */
+export const REPORT_TYPE_VALUES = ['daily', 'weekly', 'monthly', 'perf-weekly'] as const
 export type ReportType = (typeof REPORT_TYPE_VALUES)[number]
 
 /** date 列形状：YYYY-MM-DD（归属期锚日——月报=当月末日 UTC，由期键派生非生成时刻；拟稿待批） */
