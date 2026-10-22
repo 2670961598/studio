@@ -4,11 +4,18 @@
  *
  * kind='escalate'（docs/35-§3 岗位运作规格首刀，制作人 2026-10-19 批复）：SLA/升级计时器源产
  * ——payload 携单号+超时档；附原单上下文唤起（35-§4「升级唤起」）的引擎消费面归后续刀。
+ *
+ * kind='data-change'（studio-dev-129 提案 C1，制作人 2026-10-22 全批·批示②；先例='escalate'
+ * v1.4 同款路径）：数据变更类源产（129-§6.1 分类学①——首源=people-change 挂 hr-sync
+ * peopleDiff 出口双写，源与 org-config 路由表归拆单 C）。payload={class:'people-change',
+ * classifier,person,field?,prev?,next?,linked_ticket?}；dedupKey=变更指纹
+ * `person+classifier+prev→next`（源侧设置，引擎消费面校验一致——129-§6.1 铁律2 幂等双层）。
+ * 引擎消费面（联动单物化+路由指派）=拆单 A（studio-dev-166）。
  */
 import type { CompanySlug, TicketId } from './kernel.ts'
 
 export interface InvokeIntent {
-  kind: 'ticket' | 'mention' | 'schedule' | 'relay' | 'resume' | 'webhook' | 'escalate'
+  kind: 'ticket' | 'mention' | 'schedule' | 'relay' | 'resume' | 'webhook' | 'escalate' | 'data-change'
   company: CompanySlug
   ticket?: TicketId
   payload?: unknown

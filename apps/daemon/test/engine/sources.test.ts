@@ -619,25 +619,25 @@ describe('serve 接线：配置面与三源装配', () => {
 describe('验收三证（docs/22-§三：解耦验收口径）', () => {
   it('证① 注册自定义源零改主循环：真引擎公面 + 注册表 + watch-file——文件变化经注册表直达 engine.ingest 队列', async () => {
     // 证明方式（实现单口径）：全程只用 Engine 公面（ingest/pendingIntents/tick）与注册表——
-    // 不 import、不触碰 engine 内部状态；engine.ts 本刀零改（git diff 为证）。
+    // 不 import、不触碰 engine 内部状态；源侧注册协议与 emit→ingest 接线零改（129-A 只在引擎消费分发表增 webhook 行）。
     const stack = buildEngineStack('acc1')
-    const file = watchFile('acc1-watch', '{"payload":{"n":0}}\n', T1)
+    const file = watchFile('acc1-watch', '{"payload":{"title":"初始事件"}}\n', T1)
     const reg = createSourceRegistry()
     reg.register(createFileWatchSource({ company: 'demo', file }), FILE_WATCH_MANIFEST)
     reg.startAll((intent) => stack.engine.ingest([intent])) // serve 同形接线：emit 统一进 ingest
-    // 文件变化（真 fs.watch 事件路径）→ 意图达引擎 ingest 队列
-    writeFileSync(file, '{"payload":{"n":1}}\n', 'utf8')
+    // 文件变化（真 fs.watch 路径）→ 意图达 ingest 队列（payload 按 WebhookIntentPayload：title 必填）
+    writeFileSync(file, '{"payload":{"title":"构建失败 #42"}}\n', 'utf8')
     utimesSync(file, T2, T2)
     const deadline = Date.now() + 3000
     while (Date.now() < deadline && stack.engine.pendingIntents === 0) {
       await new Promise((r) => setTimeout(r, 25))
     }
     expect(stack.engine.pendingIntents).toBe(1)
-    // 消费面（既有路径，零改）：v0.4 意图消费门只物化 schedule——webhook 明报不支持
-    // （六源全通归 v0.8 后续刀），错误如实入报告、队列清空、不派发
+    // 消费面（129-A 起 webhook 行开闸）：外部事件只落单不派工——PATROL 留痕、零派发零错误
     const report = await stack.engine.tick()
-    expect(report.errors.join('\n')).toContain("kind='webhook' 不支持")
+    expect(report.errors).toEqual([])
     expect(stack.engine.pendingIntents).toBe(0)
+    expect(eventsOf(stack.ledger, 'PATROL')).toHaveLength(1)
     expect(eventsOf(stack.ledger, 'DISPATCH')).toHaveLength(0)
     reg.stopAll()
     stack.ledger.close()

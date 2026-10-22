@@ -586,11 +586,11 @@ describe('schedule 意图：明报路径（不静默）', () => {
     s.ledger.close()
   })
 
-  it('分发表外 kind（webhook）→ errors 明报不支持（105-刀A：mention 已开闸，改用 webhook 钉不支持面）', async () => {
+  it('分发表外 kind（relay）→ errors 明报不支持（129-A：webhook/data-change 已开闸，改用 relay 钉不支持面）', async () => {
     const s = buildEngineStack('kind-reject')
-    s.engine.ingest([{ kind: 'webhook', company: 'demo', source: 'test', dedupKey: 'm1' }])
+    s.engine.ingest([{ kind: 'relay', company: 'demo', source: 'test', dedupKey: 'm1' }])
     const report = await s.engine.tick()
-    expect(report.errors.join('\n')).toContain("kind='webhook' 不支持")
+    expect(report.errors.join('\n')).toContain("kind='relay' 不支持")
     s.ledger.close()
   })
 

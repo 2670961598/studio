@@ -50,8 +50,9 @@
  *     + SLA/升级计时器（sla: true——escalate 意图+ESCALATE 落账；notify 归端口后续刀）。
  *     startAll 的 emit 统一进 engine.ingest——源零直驱（见 src/engine/sources.ts）。意图消费门
  *     在引擎（kind→handler 分发表，105-刀A A-2）：schedule｜mention 已开闸（mention=③混合：
- *     @工号 物化唤醒单派岗位，@宰相/@制作人 roles 映射同径派发）；escalate 归刀B、webhook 等
- *     明报不支持——注册面先行，消费面按刀推进。
+ *     @工号 物化唤醒单派岗位，@宰相/@制作人 roles 映射同径派发）；webhook｜data-change 已开闸
+ *     （129-A：webhook 只落单不派工、data-change 联动单+路由指派，见 engine/intents/taxonomy.ts）；
+ *     escalate 归刀B、ticket/relay/resume 等明报不支持——注册面先行，消费面按刀推进。
  *   - SIGINT/SIGTERM 优雅停：等当前拍收口 → stopAll 唤起源 → 在途 drain（v0=内存 handle
  *     优雅杀，work_records 留 running——重启由 takeOverRunningWorkRecords 接管收口，38-§2 R-B）
  *     → 关台账。队列中未消费意图停机即弃（at-most-once，与 markRan 已提交未消费边界同语义）。
@@ -85,6 +86,7 @@ import path from 'node:path'
 import {
   createEngine,
   ENGINE_CONFIG_DEFAULTS,
+  parseDataChangeRoutes,
   type Engine,
   type EngineConfig,
   type TickDecisionEntry,
@@ -196,6 +198,8 @@ export interface ServeConfig extends HrServeConfig {
   matrixRooms?: string
   /** 角色词映射（分号分隔 角色词=工号，如 宰相=PRIME-0;制作人=PRODUCER-0；③混合语义源侧面） */
   matrixRoles?: string
+  /** data-change 路由表登记位（129-A；分号对 变更类型=工号，如 入=HR-1;升=PLN-1；org-config 接线归拆单 C） */
+  dataChangeRoutes?: string
   /** 轮询间隔 ms（缺省 3000——源节奏；@studio-next/matrix adapter 同名缺省） */
   matrixPollMs?: number
   /** 增量 sync 长轮询超时 ms（缺省 25000——空闲期挂连接，A-4；基线拉取恒 0） */
@@ -363,20 +367,8 @@ export function parseDaemonConfig(text: string): ServeConfig {
   return coerceServeConfig(out)
 }
 
-function str(v: unknown, key: string): string {
-  if (typeof v !== 'string' || v === '') throw new Error(`daemon.yaml：${key} 须为非空字符串`)
-  return v
-}
-
-function num(v: unknown, key: string): number {
-  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) throw new Error(`daemon.yaml：${key} 须为非负数`)
-  return v
-}
-
-function bool(v: unknown, key: string): boolean {
-  if (typeof v !== 'boolean') throw new Error(`daemon.yaml：${key} 须为 true/false`)
-  return v
-}
+// daemon.yaml 标量强制件拆在 assembly/serveconfig/coerce.ts（129-A 接线时腾位，零行为漂移）
+import { bool, num, str } from './serveconfig/coerce.ts'
 
 function coerceServeConfig(raw: Record<string, string | number | boolean>): ServeConfig {
   const cfg: ServeConfig = { ...DEFAULT_SERVE_CONFIG }
@@ -473,6 +465,9 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         break
       case 'matrixRoles':
         cfg.matrixRoles = str(value, key)
+        break
+      case 'dataChangeRoutes':
+        cfg.dataChangeRoutes = str(value, key)
         break
       case 'matrixPollMs':
         cfg.matrixPollMs = num(value, key)
@@ -975,6 +970,9 @@ export function buildServeRuntime(
     log(`[serve] judge 注册位：${judgeRegs.map((r) => r.name).join('、')}（v1=dsh 家派发面；三帽缺省 $0.01/次+$0.50/址/日+$5/公司/日）`)
   }
 
+  // data-change 路由登记位（129-A）：坏形态 CONFIG_INVALID 明报拒启动（解析件在 engine/intents/taxonomy.ts）
+  const dataChangeRoutes = parseDataChangeRoutes(config.dataChangeRoutes)
+
   const engineConfig: EngineConfig = {
     ...ENGINE_CONFIG_DEFAULTS,
     company: config.company,
@@ -983,6 +981,7 @@ export function buildServeRuntime(
     // deliverables 收账经 dirname(briefPath) 全随迁；缺省不注入=引擎旧布局回退面
     aiwsRoot,
     defaultPersonId: (snapshot.people[0] as PersonRef | undefined)?.id ?? '',
+    ...(dataChangeRoutes !== undefined ? { dataChangeRoutes } : {}), // 129-A 路由登记位（未配=闸面 fail-closed）
     deptFallback: snapshot.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback,
     defaultLane: snapshot.departments[0]?.lanes[0] ?? ENGINE_CONFIG_DEFAULTS.defaultLane,
     limits: { maxActionsPerTick: config.maxActionsPerTick, maxInflight: config.maxInflight },
