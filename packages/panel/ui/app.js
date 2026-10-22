@@ -3,7 +3,8 @@
  *
  * 布局（栅格 cols="12" 自适应 span）：
  *   StatStrip（全宽）→ [事件分布 | run 构成] → JobsCard（4）｜RunsCard（4）｜WorkersCard（4）
- *   → CostsCard（全宽：统计行+双图）→ BreakersCard（6）｜EventsFeedCard（6）。
+ *   → InboxCard（全宽：todo_queue 收件箱，129-§6.2 R5）→ CostsCard（全宽：统计行+双图）
+ *   → BreakersCard（6）｜EventsFeedCard（6）。
  * 数据流：useSnapshot 四读面轮询（3s）+ useLedgerStream SSE 实时事件（backlog 合流）。
  */
 import { computed } from 'vue'
@@ -14,6 +15,7 @@ import BreakersCard from './components/BreakersCard.js'
 import ChartCard from './components/ChartCard.js'
 import CostsCard from './components/CostsCard.js'
 import EventsFeedCard from './components/EventsFeedCard.js'
+import InboxCard from './components/InboxCard.js'
 import JobsCard from './components/JobsCard.js'
 import RunsCard from './components/RunsCard.js'
 import StatStrip from './components/StatStrip.js'
@@ -28,6 +30,7 @@ export default {
     ChartCard,
     CostsCard,
     EventsFeedCard,
+    InboxCard,
     JobsCard,
     RunsCard,
     StatStrip,
@@ -105,6 +108,7 @@ export default {
         <n-gi><runs-card :runs="state.snapshot?.runs ?? null" /></n-gi>
         <n-gi><workers-card :workers="state.snapshot?.workers ?? null" /></n-gi>
       </n-grid>
+      <inbox-card :body="state.inbox" />
       <costs-card :body="state.costs" />
       <n-grid cols="1 l:2" responsive="screen" :x-gap="12" :y-gap="12">
         <n-gi><breakers-card :body="state.breakers" /></n-gi>

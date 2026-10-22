@@ -115,7 +115,7 @@ export interface DepartmentRecord {
   parent_path?: string
 }
 
-/** ticket_mirror 记录（YouTrack 镜像，17-§3「issue(PK), company, created, updated, state, type, dept, level, dispatcher, parent, lane」） */
+/** ticket_mirror 记录（YouTrack 镜像，17-§3「issue(PK), company, created, updated, state, type, dept, level, dispatcher, parent, lane」；assignee=v8 增列——129-B 按人重导 todo_queue 投影所需） */
 export interface TicketMirrorRecord {
   issue: string
   company: string
@@ -130,6 +130,8 @@ export interface TicketMirrorRecord {
   parent?: string
   /** 泳道；可空=未定泳道 */
   lane?: string
+  /** 当前指派（129-§6.2-R2，v8）；可空=平台未指派——引擎解析链 assignee→defaultPersonId */
+  assignee?: string
 }
 
 /** budgets 记录（本库，17-§3「id, issue/工号/公司, kind(reserve/settle/refusal), estimated, actual, ts」） */
@@ -292,7 +294,9 @@ export const TicketMirrorRecordSchema = z.strictObject({
   dispatcher: z.string().min(1),
   parent: z.string().min(1).optional(),
   lane: z.string().min(1).optional(),
+  assignee: z.string().min(1).optional(),
 })
+
 
 /** store 层临时校验（拟稿待批，见文件头注） */
 export const BudgetRecordSchema = z.strictObject({
@@ -595,3 +599,8 @@ export const HrSyncTaskSchema = z.strictObject({
   payload: HrSyncPayloadSchema.optional(),
   updated: z.number().int().min(0),
 })
+
+// —— v8 todo_queue 投影记录（129-§6.2-R2，studio-dev-167 单B）——形状与校验独立成模
+//    （todo-queue-records.ts，records.ts 尺寸阈 600 清偿）；此处转发出口保持导入面不变 ——
+export type { TodoQueueRecord } from './todo-queue-records.ts'
+export { TodoQueueRecordSchema } from './todo-queue-records.ts'

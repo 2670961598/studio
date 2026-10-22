@@ -82,7 +82,7 @@ interface StackOptions {
   catalog?: ModelCatalog
   budgetTicketCapUsd?: number
   budgetPersonCapUsd?: number
-  limits?: { maxActionsPerTick?: number; maxInflight?: number }
+  limits?: { maxActionsPerTick?: number; maxInflight?: number; maxInflightPerPerson?: number }
   /** 注入 appendBudget 抛错（不落即不派的机制点直证）：命中谓词即抛 */
   failAppendBudgetOn?: (record: { kind: string; scope_kind: string }) => boolean
 }
@@ -141,6 +141,11 @@ function buildStack(id: string, opts?: StackOptions): TestStack {
       limits: {
         maxActionsPerTick: opts?.limits?.maxActionsPerTick ?? 4,
         maxInflight: opts?.limits?.maxInflight ?? 4,
+        // 人闸（129-§6.2-R3）缺省 1 串行——预算岗帽面要同人两单同拍进派发面才可观测，
+        // 显式放宽到 2（正交闸：预算闸比较基准=人档在途两笔，与人闸互不代劳）
+        ...(opts?.limits?.maxInflightPerPerson !== undefined
+          ? { maxInflightPerPerson: opts.limits.maxInflightPerPerson }
+          : {}),
       },
       ...(opts?.budgetTicketCapUsd !== undefined ? { budgetTicketCapUsd: opts.budgetTicketCapUsd } : {}),
       ...(opts?.budgetPersonCapUsd !== undefined ? { budgetPersonCapUsd: opts.budgetPersonCapUsd } : {}),
@@ -347,6 +352,9 @@ describe('派发前闸：预留先落账才派发（20-§六.8 不落即不派�
     const stack = buildStack('cap-b', {
       catalog,
       budgetPersonCapUsd: (est as number) * 1.5,
+      // 人闸放宽 2（129-§6.2-R3 缺省 1 会先 HOLD_PERSON_BUSY——岗帽面的同人并发须放行，
+      // 两闸正交：人闸管「有没有手」，岗帽管「钱够不够」）
+      limits: { maxInflightPerPerson: 2 },
     })
     await stack.platform.issues.create({ title: '岗帽第一单', type: 'task', level: 0 })
     const second = await stack.platform.issues.create({ title: '岗帽第二单', type: 'task', level: 0 })
@@ -515,7 +523,11 @@ describe('无价目表降级态（态 B）与 daemon.yaml 装载面', () => {
   })
 
   it('态 B：岗级帽不生效（无价目依据）——两单并发均派（对照态 A 的 over-person-cap）', async () => {
-    const stack = buildStack('degraded-pc', { budgetPersonCapUsd: 0.000001 })
+    // 人闸放宽 2（同 cap-b 注：同人两单同拍并发是人闸配置面，与岗帽态 B 无关）
+    const stack = buildStack('degraded-pc', {
+      budgetPersonCapUsd: 0.000001,
+      limits: { maxInflightPerPerson: 2 },
+    })
     await stack.platform.issues.create({ title: '岗帽失效一', type: 'task', level: 0 })
     const second = await stack.platform.issues.create({ title: '岗帽失效二', type: 'task', level: 0 })
     await stack.platform.issues.setField(second.id, 'lane', 'extra') // 异泳道：两单同拍都进派发面

@@ -87,6 +87,10 @@ export * from './judge.ts'
 // micro-judge 原语·策略面（studio-dev-160 §6.2/§6.4：三帽/降级枚举/按址熔断/拍闸/roles 闸）
 export * from './judge-gates.ts'
 
+// 员工待办队列排序键纯函数（129-§6.2-R1/R4，studio-dev-167 单B：score=优先级+ageBoost
+// 两档封顶、置顶恒首、并列 FIFO；规则缺省档——QueueRanker=160-B 小模型档升级位）
+export * from './queue.ts'
+
 /** 包名常量 */
 export const PACKAGE_NAME = '@studio-next/core'
 

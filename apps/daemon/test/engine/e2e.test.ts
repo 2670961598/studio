@@ -66,7 +66,7 @@ interface TestStack {
 
 interface StackOptions {
   gateRunner?: GateRunner
-  limits?: { maxActionsPerTick?: number; maxInflight?: number }
+  limits?: { maxActionsPerTick?: number; maxInflight?: number; maxInflightPerPerson?: number }
   breakerThreshold?: number
   /** 适配器注入面（132-§6.1 单A：四桶+model 账目收割回归用）；缺省=default fake */
   adapter?: ReturnType<typeof createFakeAdapter>
@@ -109,6 +109,10 @@ function buildStack(id: string, opts?: StackOptions): TestStack {
       limits: {
         maxActionsPerTick: opts?.limits?.maxActionsPerTick ?? ENGINE_CONFIG_DEFAULTS.limits.maxActionsPerTick,
         maxInflight: opts?.limits?.maxInflight ?? ENGINE_CONFIG_DEFAULTS.limits.maxInflight,
+        // 人闸帽透传（129-§6.2-R3：缺省不注入=引擎兜底 1 串行——本测试栈显式可放宽）
+        ...(opts?.limits?.maxInflightPerPerson !== undefined
+          ? { maxInflightPerPerson: opts.limits.maxInflightPerPerson }
+          : {}),
       },
       ...(opts?.breakerThreshold !== undefined ? { breakerThreshold: opts.breakerThreshold } : {}),
     },
@@ -376,12 +380,12 @@ describe('失败链与断路器：闸门红 → GATE_FAIL → 3 连击熔断 →
   })
 })
 
-describe('并发三闸：泳道占用与每拍上限', () => {
-  it('同泳道第二单 HOLD_LANE_BUSY；异泳道超每拍上限 HOLD_TICK_LIMIT（顺延不丢）', async () => {
+describe('并发四闸：泳道占用、人闸与每拍上限（129-§6.2-R3 闸序冻结：断路 > 泳道 > 人 > 每拍 > 在途）', () => {
+  it('同泳道第二单 HOLD_LANE_BUSY；同人异泳道 HOLD_PERSON_BUSY（人闸先于每拍限——缺省帽 1）', async () => {
     const stack = buildStack('gates', { limits: { maxActionsPerTick: 1, maxInflight: 4 } })
     await stack.platform.issues.create({ title: 'a：占 core 泳道', type: 'task', level: 0 })
     await stack.platform.issues.create({ title: 'b：core 泳道排队', type: 'task', level: 0 })
-    const extra = await stack.platform.issues.create({ title: 'c：extra 泳道但拍上限已满', type: 'task', level: 0 })
+    const extra = await stack.platform.issues.create({ title: 'c：extra 泳道但人忙（同人缺省帽 1）', type: 'task', level: 0 })
     await stack.platform.issues.setField(extra.id, 'lane', 'extra')
 
     stack.clock.advance(1000)
@@ -390,6 +394,27 @@ describe('并发三闸：泳道占用与每拍上限', () => {
     const byTicket = new Map(report.phases.stateDiff.decisions.map((d) => [d.ticket, d.code]))
     expect(byTicket.get('T-1')).toBe('DISPATCH')
     expect(byTicket.get('T-2')).toBe('HOLD_LANE_BUSY')
+    // 泳道空但人忙（T-1 已占 AGENT-1 的缺省帽 1）——闸序：人 > 每拍（S8 同款断言）
+    expect(byTicket.get('T-3')).toBe('HOLD_PERSON_BUSY')
+    stack.ledger.close()
+  })
+
+  it('人闸放宽（maxInflightPerPerson=2）后每拍上限照拦：HOLD_TICK_LIMIT（两闸正交，顺延不丢）', async () => {
+    const stack = buildStack('gates-person2', {
+      limits: { maxActionsPerTick: 1, maxInflight: 4, maxInflightPerPerson: 2 },
+    })
+    await stack.platform.issues.create({ title: 'a：占 core 泳道', type: 'task', level: 0 })
+    await stack.platform.issues.create({ title: 'b：core 泳道排队', type: 'task', level: 0 })
+    const extra = await stack.platform.issues.create({ title: 'c：extra 泳道人也有手——拍上限拦', type: 'task', level: 0 })
+    await stack.platform.issues.setField(extra.id, 'lane', 'extra')
+
+    stack.clock.advance(1000)
+    const report = await stack.engine.tick()
+    expect(report.phases.dispatch.dispatched).toBe(1)
+    const byTicket = new Map(report.phases.stateDiff.decisions.map((d) => [d.ticket, d.code]))
+    expect(byTicket.get('T-1')).toBe('DISPATCH')
+    expect(byTicket.get('T-2')).toBe('HOLD_LANE_BUSY')
+    // 人有第二只手（帽 2：在工 1 < 2 过人闸）→ 每拍上限拦（1 动作已满）——闸序：人 > 每拍
     expect(byTicket.get('T-3')).toBe('HOLD_TICK_LIMIT')
     stack.ledger.close()
   })
@@ -439,7 +464,7 @@ describe('store v4 切换回归：daemon 全路径无自建 DDL', () => {
     expect(report.phases.account.heartbeat).toBe(true)
     expect(ledger.kvGet('tick.seq')).toBe('1')
     expect(schemaOf()).toBe(before)
-    expect(ledger.version()).toBe(8) // store migration v8（work_records.model，132-§6.1 单A）——版本随库迁移面走，daemon 仍零 DDL
+    expect(ledger.version()).toBe(9) // store migration v8(132-A model)+v9(129-B todo_queue)——版本随库迁移面走，daemon 仍零 DDL
     ledger.close()
   })
 })

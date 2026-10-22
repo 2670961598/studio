@@ -58,6 +58,8 @@ export function makeInput(o: InputOverrides = {}): DecisionInput {
     breaker: o.breaker ?? { strikes: 0, threshold: 3 },
     ...(o.approved !== undefined ? { approved: o.approved } : {}),
     ...(o.verifiedEvidence !== undefined ? { verifiedEvidence: o.verifiedEvidence } : {}),
+    // 人闸快照（129-§6.2-R3 第四闸；缺省不装配=闸开——旧调用面零漂）
+    ...(o.personGate !== undefined ? { personGate: o.personGate } : {}),
     // 默认 now=updated+60s：静默 1 分钟 < 阈值 1 小时，不触停摆
     now: o.now ?? T0 + 60_000,
     stallAfterMs: o.stallAfterMs ?? 3_600_000,

@@ -157,9 +157,10 @@ export const maxLinesPerFile = 600;
  * 清偿义务：每里程碑对账点核对净变化——只许净减（§十五.三.4）。
  */
 export const lineBaseline = {
-  "apps/daemon/src/engine/engine.ts": 2043, // 132-§6.1 单A 收割账目(+8：tokenBuckets 四桶兼容读+model 直录/note 后缀——studio-dev-168，制作人全批提案落位；前值 2035=105-刀A；前值 1865=DEV-141)
-  "packages/store/src/ledger.ts": 1665,
-  "apps/daemon/src/assembly/serve.ts": 1491, // 105-刀A matrix 必配键交叉校验(+15) // DEV-48 hrSync 装配与配置门(+63，逻辑在 engine/hrsync/)
+  "apps/daemon/src/engine/engine.ts": 2200, // 168 132-A 收割账目+167 129-B 人闸/todo_queue 合并态(+165：两刀叠加——宰相亲批 2026-10-22；前值 2035=105-刀A)
+  "packages/store/src/records.ts": 606, // 129-B todo_queue 写面闸扩展(+6，v9 配套——新超限件随批示波次入基线：制作人 2026-10-22 全批)
+  "packages/store/src/ledger.ts": 1764, // 167 129-B todo_queue 读写面(+99，v9 迁移配套；前值 1665)
+  "apps/daemon/src/assembly/serve.ts": 1553, // 167 129-B 队列四键配置门(+62：maxInflightPerPerson/queueAgeStepMs 等；逻辑在 engine/todoqueue/) // 前值 1491=105-刀A matrix 校验
   "packages/company/src/repo-validate.ts": 1021,
   "apps/daemon/test/control/hot-reload.test.ts": 930,
   "apps/daemon/test/engine/scheduler.test.ts": 785,

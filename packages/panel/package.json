@@ -8,7 +8,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./overview": "./src/overview/index.ts",
-    "./external": "./src/external/index.ts"
+    "./external": "./src/external/index.ts",
+    "./inbox": "./src/inbox.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",

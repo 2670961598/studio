@@ -1,5 +1,5 @@
 /**
- * decide 纯函数测试 —— docs/17-§2 七相位语义 / 并发三闸 / 幂等去重 / 断路压制 /
+ * decide 纯函数测试 —— docs/17-§2 七相位语义 / 并发四闸（含人闸 129-§6.2-R3） / 幂等去重 / 断路压制 /
  * 纯度纪律。分支全覆盖目标：每闸、每锚点态、每理由码至少一例。
  */
 import { describe, expect, it } from 'vitest'
@@ -52,7 +52,7 @@ describe('L0 正常链（七相位语义）', () => {
   })
 })
 
-describe('并发三闸（17-§2；F1-05 触顶顺延不丢）', () => {
+describe('并发三闸基线（17-§2 并发四闸前三闸；F1-05 触顶顺延不丢）', () => {
   it('闸一：泳道租约有主且未过期 → hold LANE_BUSY', () => {
     const out = decide(makeInput({ laneLease: { lane: 'main', holder: 'P-9', expiresAt: T0 + 600_000 } }))
     expect(out.action).toMatchObject({ type: 'hold', code: 'HOLD_LANE_BUSY' })
@@ -115,6 +115,62 @@ describe('并发三闸（17-§2；F1-05 触顶顺延不丢）', () => {
       }),
     )
     expect(out.action).toMatchObject({ type: 'recycle', code: 'LANE_RELEASE' })
+  })
+})
+
+describe('人闸（129-§6.2-R3 第四闸；studio-dev-167 单B：缺省 1/人，顺延不丢不抢占）', () => {
+  it('人忙（count ≥ limit）→ hold PERSON_BUSY（顺延不丢）', () => {
+    const out = decide(makeInput({ personGate: { inflightCount: 1, limit: 1 } }))
+    expect(out.action).toMatchObject({ type: 'hold', code: 'HOLD_PERSON_BUSY' })
+  })
+
+  it('人在工数未达帽 → 照常派发（批量执行岗 limit=2、count=1 场景）', () => {
+    const out = decide(makeInput({ personGate: { inflightCount: 1, limit: 2 } }))
+    expect(out.action).toMatchObject({ type: 'dispatch', code: 'DISPATCH' })
+  })
+
+  it('人快照缺省=闸开（旧调用面/人不可解析面零漂——golden 旧迹兼容）', () => {
+    const out = decide(makeInput())
+    expect(out.action).toMatchObject({ type: 'dispatch', code: 'DISPATCH' })
+  })
+
+  it('闸序冻结：断路 > 泳道 > 人 > 每拍 > 在途（同触多发取首因）', () => {
+    // 泳道有主 + 人忙 + 每拍满 → 取 HOLD_LANE_BUSY（人闸在泳道后）
+    const out = decide(
+      makeInput({
+        laneLease: { lane: 'main', holder: 'P-9', expiresAt: T0 + 600_000 },
+        personGate: { inflightCount: 5, limit: 1 },
+        tickActionCount: 5,
+        limits: { maxActionsPerTick: 5, maxInflight: 10 },
+      }),
+    )
+    expect(out.action).toMatchObject({ type: 'hold', code: 'HOLD_LANE_BUSY' })
+    // 泳道空闲 + 人忙 + 每拍满 → 取 HOLD_PERSON_BUSY（人闸在每拍前——排序键首者先过闸）
+    const out2 = decide(
+      makeInput({
+        personGate: { inflightCount: 5, limit: 1 },
+        tickActionCount: 5,
+        limits: { maxActionsPerTick: 5, maxInflight: 10 },
+      }),
+    )
+    expect(out2.action).toMatchObject({ type: 'hold', code: 'HOLD_PERSON_BUSY' })
+  })
+
+  it('limit < 1 视同 1（fail-closed 到最保守：count=0 放行、count≥1 拦下）', () => {
+    const pass = decide(makeInput({ personGate: { inflightCount: 0, limit: 0 } }))
+    expect(pass.action).toMatchObject({ type: 'dispatch', code: 'DISPATCH' })
+    const block = decide(makeInput({ personGate: { inflightCount: 1, limit: 0 } }))
+    expect(block.action).toMatchObject({ type: 'hold', code: 'HOLD_PERSON_BUSY' })
+  })
+
+  it('人闸只压制派发轨道（待批态 WAIT_APPROVAL 不受人闸影响）', () => {
+    const out = decide(
+      makeInput({
+        issue: makeIssue({ state: approval, level: 1 }),
+        personGate: { inflightCount: 5, limit: 1 },
+      }),
+    )
+    expect(out.action).toMatchObject({ type: 'noop', code: 'WAIT_APPROVAL' })
   })
 })
 

@@ -1,0 +1,64 @@
+{
+  "name": "person-gate-chain",
+  "description": "人闸链（L0 · T-405，129-§6.2-R3 第四闸，studio-dev-167 单B）：新单就绪但派发对象 P-7 在工已满帽（count=1 ≥ limit=1 缺省档）→ HOLD_PERSON_BUSY 顺延不丢 → 在工收口帽释放（count=0）→ 派发 → 在工等证据。闸序冻结：断路 > 泳道 > 人 > 每拍 > 在途；人闸快照缺省不装配=闸开（旧迹兼容，见 normal-dispatch-chain）。",
+  "inputs": [
+    {
+      "issue": { "id": "T-405", "title": "登录页埋点补录", "state": "新单", "type": "task", "dept": "eng", "level": 0, "assignee": "P-7", "lane": "main", "updated": "2026-10-16T00:00:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "personGate": { "inflightCount": 1, "limit": 1 },
+      "intent": { "kind": "ticket", "company": "acme", "ticket": "T-405", "source": "poll", "priority": 1 },
+      "seenIntentKeys": [],
+      "breaker": { "strikes": 0, "threshold": 3 },
+      "now": 1792108860000,
+      "stallAfterMs": 3600000
+    },
+    {
+      "issue": { "id": "T-405", "title": "登录页埋点补录", "state": "新单", "type": "task", "dept": "eng", "level": 0, "assignee": "P-7", "lane": "main", "updated": "2026-10-16T00:10:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "personGate": { "inflightCount": 1, "limit": 1 },
+      "intent": { "kind": "ticket", "company": "acme", "ticket": "T-405", "source": "poll", "priority": 1 },
+      "seenIntentKeys": [],
+      "breaker": { "strikes": 0, "threshold": 3 },
+      "now": 1792109460000,
+      "stallAfterMs": 3600000
+    },
+    {
+      "issue": { "id": "T-405", "title": "登录页埋点补录", "state": "新单", "type": "task", "dept": "eng", "level": 0, "assignee": "P-7", "lane": "main", "updated": "2026-10-16T00:20:00.000Z" },
+      "laneLease": { "lane": "main", "holder": null },
+      "inflightCount": 0,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "personGate": { "inflightCount": 0, "limit": 1 },
+      "intent": { "kind": "ticket", "company": "acme", "ticket": "T-405", "source": "poll", "priority": 1 },
+      "seenIntentKeys": [],
+      "breaker": { "strikes": 0, "threshold": 3 },
+      "now": 1792110060000,
+      "stallAfterMs": 3600000
+    },
+    {
+      "issue": { "id": "T-405", "title": "登录页埋点补录", "state": "已派发", "type": "task", "dept": "eng", "level": 0, "assignee": "P-7", "lane": "main", "updated": "2026-10-16T00:21:00.000Z" },
+      "laneLease": { "lane": "main", "holder": "P-7", "expiresAt": 1792110600000 },
+      "inflightCount": 1,
+      "tickActionCount": 0,
+      "limits": { "maxActionsPerTick": 5, "maxInflight": 10 },
+      "personGate": { "inflightCount": 1, "limit": 1 },
+      "intent": { "kind": "relay", "company": "acme", "ticket": "T-405", "source": "relay" },
+      "seenIntentKeys": ["poll|ticket|acme|T-405"],
+      "breaker": { "strikes": 0, "threshold": 3 },
+      "now": 1792110120000,
+      "stallAfterMs": 3600000
+    }
+  ],
+  "expected": [
+    { "type": "hold", "code": "HOLD_PERSON_BUSY" },
+    { "type": "hold", "code": "HOLD_PERSON_BUSY" },
+    { "type": "dispatch", "code": "DISPATCH" },
+    { "type": "wait_evidence", "code": "EVIDENCE_PENDING" }
+  ]
+}

@@ -406,6 +406,41 @@ const MIGRATIONS: readonly Migration[] = [
       '',
     ].join('\n'),
   },
+  {
+    // v9：员工待办队列投影（原单拟 v8，与 132-A 撞号顺延——宰相亲批 2026-10-22）（129-§6.2-R2，studio-dev-167 单B，制作人 2026-10-22 全批）。
+    //   - todo_queue=**可重建投影非事实源**：成员资格×person 全由 ticket_mirror 重导
+    //     （单写者=daemon，每拍末全量重投，diff 才写）；决策**永不读表**——派发排序
+    //     在引擎拍内实时算（core/queue.ts 冻结公式），表只作面板 inbox/观测投影；
+    //   - 排序键两列落值域冻结：priority 0..3（钳后意图优先级）/ boost_tier 0..2
+    //     （ageBoost 离散两档封顶）；pinned 0|1（制作人置顶——daemon.yaml 现算不入携带态）；
+    //     FIFO 锚=first_seen_at（引擎携带态，派发即出队——jobs.last_run_at 先例：非事件
+    //     可导携带列）；last_boost_at=观测面（=first_seen_at+tier*ageStepMs 推导值）；
+    //   - ready_state：'ready'（新单等前向派发）| 'awaiting_approval'（待批态在人闸前
+    //     等批——成员但非可即刻派发）；why=入队归因（意图源+kind，人读）；
+    //   - ticket_mirror += assignee 列（v1 建表无指派维度——129-B 按人重导投影所需；
+    //     ALTER 可空=旧镜像行兼容，引擎 upsert 现填）。
+    version: 9,
+    name: 'v0.13 129-B 待办队列投影：todo_queue + ticket_mirror.assignee',
+    sql: [
+      'ALTER TABLE ticket_mirror ADD COLUMN assignee TEXT;',
+      'CREATE TABLE todo_queue (',
+      '  company TEXT NOT NULL,',
+      '  ticket TEXT NOT NULL,',
+      '  person TEXT NOT NULL,',
+      '  priority INTEGER NOT NULL DEFAULT 0,   -- 钳后意图优先级 0..3',
+      '  pinned INTEGER NOT NULL DEFAULT 0,     -- 制作人置顶 0|1',
+      '  boost_tier INTEGER NOT NULL DEFAULT 0, -- ageBoost 档 0..2（封顶两档）',
+      '  first_seen_at INTEGER NOT NULL,        -- 首次入队 epoch-ms（FIFO 锚）',
+      '  last_boost_at INTEGER,                 -- 最近升档时刻（观测面，可空=未升档）',
+      "  ready_state TEXT NOT NULL DEFAULT 'ready',  -- 'ready' | 'awaiting_approval'",
+      '  why TEXT,                              -- 入队归因（人读）',
+      '  updated_at INTEGER NOT NULL,           -- 投影刷新时刻 epoch-ms',
+      '  PRIMARY KEY (company, ticket)',
+      ');',
+      'CREATE INDEX idx_todo_queue_person ON todo_queue (company, person);',
+      '',
+    ].join('\n'),
+  },
 ]
 
 /** 内置迁移的最高版本（0 = 无迁移可用，仅占位防呆） */
