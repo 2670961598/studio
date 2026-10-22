@@ -108,6 +108,8 @@ import { createPricingFace } from './pricing.ts'
 import type { PricingFace } from './pricing.ts'
 import { createUsageFace } from './usage.ts'
 import type { UsageFace } from './usage.ts'
+import { createCostDailyFace } from './cost.ts'
+import type { CostDailyFace } from './cost.ts'
 import { assertRecord, optNum, optStr, str, type SqlRow } from './row-helpers.ts'
 import { currentVersion, migrate } from './migrations.ts'
 import {
@@ -222,7 +224,7 @@ export type PersonnelTimelineEntry =
   | { source: 'session'; ts: number; record: SessionRecord }
 
 /** 台账句柄：daemon 持有；db 暴露 DatabaseSync 标准面（引擎切换只动 driver.ts） */
-export interface Ledger extends HrSyncQueueFace, PricingFace, UsageFace, ProbesFace {
+export interface Ledger extends HrSyncQueueFace, PricingFace, UsageFace, ProbesFace, CostDailyFace {
   db: DatabaseSync
   close(): void
   /** 当前 schema 版本（schema_version 表 MAX(version)；0=无迁移记录） */
@@ -1649,6 +1651,9 @@ export function openLedger(path: string): Ledger {
     // v11 用量投影面（132-§6.1 单C：id/updated_at 归 daemon——投影刷新时刻由
     // 调用方（收割相位尾缝）供，与 append 面事实时刻口径不同）
     ...createUsageFace(db),
+    // v12 定型账面（132-§6.3 单D：append-only 定型账——id/closed_at/closed_by 归
+    // daemon 收口工序供）
+    ...createCostDailyFace(db),
   }
 }
 

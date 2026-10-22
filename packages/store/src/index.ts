@@ -191,6 +191,19 @@ export {
   type UsageFace,
 } from './usage.ts'
 
+// v12 定型账面（132-§6.3 单D·studio-dev-179）：append-only 定型账（final 首冻+
+// adjustment 迟到事实补账）+ 读面/已收口日期扫描面；迁移条目 costDailyMigration 同源
+export {
+  COST_BASIS_VALUES,
+  COST_KIND_VALUES,
+  costDailyMigration,
+  type CostBasis,
+  type CostDailyFace,
+  type CostDailyQuery,
+  type CostDailyRecord,
+  type CostKind,
+} from './cost.ts'
+
 // probes_runs 探针跑分面（BC-S2 拆分件·studio-dev-177：自 ledger.ts 原样拆出零行为变更）
 export { createProbesFace, type ProbeRunQuery, type ProbesFace } from './probes.ts'
 

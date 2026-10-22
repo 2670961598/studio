@@ -96,6 +96,11 @@ export * from './pricing.ts'
 // 成本警戒纯逻辑（132-§6.4 单C·studio-dev-177：本地日键/档位判定/usage_daily
 // 投影折叠与格价折算——cost-threshold 源+hard 线联动的纯地基）
 export * from './costguard.ts'
+// 定型面日终收口纯逻辑（132-§6.3 单D·studio-dev-179）：折算计划/补账巡检/对账段/
+// P7 合并展示/财务分析面四规则/日报装配体
+export * from './costclose.ts'
+// 财务分析面四规则（costclose 拆分面——BC-S2 600 行阈）
+export * from './cost-insights.ts'
 
 /** 包名常量 */
 export const PACKAGE_NAME = '@studio-next/core'

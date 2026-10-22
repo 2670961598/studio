@@ -104,19 +104,19 @@ describe('v5 迁移（candidates 表）', () => {
   })
 
   it('建库即到最新版（v7）：candidates 表在库、schema_version 恰七行；重开库 migrate 幂等（version 不涨、v5..v7 不重放）', () => {
-    expect(ledger.version()).toBe(11)
+    expect(ledger.version()).toBe(12)
     const tables = (
       ledger.db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as Array<{ name: unknown }>
     ).map((r) => String(r.name))
     expect(tables).toContain('candidates')
     const rows = ledger.db.prepare('SELECT version, sha8 FROM schema_version ORDER BY version').all() as Array<{ version: unknown; sha8: unknown }>
-    expect(rows.length).toBe(11)
+    expect(rows.length).toBe(12)
     for (const row of rows) expect(String(row.sha8)).toMatch(/^[0-9a-f]{8}$/)
 
     const again = openLedger(path.join(root, 'ledger.db'))
-    expect(again.version()).toBe(11)
+    expect(again.version()).toBe(12)
     const count = again.db.prepare('SELECT COUNT(*) AS c FROM schema_version').get() as { c?: unknown }
-    expect(Number(count.c)).toBe(11)
+    expect(Number(count.c)).toBe(12)
     again.close()
   })
 
@@ -154,7 +154,7 @@ describe('v5 迁移（candidates 表）', () => {
 
     // ② 重开（openLedger 全量迁移）→ v5：存量无损、candidates 面可用
     const upgraded = openLedger(p)
-    expect(upgraded.version()).toBe(11)
+    expect(upgraded.version()).toBe(12)
     expect(upgraded.queryEvents().map((e) => e.id)).toEqual(['01ARZ3NDEKTSV4RRFFQ69G5FAV'])
     expect(upgraded.getCandidate('c-up')).toBeUndefined()
     expect(upgraded.insertCandidate(makeCandidate({ id: 'c-up', asset_path: 'prompts/upgrade.md', diff_hash: 'h-up' }))).toEqual({ id: 'c-up', inserted: true })

@@ -14,6 +14,8 @@
 import { createHash } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { configInvalid } from '@studio-next/contract'
+// v12 条目体在 cost.ts（BC-S2 先拆再增：本文件已近尺寸阈 600——条目+读写面同文件自足）
+import { costDailyMigration } from './cost.ts'
 
 /** 一条迁移：version 单调 +1 起；name 仅为人读；sql 为该版本的完整顺序 SQL */
 export interface Migration {
@@ -524,6 +526,7 @@ const MIGRATIONS: readonly Migration[] = [
       '',
     ].join('\n'),
   },
+  costDailyMigration,
 ]
 
 /** 内置迁移的最高版本（0 = 无迁移可用，仅占位防呆） */
