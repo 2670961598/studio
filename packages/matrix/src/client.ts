@@ -195,11 +195,33 @@ export class MatrixClient {
     })
   }
 
-  /** 建房（POST /createRoom；aliasName 给定时服务器侧挂别名）。返回 roomId（!开头） */
-  async createRoom(opts: { name: string; aliasName?: string; visibility?: 'public' | 'private' }): Promise<{ roomId: string }> {
+  /**
+   * 建房（POST /createRoom；aliasName 给定时服务器侧挂别名）。返回 roomId（!开头）。
+   * 130-P3 增补（DEV-20 §5.1-§5.4）：preset（private_chat=邀请制）/initialState（建房即写
+   * history_visibility 等初始 state）/creationContent（m.space 建空间——type 键）——全部
+   * 可选增量，既有调用面（hr-face）零改动。E2EE 恒不启用（21A-§5.7 明文红线——初始
+   * state 不写 m.room.encryption，PL 基线由供给器置 100 挡）。
+   */
+  async createRoom(opts: {
+    name: string
+    aliasName?: string
+    visibility?: 'public' | 'private'
+    preset?: 'private_chat' | 'public_chat' | 'trusted_private_chat'
+    initialState?: ReadonlyArray<{ type: string; stateKey?: string; content: unknown }>
+    creationContent?: Readonly<Record<string, unknown>>
+  }): Promise<{ roomId: string }> {
     const body: Record<string, unknown> = { name: opts.name }
     if (opts.aliasName !== undefined) body['room_alias_name'] = opts.aliasName
     if (opts.visibility !== undefined) body['visibility'] = opts.visibility
+    if (opts.preset !== undefined) body['preset'] = opts.preset
+    if (opts.initialState !== undefined && opts.initialState.length > 0) {
+      body['initial_state'] = opts.initialState.map((s) => ({
+        type: s.type,
+        state_key: s.stateKey ?? '',
+        content: s.content,
+      }))
+    }
+    if (opts.creationContent !== undefined) body['creation_content'] = { ...opts.creationContent }
     const res = await this.request<{ room_id?: unknown }>('POST', '/_matrix/client/v3/createRoom', { auth: true, body })
     if (typeof res.room_id !== 'string') throw new Error('matrix createRoom: 响应缺 room_id')
     return { roomId: res.room_id }
@@ -261,6 +283,73 @@ export class MatrixClient {
       auth: true,
       body: current,
     })
+  }
+
+  /**
+   * 通用 state 写（PUT /rooms/:id/state/:type/:stateKey）——130-P3 供给器消费面
+   * （DEV-20 §5.3/§5.4）：m.room.power_levels 全量快照 / m.room.history_visibility /
+   * m.room.name（归档改名）/ m.space.child（空间挂子房间）。薄网络层：同值重写无害
+   * （幂等收敛归调用方 ensure-shape，同 hr-face 纪律）。
+   */
+  async sendStateEvent(roomId: string, type: string, stateKey: string, content: unknown): Promise<void> {
+    await this.request(
+      'PUT',
+      `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/${encodeURIComponent(type)}/${encodeURIComponent(stateKey)}`,
+      { auth: true, body: content },
+    )
+  }
+
+  /**
+   * 通用 state 读（GET /rooms/:id/state/:type/:stateKey）——130-P3：ensure-shape 的
+   * 「同值零写」面（PL/visibility/空间子项/房间名比对现状，一致即跳过——S8 重跑收敛
+   * 的省写判据）。404（无此 state）抛错，调用方按「缺省即写」处理。
+   */
+  async getStateEvent(roomId: string, type: string, stateKey: string): Promise<Record<string, unknown>> {
+    return await this.request<Record<string, unknown>>(
+      'GET',
+      `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/${encodeURIComponent(type)}/${encodeURIComponent(stateKey)}`,
+      { auth: true },
+    )
+  }
+
+  /**
+   * 房间成员按 membership 过滤读（GET /rooms/:id/members?membership=…）——130-P3：
+   * ensure 的「缺员才邀」面（重跑不重复 invite——invite 事件落房间历史即观测漂移，
+   * S8 判负线=重跑漂移）。返回 MXID 列表（chunk[].sender? no——content.membership 对
+   * event.state_key 生效；本封装只回 join/invite 名单的 state_key 集）。
+   */
+  async listMembers(roomId: string, membership: 'join' | 'invite' | 'leave' | 'ban'): Promise<string[]> {
+    const res = await this.request<{ chunk?: unknown }>(
+      'GET',
+      `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/members`,
+      { auth: true, query: { membership } },
+    )
+    const out: string[] = []
+    if (Array.isArray(res.chunk)) {
+      for (const ev of res.chunk) {
+        const e = ev as { type?: unknown; state_key?: unknown; content?: { membership?: unknown } }
+        if (e.type === 'm.room.member' && typeof e.state_key === 'string') out.push(e.state_key)
+      }
+    }
+    return out
+  }
+
+  /**
+   * power_levels **全量内容**读（130-P3）：setPowerLevel 的 users 投影只够单槽改写；
+   * 供给器要判「目标快照与现状一致」（一致即零写——S8 重跑收敛的省写面），需要
+   * events_default/redact/invite/… 全字段落账比较。数值字段防御性投影（缺省键不进返回）。
+   */
+  async getFullPowerLevels(roomId: string): Promise<Record<string, unknown>> {
+    const res = await this.request<Record<string, unknown>>(
+      'GET',
+      `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.power_levels`,
+      { auth: true },
+    )
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(res ?? {})) {
+      if (typeof v === 'number' || typeof v === 'object' || v === null) out[k] = v
+    }
+    return out
   }
 
   private async request<T>(

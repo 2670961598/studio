@@ -74,7 +74,6 @@ import type { SignatureContext } from '@studio-next/gateway'
 import { openLedger, type Ledger } from '@studio-next/store'
 import type {
   CompanySnapshot,
-  FlowPlatform,
   InvokeSource,
   ModelCatalog,
   PersonRef,
@@ -93,7 +92,6 @@ import {
 import { runEvolveStartupSelfCheck, type EvolveSelfCheckReport, type FrozenAsset } from '../evolve/evolve-guard.ts'
 import { createFakeAdapter } from '../engine/fakes.ts'
 import { buildServeDirectiveDeps, parseWhitelistSpec } from '../engine/directive/index.ts'
-import { createGatedPlatform } from '../engine/tools/gated-platform.ts'
 import { createDefaultGateRunner, createAcceptanceGateRunner } from '../engine/gate.ts'
 import { answerReloadNoCompanyDir, createHotReload, type HotReload, type HotReloadApplyReport } from '../control/hot-reload.ts'
 import { makeUlid } from '../engine/tools/id.ts'
@@ -107,11 +105,15 @@ import { flowsFromWorkflows } from '../engine/typeflows.ts'
 import { consumeStopRequest, readStopRequest, STOP_LAST_SEEN_KV_KEY, writeStopResult } from '../control/stop-channel.ts'
 import type { WorkerKeyDeps } from '../engine/worker-key.ts'
 import type { MatrixHrFace } from '../engine/hrsync/hrsync.ts'
+// 频道供给面（130-P3，130 提案 §6.7）：结构同形接口——daemon 不 import matrix 包
+import type { MatrixRoomFace, MatrixRoomFaceContext } from '../engine/rooms/room-duty.ts'
 // 人事同步器装配（DEV-48，docs/52-§九）——hr 配置面/装配体/平台接线件（BC-S2 先拆再增）
 import { assembleHrSync, hrApplySegment } from './hrsync/assemble.ts'
 import { coerceHrServeKey, HR_SERVE_DEFAULTS, validateHrServeCross, type HrServeConfig } from './hrsync/config.ts'
-import { loadTaigaFieldMap, provisionDeclaredStates, resolveTaigaAuth, wirePlatform } from './platform/wire.ts'
+import { loadTaigaFieldMap, provisionDeclaredStates, resolveTaigaAuth, wireGatedPlatform, wirePlatform } from './platform/wire.ts'
 export { resolveTaigaAuth, loadTaigaFieldMap, wirePlatform }
+// 频道供给面类型再出（130-P3）：boot 组合根从 '@studio-next/daemon/serve' 消费工厂签名
+export type { MatrixRoomFace, MatrixRoomFaceContext } from '../engine/rooms/room-duty.ts'
 import {
   createFileWatchSource,
   createSchedulerSource,
@@ -209,6 +211,16 @@ export interface ServeConfig extends HrServeConfig {
   matrixPollMs?: number
   /** 增量 sync 长轮询超时 ms（缺省 25000——空闲期挂连接，A-4；基线拉取恒 0） */
   matrixSyncTimeoutMs?: number
+  /**
+   * 公司频道供给开关（130-P3，130 提案 §6.7.3-③；缺省关）：true=注入工厂装配（opts.
+   * matrixRoomFace）——启动+热重载 ensure 八类地图＋派发/CLOSE 生命周期钩（EngineDeps.
+   * rooms）。开而未注入=CONFIG_INVALID；供给失败不阻主循环（执行体 assembly/channels/）。
+   */
+  matrixChannels: boolean
+  /** 部门 path → ASCII slug 映射 JSON 路径（DEV-20 D6；matrixChannels: true 时必配） */
+  matrixDeptMap?: string
+  /** 制作人 MXID（缺省 @opengames:localhost——神号全知，130 §6.7.2；21A-§2.2） */
+  matrixProducerMxid?: string
   /**
    * watch-file 示例源开关（22-§三.1 验收靶子；缺省关）：true 时监听 fileWatchPath 指定
    * 文件的变化，JSON 行各产一条 webhook 意图（dedupKey=mtime#行号，见 src/engine/sources.ts）。
@@ -345,6 +357,7 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   jobs: false,
   jobPollMs: 15_000,
   matrix: false,
+  matrixChannels: false,
   // 人事同步器缺省关（DEV-48，docs/52-§九；缺省值面=HR_SERVE_DEFAULTS 单一源）
   ...HR_SERVE_DEFAULTS,
   fileWatch: false,
@@ -403,6 +416,7 @@ export function parseDaemonConfig(text: string): ServeConfig {
 import { bool, num, str } from './serveconfig/coerce.ts'
 // 员工待办队列配置解析件（129-§6.2，studio-dev-167 单B——engine/todoqueue 域件同源）
 import { parsePersonInflightOverrides, parsePinnedTickets } from '../engine/todoqueue/queue.ts'
+import { crossValidateMatrixChannels, reEnsureChannels, startChannelSupply, wireRoomFace } from './channels/channels.ts'
 
 function coerceServeConfig(raw: Record<string, string | number | boolean>): ServeConfig {
   const cfg: ServeConfig = { ...DEFAULT_SERVE_CONFIG }
@@ -543,6 +557,15 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'matrixSyncTimeoutMs':
         cfg.matrixSyncTimeoutMs = num(value, key)
         break
+      case 'matrixChannels':
+        cfg.matrixChannels = bool(value, key)
+        break
+      case 'matrixDeptMap':
+        cfg.matrixDeptMap = str(value, key)
+        break
+      case 'matrixProducerMxid':
+        cfg.matrixProducerMxid = str(value, key)
+        break
       case 'fileWatch':
         cfg.fileWatch = bool(value, key)
         break
@@ -646,52 +669,16 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       )
     }
   }
+  // —— 频道供给交叉校验（130-P3，130 提案 §6.7.3-③；fail-fast 同 matrix 先例）
+  crossValidateMatrixChannels(cfg)
   return cfg
 }
 
 // ————————————————————————— demo 快照与栈装配 —————————————————————————
 
-/** 内置 demo 公司快照（companyDir 未给时的兜底——单部门单人， Lane 通道走 defaultLane） */
-export const DEMO_SNAPSHOT: CompanySnapshot = {
-  slug: 'demo',
-  name: 'Demo 公司',
-  level: 2,
-  charter: 'charter.md',
-  platform: { platform: 'localfile' },
-  departments: [
-    {
-      name: '工程部',
-      path: 'departments/工程部',
-      parent: null,
-      leader: 'AGENT-1',
-      level: 2,
-      lanes: ['core'],
-      functions: ['交付'],
-      relations: [],
-    },
-  ],
-  people: [
-    { id: 'AGENT-1', name: '示例工程师', login: 'agent-1', level: 2, dept: 'departments/工程部' },
-  ],
-  jobs: [
-    // v0.4 首个定时岗样例（16-§四「健康巡检」）：5 分钟巡逻——demo 模式出厂即跑通
-    // 「cron 到点 → schedule 意图 → 岗单据 → 台账」链（PATROL 起头）。
-    // 落位分型（DEV-40）：type='patrol'=巡查工件——物化落终态（已交付），同拍回收 CLOSE，
-    // **不派发**（宰相批注 2026-10-20：巡查工件派发=烧配额；真「健康巡检」实职归后续
-    // 运维单）。工单型岗（report/cadence）落初态照走派发-收割链（见 engine.ts 物化段）。
-    {
-      job_id: 'health-patrol',
-      company: 'demo',
-      dept: 'departments/工程部',
-      cron: '*/5 * * * *',
-      role: 'AGENT-1',
-      level: 2,
-      model_tier: 'low',
-      budget_cap: { usd: 1 },
-      payload: { type: 'patrol', note: 'demo 健康巡检样例岗（16-§四 v0.4）' },
-    },
-  ],
-}
+// demo 快照拆至 assembly/demo/（130-P3 接线时腾位，20-§十五「先拆再增」；同源 re-export）
+import { DEMO_SNAPSHOT } from './demo/demo-snapshot.ts'
+export { DEMO_SNAPSHOT }
 
 /** runServe 启动日志的闸门形态（buildServeRuntime 同判据：acceptance 配置给定=真单模式） */
 function realGateMode(config: ServeConfig): boolean {
@@ -751,25 +738,9 @@ function daemonIdentity(config: ServeConfig, snapshot: CompanySnapshot): {
 }
 
 /**
- * 网关写收口接线（17-§7：engine 直调 platform 是最后一条未收口写路径——本函数收口）。
- * 控制面实例（ticket=CONTROL_TICKET）+ daemon 侧身份署名；gateway: false 时裸 platform 直返
- * （对照/测试用——生产不得关）。身份=共享活对象（daemonIdentity 产物——L1 热重载 mutate 面）。
+ * 网关写收口接线拆至 assembly/platform/wire.ts（130-P3 接线时腾位，20-§十五「先拆再增」；
+ * 同源 import 使用——逐字搬迁零行为漂移）。
  */
-function wireGatedPlatform(raw: FlowPlatform, config: ServeConfig, identity: ReturnType<typeof daemonIdentity>, clock: () => number, log: (line: string) => void): FlowPlatform {
-  if (!config.gateway) {
-    log('[serve] 警告：gateway=false——平台写路径未过闸（仅测试/对照用；生产不得关，17-§7）')
-    return raw
-  }
-  const { secret, ctx, author } = identity
-  const usingDevSecret = config.gatewaySecret === undefined
-  const gateway = createGateway({ secret, clock, ticket: CONTROL_TICKET, ctx, author })
-  log(
-    `[serve] 网关已接：平台写路径全收口（17-§7；控制面 control key，一调用一签发）` +
-      `${usingDevSecret ? '——【警告】用开发缺省密钥（生产必配 daemon.yaml gatewaySecret:）' : '（密钥来自 daemon.yaml）'}`,
-  )
-  return createGatedPlatform(raw, gateway, { ctx, author })
-}
-
 /**
  * worker 级 wkey 接线（17-§7「按单签发→随派发注入→关单吊销」；src/engine/worker-key.ts）。
  * gateway: false 时不签发（与控制面同开关）；签发实例绑 CONTROL_TICKET——本实例只用
@@ -924,6 +895,13 @@ export function buildServeRuntime(
      * daemon 不 import @studio-next/matrix，同 matrixSource 注入纪律）。
      */
     hrMatrixFace?: () => MatrixHrFace
+    /**
+     * Matrix 频道供给面工厂（130-P3，130 提案 §6.7.3-③；matrixChannels: true 时调用）：
+     * 装配单元（apps/boot）注入 createMatrixProvisionFace 产物（结构同形 engine/rooms/room-duty
+     * MatrixRoomFace——daemon 不 import @studio-next/matrix，同注入纪律）。ctx.snapshot 活取
+     * 公司快照（L1 热重载新鲜面）——daemon 只收工厂不持 Matrix 网络面。
+     */
+    matrixRoomFace?: (ctx: MatrixRoomFaceContext) => MatrixRoomFace
     /** 出站脱敏补充秘密面（DEV-48，docs/52-§十二；matrix shared_secret 等装配单元持有物） */
     hrKnownSecrets?: readonly string[]
     /**
@@ -1136,11 +1114,16 @@ export function buildServeRuntime(
     platformIssues: rawPlatform.issues,
     makeId: makeUlid,
   })
+  // —— 频道供给面装配（130-P3，130 提案 §6.7.3；装配体拆至 assembly/channels/）：
+  //    matrixChannels 关=零装配零注入，既有行为字节不变（同 hrSync 纪律）。
+  let roomFace: MatrixRoomFace | undefined
+  if (config.matrixChannels) roomFace = wireRoomFace(opts?.matrixRoomFace, () => companyState.snapshot)
   const engine = createEngine({
     // 写路径网关收口（17-§7）：raw platform 包一层 gated 代理——engine 写调用签名不变（透明）
     platform: wireGatedPlatform(rawPlatform, config, identity, clock, log),
     ...(workerKeys !== undefined ? { workerKeys } : {}),
     ...(hrDigester !== undefined ? { hrSync: hrDigester } : {}),
+    ...(roomFace !== undefined ? { rooms: roomFace } : {}),
     ledger,
     registry,
     assembler: makeAssembler(),
@@ -1243,6 +1226,10 @@ export function buildServeRuntime(
 
   log(`[serve] 唤起源注册表：${sources.list().map((e) => e.source.name).join('、') || '（空）'}——emit 统一进 engine.ingest（22-§一 源零直驱）`)
 
+  // —— 公司频道地图启动供给（130-P3 §6.7.3-③；DEV-20 §5.4 ensure 幂等）：fire-and-forget
+  //    不阻主循环（执行体拆至 assembly/channels/；报告/problems/failures 逐条落日志）
+  if (roomFace !== undefined) startChannelSupply(roomFace, log)
+
   // —— L1 配置热重载执行体（docs/38-§2 L1 / §4 R-A；companyDir 给定时装配）——
   //    apply 段（校验绿后调用，幂等可重入）：调度岗播种/移除（jobs: true 时——与启动同一
   //    闸门）→ 快照持有者替换 → engine.applyCompanyUpdate（people/装配器/三派生键）→
@@ -1292,6 +1279,9 @@ export function buildServeRuntime(
         }
         // 纯赋值段（不抛）：快照持有者 → 引擎整组换 → 署名上下文
         companyState.snapshot = next
+        // 频道地图重供给（130-P3 §6.7.3-③）：apply 段同步推进、供给异步收敛（执行体
+        // 拆至 assembly/channels/——ensure 幂等只补差集；不入 apply 事务面）
+        if (roomFace !== undefined) reEnsureChannels(roomFace, log)
         // 类型流热换（N1，DEV-43）：拍边界换表——在途单下拍 decide 对新表重解析
         //（resolveTicketFlow 同函数；跨边界遇未知态=既有 L1 热重载纪律 NOOP_UNKNOWN_STATE，
         //  状态权威在平台侧、不猜不动）；无 workflows=flows:undefined=回内置缺省表
@@ -1422,6 +1412,11 @@ export async function runServe(
      * （matrix: true 且未注入=CONFIG_INVALID 拒启动）。
      */
     matrixSource?: () => InvokeSource
+    /**
+     * matrix 频道供给面工厂（130-P3 §6.7.3）：matrixChannels: true 时注入（apps/boot
+     * 构造 createMatrixProvisionFace 产物）；缺省不注入（开而未注入=CONFIG_INVALID）。
+     */
+    matrixRoomFace?: (ctx: MatrixRoomFaceContext) => MatrixRoomFace
   },
 ): Promise<ServeResult> {
   const config = parseDaemonConfig(readFileSync(path.resolve(configPath), 'utf8'))
@@ -1480,6 +1475,7 @@ export async function runServe(
 
   const { engine, sources, stop, hotReload } = buildServeRuntime(config, ledger, snapshot, {
     ...(opts?.matrixSource !== undefined ? { matrixSource: opts.matrixSource } : {}),
+    ...(opts?.matrixRoomFace !== undefined ? { matrixRoomFace: opts.matrixRoomFace } : {}),
   })
 
   // 未挂公司目录的 daemon：L1 热重载不适用——reload 请求仍回执拒绝（不悬空 CLI 轮询）

@@ -266,9 +266,10 @@ import { aiwsWorkspaceOf, type PromptAssembler } from './prompt-assembly.ts'
 import { blindArtifactPaths, createView, resolveReadTier, roleOfAssignee } from './read-tiers.ts'
 import type { ReadTier } from './read-tiers.ts'
 import { heartbeatSentinelRecord, runDev49Sentinels } from './sentinel/sentinels.ts'
-import { mintWorkerKey, workerKeyCredentials, workerKeyGuidance, WORKER_WKEY_ENV_KEY } from './worker-key.ts'
+import { mintWorkerKey, workerKeyCredentials, workerKeyGuidance, revokeWorkerKey, WORKER_WKEY_ENV_KEY } from './worker-key.ts'
 import type { WorkerKeyDeps } from './worker-key.ts'
 import type { HrSyncTickReport } from './hrsync/hrsync.ts'
+import { closeRoomDuty, dispatchRoomDuty, type RoomDuty } from './rooms/room-duty.ts'
 // 员工待办队列域件（129-§6.2，studio-dev-167 单B，20-§十五「先拆再增」自 engine.ts 拆出）：
 // 排序键/携带态/成员资格/投影/配置解析全在域件；engine 只留相位缝（候选定序/人闸快照/
 // 派发 note wait 锚/相位 7 尾投影重投）。
@@ -518,6 +519,8 @@ export interface EngineDeps {
    *（wire.ts 头注）；departments 热重载经 applyCompanyUpdate 整组换。
    */
   directives?: DirectiveGateDeps
+  /** 单据房间义务面（130-P3/DEV-20 P9-P10，src/engine/rooms/room-duty.ts）：派发/CLOSE 相位钩；缺省不注入=零行为变更 */
+  rooms?: RoomDuty
 }
 
 // ————————————————————————— TickReport（17-§2「tick 返回结构化 actions」；各面类型驻 tick-report/types.ts） —————————————————————————
@@ -670,17 +673,7 @@ export function createEngine(deps: EngineDeps): Engine {
   // 子进程 env，daemon 不留 token 副本、无在途索引面（吊销按 ticket 走 gateway，不依赖
   // 索引；workerKeys 未注入=面关闭）
   const workerKeys = deps.workerKeys
-
-  /**
-   * 吊销一单的 worker key（终局面：CLOSE——交付归档后不再重派，吊销安全；DEV-46 起
-   * 熔断**不**再吊销：冷却后半开试探要重签新 key，ticket 级吊销会令试探 key 出生即死）。
-   * env 通道下凭据本体已随子进程终结离场——吊销封死的是 TTL 兜底面（nonce 单次有效）。
-   */
-  function revokeWorkerKeyOf(ticket: TicketId): boolean {
-    if (workerKeys === undefined) return false
-    workerKeys.gateway.revoke(ticket)
-    return true
-  }
+  const rooms = deps.rooms // 单据房间义务面（130-P3）：缺省=零行为
 
   // daemon_kv：store v4 正式面（活动流游标/拍序的家——ledger.kvGet/kvSet；本引擎自建 DDL
   // 与 prepared 语句已删，存量数据原地续用，见文件头注「已清偿」两条与 migrations v4 头注）
@@ -1005,6 +998,8 @@ export function createEngine(deps: EngineDeps): Engine {
       // 派发成功即出队（129-§6.2）：携带条删——GATE_FAIL 回滚再入队走 touchQueueCarry
       // 新钟（attempt 轮次可区分，队列等待观测口径=每誓一钟，不跨轮累计）。
       if (queueEntryAtDispatch !== undefined) dropQueueCarry(queueCarry, [ticket])
+      // 单据房间供给（130-P3/DEV-20 P9）：ensureTicketRoom；失败 ESCALATE 不阻派发（幂等重跑收敛）
+      if (rooms !== undefined) await dispatchRoomDuty(rooms, { ticket, title: fresh.title, dept: fresh.dept ?? person.dept, assignee: person.id }, (note) => makeEvent('ESCALATE', transitioned, attempt, tickEvents, { note }))
       return {
         ticket,
         actionType: action.type,
@@ -2080,10 +2075,12 @@ export function createEngine(deps: EngineDeps): Engine {
         // （GATE_PASS 后 key 存续到此处——验收/复验窗口内 worker 仍可署名回执）。
         // 工位=**原位**归档（DEV-28，docs/43-§五）：tickets/<单号>/att<N> 证据不动（台账
         // report_ref/summary_ref 引用不断链）、员工家永不删——回收只释放泳道+吊销凭据
-        const wkeyRevoked = revokeWorkerKeyOf(action.ticket)
+        const wkeyRevoked = revokeWorkerKey(workerKeys, action.ticket)
         makeEvent('CLOSE', fresh, index.attemptOf(action.ticket), tickEvents, {
           note: `交付回收：泳道释放、工位原位归档=.AIWS 家保留（docs/43-§五；会话归档归后续刀）${wkeyRevoked ? '；wkey=关单吊销（17-§7）' : ''}`,
         })
+        // 单据房间归档（130-P3/DEV-20 P10）：只读归档；失败 ESCALATE 不阻回收（幂等重跑收敛）
+        if (rooms !== undefined) await closeRoomDuty(rooms, action.ticket, (note) => makeEvent('ESCALATE', fresh, index.attemptOf(action.ticket), tickEvents, { note }))
         recycled += 1
         mutations += 1
         actionResults.push({ ticket: action.ticket, actionType: action.type, ok: true, detail: `lane=${lane} 释放` })

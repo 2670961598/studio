@@ -132,3 +132,15 @@ export function workerKeyGuidance(): string {
     `经 studio-tools MCP 的 initialize 参数 \`_meta['studio-wkey']\` 注入使用；关单即吊销（17-§7），过期/吊销后不得再写平台。`
   )
 }
+
+/**
+ * 吊销一单的 worker key（终局面：CLOSE——交付归档后不再重派，吊销安全；DEV-46 起
+ * 熔断**不**再吊销：冷却后半开试探要重签新 key，ticket 级吊销会令试探 key 出生即死）。
+ * env 通道下凭据本体已随子进程终结离场——吊销封死的是 TTL 兜底面（nonce 单次有效）。
+ * 130-P3 自 engine.ts 相位缝拆出（20-§十五「先拆再增」）；未注入面=false 不吊销。
+ */
+export function revokeWorkerKey(workerKeys: WorkerKeyDeps | undefined, ticket: TicketId): boolean {
+  if (workerKeys === undefined) return false
+  workerKeys.gateway.revoke(ticket)
+  return true
+}

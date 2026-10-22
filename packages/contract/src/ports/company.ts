@@ -120,6 +120,25 @@ export interface TicketWorkflows {
   types: WorkflowTypeDecl[]
 }
 
+/**
+ * org-config groups 段条目（130-P3 频道供给扩展，130 提案 §6.7.1/C4——组群声明面）。
+ * 声明由供给器展开（ensure 幂等收敛）为小组频道 `#<公司slug>-<部门ascii slug>-<组id>`：
+ * 如 groups[{id: pln, dept: departments/研发部}] → `#studio-dev-rd-pln`（DEV-20 §5.1 命名法）。
+ * members 为工号显式清单（审计面——不按 role 模糊匹配；增减人改声明，下拍供给收敛）。
+ */
+export interface OrgGroupDecl {
+  /** 组 id：ASCII slug（频道别名段——语法闸同公司 slug），部门内唯一 */
+  id: string
+  /** 所属部门 path（须在 departments 内——装载交叉校验） */
+  dept: string
+  /** 频道显示名（CJK，如「研发部-策划组」） */
+  name: string
+  /** 组长（可选；组长进群 PL=50——DEV-20 §5.3 部门频道列「部门主管」槽同款） */
+  leader?: PersonId
+  /** 成员工号清单（≥1；leader 若声明须在清单内） */
+  members: PersonId[]
+}
+
 export interface CompanySnapshot {
   slug: CompanySlug
   name: string
@@ -131,6 +150,11 @@ export interface CompanySnapshot {
   jobs: ScheduledJob[]
   /** 单据类型流声明（DEV-43；不声明=undefined=等级流现状行为） */
   workflows?: TicketWorkflows
+  /**
+   * 组群声明（130-P3，130 提案 §6.7.1/C4；不声明=undefined=无小组频道供给）。
+   * 可选=快照向后兼容（workflows 同款扩法）；装载面交叉校验（dept 存在/工号在册）。
+   */
+  groups?: OrgGroupDecl[]
   /**
    * 州表卫生·白名单层（127-C，studio-dev-127 §4.7）：已知外来态（org-config
    * `yt.known_foreign_states`）——引擎哨兵对其降 FOREIGN_KNOWN 观察级（不升

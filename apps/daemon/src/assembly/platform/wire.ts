@@ -11,10 +11,39 @@
 import { readFileSync } from 'node:fs'
 import { resolve as resolvePath } from 'node:path'
 import type { FieldProvisionMap, FlowPlatform } from '@studio-next/contract'
+import { createGateway, CONTROL_TICKET, type SignatureContext } from '@studio-next/gateway'
 import { createLocalPlatform } from '@studio-next/localplatform'
 import { createTaigaPlatform, type TaigaAuth, type TaigaEntity } from '@studio-next/taiga'
 import { createFakePlatform } from '../../engine/fakes.ts'
+import { createGatedPlatform } from '../../engine/tools/gated-platform.ts'
 import type { ServeConfig } from '../serve.ts'
+
+/**
+ * 网关写收口接线（17-§7：engine 直调 platform 是最后一条未收口写路径——本函数收口）。
+ * 控制面实例（ticket=CONTROL_TICKET）+ daemon 侧身份署名；gateway: false 时裸 platform
+ * 直返（对照/测试用——生产不得关）。身份=共享活对象（serve.ts daemonIdentity 产物——
+ * L1 热重载 mutate 面）。130-P3 自 serve.ts 拆出（20-§十五「先拆再增」；逐字搬迁）。
+ */
+export function wireGatedPlatform(
+  raw: FlowPlatform,
+  config: ServeConfig,
+  identity: { secret: Uint8Array; ctx: SignatureContext; author: string },
+  clock: () => number,
+  log: (line: string) => void,
+): FlowPlatform {
+  if (!config.gateway) {
+    log('[serve] 警告：gateway=false——平台写路径未过闸（仅测试/对照用；生产不得关，17-§7）')
+    return raw
+  }
+  const { secret, ctx, author } = identity
+  const usingDevSecret = config.gatewaySecret === undefined
+  const gateway = createGateway({ secret, clock, ticket: CONTROL_TICKET, ctx, author })
+  log(
+    `[serve] 网关已接：平台写路径全收口（17-§7；控制面 control key，一调用一签发）` +
+      `${usingDevSecret ? '——【警告】用开发缺省密钥（生产必配 daemon.yaml gatewaySecret:）' : '（密钥来自 daemon.yaml）'}`,
+  )
+  return createGatedPlatform(raw, gateway, { ctx, author })
+}
 
 /**
  * Taiga 凭据供给（token 供给面）：daemon.yaml 只配形态（taigaAuth: password|token），
