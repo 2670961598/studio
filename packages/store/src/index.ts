@@ -155,6 +155,19 @@ export type { Migration } from './migrations.ts'
 export { openLedger } from './ledger.ts'
 export type { AppendResult, BudgetListQuery, BudgetScope, CompanySyncResult, DumpResult, EventQuery, InsertCandidateResult, Ledger, PersonnelTimelineEntry } from './ledger.ts'
 
+// v9 定价快照面（132-§6.2 单B·studio-dev-169）：唯一写面 appendPriceSnapshot（单据锚）
+// + 读面 listPriceSnapshots；形状闸与冻结词表复制随面落 src/pricing.ts
+export {
+  PRICE_BILLING_TRACK_VALUES,
+  PRICE_SLOT_VALUES,
+  type AppendPriceSnapshotResult,
+  type PriceBillingTrack,
+  type PriceSnapshotQuery,
+  type PriceSnapshotRecord,
+  type PriceSlot,
+  type PricingFace,
+} from './pricing.ts'
+
 // work_records / sessions + v2 五表 + v3 jobs + v4 收口面 + v5 candidates + v6 报表三表
 // + v7 hr_sync_log 记录形状（store 层临时闸，contract schema 落地后替换）
 export {

@@ -10,6 +10,7 @@ import type { EventRecord, TicketId } from '@studio-next/contract'
 import type { Action, DecisionCode } from '@studio-next/core'
 import type { HrSyncTickReport } from '../hrsync/hrsync.ts'
 import type { HarvestReconResult } from '../jobs/harvest-recon.ts'
+import type { PricingStaleTickReport } from '../pricing/pricing.ts'
 
 /** 采集相位汇报 */
 export interface TickPhaseCollect {
@@ -106,7 +107,13 @@ export interface TickReport {
     harvest: TickPhaseHarvest
     merge: { merged: number }
     recycle: { recycled: number }
-    account: { eventsAppended: number; heartbeat: boolean; hrSync?: HrSyncTickReport }
+    account: {
+      eventsAppended: number
+      heartbeat: boolean
+      hrSync?: HrSyncTickReport
+      /** 定价 stale 检查（132-§6.2 单B：相位 7 尾日锚步——一日一跑，checked=0 未到窗/已跑） */
+      pricingStale?: PricingStaleTickReport
+    }
   }
   actions: readonly Action[]
   actionResults: readonly TickActionResult[]

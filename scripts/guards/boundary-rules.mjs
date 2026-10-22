@@ -157,10 +157,10 @@ export const maxLinesPerFile = 600;
  * 清偿义务：每里程碑对账点核对净变化——只许净减（§十五.三.4）。
  */
 export const lineBaseline = {
-  "apps/daemon/src/engine/engine.ts": 2223, // 170 127-C 州表卫生(+23：knownForeignStates 注入/FOREIGN_KNOWN 落账口/热换/拍计数；制作人 2026-10-22 全批) // 前值 2200=168/167 两刀叠加
-  "packages/store/src/records.ts": 606, // 129-B todo_queue 写面闸扩展(+6，v9 配套——新超限件随批示波次入基线：制作人 2026-10-22 全批)
-  "packages/store/src/ledger.ts": 1764, // 167 129-B todo_queue 读写面(+99，v9 迁移配套；前值 1665)
-  "apps/daemon/src/assembly/serve.ts": 1560, // 170 127-C 州表卫生(+7：白名单启动装配+热重载注入——恒显式数组口径) // 前值 1553=167 129-B
+  "apps/daemon/src/engine/engine.ts": 2269, // 168+167+170+169 波次叠加态(+69：定价面缝并入——宰相亲批 2026-10-22；前值 2200)
+  "packages/store/src/records.ts": 606,
+  "packages/store/src/ledger.ts": 1768, // 169 132-B pricing 读写面并入(+4；前值 1764=167)
+  "apps/daemon/src/assembly/serve.ts": 1560, // 169 132-B 装配缝并入(+7；前值 1553=167)
   "packages/company/src/repo-validate.ts": 1021,
   "apps/daemon/test/control/hot-reload.test.ts": 930,
   "apps/daemon/test/engine/scheduler.test.ts": 785,

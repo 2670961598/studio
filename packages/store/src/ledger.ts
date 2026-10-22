@@ -102,6 +102,8 @@ import {
 import { openSqlite } from './driver.ts'
 import { createHrSyncQueue } from './hr-sync-queue.ts'
 import type { HrSyncQueueFace } from './hr-sync-queue.ts'
+import { createPricingFace } from './pricing.ts'
+import type { PricingFace } from './pricing.ts'
 import { assertRecord, optNum, optStr, str, type SqlRow } from './row-helpers.ts'
 import { currentVersion, migrate } from './migrations.ts'
 import {
@@ -218,7 +220,7 @@ export type PersonnelTimelineEntry =
   | { source: 'session'; ts: number; record: SessionRecord }
 
 /** 台账句柄：daemon 持有；db 暴露 DatabaseSync 标准面（引擎切换只动 driver.ts） */
-export interface Ledger extends HrSyncQueueFace {
+export interface Ledger extends HrSyncQueueFace, PricingFace {
   db: DatabaseSync
   close(): void
   /** 当前 schema 版本（schema_version 表 MAX(version)；0=无迁移记录） */
@@ -1734,6 +1736,8 @@ export function openLedger(path: string): Ledger {
     getProbeRun,
     listProbeRuns,
     ...createHrSyncQueue(db),
+    // v9 定价快照面（132-§6.2 单B：published_at 取库侧时钟——append 时刻的事实）
+    ...createPricingFace(db, () => Date.now()),
   }
 }
 
