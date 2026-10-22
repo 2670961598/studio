@@ -81,6 +81,7 @@ import type {
   PersonRef,
   ScheduledJob,
   SourceManifest,
+  TicketId,
 } from '@studio-next/contract'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -95,6 +96,7 @@ import { runEvolveStartupSelfCheck, type EvolveSelfCheckReport, type FrozenAsset
 import { mergeDataChangeRoutes } from '../engine/intents/taxonomy.ts' // 129-C：org-config hooks.data_change.routes（规范位）+ daemon.yaml dataChangeRoutes（逃生位）合并
 import { createCostNotifyOutlet, mergeCostThresholdDefaults } from '../engine/intents/escalate.ts' // 129-D：cost-threshold 缺省路由合并+notify 出口（刀B 登记位）
 import { wirePeopleChangeSource } from '../engine/hrsync/people-change-source.ts' // 129-C：people-change 源注册件（hrPeopleWatch 开时挂 hr-sync 分类器出口）
+import { wireRelaySource, wireResumeSource, type RelayWorkSignal } from '../engine/intents/relay-resume-sources.ts' // 129-E 单E：relay/resume 源注册件（收割完成钩→接力意图；续命意图推送面）
 import { createFakeAdapter } from '../engine/fakes.ts'
 import { buildServeDirectiveDeps, parseWhitelistSpec } from '../engine/directive/index.ts'
 import { createDefaultGateRunner, createAcceptanceGateRunner } from '../engine/gate.ts'
@@ -260,6 +262,10 @@ export interface ServeConfig extends HrServeConfig {
    * 不自动补跑（处置=CLI jobs catchup）。扫描轮询复用 jobPollMs。
    */
   freshness: boolean
+  /** 接力源开关（129-§6.1⑥/§6.5 单E·studio-dev-184；缺省关）：收割完成钩→「请重估单 X」幂等意图（誓作用域防抖，F1-11；缺省关=零装配零注入） */
+  relay: boolean
+  /** 续命源开关（129-§6.1⑥/§6.5 单E·studio-dev-184；缺省关）：断点续跑意图推送面（v0 生产调用面=测试与后续 CLI resume，50a-B4 归档） */
+  resume: boolean
   /**
    * L1 配置热重载·自动指纹监听开关（docs/38-§2 L1 / §4 R-A；缺省开，仅 companyDir 给定
    * 时生效）：每拍轻量 stat+mtime 扫公司目录，变更且稳定 → 拍边界重装载（零进程重启）。
@@ -378,6 +384,9 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   sla: false,
   costGuard: false,
   freshness: false,
+  // 接力/续命源缺省关（129-E studio-dev-184）：关=零装配零注入，行为字节不变
+  relay: false,
+  resume: false,
   reloadWatch: true,
   gateway: true,
 }
@@ -607,6 +616,13 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         break
       case 'freshness':
         cfg.freshness = bool(value, key)
+        break
+      // —— 接力/续命源开关（129-§6.1⑥/§6.5 单E，studio-dev-184）——
+      case 'relay':
+        cfg.relay = bool(value, key)
+        break
+      case 'resume':
+        cfg.resume = bool(value, key)
         break
       // —— 人事同步器键组（DEV-48，docs/52-§九/§六.1/§七；hrPeopleWatch=129-C）——胁迫/校验收口 assembly/hrsync/config.ts（不属 hr 面回落本 switch）
       case 'hrSync':
@@ -868,6 +884,11 @@ export interface ServeRuntime {
    * 落账（unauthorized 时）；本字段为汇报面（测试/面板观测锚）。
    */
   evolveSelfCheck: EvolveSelfCheckReport
+  /**
+   * 续命意图推送面（129-E 单E，studio-dev-184；resume: true 时存在）：v0 生产调用面=
+   * 测试与后续 CLI `studio resume <单号>`（50a-B4 归档在册——命令面另批，此处先露面）。
+   */
+  resumePublish?: (ticket: TicketId, cause?: string) => boolean
   /**
    * 优雅停：先 stopAll 唤起源（不再进新意图）→ 在途 drain → 关台账
    * （SIGINT/SIGTERM 同一收口；可重入）。队列中未消费意图停机即弃（at-most-once，
@@ -1169,6 +1190,12 @@ export function buildServeRuntime(
       { producer: config.directiveProducer, whitelist: config.directiveWhitelist },
       snapshot.departments,
     ),
+    // 收割完成钩（129-E 单E，F1-11 接力产面）：engine 相位 4 收口回调→relay 源 publish。
+    // 源注册在 engine 之后（22-§一 装配序）——闭包后绑定（下方 relayPublish 绑定位）；
+    // relay 源未开=闭包转发空跳零行为（缺省不注入语义等效）
+    onWorkComplete: (signal: RelayWorkSignal): void => {
+      relayPublish?.(signal)
+    },
   })
 
   // —— 唤起源注册表（22-§一）：三源按配置接入，emit 统一进 engine.ingest（runServe 接线） ——
@@ -1178,6 +1205,12 @@ export function buildServeRuntime(
   }
   // people-change 源（129-C P0-A，studio-dev-178）：hrSync+hrPeopleWatch 开=挂 hr-sync 分类器出口双写 data-change 意图（源本体 engine/hrsync/people-change-source.ts）
   const peopleChangePublish = config.hrPeopleWatch ? wirePeopleChangeSource(sources, { company: config.company, sink: ingestSink, log }) : undefined
+  // —— relay/resume 源（129-E 单E，studio-dev-184；§6.4-C6 注册三件套：源件+开关+manifest）——
+  // relay：收割完成钩转发面（onWorkComplete 闭包→publish；誓作用域防抖——relay-resume-sources.ts 头注）
+  // resume：续命意图推送面（v0 产面=测试/后续 CLI resume 命令，50a-B4 归档；publish 面经
+  // runtime 返回口露出——命令面另批接）。
+  const relayPublish = config.relay ? wireRelaySource(sources, { company: config.company, sink: ingestSink, log }) : undefined
+  const resumePublish = config.resume ? wireResumeSource(sources, { company: config.company, sink: ingestSink, log }) : undefined
 
   let scheduler: Scheduler | null = null
   if (config.jobs) {
@@ -1346,6 +1379,8 @@ export function buildServeRuntime(
     sources,
     evolveSelfCheck,
     ...(hotReload !== undefined ? { hotReload } : {}),
+    // 129-E（184）：续命意图推送面露头（resume: true 时；调用面归 B4 CLI resume——另批）
+    ...(resumePublish !== undefined ? { resumePublish } : {}),
     async stop(): Promise<void> {
       // 先停源（不再进新意图）→ 再停引擎（在途 drain）→ 关台账（SIGINT 停机顺序，22-§三.3）
       sources.stopAll()
@@ -1356,14 +1391,6 @@ export function buildServeRuntime(
 }
 
 // ————————————————————————— 在途接管（R-B） —————————————————————————
-
-/** 在途接管结果（serve 启动例行面的观测锚——启动日志一行 + 测试断言面） */
-export interface InflightTakeoverResult {
-  /** 收口条数（前命孤儿 running 工位） */
-  takenOver: number
-  /** 收口明细（单号+attempt——日志归因面） */
-  items: ReadonlyArray<{ id: string; issue: string; attempt: number }>
-}
 
 /**
  * serve 启动例行接管 work_records running（DEV-13 R-B；38-§2/§4 R-B——crash-injection ③
@@ -1377,16 +1404,10 @@ export interface InflightTakeoverResult {
  *     WORKER_DEAD 名（加名走 SCHEMA_EVOLVE）——观测面=启动日志+终态行本身。
  *   - 幂等：过滤面先于收口面（已收再收=CONFIG_INVALID）；优雅停与硬杀殊途同归，重启即收口。
  */
-export function takeOverRunningWorkRecords(ledger: Ledger, now: number): InflightTakeoverResult {
-  const items: Array<{ id: string; issue: string; attempt: number }> = []
-  for (const r of ledger.listWorkRecords()) {
-    if (r.status !== 'running' || r.ended_at !== undefined) continue
-    if (ledger.endWorkRecord(r.id, { ended_at: now, status: 'interrupted' })) {
-      items.push({ id: r.id, issue: r.issue, attempt: r.attempt })
-    }
-  }
-  return { takenOver: items.length, items }
-}
+// 抽件 engine/harvest/inflight-takeover.ts（20-§十五「先拆再增」+contrib 子域——129-E
+// studio-dev-184 拆出腾基线，语义零变）；公面经本文件 re-export 保持既有导入面
+export { takeOverRunningWorkRecords, type InflightTakeoverResult } from '../engine/harvest/inflight-takeover.ts'
+import { takeOverRunningWorkRecords } from '../engine/harvest/inflight-takeover.ts'
 
 // ————————————————————————— 主循环 —————————————————————————
 

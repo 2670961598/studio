@@ -586,11 +586,11 @@ describe('schedule 意图：明报路径（不静默）', () => {
     s.ledger.close()
   })
 
-  it('分发表外 kind（relay）→ errors 明报不支持（129-A：webhook/data-change 已开闸，改用 relay 钉不支持面）', async () => {
+  it('分发表外 kind（ticket）→ errors 明报不支持（129-E：relay/resume 已开闸，改用 ticket 钉不支持面——活动/镜像内部 kind 非源产面）', async () => {
     const s = buildEngineStack('kind-reject')
-    s.engine.ingest([{ kind: 'relay', company: 'demo', source: 'test', dedupKey: 'm1' }])
+    s.engine.ingest([{ kind: 'ticket', company: 'demo', source: 'test', dedupKey: 'm1', ticket: 'ISSUE-1' }])
     const report = await s.engine.tick()
-    expect(report.errors.join('\n')).toContain("kind='relay' 不支持")
+    expect(report.errors.join('\n')).toContain("kind='ticket' 不支持")
     s.ledger.close()
   })
 

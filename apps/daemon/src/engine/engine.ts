@@ -179,7 +179,8 @@
  *   - markRan 已提交而进程崩溃于 ingest 消费前：该次触发丢失（at-most-once）——已物化岗单据
  *     经活动流重启后仍被主循环接管；mention 同径（源重启按 eventId 重投可追补；E17 停机
  *     不丢意图两预案进 spike 比选不预设——105-§5.3-3）；
- *   - 分发表外 kind（ticket/relay/resume/escalate）明报不支持（六源全通归 v0.8）。
+ *   - 分发表外 kind 仅 ticket（活动/镜像内部 kind，非源产面）明报不支持；relay/resume
+ *     已开（129-E 单E，studio-dev-184——六源全通收口）。
  */
 import { createHash } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -206,7 +207,6 @@ import {
   decide,
   emptyBreakerState,
   flowAnchors,
-  intentKeyOf,
   onWorkerError,
   onSuccess,
   resolveTicketFlow,
@@ -226,11 +226,6 @@ import { crashHook } from './crash-points.ts'
 // 20-§十五 尺寸门「先拆再增」）：契约面/指纹/路由解析/落单渲染+消费工厂；noteSafe 同源
 // （各消费路径共用，零漂移）。公面经本文件 re-export（组合根守护测试钉「源侧产物↔契约」
 // 兼容的既有口径——105-刀A checkMentionPayload 先例）。mention 消费件 129-D（181）迁入。
-import {
-  createDataChangeConsumer,
-  createMentionConsumer,
-  createWebhookConsumer,
-} from './intents/taxonomy.ts'
 export {
   checkDataChangePayload,
   checkMentionPayload,
@@ -241,14 +236,24 @@ export {
   type MentionIntentPayload,
   type WebhookIntentPayload,
 } from './intents/taxonomy.ts'
-// escalate 消费件（129-D studio-dev-181；129-§6.1② 阈值类首开——cost-threshold 类）
-import { createEscalateConsumer, type CostThresholdNotice } from './intents/escalate.ts'
+// escalate 消费件（129-D studio-dev-181；129-§6.1② 阈值类首开——cost-threshold 类；
+// 消费件装配迁 drain.ts——129-E 184 抽件，notify 端口类型经本文件 re-export 保持）
+import type { CostThresholdNotice } from './intents/escalate.ts'
+// 意图消费段（相位 2 前置）抽件（129-E studio-dev-184，20-§十五「先拆再增」）
+import { drainIntents } from './intents/drain.ts'
 export {
   checkEscalatePayload,
   costThresholdKey,
   type CostThresholdNotice,
   type EscalateIntentPayload,
 } from './intents/escalate.ts'
+// relay/resume 消费件（129-E 单E studio-dev-184；129-§6.1⑥ 接力/续命类——六源全通收口）：
+// 消费语义（零物化重估/断点续跑计划）在 relay-resume.ts；源件在 relay-resume-sources.ts
+import type { ResumeDispatchPlan } from './intents/relay-resume.ts'
+import { resumeDispatchFace } from './intents/relay-resume-faces.ts'
+import type { RelayWorkSignal } from './intents/relay-resume-sources.ts'
+export { checkRelayPayload, checkResumePayload, pickResumeAdapter, resolveResumePlan, type RelayIntentPayload, type ResumeIntentPayload, type ResumeDispatchPlan, type ResumePlanOutcome } from './intents/relay-resume.ts'
+
 import { createSplitMaterializer, type SplitDirectiveInput } from './split/materialize.ts' // 拆单物化件（130-P2 studio-dev-173；提案 §6.2.2/§6.2.3-R2）：批示:拆单→子单物化＋父单立案收口
 import { buildEventIndex, STALL_KILL_CLOSE_ANCHOR, type EventIndex } from './sentinel/events-index.ts'
 // 事件四要素形状＋人闸快照投影（自本件抽件——20-§十五「先拆再增」；BC-S2 清偿）
@@ -560,6 +565,14 @@ export interface EngineDeps {
    * 随拍清判断拍闸计数）。
    */
   judge?: QueueJudgeHook
+  /**
+   * 收割完成钩（可选注入；缺省不注入=零行为变更——129-E studio-dev-184）：相位 4 收割
+   * 收口回调，GATE_PASS（completed）/GATE_FAIL（failed）两面都报——「worker 完成」含
+   * 失败完成（F1-11 接力语义）。引擎只报事实不识源（hrSync digester 注入先例——行为缝
+   * 不占主循环结构）；serve 侧闭包转发到 relay 源 publish（relay-resume-sources.ts）。
+   * 钩异常进 tick errors 不炸拍（防御性 try/catch——收割面完整性优先于钩面）。
+   */
+  onWorkComplete?: (signal: RelayWorkSignal) => void
 }
 
 // ————————————————————————— TickReport（17-§2「tick 返回结构化 actions」；各面类型驻 tick-report/types.ts） —————————————————————————
@@ -713,6 +726,7 @@ export function createEngine(deps: EngineDeps): Engine {
   // 索引；workerKeys 未注入=面关闭）
   const workerKeys = deps.workerKeys
   const rooms = deps.rooms // 单据房间义务面（130-P3）：缺省=零行为
+  const onWorkComplete = deps.onWorkComplete // 收割完成钩（129-E F1-11 接力产面）：缺省=零行为
 
   // daemon_kv：store v4 正式面（活动流游标/拍序的家——ledger.kvGet/kvSet；本引擎自建 DDL
   // 与 prepared 语句已删，存量数据原地续用，见文件头注「已清偿」两条与 migrations v4 头注）
@@ -763,6 +777,8 @@ export function createEngine(deps: EngineDeps): Engine {
       size?: number
       payload_hash?: string
       note?: string
+      /** 因果链锚（F1-15 续跑派发：causation_id=上次工时单 id——EventRecord 既有可选列填列非加列） */
+      causation_id?: string
     },
   ): EventRecord {
     const ts = now()
@@ -782,6 +798,7 @@ export function createEngine(deps: EngineDeps): Engine {
       ...(extra?.size !== undefined ? { size: extra.size } : {}),
       ...(extra?.payload_hash !== undefined ? { payload_hash: extra.payload_hash } : {}),
       ...(extra?.note !== undefined ? { note: extra.note } : {}),
+      ...(extra?.causation_id !== undefined ? { causation_id: extra.causation_id } : {}),
     }
     append(rec, tickEvents)
     return rec
@@ -832,6 +849,15 @@ export function createEngine(deps: EngineDeps): Engine {
    * 每任务临时文件 instructions-store.ts）→ **预算闸（reserve 双行落账→才 launch，
    * 20-§六.8 不落即不派）** → registry 选适配器 → launch → work_records 落在途
    * → 平台迁已派发 → events 落 DISPATCH（note 携分层指纹与 intentKey——幂等索引依据）。
+   *
+   * resume 面（129-E studio-dev-184，F1-15）：resumePlan 在（拍作用域——drain 段 resume
+   * 意图消费时登记）→ 适配器优先指名解析 plan.executor（原生续跑用同一家——session id
+   * 是 executor 本地命名空间）→ 装配入参带 resume{sessionId, summaryPath, summary} →
+   * 任务书续跑版（前情摘要注入，17-§5）；executor 除名/声明 session_resume=false →
+   * 明报降级为新派（DISPATCH note `resume=降级新派` 锚——F1-15 字面「不支持续跑的
+   * executor 明报并降级为新派」，不静默）。续跑不重置 attempt 计数（attemptOf 天然续号
+   * ——断路器连击口径不被续跑洗白）；DISPATCH 事件挂 causation_id=上次工时单 id（F1-15
+   * 「新工时单挂 causation_id 链到上次」——EventRecord 既有可选列填列非加列）。
    */
   async function executeDispatch(
     action: Extract<Action, { type: 'dispatch' }>,
@@ -839,6 +865,7 @@ export function createEngine(deps: EngineDeps): Engine {
     index: EventIndex,
     tickEvents: EventRecord[],
     budget: TickPhaseDispatchBudget,
+    resumePlan?: ResumeDispatchPlan,
   ): Promise<TickActionResult> {
     const ticket = action.ticket
     // state-diff 排队时已占泳道（决策即占用）——任何失败路径都必须归还，不留死锁
@@ -855,7 +882,10 @@ export function createEngine(deps: EngineDeps): Engine {
     if (person === undefined) {
       return fail('人员索引为空（people 未注入）——不派工')
     }
-    const adapter = registry.pick()
+    // resume 面（129-E 单E）：指名解析优先（同一家原生续跑），不可续=明报降级走 pick 新派
+    //（resumeDispatchFace 一次取齐适配器/观测锚/装配入参——faces 件，语义源 relay-resume.ts）
+    const resumeFace = resumePlan !== undefined ? resumeDispatchFace(registry, resumePlan, registry.pick()) : undefined
+    const adapter = resumeFace !== undefined && resumeFace.adapter !== undefined ? resumeFace.adapter : registry.pick()
     if (adapter === undefined) {
       return fail('注册表无存活 executor（registry.pick 空）')
     }
@@ -898,7 +928,8 @@ export function createEngine(deps: EngineDeps): Engine {
           ? { blind: { acceptance: config.readBlindAcceptance ?? [], artifacts: blindArtifactPaths(workspace) } }
           : {}),
       })
-      // 装配（L0-L5 → AGENTS.md + 任务书首版）与落盘（daemon 是 prompt 落盘者，17-§5）
+      // 装配（L0-L5 → AGENTS.md + 任务书首版/续跑版，17-§5）与落盘（daemon 是 prompt 落盘者）。
+      // resume 面（129-E）：face.assembleCtx 在场=续跑版（前情摘要注入）；降级面缺席=首版新派
       const assembled = assembler({
         issue: fresh,
         attempt,
@@ -911,6 +942,7 @@ export function createEngine(deps: EngineDeps): Engine {
         agentsTarget,
         agentsChannel: { channel: adapter.capabilities.agents_md, target: agentsTarget },
         readView,
+        ...(resumeFace?.assembleCtx !== undefined ? { resume: resumeFace.assembleCtx } : {}),
       })
       // —— P3-② 权限前移（studio-dev-100 提案 §4.3-2，治 E12 于干预窗内）：工位脚手架
       //    落盘与 worker 子进程（umask 随 fork 继承）统一 0o022——产物默认 ≥0644，收割/
@@ -1020,10 +1052,13 @@ export function createEngine(deps: EngineDeps): Engine {
         queueEntryAtDispatch !== undefined
           ? `;wait=${queueWaitMs};prio=${queueEntryAtDispatch.priority};boost=${ageBoostTier(queueWaitMs ?? 0, queueAgeStepMs)}`
           : ''
+      // resume 观测锚（129-E，F1-15「续跑派发不静默」）：note 尾锚+causation_id=上次工时单 id
+      //（两形都带——因果链不因降级断；锚形见 faces 件 resumeDispatchFace 头注）
       makeEvent('DISPATCH', transitioned, attempt, tickEvents, {
         size: Buffer.byteLength(assembled.agentsMd.text, 'utf8'),
         payload_hash: `sha256:${createHash('sha256').update(assembled.agentsMd.text, 'utf8').digest('hex')}`,
-        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${minted !== undefined ? `;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=${minted.nonce}` : ''}${action.breakerProbe === true ? `;breaker=half-open-probe（冷却窗过——单次试探：成功即复位，失败回全开续冷却，DEV-46）` : ''}${queueAnchor}`,
+        ...(resumeFace !== undefined ? { causation_id: resumeFace.causationId } : {}),
+        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${minted !== undefined ? `;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=${minted.nonce}` : ''}${action.breakerProbe === true ? `;breaker=half-open-probe（冷却窗过——单次试探：成功即复位，失败回全开续冷却，DEV-46）` : ''}${queueAnchor}${resumeFace?.noteAnchor ?? ''}`,
       })
       // 派发成功即出队（129-§6.2）：携带条删——GATE_FAIL 回滚再入队走 touchQueueCarry
       // 新钟（attempt 轮次可区分，队列等待观测口径=每誓一钟，不跨轮累计）。
@@ -1036,7 +1071,8 @@ export function createEngine(deps: EngineDeps): Engine {
         ok: true,
         detail:
           `attempt=${attempt} executor=${adapter.name} lane=${action.lane}` +
-          `;budget=${gate.kind === 'reserved' ? `reserve $${gate.estimated.toFixed(4)}` : `adopt（沿用未结预留）$${gate.estimated.toFixed(4)}`}`,
+          `;budget=${gate.kind === 'reserved' ? `reserve $${gate.estimated.toFixed(4)}` : `adopt（沿用未结预留）$${gate.estimated.toFixed(4)}`}` +
+          (resumeFace?.detailSegment ?? ''),
       }
     } catch (err) {
       // 派发失败如实分类上报（DISPOSITIONS: DISPATCH_FAIL/retry）；v0 不计断路连击（拟稿）
@@ -1599,7 +1635,7 @@ export function createEngine(deps: EngineDeps): Engine {
     mutations += dLayer?.mutations ?? 0
 
     // —— 相位 2 state-diff：受影响单逐个 decide（每单至多一动作；provisionalActions 供三闸） ——
-    const dispatchQ: Array<{ action: Extract<Action, { type: 'dispatch' }>; intentKey: string }> = []
+    const dispatchQ: Array<{ action: Extract<Action, { type: 'dispatch' }>; intentKey: string; resumePlan?: ResumeDispatchPlan }> = [] // resumePlan=129-E 拍作用域续跑计划携带面
     const approvalQ: Array<Extract<Action, { type: 'submit_approval' }>> = []
     const collectQ: Array<Extract<Action, { type: 'collect' }>> = []
     const mergeQ: Array<Extract<Action, { type: 'merge' }>> = []
@@ -1615,128 +1651,36 @@ export function createEngine(deps: EngineDeps): Engine {
     const drained = intentQueue.splice(0)
     const drainSeen = new Set<string>()
 
-    // schedule handler：排程意图物化岗单据（v0.4 既有语义逐字保持——payload.job_id 校验/
-    // 台账查岗/L0 物化/PATROL 留痕）
-    const consumeSchedule = async (intent: InvokeIntent, intentKey: string): Promise<void> => {
-      const payload = (intent.payload ?? {}) as { job_id?: unknown }
-      if (typeof payload.job_id !== 'string' || payload.job_id === '') {
-        errors.push('意图消费：schedule 意图 payload 缺 job_id——丢弃')
-        return
-      }
-      const job = ledger.getJob(payload.job_id)
-      if (job === undefined) {
-        errors.push(`意图消费：job ${payload.job_id} 不在台账（热更移除？）——丢弃`)
-        return
-      }
-      try {
-        // 物化岗单据：岗流 + job.role 命工号则精确指派（口径见文件头注）。
-        // 落位分型（DEV-40 + 127-A R3 丁案——studio-dev-127 §4.4 批示①，2026-10-22）：
-        //   - 工单型岗（report/cadence 等产出实工件）：type='task' 不指定落位→适配器落流程
-        //     初态（新单），照走 v0.4 派发-收割链（16-§四）；budget_cap 正因会派发才存在。
-        //   - 巡查岗（payload.type='patrol'）：**type='patrol' 丁案**——终态名走
-        //     workflows T:patrol 类型流声明（推荐「巡毕无产出」final；W-9 只保留 bug/task，
-        //     patrol 可声明——DEV-43 类型优先解析）；镜像 state≠「已交付」→报表已交付计数
-        //     结构性不含巡查工件（spike-② 判负线）。T:patrol 未声明→L0 delivered 兜底
-        //     （现状行为原样；装载警告面 jobContractLoadWarnings 让退化可见，不炸既有配置）。
-        //     巡查工件不是工单——落终态锚点结构性不可派发，decide 恒走回收 CLOSE。
-        const isPatrolArtifact = ((job.payload as { type?: unknown } | undefined)?.type) === 'patrol'
-        // 岗单物化流：resolveTicketFlow 同函数同序（与 decide/flowOf 永不漂移）——工单型走
-        // 'task'（W-9 不收 T:task，恒落 L0 回退=现状）；巡查型走 'patrol'（T 优先 L 回退）
-        const materializeType = isPatrolArtifact ? 'patrol' : 'task'
-        const artifactFlow = resolveTicketFlow(config.flows ?? DEFAULT_FLOW_TABLE, materializeType, 0)
-        const created = await platform.issues.create({
-          title: `[定时岗] ${job.job_id} ${new Date(startedAt).toISOString()}`,
-          type: materializeType,
-          dept: job.dept,
-          level: 0,
-          assignee: job.role,
-          ...(isPatrolArtifact && artifactFlow !== undefined ? { initialState: flowAnchors(artifactFlow).delivered } : {}),
-        })
-        syncMirror(created)
-        makeEvent('PATROL', created, 1, tickEvents, {
-          note: `intent=${intentKey};job=${job.job_id};cron=${job.cron};role=${job.role};dedup=${intent.dedupKey};来源=${intent.source}`,
-        })
-        mutations += 1
-        drainSeen.add(intentKey)
-        candidates.push({ ticket: created.id, intent })
-      } catch (err) {
-        errors.push(`意图消费：job ${job.job_id} 岗单据物化失败：${err instanceof Error ? err.message : String(err)}`)
-      }
-    }
-
-    // webhook｜data-change handler（129-A）：本体拆在 engine/intent-taxonomy.ts（20-§十五
-    // 尺寸门「先拆再增」——129-§6.1 分类学消费件：契约面+消费工厂零引擎内部态持有）；
-    // 此处只以 tick 作用域依赖装配（共闸四件+落单面注入），分发表注册口径与 105-刀A 同构。
-    // mention 消费件同族迁入（129-D 181 先拆再增）；escalate 消费件（129-D）本体在
-    // engine/intents/escalate.ts——costGuard 活取（热重载感知）+notify 出口（刀B 登记位）
-    // +costThresholdTarget/Lane（缺省路由表/泳道落位）经 escalateDeps 追加注入。
-    const consumerDeps = {
+    // 意图消费段抽件 intents/drain.ts（20-§十五「先拆再增」——129-E studio-dev-184 拆出腾
+    // 基线，语义逐字保持）：schedule 物化+五类消费件装配+分发表+共闸循环全在彼处；此处只
+    // 注入拍作用域依赖（escalate 的 costGuard 活取热重载感知、touch 队列峰值登记同源迁入）。
+    const relayResume = await drainIntents({
+      drained,
+      ledger,
       platform,
       syncMirror,
       makeEvent,
       tickEvents,
       config,
       people,
-      errors,
-      drainSeen,
-      candidates,
-      onMutation: (): void => {
-        mutations += 1
-      },
-    }
-    const consumeWebhook = createWebhookConsumer(consumerDeps)
-    const consumeDataChange = createDataChangeConsumer(consumerDeps)
-    const consumeMention = createMentionConsumer(consumerDeps)
-    const consumeEscalate = createEscalateConsumer({
-      ...consumerDeps,
       ...(deps.departments !== undefined ? { departments: deps.departments } : {}),
       costGuard: (): CostGuardConfig | undefined => costGuard,
       ...(deps.notify !== undefined ? { notify: deps.notify } : {}),
-      // P0-B「priority=3 置顶」：物化拍登记意图峰值（延拍并入携带峰——见投影段 settle 调用）
       touch: (ticket, intent): void => {
         const p = Math.max(0, Math.min(3, intent.priority ?? 0))
         if (p <= 0) return
         const prev = pendingQueuePriority.get(ticket)
         pendingQueuePriority.set(ticket, { priority: Math.max(prev?.priority ?? 0, p), since: prev?.since ?? now() })
       },
+      onMutation: (): void => {
+        mutations += 1
+      },
+      errors,
+      drainSeen,
+      candidates,
+      patrolKeys: index.patrolKeys,
+      startedAt,
     })
-
-    // 普适分发表（105-刀A A-2）：新 kind 开闸=注册一个 handler，前置共闸/幂等零改。
-    // 129-A 扩 webhook（只落单——落单链收口+派工链登记位）｜data-change（联动单物化+
-    // 路由指派）两行；129-D（181）开 escalate 槽——cost-threshold 类消费（处置单物化/
-    // notify 出口/gate 留痕，sla 类仍 class 级明报归刀B）。
-    const intentHandlers: {
-      [K in InvokeIntent['kind']]?: (intent: InvokeIntent, intentKey: string) => Promise<void>
-    } = {
-      schedule: consumeSchedule,
-      mention: consumeMention,
-      webhook: consumeWebhook,
-      'data-change': consumeDataChange,
-      escalate: consumeEscalate,
-    }
-
-    for (const intent of drained) {
-      if (intent.company !== config.company) {
-        errors.push(`意图消费：公司不匹配（intent=${intent.company} engine=${config.company}）——丢弃`)
-        continue
-      }
-      const handler = intentHandlers[intent.kind]
-      if (handler === undefined) {
-        errors.push(`意图消费：kind='${intent.kind}' 不支持（消费门分发表：schedule｜mention 已开（105-刀A）；webhook｜data-change 已开（129-A）；escalate 已开（129-D，class 级判别——sla 类仍归刀B）；六源全通归 v0.8）——丢弃`)
-        continue
-      }
-      // HOLD_INTENT_MALFORMED 前置闸（25-§3.4 v1.3，判负线②）：无 ticket 意图必填
-      // dedupKey——明报拒收不静默（对 schedule/mention 及后续开闸的每个 kind 一致）
-      if (intent.ticket === undefined && (typeof intent.dedupKey !== 'string' || intent.dedupKey === '')) {
-        errors.push(`意图消费：${intent.kind} 意图缺 dedupKey（无 ticket 意图必填，invoke v1.3）——丢弃`)
-        continue
-      }
-      const intentKey = intentKeyOf(intent)
-      // 意图幂等（22-§三.2）：PATROL 已留痕的键（append-only 不释放——markRan 已记账，
-      // 重投不得重跑）或本拍重复键，只物化一次
-      if (index.patrolKeys.has(intentKey) || drainSeen.has(intentKey)) continue
-      await handler(intent, intentKey)
-    }
 
     // —— 相位 2 前置①b：拆单指令消费（130-P2，studio-dev-173；提案 §6.2.2/§6.2.3-R2）——批示:拆单
     // ＋子单清单→物化子单（IssueCreate.parent）＋父单立案收口（leader 短持＋回执；状态零迁移走
@@ -1770,8 +1714,13 @@ export function createEngine(deps: EngineDeps): Engine {
       mutations += 1
     }
 
+    // 候选去重集（同拍一单至多一动作，17-§2；129-E 上移到活动候选段之前）：relay/resume
+    // 推回候选的是**既有单**，恰可与本拍活动集相交——双候选=双 dispatch 状态腐坏；活动候选
+    // 只补位不覆盖意图面候选（intentKey 归因更精确）。
+    const candidateSeen = new Set<TicketId>(candidates.map((c) => c.ticket))
     for (const ticket of [...affected].sort()) {
       if (closedSet.has(ticket)) continue // 已 CLOSE 单不再进决策（复活经 RESUME 释放——见上）
+      if (candidateSeen.has(ticket)) continue // 本拍已是候选（意图消费段推入）——不重复
       candidates.push({
         ticket,
         intent: {
@@ -1782,16 +1731,17 @@ export function createEngine(deps: EngineDeps): Engine {
           priority: 1,
         },
       })
+      candidateSeen.add(ticket)
     }
 
     // —— 相位 2 前置③：镜像对账重决策（DEV-42①，2026-10-20 哨查 studio-dev-45..53 零事件滞留）——
     // 活动驱动候选只看「有新活动」的单：被三闸顺延（HOLD_TICK_LIMIT/HOLD_INFLIGHT_LIMIT）
     // 且活动已被游标消费的单，下一拍不再是候选=永久搁置（队列大片开放却长时间零派发）。
     // 兜底=每 N 拍把非闭环（未 CLOSE）mirror 单补进候选（issues.list 全量每拍已取——镜像
-    // upsert 用，零额外平台 IO）；N=节流闸（防 noop 决策日志面无界放大）。候选去重：本拍
-    // 已是候选（活动/岗单物化）的单不重复（同拍一单至多一动作）；意图源名 'mirror'——
+    // upsert 用，零额外平台 IO）；N=节流闸（防 noop 决策日志面无界放大）。候选去重：
+    // candidateSeen（活动候选段前已建——129-E 上移）复用，本拍已是候选的单不重复；
+    // 意图源名 'mirror'——
     // 与活动源 'activity' 区分，救回派发的 DISPATCH note/决策条目可观测归因。
-    const candidateSeen = new Set<TicketId>(candidates.map((c) => c.ticket))
     let rescanned = 0
     const rescanEvery = config.mirrorRescanEveryTicks ?? 0
     if (rescanEvery > 0 && seq % rescanEvery === 0) {
@@ -1934,8 +1884,11 @@ export function createEngine(deps: EngineDeps): Engine {
       decisions.push({ ticket, intentKey, code: action.code, actionType: action.type, state: issue.state })
       decidedActions.push(action)
       switch (action.type) {
-        case 'dispatch':
-          dispatchQ.push({ action, intentKey })
+        case 'dispatch': {
+          // resume 面（129-E）：本拍 resume 意图消费登记的续跑计划随派发携带（拍作用域
+          //——decide 未出 dispatch 即失效，重发意图即重试）
+          const resumePlan = relayResume.planOf(ticket)
+          dispatchQ.push(resumePlan !== undefined ? { action, intentKey, resumePlan } : { action, intentKey })
           provisionalActions += 1
           // 人位占用记账（同拍后续候选的人闸快照须看到——泳道占用同款决策即生效；
           // 执行失败时 executeDispatch fail() 不清 dispatchPersons——dispatchQ 派发循环
@@ -1945,6 +1898,7 @@ export function createEngine(deps: EngineDeps): Engine {
           // 执行失败时 executeDispatch 的 catch 负责释放）
           lanes.acquire(action.lane, ticket, startedAt)
           break
+        }
         case 'submit_approval':
           approvalQ.push(action)
           provisionalActions += 1
@@ -1995,8 +1949,8 @@ export function createEngine(deps: EngineDeps): Engine {
     }
     let dispatched = 0
     const budget: TickPhaseDispatchBudget = { budgetReserved: 0, budgetRefused: 0 }
-    for (const { action, intentKey } of dispatchQ) {
-      const result = await executeDispatch(action, intentKey, index, tickEvents, budget)
+    for (const { action, intentKey, resumePlan } of dispatchQ) {
+      const result = await executeDispatch(action, intentKey, index, tickEvents, budget, resumePlan)
       actionResults.push(result)
       if (result.ok) {
         dispatched += 1
@@ -2024,6 +1978,15 @@ export function createEngine(deps: EngineDeps): Engine {
         if (outcome === 'completed') harvest.completed += 1
         else harvest.failed += 1
         mutations += 1
+        // 收割完成钩（129-E，F1-11 接力产面）：completed/failed 两面都报（worker 完成含失败
+        // 完成）；serve 闭包转发 relay 源；防御吞错——钩面异常不炸收割拍（errors 明报）
+        if (onWorkComplete !== undefined) {
+          try {
+            onWorkComplete({ ticket: entry.ticket, attempt: entry.attempt, outcome, personId: entry.personId })
+          } catch (err) {
+            errors.push(`收割完成钩异常 ${entry.ticket}：${err instanceof Error ? err.message : String(err)}（钩面不阻断收割）`)
+          }
+        }
       } catch (err) {
         errors.push(`收割异常 ${entry.ticket}：${err instanceof Error ? err.message : String(err)}`)
       }

@@ -14,8 +14,10 @@
  *     真网关接线后改为透传网关注入值）。
  *
  * v0 边界（诚实标注）：
- *   - 任务书只出**首版**（renderTaskBrief kind='first'）；续跑版（上次 summary.json 前情
- *     注入，17-§5）归 v0.5 真单刀（engine 侧 resume 判据与 sidecar 读取待接线）。
+ *   - 续跑版已接线（129-E 单E，studio-dev-184，F1-15/17-§5）：装配入参带 resume 三元组
+ *     时出**续跑版**（renderTaskBrief kind='resume'——上次 summary.json 前情摘要注入）；
+ *     resume 判据=resume 意图消费（engine/intents/relay-resume.ts——work_records 断点
+ *     解析），sidecar 读取=resolveResumePlan（同文件）。不带 resume=首版（既有行为）。
  *   - 同类教训 top-k（L4 lessons）v0 传空——知识库检索面未接线。
  *   - 冻结验收命令（L4 acceptance）来自 daemon 配置常量注入，任务书粒度的验收冻结
  *     （单据验收命令字段）归真单刀。
@@ -26,6 +28,7 @@ import type {
   ExecutorCapabilities,
   IssueRecord,
   PersonRef,
+  SummarySidecar,
 } from '@studio-next/contract'
 import {
   assembleAgentsMd,
@@ -58,6 +61,18 @@ export interface AssembleDispatchInput {
    * 声明入 L4 scope（持久通道抗 compact）。
    */
   readView: TicketReadView
+  /**
+   * 续跑上下文（129-E 单E，F1-15/17-§5 续跑版）：在场=任务书出续跑版（前情摘要注入
+   * 上次 summary.json）；缺省=首版（既有行为零变更）。三元组=engine 侧断点解析产物
+   * （resolveResumePlan——work_records 最后一条带 session 工时单），executor 不可续时
+   * engine 不注入（降级为新派，F1-15）。
+   */
+  resume?: {
+    sessionId: string
+    summaryPath: string
+    /** 上次 summary.json 内容（SummarySidecar 形状，contract schemas/report.ts） */
+    summary: SummarySidecar
+  }
 }
 
 /** 装配产物：AGENTS.md 组装结果（含分层指纹/字节清单）+ 任务书渲染结果（含 TaskBrief） */
@@ -103,7 +118,8 @@ function signatureOf(snapshot: CompanySnapshot, person: PersonRef): string {
   return `[${snapshot.name}·${person.dept}·${person.name}·${person.level}]`
 }
 
-/** 默认装配器：六源 → buildLayers → assembleAgentsMd + renderTaskBrief('first')（首版） */
+/** 默认装配器：六源 → buildLayers → assembleAgentsMd + renderTaskBrief（首版/续跑版——
+ * input.resume 在场切续跑版，129-E studio-dev-184；prompt 包两模板既有实现零改） */
 export function createDefaultAssembler(ctx: AssemblerContext): PromptAssembler {
   return (input: AssembleDispatchInput): AssembleDispatchOutput => {
     const person = input.person
@@ -152,7 +168,11 @@ export function createDefaultAssembler(ctx: AssemblerContext): PromptAssembler {
       },
     ])
     const agentsMd = assembleAgentsMd(layers)
-    const brief = renderTaskBrief('first', {
+    // 任务书两版（129-E 续跑版接线，17-§5）：resume 在场=续跑版（前情摘要注入）；
+    // 缺省=首版。kind 与 ctx.resume 同源传入——renderTaskBrief('resume') 缺 resume
+    // 会 throw（prompt 包契约「不静默降级为首版」，此处恒满足）
+    const briefKind = input.resume !== undefined ? 'resume' : 'first'
+    const brief = renderTaskBrief(briefKind, {
       ticket: input.issue.id,
       attempt: input.attempt,
       workspace: input.workspace,
@@ -161,6 +181,7 @@ export function createDefaultAssembler(ctx: AssemblerContext): PromptAssembler {
       acceptance: ctx.acceptance,
       docRefs: ctx.docRefs,
       objective: input.issue.title,
+      ...(input.resume !== undefined ? { resume: input.resume } : {}),
     })
     // 读面分级消费面之二（17-§7）：任务书追加「单据读面」节——任务书是 per-attempt
     // 操作面（wkey 指引行同款落点裁决，AGENTS.md 是六层组装产物追加破层纯净度，
