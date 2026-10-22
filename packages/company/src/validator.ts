@@ -38,6 +38,7 @@ import { z } from 'zod'
 import type { CompanySnapshot, DeptNode, DirectoryIssue, MountResult, PersonRef, RoleName, ScheduledJob, TicketWorkflows } from '@studio-next/contract'
 import { expandCadence, parseJobDuration } from './cadence.ts'
 import { applyStateHygieneToSnapshot, stateHygieneRules } from './state-hygiene.ts'
+import { typeInboxRules } from './type-inbox.ts'
 import { ORG_CONFIG_SCHEMA_LITERALS, lineOfPath, multifileRules, zodIssuesToDirectoryIssues } from './multifile.ts'
 
 const ORG_CONFIG_FILE = 'org-config.yaml'
@@ -541,7 +542,6 @@ function workflowRules(doc: ReturnType<typeof parseDocument>, lc: LineCounter, o
   return out
 }
 
-
 /** workflows 装载（→ contract TicketWorkflows；states 归一为对象形进快照） */
 function toWorkflows(org: OrgConfig): TicketWorkflows | undefined {
   if (org.workflows === undefined) return undefined
@@ -634,6 +634,7 @@ export function loadCompanyDirectory(files: Record<string, string>, opts?: Mount
   const issues = [
     ...crossRules(doc, lc, parsed.data),
     ...workflowRules(doc, lc, parsed.data),
+    ...typeInboxRules(doc, lc, parsed.data),
     ...stateHygieneRules(doc, lc, parsed.data.yt),
     ...(opts?.strictFiles === false ? [] : multifileRules(files, parsed.data, doc, lc)),
   ]

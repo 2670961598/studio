@@ -274,3 +274,84 @@ describe('deriveFieldProvision（git-import 平台折叠）', () => {
     expect(map.states).not.toContain('新建')
   })
 })
+
+// ————————————————— yt.typeInbox（130-P1，studio-dev-172；studio-dev-130 §6.1.2）—————————————————
+
+/** yt 段注入（追加在 workflows 之后、departments 之前——同为顶层键） */
+const YT_TYPEINBOX = (body: string): string => `yt:
+${body}
+`
+
+describe('TI-1..TI-3：yt.typeInbox 内容规则（130-P1）', () => {
+  it('合法：spike→探索结论就绪（值∈workflows 类型声明态，yt 覆盖派生值同过闸）', () => {
+    const yt = YT_TYPEINBOX('  typeInbox:\n    spike: 探索结论就绪\n')
+    const r = loadOk(dirWith(`${LEGAL_SPIKE}${yt}`))
+    expect(r.ok).toBe(true)
+  })
+
+  it('合法：值∈yt.states（无 workflows 亦可单收——声明态全集的另一来源）', () => {
+    const yt = `yt:
+  states: [新单, 待批, 已派发, 证据就绪, 复验通过, 已交付]
+  typeInbox:
+    proposal: 待批
+`
+    expect(loadOk(dirWith(yt)).ok).toBe(true)
+  })
+
+  it('TI-1：值非字符串 → typeinbox-bad-shape', () => {
+    const yt = YT_TYPEINBOX('  typeInbox:\n    proposal: 3\n')
+    expect(rulesOf(dirWith(`${LEGAL_SPIKE}${yt}`))).toContain('org-config/typeinbox-bad-shape')
+  })
+
+  it('TI-1：数组形 → typeinbox-bad-shape', () => {
+    const yt = YT_TYPEINBOX('  typeInbox: [proposal]\n')
+    expect(rulesOf(dirWith(yt))).toContain('org-config/typeinbox-bad-shape')
+  })
+
+  it('TI-2：值不在声明态全集（缺省五态∪类型声明态均无）→ typeinbox-unknown-state', () => {
+    const yt = YT_TYPEINBOX('  typeInbox:\n    spike: 空想态\n')
+    expect(rulesOf(dirWith(`${LEGAL_SPIKE}${yt}`))).toContain('org-config/typeinbox-unknown-state')
+  })
+
+  it('TI-3：保留词 task/bug 键 → typeinbox-reserved-key（W-9 同源），值合法不叠 TI-2', () => {
+    const yt = YT_TYPEINBOX('  typeInbox:\n    task: 待探索\n    bug: 待探索\n')
+    const rules = rulesOf(dirWith(`${LEGAL_SPIKE}${yt}`))
+    expect(rules.filter((r) => r === 'org-config/typeinbox-reserved-key').length).toBe(2)
+    expect(rules).not.toContain('org-config/typeinbox-unknown-state')
+  })
+
+  it('行号指认（lineOfPath）且不依赖 workflows 段（无 workflows 也拦）', () => {
+    const yt = YT_TYPEINBOX('  typeInbox:\n    ghost: 幽灵态\n')
+    const r = loadCompanyDirectory(dirWith(yt))
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      const hit = r.issues.find((i) => i.rule === 'org-config/typeinbox-unknown-state')
+      expect(hit?.line).toBeGreaterThan(1)
+    }
+  })
+})
+
+describe('deriveFieldProvision × yt.typeInbox 折叠（130-P1 per-key 覆盖）', () => {
+  it('无 workflows：仅 yt.typeInbox 也落 typeInbox 键（轻量落位面，typeFlows/entities 不落）', () => {
+    const map = deriveFieldProvision({ typeInbox: { proposal: '待批' } }, undefined)
+    expect(map.typeInbox).toEqual({ proposal: '待批' })
+    expect(map.typeFlows).toBeUndefined()
+    expect(map.entities).toBeUndefined()
+  })
+
+  it('workflows 派生值被 yt 同键覆盖（yt 胜出），未覆盖键保留派生值', () => {
+    const wf = loadOk(dirWith(`${LEGAL_SPIKE}${LEGAL_DEFECT}`)).snapshot.workflows as TicketWorkflows
+    const map = deriveFieldProvision({ typeInbox: { spike: '探索结论就绪' } }, wf)
+    expect(map.typeInbox).toEqual({ spike: '探索结论就绪', defect: '新建' })
+  })
+
+  it('无 yt.typeInbox：workflows 派生原样（现状字节不变）', () => {
+    const wf = loadOk(dirWith(`${LEGAL_SPIKE}${LEGAL_DEFECT}`)).snapshot.workflows as TicketWorkflows
+    expect(deriveFieldProvision({}, wf).typeInbox).toEqual({ spike: '待探索', defect: '新建' })
+  })
+
+  it('非字符串值防御性跳过（校验面归 validator——推导不二审）', () => {
+    const map = deriveFieldProvision({ typeInbox: { a: '新单', b: 3 } }, undefined)
+    expect(map.typeInbox).toEqual({ a: '新单' })
+  })
+})
