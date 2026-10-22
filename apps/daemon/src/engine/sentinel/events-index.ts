@@ -53,6 +53,13 @@ export interface EventIndex {
    */
   unknownStateAlarmed: ReadonlySet<string>
   /**
+   * 白名单态已观察键集（127-C 州表卫生）：FOREIGN_KNOWN 事件 note 携
+   * `FOREIGN_KNOWN;state=<s>` 派生，键=`${ticket}|${state}`——观察级也每单每态
+   * 一次（append-only 不释放，与 unknownStateAlarmed 独立两集：降级不吞历史告警，
+   * 白名单摘除后 ESCALATE 键仍在——不回灌刷屏）。
+   */
+  foreignKnownAlarmed: ReadonlySet<string>
+  /**
    * 状态集巡逻核已告警状态名集（DEV-49 A4）：ESCALATE 事件 note 携
    * `UNKNOWN_STATUS;status=<name>` 派生——每漂移状态名只告一次。
    */
@@ -82,6 +89,7 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
   const closed = new Set<TicketId>()
   const patrolKeys = new Set<string>()
   const unknownStateAlarmed = new Set<string>()
+  const foreignKnownAlarmed = new Set<string>()
   const statusSetDriftAlarmed = new Set<string>()
   const declaredStatusMissingAlarmed = new Set<string>()
   const platformStatusExtraAlarmed = new Set<string>()
@@ -108,6 +116,10 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
       // 与 DISPATCH 键的「结论后释放」语义相反（定时触发=markRan 已记账，重投不得重跑）
       const key = noteField(e.note, 'intent')
       if (key !== undefined) patrolKeys.add(key)
+    } else if (e.event === 'FOREIGN_KNOWN') {
+      // 127-C 州表卫生白名单态观察键（append-only 不释放）：note 携 FOREIGN_KNOWN;state=<s>
+      const st = noteField(e.note, 'state')
+      if (st !== undefined) foreignKnownAlarmed.add(`${e.issue}|${st}`)
     } else if (e.event === 'ESCALATE') {
       // DEV-49 A4 哨键派生（PATROL 键同法，append-only）：未知态哨键=`ticket|state`
       // （每单每态一次）；巡逻核键=漂移状态名（每状态名一次）
@@ -161,6 +173,7 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
     },
     patrolKeys,
     unknownStateAlarmed,
+    foreignKnownAlarmed,
     statusSetDriftAlarmed,
     declaredStatusMissingAlarmed,
     platformStatusExtraAlarmed,

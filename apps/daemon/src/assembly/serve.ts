@@ -1073,6 +1073,10 @@ export function buildServeRuntime(
     ...(config.platform === 'taiga' && config.taigaFieldsFile !== undefined
       ? { provisionDeclaredStates: provisionDeclaredStates(loadTaigaFieldMap(config.taigaFieldsFile), config.taigaEntity ?? 'userstory') }
       : {}),
+    // 州表卫生白名单注入（127-C，studio-dev-127 §4.7）：快照携带（org-config
+    // yt.known_foreign_states 经 SH-1 内容规则校验）——已知外来态哨兵降 FOREIGN_KNOWN
+    // 观察级；恒传显式数组（缺声明=空数组=哨兵全灵敏度，不留 undefined 滞留面）
+    knownForeignStates: snapshot.knownForeignStates ?? [],
     ...(config.companyDir !== undefined ? { companyDir: path.resolve(config.companyDir) } : {}), // 岗产物落位收账锚（DEV-50）
   }
   // 装配器工厂（L1 热重载换装配器=换快照重建——静态部分不随公司目录变）
@@ -1260,6 +1264,9 @@ export function buildServeRuntime(
           deptFallback: next.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback,
           defaultLane: next.departments[0]?.lanes[0] ?? ENGINE_CONFIG_DEFAULTS.defaultLane,
           ...(nextTypeFlows !== undefined ? { flows: { ...DEFAULT_FLOW_TABLE, ...nextTypeFlows } } : {}),
+          // 州表卫生白名单热换（127-C）：恒显式（摘声明=空数组=哨兵回全灵敏度——
+          // 白名单滞留会静默吞告警，安全面须热换即时生效）
+          knownForeignStates: next.knownForeignStates ?? [],
         })
         identity.ctx.company = next.name
         identity.ctx.dept = next.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback

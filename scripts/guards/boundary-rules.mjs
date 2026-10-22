@@ -157,10 +157,10 @@ export const maxLinesPerFile = 600;
  * 清偿义务：每里程碑对账点核对净变化——只许净减（§十五.三.4）。
  */
 export const lineBaseline = {
-  "apps/daemon/src/engine/engine.ts": 2200, // 168 132-A 收割账目+167 129-B 人闸/todo_queue 合并态(+165：两刀叠加——宰相亲批 2026-10-22；前值 2035=105-刀A)
+  "apps/daemon/src/engine/engine.ts": 2223, // 170 127-C 州表卫生(+23：knownForeignStates 注入/FOREIGN_KNOWN 落账口/热换/拍计数；制作人 2026-10-22 全批) // 前值 2200=168/167 两刀叠加
   "packages/store/src/records.ts": 606, // 129-B todo_queue 写面闸扩展(+6，v9 配套——新超限件随批示波次入基线：制作人 2026-10-22 全批)
   "packages/store/src/ledger.ts": 1764, // 167 129-B todo_queue 读写面(+99，v9 迁移配套；前值 1665)
-  "apps/daemon/src/assembly/serve.ts": 1553, // 167 129-B 队列四键配置门(+62：maxInflightPerPerson/queueAgeStepMs 等；逻辑在 engine/todoqueue/) // 前值 1491=105-刀A matrix 校验
+  "apps/daemon/src/assembly/serve.ts": 1560, // 170 127-C 州表卫生(+7：白名单启动装配+热重载注入——恒显式数组口径) // 前值 1553=167 129-B
   "packages/company/src/repo-validate.ts": 1021,
   "apps/daemon/test/control/hot-reload.test.ts": 930,
   "apps/daemon/test/engine/scheduler.test.ts": 785,
@@ -173,10 +173,10 @@ export const lineBaseline = {
   "packages/panel/src/views.ts": 662,
   "packages/adapters/test/kimi.test.ts": 662, // 132-§6.1 单A 桶键统一(+1：cached→cache_read 断言注释——studio-dev-168；前值 661)
   "apps/daemon/test/evolve/evolution-e2e.test.ts": 652,
-  "packages/company/src/validator.ts": 647,
+  "packages/company/src/validator.ts": 654, // 170 127-C 州表卫生(+7：接线行——规则体/装载=state-hygiene.ts 拆出) // 前值 647
   "apps/daemon/test/evolve/gray.test.ts": 625,
   "apps/daemon/src/control/hot-reload.ts": 624,
-  "packages/panel/src/overview/views.ts": 618, // DEV-12 刀二归位（+7：/legacy 路由基与换装注释；行为=旧五读面整组迁 legacy）
+  "packages/panel/src/overview/views.ts": 629, // 170 127-C 州表卫生映射层(+11：stateMapping 形参+口径注) // 前值 618=DEV-12 刀二
   "packages/store/test/v5-candidates.test.ts": 602,
 };
 

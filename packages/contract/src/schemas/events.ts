@@ -17,6 +17,10 @@
  *     +`JUDGE_` 前缀族（micro-judge 判断调用可观测面：JUDGE_OK/JUDGE_FALLBACK——
  *     判断调用零生命周期不进收割契约，事件族是其唯一台账锚）→ 25 具体名 +
  *     3 前缀族 = 28 类。
+ *   - 127-C 增补（studio-dev-127 提案 §4.7/§4.8，制作人 2026-10-22 全批——docs/17-§3
+ *     注记同批）：+`FOREIGN_KNOWN`（州表卫生白名单层：已知外来态（org-config
+ *     `yt.known_foreign_states`）不升 ESCALATE UNKNOWN_STATE，降为观察级事件每单每态
+ *     一条；未声明新漂移仍 ESCALATE——负对照保护）→ 26 具体名 + 3 前缀族 = 29 类。
  *   - tokens 四桶 = F2-04 冻结列名 input/output/cache_read/cache_creation（互斥桶，
  *     至少其一出现）。kernel.TokenCounts 是 executor 归一化层的三字段口径，不用于台账。
  *   - 拟稿待批（docs 未细化）：attempt 最小值取 1（首次尝试=1）；level 取 1..9
@@ -53,7 +57,7 @@ export const UlidSchema = z
 
 // —— 事件名：冻结枚举 + 前缀族双通道（17-§3）——
 
-/** 25 个具体事件名（17-§3 冻结清单 23 项，序即文档序；+P3 增补 2 项——studio-dev-100 §6.2-4 批示） */
+/** 26 个具体事件名（17-§3 冻结清单 23 项，序即文档序；+P3 增补 2 项——studio-dev-100 §6.2-4 批示；+127-C 增补 1 项——studio-dev-127 §4.7/§4.8 批示） */
 export const EVENT_NAMES = [
   'DISPATCH',
   'GATE_PASS',
@@ -81,6 +85,8 @@ export const EVENT_NAMES = [
   // —— P3 收账对账（studio-dev-100 提案 §4.3，2026-10-21 制作人全批 §6.2-4）——
   'HARVEST_INCOMPLETE', // 有产物无 REPORT（94 号工况）：悬空面可见，不代写不补收
   'HARVEST_DENIED', // 收账面不可读（E12 chmod 类）：stat 兜底不静默（权限前移后的残险网）
+  // —— 127-C 州表卫生（studio-dev-127 提案 §4.7/§4.8，2026-10-22 制作人全批，SCHEMA_EVOLVE 通道——docs/17-§3 注记）——
+  'FOREIGN_KNOWN', // 已知外来态（yt.known_foreign_states 白名单）：观察级替代 ESCALATE UNKNOWN_STATE（每单每态一条）；未声明新漂移仍 ESCALATE（负对照保护）
 ] as const
 
 /** 前缀族：网关动作 / 报表产物 / 判断调用（17-§3 `GW_*`/`REPORT_*`；P6 `JUDGE_*`——studio-dev-160 §6.5） */

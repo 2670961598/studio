@@ -78,9 +78,10 @@ describe('契约语料（evt/rpt 域）', () => {
 // —— 事件名：冻结枚举 + 前缀族双通道（17-§3）——————————————————
 
 describe('事件名双通道（17-§3 冻结清单）', () => {
-  it('冻结清单计数互证：25 具体名 + 3 前缀族 = 28 类（P3 增补两具体名；P6 增补 JUDGE_ 前缀族——studio-dev-160 §6.5，2026-10-22 全批）', () => {
-    expect(EVENT_NAMES).toHaveLength(25)
+  it('冻结清单计数互证：26 具体名 + 3 前缀族 = 29 类（P3 增补两具体名；P6 增补 JUDGE_ 前缀族——studio-dev-160 §6.5；127-C 增补 FOREIGN_KNOWN——studio-dev-127 §4.7/§4.8，均 SCHEMA_EVOLVE 全批）', () => {
+    expect(EVENT_NAMES).toHaveLength(26)
     expect(EVENT_PREFIX_FAMILIES).toEqual(['GW_', 'REPORT_', 'JUDGE_'])
+    expect(EVENT_NAMES).toContain('FOREIGN_KNOWN')
   })
 
   it('23 个具体事件名全部命中枚举通道', () => {
