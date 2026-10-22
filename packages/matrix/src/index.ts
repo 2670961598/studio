@@ -37,3 +37,36 @@ export type { MentionSourceOptions } from './adapter.ts'
 // DEV-48 人事同步器执行面（docs/52-§七；ensure-shape 业务幂等层——daemon 侧结构同形接口注入）
 export { createMatrixHrFace, matrixLevelFor } from './hr-face.ts'
 export type { MatrixHrFaceOptions, MatrixHrTarget } from './hr-face.ts'
+// 130-P3 频道供给扩展（130 提案 §6.7 八类地图＋DEV-20 §5.1-§5.4 冻结基座；ensure
+// 幂等收敛——S8 判负线=重跑漂移；boot 组合根装配，daemon 侧结构同形接口消费）
+export {
+  powerLevelTarget,
+  planChannelMap,
+  ensureSpace,
+  ensureChannel,
+  ensureCompanyChannels,
+  ensureTicketRoom,
+  archiveTicketRoom,
+  createMatrixProvisionFace,
+  mxidOf,
+  serverNameOf,
+  aliasLocalpart,
+  ticketAliasLocalpart,
+  ticketRoomName,
+  resolveTicketMembers,
+  ARCHIVED_PREFIX,
+} from './provision.ts'
+export type {
+  ProvisionPerson,
+  ProvisionDept,
+  ProvisionGroup,
+  ChannelMapInput,
+  ChannelKind,
+  PowerLevelColumn,
+  PowerLevelsContent,
+  ChannelSpec,
+  ChannelMapPlan,
+  ProvisionClient,
+  EnsureRoomResult,
+  CompanyChannelsReport,
+} from './provision.ts'

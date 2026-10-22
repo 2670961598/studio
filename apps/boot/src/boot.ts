@@ -8,22 +8,35 @@
  *   daemon.yaml（matrix 键组，扁平）+ env MATRIX_BOT_PASSWORD（密码永不入 yaml，21A D5）
  *     → parseDaemonConfig（fail-fast：缺 matrixHomeserverUrl/matrixUserId=CONFIG_INVALID）
  *     → MatrixClient.login（bot 密码登录，凭据只留进程内存）
- *     → createMentionSource（rooms 白名单/roles 角色词映射/节奏/长轮询超时）
- *     → runServe(configPath, { matrixSource })（源工厂注入；emit 统一进 engine.ingest）
+ *     → matrix: true → createMentionSource（rooms 白名单/roles 角色词映射/节奏/长轮询超时）
+ *     → matrixChannels: true → createMatrixProvisionFace（130-P3 §6.7 八类地图供给面：
+ *       matrixDeptMap JSON 装载 + matrixProducerMxid 缺省神号；ctx.snapshot 活取公司快照）
+ *     → runServe(configPath, { matrixSource?, matrixRoomFace? })（源/面工厂注入）
  *
- * 不做什么（105-刀A 边界）：
+ * 不做什么（105-刀A 边界＋130-P3 边界）：
  *   - 不做 notify 出口装配（createMatrixNotifier 归刀B notify 端口接线单）
  *   - 不做 E2EE/alias 解析/应用服务（matrix 包 README 未做事项同源）
  *   - 不代 daemon 存 Matrix 凭据：login 结果（token）只留 client 实例内存，重启重登
+ *   - 不供给频道内容（总览广播文本/告警文案归 notify/announce 后续刀——本刀只建房间结构）
  */
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import type { InvokeSource, PersonId } from '@studio-next/contract'
-import { parseDaemonConfig, runServe, type ServeConfig, type ServeResult } from '@studio-next/daemon/serve'
-import { createMentionSource, MatrixClient, type FetchLike } from '@studio-next/matrix'
+import {
+  parseDaemonConfig,
+  runServe,
+  type MatrixRoomFace,
+  type MatrixRoomFaceContext,
+  type ServeConfig,
+  type ServeResult,
+} from '@studio-next/daemon/serve'
+import { createMatrixProvisionFace, createMentionSource, MatrixClient, type ChannelMapInput, type FetchLike } from '@studio-next/matrix'
 
 /** bot 密码 env 名（红名单：值永不入 daemon.yaml/日志/台账） */
 export const MATRIX_BOT_PASSWORD_ENV = 'MATRIX_BOT_PASSWORD'
+
+/** 制作人 MXID 缺省（神号全知，130 §6.7.2；21A-§2.2 冻结锚） */
+export const DEFAULT_PRODUCER_MXID = '@opengames:localhost'
 
 export interface BootOptions {
   /** daemon.yaml 路径（透传 runServe——配置由 daemon 解析面收口，boot 不重造） */
@@ -33,7 +46,10 @@ export interface BootOptions {
   /** fetch 注入面（缺省 globalThis.fetch；测试回放，不真实联网） */
   fetch?: FetchLike
   /** runServe 注入面（测试捕获 opts 契约；缺省真跑主循环） */
-  serve?: (configPath: string, opts?: { matrixSource?: () => InvokeSource }) => Promise<ServeResult>
+  serve?: (
+    configPath: string,
+    opts?: { matrixSource?: () => InvokeSource; matrixRoomFace?: (ctx: MatrixRoomFaceContext) => MatrixRoomFace },
+  ) => Promise<ServeResult>
   /** 日志出口（缺省 console.log） */
   log?: (line: string) => void
 }
@@ -41,6 +57,7 @@ export interface BootOptions {
 /**
  * matrix 装配件（boot 的被测核心）：config 键组 + env 密码 → 登录 → mention 源。
  * 不接 runServe（接线归 bootServe）——两件分离让装配面可全量假网测。
+ * options.login=boot 双开共用登录注入面（同一 bot 账号 matrix+matrixChannels 只登录一次）。
  */
 export interface MatrixAssembly {
   /** 已登录的 client（凭据在实例内存；随源闭包存活） */
@@ -75,28 +92,36 @@ export function parseMatrixRoles(
   return roles
 }
 
+/** 装配选项公共形（fetch 回放/日志出口/共用登录注入面） */
+interface AssembleOptions {
+  fetch?: FetchLike
+  log?: (line: string) => void
+  /** 已登录面（boot 双开时同一 bot 账号共用一次登录；缺省自行登录） */
+  login?: { client: MatrixClient; botMxid: string }
+}
+
 /**
- * matrix 装配：解析后的 config + env → login + createMentionSource。
- * fail-fast 面（CONFIG_INVALID 明报不猜）：matrix 开而缺密码 env / 缺 homeserver /
- * 缺 bot 账号 / roles 形态坏。
+ * matrix bot 登录核心（assembleMatrixSource/assembleMatrixProvisionFace 共用）：
+ * config 键组 + env 密码 → MatrixClient.login。fail-fast 面（CONFIG_INVALID 明报不猜）：
+ * 开关开而缺密码 env / 缺 homeserver / 缺 bot 账号。开关名随调用面（matrix/matrixChannels）。
  */
-export async function assembleMatrixSource(
+async function assembleMatrixLogin(
   config: ServeConfig,
   env: Record<string, string | undefined>,
   options?: { fetch?: FetchLike; log?: (line: string) => void },
-): Promise<MatrixAssembly> {
+  switchName = 'matrix',
+): Promise<{ client: MatrixClient; botMxid: string }> {
   const log = options?.log ?? ((): void => {})
-  if (!config.matrix) throw new Error('CONFIG_INVALID：assembleMatrixSource 在 matrix: false 下被调用（装配面与开关面不一致）')
   if (config.matrixHomeserverUrl === undefined || config.matrixHomeserverUrl === '') {
-    throw new Error('CONFIG_INVALID：matrix: true 需配 matrixHomeserverUrl（如 http://127.0.0.1:8008，105-刀A）')
+    throw new Error(`CONFIG_INVALID：${switchName}: true 需配 matrixHomeserverUrl（如 http://127.0.0.1:8008，105-刀A）`)
   }
   if (config.matrixUserId === undefined || config.matrixUserId === '') {
-    throw new Error('CONFIG_INVALID：matrix: true 需配 matrixUserId（bot 账号，如 @demo-bot:studio.local）')
+    throw new Error(`CONFIG_INVALID：${switchName}: true 需配 matrixUserId（bot 账号，如 @demo-bot:studio.local）`)
   }
   const password = env[MATRIX_BOT_PASSWORD_ENV]
   if (password === undefined || password === '') {
     throw new Error(
-      `CONFIG_INVALID：matrix: true 需 env ${MATRIX_BOT_PASSWORD_ENV}（bot 密码红名单——永不入 daemon.yaml/日志/台账，21A D5）`,
+      `CONFIG_INVALID：${switchName}: true 需 env ${MATRIX_BOT_PASSWORD_ENV}（bot 密码红名单——永不入 daemon.yaml/日志/台账，21A D5）`,
     )
   }
   const client = new MatrixClient({
@@ -105,13 +130,28 @@ export async function assembleMatrixSource(
   })
   const login = await client.login(config.matrixUserId, password)
   log(`[boot] matrix bot 已登录（${login.userId}；token 只留进程内存，重启重登）`)
+  return { client, botMxid: login.userId }
+}
+
+/**
+ * matrix 装配：解析后的 config + env → login + createMentionSource。
+ * fail-fast 面（CONFIG_INVALID 明报不猜）：matrix 开而缺密码 env / 缺 homeserver /
+ * 缺 bot 账号 / roles 形态坏。
+ */
+export async function assembleMatrixSource(
+  config: ServeConfig,
+  env: Record<string, string | undefined>,
+  options?: AssembleOptions,
+): Promise<MatrixAssembly> {
+  if (!config.matrix) throw new Error('CONFIG_INVALID：assembleMatrixSource 在 matrix: false 下被调用（装配面与开关面不一致）')
+  const { client, botMxid } = options?.login ?? (await assembleMatrixLogin(config, env, options, 'matrix'))
   const rooms = splitSemicolonList(config.matrixRooms)
-  if (rooms !== undefined) log(`[boot] matrix 房间白名单：${rooms.join('、')}`)
+  if (rooms !== undefined) options?.log?.(`[boot] matrix 房间白名单：${rooms.join('、')}`)
   const roles = parseMatrixRoles(config.matrixRoles)
   const source = createMentionSource({
     client,
     company: config.company,
-    selfUserId: login.userId, // 登录返回的规范 MXID（非配置原文）——防回声
+    selfUserId: botMxid, // 登录返回的规范 MXID（非配置原文）——防回声
     ...(rooms !== undefined ? { rooms } : {}),
     ...(roles !== undefined ? { roles } : {}),
     ...(config.matrixPollMs !== undefined ? { pollIntervalMs: config.matrixPollMs } : {}),
@@ -121,25 +161,125 @@ export async function assembleMatrixSource(
 }
 
 /**
- * 组合根入口：读 daemon.yaml →（matrix: true 时）装配 matrix 源 → runServe。
- * matrix: false 时透传 runServe（matrix 面整体关闭，boot 仍是合法入口）。
+ * deptMap JSON 装载（DEV-20 D6 形态：`{"departments/研发部": "rd"}`——部门 path →
+ * ASCII slug，频道别名段用）。fail-fast：文件读不到 / 非 JSON / 非扁平 string→string /
+ * 空对象=CONFIG_INVALID（缺部门项的软失败面归供给器 problems，不在此炸）。
+ */
+export function loadDeptSlugs(jsonPath: string | undefined): Record<string, string> {
+  if (jsonPath === undefined || jsonPath === '') {
+    throw new Error('CONFIG_INVALID：matrixChannels: true 需配 matrixDeptMap（部门 path→slug JSON 路径，DEV-20 D6）')
+  }
+  let text: string
+  try {
+    text = readFileSync(path.resolve(jsonPath), 'utf8')
+  } catch (err) {
+    throw new Error(
+      `CONFIG_INVALID：matrixDeptMap 文件读不到（${jsonPath}）：${err instanceof Error ? err.message : String(err)}`,
+    )
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch (err) {
+    throw new Error(`CONFIG_INVALID：matrixDeptMap 非 JSON（${jsonPath}）：${err instanceof Error ? err.message : String(err)}`)
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`CONFIG_INVALID：matrixDeptMap 须为扁平对象 path→slug（${jsonPath}）`)
+  }
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof v !== 'string' || v === '' || !/^[a-z0-9][a-z0-9-]*$/.test(v)) {
+      throw new Error(`CONFIG_INVALID：matrixDeptMap 条目 ${k} 的 slug 须为小写 ASCII 连字符形（实得 ${String(v)}；DEV-20 D6）`)
+    }
+    out[k] = v
+  }
+  if (Object.keys(out).length === 0) {
+    throw new Error(`CONFIG_INVALID：matrixDeptMap 为空对象（${jsonPath}——至少映射一个部门）`)
+  }
+  return out
+}
+
+/**
+ * matrix 频道供给面装配（130-P3 §6.7）：login → createMatrixProvisionFace 工厂。
+ * 工厂由 runServe 以 ctx（snapshot 活取——L1 热重载新鲜面）回调装配；本函数只持
+ * 进程内常量（client/botMxid/deptSlugs/producerMxid——daemon.yaml 键不热重载，重启生效）。
+ */
+export async function assembleMatrixProvisionFace(
+  config: ServeConfig,
+  env: Record<string, string | undefined>,
+  options?: AssembleOptions,
+): Promise<(ctx: MatrixRoomFaceContext) => MatrixRoomFace> {
+  if (!config.matrixChannels) {
+    throw new Error('CONFIG_INVALID：assembleMatrixProvisionFace 在 matrixChannels: false 下被调用（装配面与开关面不一致）')
+  }
+  const { client, botMxid } = options?.login ?? (await assembleMatrixLogin(config, env, options, 'matrixChannels'))
+  const deptSlugs = loadDeptSlugs(config.matrixDeptMap)
+  const producerMxid = config.matrixProducerMxid ?? DEFAULT_PRODUCER_MXID
+  options?.log?.(
+    `[boot] matrix 频道供给面已装配：deptMap ${Object.keys(deptSlugs).length} 部、制作人 ${producerMxid}` +
+      '——130-P3 §6.7 八类地图（ensure 幂等，重跑收敛）',
+  )
+  return (ctx: MatrixRoomFaceContext): MatrixRoomFace => {
+    const snapshot = (): ChannelMapInput => {
+      const snap = ctx.snapshot()
+      return {
+        slug: snap.slug,
+        companyName: snap.name,
+        departments: snap.departments.map((d) => ({ path: d.path, name: d.name, leader: d.leader })),
+        people: snap.people.map((p) => ({
+          id: p.id,
+          login: p.login,
+          dept: p.dept,
+          ...(p.role !== undefined ? { role: p.role } : {}),
+          ...(p.status !== undefined ? { status: p.status } : {}),
+        })),
+        ...(snap.groups !== undefined
+          ? { groups: snap.groups.map((g) => ({ id: g.id, dept: g.dept, name: g.name, ...(g.leader !== undefined ? { leader: g.leader } : {}), members: g.members })) }
+          : {}),
+        deptSlugs,
+        botMxid,
+        producerMxid,
+      }
+    }
+    return createMatrixProvisionFace(client, { snapshot })
+  }
+}
+
+/**
+ * 组合根入口：读 daemon.yaml →（matrix: true 时）装配 matrix 源 →（matrixChannels:
+ * true 时）装配频道供给面 → runServe。两开关独立（只开供给不开唤醒源=合法灰度形态：
+ * 频道先建、mention 后开）；都关=透传 runServe（matrix 面整体关闭，boot 仍是合法入口）。
  * 配置解析在 daemon 收口（runServe 内部再读同一文件——单一解析器，boot 不重造）。
  */
 export async function bootServe(options: BootOptions): Promise<ServeResult> {
   const log = options.log ?? ((line: string): void => console.log(line))
   const config = parseDaemonConfig(readFileSync(path.resolve(options.configPath), 'utf8'))
   const serve = options.serve ?? runServe
-  if (!config.matrix) {
-    log('[boot] matrix: false——@唤醒源未装配（组合根透传 runServe）')
+  if (!config.matrix && !config.matrixChannels) {
+    log('[boot] matrix: false、matrixChannels: false——@唤醒源/频道供给面均未装配（组合根透传 runServe）')
     return serve(options.configPath)
   }
-  const assembly = await assembleMatrixSource(config, options.env ?? process.env, {
-    ...(options.fetch !== undefined ? { fetch: options.fetch } : {}),
-    log,
+  // 同一 bot 账号双面共用一次登录（token 只留进程内存；两开关的必配键校验已由
+  // parseDaemonConfig 交叉校验面收口——serve.ts coerceServeConfig）；两开关独立
+  //（只开供给不开唤醒源=合法灰度形态：频道先建、mention 后开）。
+  const faceOpts: AssembleOptions = { ...(options.fetch !== undefined ? { fetch: options.fetch } : {}), log }
+  const login = await assembleMatrixLogin(config, options.env ?? process.env, faceOpts, config.matrix ? 'matrix' : 'matrixChannels')
+  const shared = { ...faceOpts, login }
+  let matrixSource: (() => InvokeSource) | undefined
+  let matrixRoomFace: ((ctx: MatrixRoomFaceContext) => MatrixRoomFace) | undefined
+  if (config.matrix) {
+    const assembly = await assembleMatrixSource(config, options.env ?? process.env, shared)
+    log(
+      `[boot] matrix @唤醒源已装配（company=${config.company}）→ runServe opts.matrixSource 注入` +
+        '（源 emit 统一进 engine.ingest，22-§一 源零直驱；消费门=kind→handler 分发表，105-刀A A-2）',
+    )
+    matrixSource = (): InvokeSource => assembly.source
+  }
+  if (config.matrixChannels) {
+    matrixRoomFace = await assembleMatrixProvisionFace(config, options.env ?? process.env, shared)
+  }
+  return serve(options.configPath, {
+    ...(matrixSource !== undefined ? { matrixSource } : {}),
+    ...(matrixRoomFace !== undefined ? { matrixRoomFace } : {}),
   })
-  log(
-    `[boot] matrix @唤醒源已装配（company=${config.company}）→ runServe opts.matrixSource 注入` +
-      '（源 emit 统一进 engine.ingest，22-§一 源零直驱；消费门=kind→handler 分发表，105-刀A A-2）',
-  )
-  return serve(options.configPath, { matrixSource: () => assembly.source })
 }

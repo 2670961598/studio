@@ -35,10 +35,12 @@
  */
 import { LineCounter, parseDocument } from 'yaml'
 import { z } from 'zod'
-import type { CompanySnapshot, DeptNode, DirectoryIssue, MountResult, PersonRef, RoleName, ScheduledJob, TicketWorkflows } from '@studio-next/contract'
+import type { CompanySnapshot, DeptNode, DirectoryIssue, MountResult, PersonRef, TicketWorkflows } from '@studio-next/contract'
 import { expandCadence, parseJobDuration } from './cadence.ts'
 import { applyStateHygieneToSnapshot, stateHygieneRules } from './state-hygiene.ts'
 import { typeInboxRules } from './type-inbox.ts'
+import { groupCrossRules, OrgGroupSchema, toGroups } from './groups.ts'
+import { toJobs } from './jobs.ts'
 import { ORG_CONFIG_SCHEMA_LITERALS, lineOfPath, multifileRules, zodIssuesToDirectoryIssues } from './multifile.ts'
 
 const ORG_CONFIG_FILE = 'org-config.yaml'
@@ -223,6 +225,9 @@ const WorkflowsSchema = z.strictObject({
   types: z.array(WorkflowTypeSchema).min(1),
 })
 
+// ————————————————— groups 段（130-P3，130 提案 §6.7.1/C4）—————————————————
+// 结构闸/内容引用闸/快照装载拆至 groups.ts（20-§十五「先拆再增」；同源 import 消费）
+
 const OrgConfigSchema = z.strictObject({
   // DEV-32（docs/51-§三 B-1）：canonical=studio-next/org@1；org-config/v1=迁移期兼容
   // （templates/DEV-27 夹具/契约 cases.json 语料仍在用——收口计划见 multifile.ts 头注）
@@ -275,6 +280,8 @@ const OrgConfigSchema = z.strictObject({
   // DEV-43（docs/51 v1.1 B-1）：单据类型流声明（可选；不声明=现状行为）——
   // 结构形状在本层，内容规则 W-1..W-9 在 workflowRules（逐条指认到行）
   workflows: WorkflowsSchema.optional(),
+  // 130-P3 频道供给扩展（130 提案 §6.7.1/C4）：组群声明（可选；不声明=无小组频道供给）
+  groups: z.array(OrgGroupSchema).optional(),
   // 03/N1：YouTrack 项目与字段/状态流映射覆盖（公司可整体替换的默认模板）
   yt: z.record(z.string(), z.unknown()).optional(),
   // 06-§三：executor 偏好覆盖（缺省继承框架级 agent.yaml）
@@ -331,80 +338,11 @@ function crossRules(doc: ReturnType<typeof parseDocument>, lc: LineCounter, org:
       })
     }
   })
+  // 组群声明引用完整性（130-P3，130 提案 §6.7.1/C4）——规则体拆至 groups.ts
+  out.push(...groupCrossRules(doc, lc, org, deptPaths, peopleIds))
   return out
 }
 
-/**
- * jobs 装载（v0.1-M4，04-§三 D9；v0.1-M5 岗位运作规格五段——docs/35-§3）：yaml jobs 段 → ScheduledJob[]。
- * 映射规则逐字段冻结在 OrgJobSchema 头注（拟稿待批 M4-①..⑧ + M5-①..⑥）；company=本司 slug；
- * dept 缺省=根部门（首个 parent:null，兜底 departments[0]——M4-①）。
- */
-function toJobs(org: OrgConfig): ScheduledJob[] {
-  if (org.jobs === undefined) return []
-  const rootDept = org.departments.find((d) => d.parent === null)?.path ?? org.departments[0]?.path ?? ''
-  return org.jobs.map((j) => {
-    // M5-⓪：cron 与 triggers.cadence 恰给其一（schema refine 保证），断言免检同 M4-② 风格
-    const cron = j.cron ?? expandCadence(j.triggers?.cadence as 'hourly' | 'daily' | 'weekly' | 'monthly' | 'quarterly', j.triggers?.at)
-    const sla = j.sla
-    return {
-      job_id: j.id,
-      company: org.company.slug,
-      dept: j.dept ?? rootDept, // M4-①
-      cron,
-      // M4-②：schema refine 保证 role/type 至少其一（见 OrgJobSchema），断言免检
-      role: (j.role ?? j.type) as RoleName,
-      level: j.level ?? org.company.level, // M4-⑤
-      model_tier: j.model_tier ?? 'low', // M4-⑥
-      ...(j.budget_cap !== undefined ? { budget_cap: { usd: j.budget_cap } } : {}), // M4-⑦
-      ...(hasOpsPayload(j, sla)
-        ? {
-            payload: {
-              ...(j.type !== undefined ? { type: j.type } : {}), // M4-④
-              ...(j.output !== undefined ? { output: j.output } : {}), // M4-④
-              ...(j.triggers?.cadence !== undefined ? { cadence_tier: j.triggers.cadence } : {}), // M5-③
-              ...(j.triggers?.at !== undefined ? { cadence_at: j.triggers.at } : {}), // M5-③
-              ...(j.outputs !== undefined ? { outputs: j.outputs } : {}), // M5-④
-              ...(sla !== undefined
-                ? {
-                    sla: {
-                      ...(sla['first-ack'] !== undefined ? { first_ack_ms: parseJobDuration(sla['first-ack']) as number } : {}), // M5-⑤
-                      ...(sla['resolve-hint'] !== undefined ? { resolve_hint_ms: parseJobDuration(sla['resolve-hint']) as number } : {}), // M5-⑤
-                    },
-                  }
-                : {}),
-              ...(j.escalate !== undefined
-                ? { escalate: j.escalate.map((e) => ({ after_ms: parseJobDuration(e.after) as number, unacked: e.unacked })) } // M5-⑥
-                : {}),
-              ...(j.grace !== undefined ? { grace_ms: parseJobDuration(j.grace) as number } : {}), // 127-A R2 批示④
-            },
-          }
-        : {}),
-    }
-  })
-}
-
-/** ops 段存在性（payload 组装前置：type/output 既有 + cadence/outputs/sla/escalate/grace 段——全缺则不设 payload） */
-function hasOpsPayload(
-  j: {
-    type?: string | undefined
-    output?: string | undefined
-    outputs?: string[] | undefined
-    triggers?: { cadence?: string | undefined; at?: string | undefined } | undefined
-    escalate?: Array<{ after: string; unacked: string }> | undefined
-    grace?: string | undefined
-  },
-  sla?: { 'first-ack'?: string | undefined; 'resolve-hint'?: string | undefined } | undefined,
-): boolean {
-  return (
-    j.type !== undefined ||
-    j.output !== undefined ||
-    j.outputs !== undefined ||
-    j.triggers?.cadence !== undefined ||
-    sla !== undefined ||
-    j.escalate !== undefined ||
-    j.grace !== undefined
-  )
-}
 
 /** workflows 段装载态（states 已归一为对象形） */
 interface WorkflowTypeLoaded {
@@ -582,6 +520,8 @@ function toSnapshot(org: OrgConfig): CompanySnapshot {  const departments: DeptN
   }
   const wf = toWorkflows(org)
   if (wf !== undefined) snap.workflows = wf
+  // 组群声明装载（130-P3，130 提案 §6.7.1/C4）——装载体拆至 groups.ts
+  if (org.groups !== undefined) snap.groups = toGroups(org.groups)
   // 州表卫生双层装载（127-C，studio-dev-127 §4.7）：state-hygiene.ts 单一实现
   applyStateHygieneToSnapshot(snap, org.yt)
   return snap
