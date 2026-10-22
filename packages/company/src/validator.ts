@@ -567,8 +567,8 @@ function toSnapshot(org: OrgConfig): CompanySnapshot {  const departments: DeptN
     name: d.name, path: d.path, parent: d.parent, leader: d.leader, level: d.level,
     lanes: d.lanes, functions: d.functions, relations: [],
   }))
-  const people: PersonRef[] = org.people.map((p) => ({ // status/role 可选携带（DEV-48，docs/52-§5.1）：缺省键不落显式 undefined
-    id: p.id, name: p.name, login: p.login, level: p.level, dept: p.dept, ...(p.status !== undefined ? { status: p.status } : {}), ...(p.role !== undefined ? { role: p.role } : {}),
+  const people: PersonRef[] = org.people.map((p) => ({ // status/role 可选携带（DEV-48，docs/52-§5.1）；skills 同款（130-P2，studio-dev-173：供拆单候选打分，提案 §6.5.2）：缺省键不落显式 undefined
+    id: p.id, name: p.name, login: p.login, level: p.level, dept: p.dept, ...(p.status !== undefined ? { status: p.status } : {}), ...(p.role !== undefined ? { role: p.role } : {}), ...(p.skills !== undefined ? { skills: [...p.skills] } : {}),
   }))
   const snap: CompanySnapshot = {
     slug: org.company.slug,

@@ -185,6 +185,7 @@ import { createHash } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import type {
+  DeptNode,
   EventRecord,
   ExecutorAdapter,
   FlowPlatform,
@@ -240,6 +241,7 @@ export {
   type MentionIntentPayload,
   type WebhookIntentPayload,
 } from './intents/taxonomy.ts'
+import { createSplitMaterializer, type SplitDirectiveInput } from './split/materialize.ts' // 拆单物化件（130-P2 studio-dev-173；提案 §6.2.2/§6.2.3-R2）：批示:拆单→子单物化＋父单立案收口
 import { buildEventIndex, STALL_KILL_CLOSE_ANCHOR, type EventIndex } from './sentinel/events-index.ts'
 import type { GateRunner } from './gate.ts'
 import { accountJobOutput } from './jobs/output-account.ts'
@@ -490,6 +492,7 @@ export interface EngineDeps {
   config: EngineConfig
   /** 人员索引（公司目录快照注入；L1 配置热重载经 applyCompanyUpdate 整组替换——docs/38-§2） */
   people: readonly PersonRef[]
+  departments?: readonly DeptNode[] // 部门索引（可选注入，130-P2 studio-dev-173：父单立案 leader 解析用；缺省=立案面关闭明报，子单物化照常）
   /** ULID 生成器（缺省 src/engine/id.ts；测试可注入确定性序列） */
   makeId?: (ts: number) => string
   /**
@@ -512,19 +515,7 @@ export interface EngineDeps {
   hrSync?: { drain(): Promise<HrSyncTickReport> }
 }
 
-// ————————————————————————— TickReport（17-§2「tick 返回结构化 actions」） —————————————————————————
-
-/** 采集相位汇报 */
-
-/** state-diff 相位：每候选一决（含 hold/noop——落账口径全量留痕） */
-
-/** 动作执行结果（派发/呈批/collect/merge/recycle/stall 面） */
-
-/** 收割相位汇报 */
-
-/** 派发相位预算闸汇报（docs/16-§三 reserve→refusal；20-§六.8） */
-
-/** 一拍全量汇报（JSON 可序列化；actions=结构化动作原体，actionResults=执行面，events=本拍新账） */
+// ————————————————————————— TickReport（17-§2「tick 返回结构化 actions」；各面类型驻 tick-report/types.ts） —————————————————————————
 
 // ————————————————————————— 内部状态 —————————————————————————
 
@@ -584,6 +575,9 @@ export interface Engine {
   ingest(intents: readonly InvokeIntent[]): void
   /** 队列深度（观测/测试断言：未消费意图数） */
   readonly pendingIntents: number
+  /** 拆单指令注入口（130-P2 studio-dev-173：P0 归一层接线位；源零直驱同 ingest）＋队列深度观测 */
+  ingestSplit(directives: readonly SplitDirectiveInput[]): void
+  readonly pendingSplits: number
   /**
    * 公司面热替换（docs/38-§2 L1 配置级热重载的引擎侧落点）：**拍边界调用**
    * （serve 主循环在 tick() 收口后调——单线程下无并发 tick，结构性不中断在途单/
@@ -674,6 +668,7 @@ export function createEngine(deps: EngineDeps): Engine {
   const lanes = new Map<string, LaneLease>()
   const inflight = new Map<TicketId, Inflight>()
   const intentQueue: InvokeIntent[] = []
+  const splitQueue: SplitDirectiveInput[] = []
   let seq = 0
 
   // worker 级 wkey（17-§7）：env 通道（TaskBrief.credentials v1.4）——凭据随 launch 进
@@ -1749,9 +1744,7 @@ export function createEngine(deps: EngineDeps): Engine {
       }
       const handler = intentHandlers[intent.kind]
       if (handler === undefined) {
-        errors.push(
-          `意图消费：kind='${intent.kind}' 不支持（消费门分发表：schedule｜mention 已开（105-刀A）；webhook｜data-change 已开（129-A）；escalate 归刀B；六源全通归 v0.8）——丢弃`,
-        )
+        errors.push(`意图消费：kind='${intent.kind}' 不支持（消费门分发表：schedule｜mention 已开（105-刀A）；webhook｜data-change 已开（129-A）；escalate 归刀B；六源全通归 v0.8）——丢弃`)
         continue
       }
       // HOLD_INTENT_MALFORMED 前置闸（25-§3.4 v1.3，判负线②）：无 ticket 意图必填
@@ -1766,6 +1759,13 @@ export function createEngine(deps: EngineDeps): Engine {
       if (index.patrolKeys.has(intentKey) || drainSeen.has(intentKey)) continue
       await handler(intent, intentKey)
     }
+
+    // —— 相位 2 前置①b：拆单指令消费（130-P2，studio-dev-173；提案 §6.2.2/§6.2.3-R2）——批示:拆单
+    // ＋子单清单→物化子单（IssueCreate.parent）＋父单立案收口（leader 短持＋回执；状态零迁移走
+    // 标准链）。幂等=父#序号 落 PATROL intent=split:（拍内 splitSeen＋跨拍 patrolKeys 双层）。
+    const splitSeen = new Set<string>()
+    const consumeSplit = createSplitMaterializer({ platform, ledger, syncMirror, makeEvent, tickEvents, config, people, departments: deps.departments, errors, patrolKeys: index.patrolKeys, splitSeen, onMutation: (): void => { mutations += 1 } })
+    for (const directive of splitQueue.splice(0)) await consumeSplit(directive)
 
     // —— 相位 2 前置②：复活对账（DEV-42②，2026-10-20 哨查 studio-dev-51/57 复活无效）——
     // closed-set 是 CLOSE 事件派生的闭集；平台侧复活（态改回流程态+评论，docs/49 复活令
@@ -2262,6 +2262,8 @@ export function createEngine(deps: EngineDeps): Engine {
     get pendingIntents(): number {
       return intentQueue.length
     },
+    ingestSplit(directives: readonly SplitDirectiveInput[]): void { splitQueue.push(...directives) },
+    get pendingSplits(): number { return splitQueue.length },
     applyCompanyUpdate(update: CompanyRuntimeUpdate): void {
       // 整组替换（不半换）：people+assembler 绑定与快照派生三键一起换——调用方保证
       // 拍边界（serve 主循环）；本方法自身纯赋值不抛，失败面归调用方前置校验

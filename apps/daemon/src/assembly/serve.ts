@@ -1139,7 +1139,7 @@ export function buildServeRuntime(
       : createDefaultGateRunner(),
     clock,
     config: engineConfig,
-    people: snapshot.people,
+    people: snapshot.people, departments: snapshot.departments, // 130-P2（studio-dev-173）：部门索引随快照注入——父单立案 leader 解析
     ...(catalog !== undefined ? { catalog } : {}),
   })
 
