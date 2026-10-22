@@ -34,8 +34,10 @@
  * 拟稿待批点（汇报后走批示流）：
  *   - submit_approval 为第十个动作（任务书列了九个"至少"）：docs 未冻结「新单→待批」由谁执行，
  *     本刀定为 daemon 呈批迁移（经网关）。
- *   - approved 输入（制作人已批信号经网关动作词落平台，daemon 归一后传入）：docs 未冻结
- *     批准信号的落点，暂以布尔入参表达。
+ *   - approved 输入：已定稿——docs/18-§2.5 批示载体（studio-dev-171 实现，130-§6.1.2
+ *     提案制作人 2026-10-22 全批）：制作人已批信号经网关 comment 批示行落平台、daemon
+ *     归一层（词表 v1+角色校验 fail-closed）归一后以布尔入参传入；生产 autoApprove:false
+ *     下的唯一生产者=批示站立（APPROVE 事件派生，DISPATCH 消费清零）。
  *   - verifiedEvidence 输入：L2 主干「待批」出现两次（docs/18-§2.1 字面模板），同一状态名下
  *     前批（→已派发）与交付批（→已交付）无法从 (state,level,type,lease) 区分——本刀以
  *     daemon 归一的「本单已有复验通过证据」布尔消歧（true=交付批→merge；缺省=派发轨道）。
