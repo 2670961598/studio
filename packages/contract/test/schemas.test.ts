@@ -7,6 +7,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  BILLING_TRACKS,
   ClassifiedErrorSchema,
   ERROR_CATEGORIES,
   ERROR_CATEGORIES_COMPLETE,
@@ -19,6 +20,7 @@ import {
   UlidSchema,
   evtSubject,
   extractReportSkeleton,
+  isBillingTrack,
   isEventName,
   isExecutorErrorCode,
   isPlatformActivityKind,
@@ -164,6 +166,41 @@ describe('executor errorCode 冻结词表（102-P2：已产码收编）', () => 
     ]) {
       expect(isExecutorErrorCode(bad)).toBe(false)
     }
+  })
+})
+
+// —— BillingTrack 冻结词表（132-§6.1 单A·补充令：包月 coding plan 双轨口径，studio-dev-168）——
+
+describe('BillingTrack 双轨词表（132 补充令预设——消费方落 单B/C/D，本刀只冻结词汇）', () => {
+  it('两轨冻结：api/coding_plan，序即成员序（api=计量轨，coding_plan=包月轨）', () => {
+    expect([...BILLING_TRACKS]).toEqual(['api', 'coding_plan'])
+  })
+
+  it('两轨全部命中词表判定（红向）', () => {
+    for (const track of BILLING_TRACKS) expect(isBillingTrack(track)).toBe(true)
+  })
+
+  it('越界负测：单复形/连字符/大小写/空串漂移一律拒收（绿向防漂移）', () => {
+    for (const bad of [
+      'API', // 大写漂移
+      'coding-plan', // 连字符变体
+      'codingplan', // 缺下划线
+      'coding_plans', // 复数形
+      'subscription', // 语义近义臆造（轨名=包月产品名，非计费语义泛称）
+      'metered', // 同上——api 轨的计费语义不是轨名
+      '',
+    ]) {
+      expect(isBillingTrack(bad)).toBe(false)
+    }
+  })
+
+  it('词汇先行语义锚：api 轨走 price_snapshots 计量（132-单B 面）、coding_plan 轨包月 $0 边际（影子价可比），消费面不在本刀', () => {
+    // 词汇冻结即契约面：isBillingTrack 是唯一合法入口——词表成员序与轨语义注记见
+    // ports/models.ts BILLING_TRACKS 文档块（补充令证据链）；本测试只锁词表防漂移
+    const tracks: readonly string[] = BILLING_TRACKS
+    expect(tracks).toHaveLength(2)
+    expect(tracks.includes('api')).toBe(true)
+    expect(tracks.includes('coding_plan')).toBe(true)
   })
 })
 

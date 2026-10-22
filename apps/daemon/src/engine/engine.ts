@@ -652,10 +652,17 @@ export function createEngine(deps: EngineDeps): Engine {
     return issue.dept ?? config.deptFallback
   }
 
-  /** 四桶映射（F2-04 冻结列名；kernel.TokenCounts 三字段→四桶，cached→cache_read 拟稿） */
+  /**
+   * 四桶映射（F2-04 冻结列名；kernel.TokenCounts 四桶直通——132-§6.1 单A·studio-dev-168）：
+   * cache_read 兼容读 `cache_read ?? cached`（旧账键，读侧认——写侧一律新键在适配器钉死）；
+   * cache_creation 直通（此前采集即丢，判负线⑤ 修复）。无值桶不落键（真值直录）。
+   */
   function tokenBuckets(stats: ResultStats): EventRecord['tokens'] {
-    const out: Record<string, number> = { input: stats.tokens.input, output: stats.tokens.output }
-    if (stats.tokens.cached !== undefined) out.cache_read = stats.tokens.cached
+    const t = stats.tokens
+    const out: Record<string, number> = { input: t.input, output: t.output }
+    const cacheRead = t.cache_read ?? t.cached
+    if (cacheRead !== undefined) out.cache_read = cacheRead
+    if (t.cache_creation !== undefined) out.cache_creation = t.cache_creation
     return out as EventRecord['tokens']
   }
 
@@ -1091,6 +1098,7 @@ export function createEngine(deps: EngineDeps): Engine {
         status: 'done',
         cost_usd: stats.cost.usd,
         tokens: stats.tokens,
+        ...(stats.model !== undefined ? { model: stats.model } : {}),
         ...(gate.reportExists ? { report_ref: gate.reportPath } : {}),
         ...(gate.summaryPath !== undefined ? { summary_ref: gate.summaryPath } : {}),
       })
@@ -1127,7 +1135,8 @@ export function createEngine(deps: EngineDeps): Engine {
         tokens: tokenBuckets(stats),
         cost_usd: stats.cost.usd,
         duration_ms: stats.duration,
-        note: `四要件齐（completed/非空/REPORT/exit0）；report=${gate.reportPath}${gate.summaryPath !== undefined ? `;summary=${gate.summaryPath}` : ''}${budgetNote}${outputNote}`,
+        // model 留痕走 note 后缀（132-§6.1 单A：events 列集冻结不动——`model=…` 尾缀）
+        note: `四要件齐（completed/非空/REPORT/exit0）；report=${gate.reportPath}${gate.summaryPath !== undefined ? `;summary=${gate.summaryPath}` : ''}${budgetNote}${outputNote}${stats.model !== undefined ? `;model=${stats.model}` : ''}`,
       })
       // bridge 通道指令临时文件：保留至收割完成→此刻删（v1.5#1 清理策略；内容指纹已在
       // DISPATCH note/payload_hash 落账——证据不依赖文件存活）

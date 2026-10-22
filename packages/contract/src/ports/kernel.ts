@@ -11,7 +11,21 @@ export type AttemptNo = number
 
 // —— 计量 ——
 export interface Money { usd: number }
-export interface TokenCounts { input: number; output: number; cached?: number }
+/**
+ * token 四桶（132-§6.1 单A，studio-dev-168）：`input/output` 主桶 + `cache_read/cache_creation`
+ * 缓存读写桶——与 events 四桶列名（F2-04 冻结）对齐，治 dsh 归并单桶坍缩（C2/G7）。
+ * `cached` 为**兼容读别名**（旧账键，存量 work_records.tokens 形状）：读侧口径
+ * `cache_read ?? cached`（消费方实现，本文件守零运行时纪律）；**写侧一律新键**——
+ * 适配器/引擎产出键集合不含 `cached`（写侧纪律由测试钉死）。
+ */
+export interface TokenCounts {
+  input: number
+  output: number
+  cache_read?: number
+  cache_creation?: number
+  /** 兼容读别名（旧账键）：仅读侧认，写侧禁用（见接口注） */
+  cached?: number
+}
 export type DurationMs = number
 
 // —— executor 归一化结果（收割输入）——
@@ -20,6 +34,13 @@ export interface ResultStats {
   tokens: TokenCounts
   duration: DurationMs
   turns: number
+  /**
+   * 模型归一形 `provider/model`（132-§6.1 单A·C3），如 `deepseek/deepseek-flash`、
+   * `glm/GLM-5.3`——work_records.model 列与后续 usage_daily/price_snapshots 的桥接键。
+   * executor 无从可知（无模型声明面）则不填，不猜（dsh 来源=profile agent-default-model
+   * 在 agent.yaml patches 的部署声明镜像，见 adapters/agentconfig.ts）。
+   */
+  model?: string
 }
 
 // —— executor 归一化流事件（各家 stdout 差异在适配器内消化）——

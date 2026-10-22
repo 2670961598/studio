@@ -157,7 +157,7 @@ export const maxLinesPerFile = 600;
  * 清偿义务：每里程碑对账点核对净变化——只许净减（§十五.三.4）。
  */
 export const lineBaseline = {
-  "apps/daemon/src/engine/engine.ts": 2035, // 105-刀A 消费门(+170：kind→handler 分发表+③混合语义——提案落位=引擎核心域；拆分归后续 contrib 刀；前值 1865=DEV-141)
+  "apps/daemon/src/engine/engine.ts": 2043, // 132-§6.1 单A 收割账目(+8：tokenBuckets 四桶兼容读+model 直录/note 后缀——studio-dev-168，制作人全批提案落位；前值 2035=105-刀A；前值 1865=DEV-141)
   "packages/store/src/ledger.ts": 1665,
   "apps/daemon/src/assembly/serve.ts": 1491, // 105-刀A matrix 必配键交叉校验(+15) // DEV-48 hrSync 装配与配置门(+63，逻辑在 engine/hrsync/)
   "packages/company/src/repo-validate.ts": 1021,
@@ -166,11 +166,11 @@ export const lineBaseline = {
   "packages/company/src/dependencies.ts": 775,
   "packages/company/test/repo-validate.test.ts": 766,
   "apps/daemon/test/engine/sources.test.ts": 768, // 105-刀A 唤醒源测试(+19)
-  "packages/adapters/src/dsh.ts": 726,
+  "packages/adapters/src/dsh.ts": 758, // 132-§6.1 单A 账目面(+32：aggregateUsage 四桶真值直录+DshAdapterOptions.model 归一注入——studio-dev-168 过审落位；前值 726)
   "packages/taiga/src/testutil.ts": 723,
-  "packages/adapters/test/dsh.test.ts": 715,
+  "packages/adapters/test/dsh.test.ts": 785, // 132-§6.1 单A 判负线⑤(+70：四桶归并/model 注入/无缓存桶三测试——studio-dev-168；前值 715)
   "packages/panel/src/views.ts": 662,
-  "packages/adapters/test/kimi.test.ts": 661,
+  "packages/adapters/test/kimi.test.ts": 662, // 132-§6.1 单A 桶键统一(+1：cached→cache_read 断言注释——studio-dev-168；前值 661)
   "apps/daemon/test/evolve/evolution-e2e.test.ts": 652,
   "packages/company/src/validator.ts": 647,
   "apps/daemon/test/evolve/gray.test.ts": 625,

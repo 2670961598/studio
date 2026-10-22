@@ -51,6 +51,12 @@ export interface WorkRecord {
   status: string
   report_ref?: string
   summary_ref?: string
+  /**
+   * 模型归一形 `provider/model`（132-§6.1 单A·studio-dev-168，migration v8 加列）：
+   * 收割 ResultStats.model 的落账位（单B/C usage_daily/price_snapshots 桥接键）。
+   * 可空=无从可知（旧执行/部署未声明 profile 模型）——如实缺省。
+   */
+  model?: string
 }
 
 /** sessions 记录（归档文件的索引，17-§3） */
@@ -182,7 +188,23 @@ export interface EndWorkRecord {
   tokens?: TokenCounts
   report_ref?: string
   summary_ref?: string
+  /** 模型归一形 provider/model（132-§6.1 单A·studio-dev-168）：收割 ResultStats.model 直落；未给值 COALESCE 不动 */
+  model?: string
 }
+
+/**
+ * tokens 闸形状（132-§6.1 单A·studio-dev-168）：kernel.TokenCounts 四桶+兼容读别名——
+ * input/output 必填非负整数；cache_read/cache_creation/cached 可选（cached=旧账键，读侧
+ * `cache_read ?? cached` 认，写侧一律新键——daemon/适配器写路径不产该键，闸不拒旧形
+ * 回写/回填的合法面）。与 events 四桶（F2-04 canonical 序）不同源，不锁键序。
+ */
+const TokenCountsShape = z.strictObject({
+  input: z.number().int().min(0),
+  output: z.number().int().min(0),
+  cache_read: z.number().int().min(0).optional(),
+  cache_creation: z.number().int().min(0).optional(),
+  cached: z.number().int().min(0).optional(),
+})
 
 /** store 层临时校验（拟稿待批，见文件头注） */
 export const WorkRecordSchema = z.strictObject({
@@ -197,13 +219,13 @@ export const WorkRecordSchema = z.strictObject({
   started_at: z.number().int().min(0),
   ended_at: z.number().int().min(0).optional(),
   cost_usd: z.number().min(0).optional(),
-  tokens: z
-    .strictObject({ input: z.number().int().min(0), output: z.number().int().min(0), cached: z.number().int().min(0).optional() })
-    .optional(),
+  tokens: TokenCountsShape.optional(),
   attempt: z.number().int().min(1),
   status: z.string().min(1),
   report_ref: z.string().min(1).optional(),
   summary_ref: z.string().min(1).optional(),
+  /** 模型归一形 provider/model（132-§6.1 单A；migration v8 列）——非空串，缺省=无从可知 */
+  model: z.string().min(1).optional(),
 })
 
 /** store 层临时校验（拟稿待批，见文件头注） */
@@ -316,16 +338,16 @@ export const JobRecordSchema = z.strictObject({
 // —— v4 收口面临时闸（EndWorkRecord 形状见上；strict：未知列拒收——拟稿待批，见接口行注） ——
 
 /** store 层临时校验（拟稿待批，见文件头注；status 终态值域不锁——归收割域后续收口；
- *  tokens 闸同 WorkRecordSchema.tokens：kernel.TokenCounts 三字段，非负整数，未知桶拒） */
+ *  tokens 闸同 WorkRecordSchema.tokens：kernel.TokenCounts 四桶+兼容键，非负整数，未知桶拒；
+ *  model=收割 ResultStats.model 直落（132-§6.1 单A）——非空串可选，未给值 COALESCE 不动） */
 export const EndWorkRecordSchema = z.strictObject({
   ended_at: z.number().int().min(0),
   status: z.string().min(1),
   cost_usd: z.number().min(0).optional(),
-  tokens: z
-    .strictObject({ input: z.number().int().min(0), output: z.number().int().min(0), cached: z.number().int().min(0).optional() })
-    .optional(),
+  tokens: TokenCountsShape.optional(),
   report_ref: z.string().min(1).optional(),
   summary_ref: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
 })
 
 // —— v5 进化管线 candidates 表（17-§3 / core evolution 首刀 / 02-F3；migration v5 同批） ——

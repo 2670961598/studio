@@ -15,8 +15,10 @@
  *   - estimateCost 精度口径（本单冻结）：usd = input/1e6*inputPerM + output/1e6*outputPerM，
  *     IEEE-754 双精度浮点直算——不中途四舍五入、不凑整到分/微美分；显示层（panel/报表）
  *     各自取整展示，台账（budgets.estimated/actual）存原始 double。对账口径归 docs/26。
- *   - TokenCounts.cached 暂不计价：PriceEntry 无 cached 单价键（端口未定义），扩键走批示
- *     （17-§4「价目表改动走批示」），本刀不擅自发明 cachedPerM。
+ *   - TokenCounts cache 桶（cache_read/cache_creation/兼容别名 cached，132-§6.1 单A 四桶化）
+ *     暂不计价：PriceEntry 无 cache 单价键（端口未定义），扩键走批示（17-§4「价目表改动
+ *     走批示」），本刀不擅自发明 cachedPerM/cacheReadPerM/cacheWritePerM——cache 价落位
+ *     归 132-单B price_snapshots（快照行 cache 键）。
  *   - fingerprint 覆盖 tiers+roles 全量（语义内容指纹）：改价、改角色映射都变指纹——两者
  *     都影响成本，都该留可审计锚点；「同内容」= 键序无关（规范化后哈希）。
  *

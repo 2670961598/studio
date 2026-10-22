@@ -133,7 +133,7 @@ describe('全链：launch→stream→resultStats（fixture：result-success）',
         // 原生账目（cost_native=true）：全部取自 result 事件，非折算非墙钟
         const stats = await adapter.resultStats(h)
         expect(stats.cost).toStrictEqual({ usd: 0.0137 }) // total_cost_usd
-        expect(stats.tokens).toStrictEqual({ input: 1468, output: 233, cached: 5120 }) // result.usage 归一
+        expect(stats.tokens).toStrictEqual({ input: 1468, output: 233, cache_read: 5120 }) // result.usage 归一（cache_read_input_tokens 源 → 新键 cache_read，132-§6.1 单A）
         expect(stats.duration).toBe(4500) // duration_ms
         expect(stats.turns).toBe(2) // num_turns
       })
@@ -194,7 +194,7 @@ describe('全链：launch→stream→resultStats（fixture：result-success）',
 
           const stats = await adapter.resultStats(h)
           expect(stats.cost).toStrictEqual({ usd: 0.0972 }) // 出错单照样有真账
-          expect(stats.tokens).toStrictEqual({ input: 9014, output: 8022 }) // 无 cached 字段
+          expect(stats.tokens).toStrictEqual({ input: 9014, output: 8022 }) // 无缓存桶字段
           expect(stats.duration).toBe(61_000)
           expect(stats.turns).toBe(10)
         },

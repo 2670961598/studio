@@ -95,19 +95,19 @@ function makeRunning(patch: Record<string, unknown> = {}): Record<string, unknow
 
 describe('v4 迁移（daemon_kv 接管）', () => {
   it('建库即到 v7（v4 daemon_kv 随建库齐备）：daemon_kv 在库；重开库 migrate 幂等（version 不涨、schema_version 恰七行、v4 不重放）', () => {
-    expect(ledger.version()).toBe(7)
+    expect(ledger.version()).toBe(8)
     const tables = (
       ledger.db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as Array<{ name: unknown }>
     ).map((r) => String(r.name))
     expect(tables).toContain('daemon_kv')
     const rows = ledger.db.prepare('SELECT version, sha8 FROM schema_version ORDER BY version').all() as Array<{ version: unknown; sha8: unknown }>
-    expect(rows.length).toBe(7)
+    expect(rows.length).toBe(8)
     for (const row of rows) expect(String(row.sha8)).toMatch(/^[0-9a-f]{8}$/)
 
     const again = openLedger(path.join(root, 'ledger.db'))
-    expect(again.version()).toBe(7)
+    expect(again.version()).toBe(8)
     const count = again.db.prepare('SELECT COUNT(*) AS c FROM schema_version').get() as { c?: unknown }
-    expect(Number(count.c)).toBe(7)
+    expect(Number(count.c)).toBe(8)
     again.close()
   })
 
@@ -128,9 +128,9 @@ describe('v4 迁移（daemon_kv 接管）', () => {
     l.kvSet('tick.seq', '4')
     l.kvSet('activity.cursor', '') // 空串=游标 null 持久形态（daemon 回读方还原 null 的那条路径）
     expect(schemaOf()).toBe(before)
-    expect(l.version()).toBe(7)
+    expect(l.version()).toBe(8)
     const versionRows = l.db.prepare('SELECT COUNT(*) AS c FROM schema_version').get() as { c?: unknown }
-    expect(Number(versionRows.c)).toBe(7)
+    expect(Number(versionRows.c)).toBe(8)
     // 存档语句与本面的读写互通仍成立（历史存量库数据的可读性）：存档 SET 写入 → 本面可读
     l.db.prepare(DAEMON_KV_SET_SQL).run('legacy.key', 'legacy-value')
     expect(l.kvGet('legacy.key')).toBe('legacy-value')
@@ -176,7 +176,7 @@ describe('v4 迁移（daemon_kv 接管）', () => {
 
     // ② 重开（openLedger 全量迁移）→ v4：IF NOT EXISTS 对存量表无操作，kv 数据原地接管
     const upgraded = openLedger(p)
-    expect(upgraded.version()).toBe(7)
+    expect(upgraded.version()).toBe(8)
     expect(upgraded.queryEvents().map((e) => e.id)).toEqual(['01ARZ3NDEKTSV4RRFFQ69G5FAV'])
     expect(upgraded.kvGet('activity.cursor')).toBe('legacy-cursor')
     expect(upgraded.kvGet('tick.seq')).toBe('12')
@@ -249,17 +249,23 @@ describe('endWorkRecord（收口面：一次性 + COALESCE）', () => {
     })
   })
 
-  it('tokens 收口往返：kernel.TokenCounts 落列 JSON 文本原序（同 insertWorkRecord 口径）+ 回读同形；未给值列不动', () => {
+  it('tokens 收口往返：四桶+兼容旧键落列 JSON 文本原序（132-§6.1 单A）+ 回读同形；未给值列不动', () => {
     ledger.insertWorkRecord(makeRunning({ id: 'wr-tok', started_at: T0 + 400 }))
     expect(
-      ledger.endWorkRecord('wr-tok', { ended_at: T0 + 800, status: 'done', cost_usd: 0.5, tokens: { input: 120, output: 30, cached: 7 } }),
+      ledger.endWorkRecord('wr-tok', { ended_at: T0 + 800, status: 'done', cost_usd: 0.5, tokens: { input: 120, output: 30, cache_read: 7, cache_creation: 2 } }),
     ).toBe(true)
-    expect(ledger.getWorkRecord('wr-tok')?.tokens).toEqual({ input: 120, output: 30, cached: 7 })
-    // 列形态：JSON 文本，键序=input/output/cached（kernel.TokenCounts 口径）——非 events 四桶
-    // canonical 序（cache_read/cache_creation 不出现在本列），与 insertWorkRecord 写入路径同字节口径
+    expect(ledger.getWorkRecord('wr-tok')?.tokens).toEqual({ input: 120, output: 30, cache_read: 7, cache_creation: 2 })
+    // 列形态：JSON 文本，键序=写入原序（kernel.TokenCounts 四桶——132-§6.1 单A 与 events
+    // F2-04 同名统一，G7 收口）；序列化原序=调用方对象序，store 不重排不增删
     const raw = ledger.db.prepare('SELECT tokens FROM work_records WHERE id = ?').get('wr-tok') as { tokens?: unknown }
-    expect(String(raw.tokens)).toBe('{"input":120,"output":30,"cached":7}')
-    // 反向：不带 cached 的两字段形态（daemon fake 收割 stats 即此形）
+    expect(String(raw.tokens)).toBe('{"input":120,"output":30,"cache_read":7,"cache_creation":2}')
+    // 兼容旧键：`cached` 形（存量 85 行形状）照收照回——读侧归并 cache_read ?? cached 归消费方
+    ledger.insertWorkRecord(makeRunning({ id: 'wr-tok4', started_at: T0 + 420 }))
+    expect(
+      ledger.endWorkRecord('wr-tok4', { ended_at: T0 + 820, status: 'done', tokens: { input: 80, output: 20, cached: 5 } }),
+    ).toBe(true)
+    expect(ledger.getWorkRecord('wr-tok4')?.tokens).toEqual({ input: 80, output: 20, cached: 5 })
+    // 反向：不带缓存桶的两字段形态（无缓存流的收割 stats 即此形）
     ledger.insertWorkRecord(makeRunning({ id: 'wr-tok3', started_at: T0 + 410 }))
     expect(ledger.endWorkRecord('wr-tok3', { ended_at: T0 + 810, status: 'done', tokens: { input: 100, output: 50 } })).toBe(true)
     expect(ledger.getWorkRecord('wr-tok3')?.tokens).toEqual({ input: 100, output: 50 })
@@ -269,7 +275,24 @@ describe('endWorkRecord（收口面：一次性 + COALESCE）', () => {
     expect(ledger.getWorkRecord('wr-tok2')?.tokens).toBeUndefined()
   })
 
-  it('tokens 坏形状拒：负值 / 非整数 / 未知桶（strict，events 四桶名不吃）；闸先于行存在性', () => {
+  it('model 收口往返（132-§6.1 单A·v8 列）：收割直落归一形；未给值列不动（COALESCE）；插入时已有值收口不带走', () => {
+    ledger.insertWorkRecord(makeRunning({ id: 'wr-model', started_at: T0 + 460 }))
+    expect(
+      ledger.endWorkRecord('wr-model', { ended_at: T0 + 860, status: 'done', model: 'glm/GLM-5.3' }),
+    ).toBe(true)
+    expect(ledger.getWorkRecord('wr-model')).toMatchObject({ model: 'glm/GLM-5.3' })
+    // 未给 model：列仍 NULL（无从可知=缺省，不猜）
+    ledger.insertWorkRecord(makeRunning({ id: 'wr-model2', started_at: T0 + 470 }))
+    expect(ledger.endWorkRecord('wr-model2', { ended_at: T0 + 870, status: 'done' })).toBe(true)
+    expect(ledger.getWorkRecord('wr-model2')?.model).toBeUndefined()
+    // 空 model 串拒（归一形非空串——写面闸）
+    expectConfigInvalid(
+      () => ledger.endWorkRecord('wr-404', { ended_at: T0, status: 'done', model: '' }),
+      'store/work-record:end-invalid:model',
+    )
+  })
+
+  it('tokens 坏形状拒：负值 / 非整数 / 未知桶（strict——真未知键不吃；四桶名 cache_read/cache_creation 合法=132-§6.1 单A 正名）；闸先于行存在性', () => {
     const bad = (tokens: unknown): void => {
       expectConfigInvalid(
         () => ledger.endWorkRecord('wr-404', { ended_at: T0, status: 'done', tokens: tokens as EndWorkRecord['tokens'] }),
@@ -278,7 +301,7 @@ describe('endWorkRecord（收口面：一次性 + COALESCE）', () => {
     }
     bad({ input: -1, output: 0 })
     bad({ input: 1.5, output: 0 })
-    bad({ input: 1, output: 2, cache_read: 3 }) // events 侧桶名在本列为未知键——拒
+    bad({ input: 1, output: 2, cache_warm: 3 }) // 真未知桶名——拒（cache_read/cache_creation 现为合法四桶键）
     bad({ input: 1 }) // 缺 output
   })
 

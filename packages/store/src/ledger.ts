@@ -594,8 +594,8 @@ export function openLedger(path: string): Ledger {
     db.prepare(
       `INSERT INTO work_records (
         id, issue, person_id, instance_id, executor, session_id, lane, branch,
-        started_at, ended_at, cost_usd, tokens, attempt, status, report_ref, summary_ref
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        started_at, ended_at, cost_usd, tokens, attempt, status, report_ref, summary_ref, model
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       r.id,
       r.issue,
@@ -613,6 +613,7 @@ export function openLedger(path: string): Ledger {
       r.status,
       r.report_ref ?? null,
       r.summary_ref ?? null,
+      r.model ?? null,
     )
     return r.id
   }
@@ -645,6 +646,10 @@ export function openLedger(path: string): Ledger {
     if (reportRef !== undefined) rec.report_ref = reportRef
     const summaryRef = optStr(row, 'summary_ref')
     if (summaryRef !== undefined) rec.summary_ref = summaryRef
+    // model（132-§6.1 单A·migration v8 尾列）：NULL=无从可知（旧执行），tokens 旧形
+    // `cached` 键原样往返——读侧兼容（cache_read ?? cached）归消费方，本层不改写键
+    const model = optStr(row, 'model')
+    if (model !== undefined) rec.model = model
     return rec
   }
 
@@ -1108,6 +1113,7 @@ export function openLedger(path: string): Ledger {
    * 既有值（对齐 daemon 切换前 closeWorkRecord 语句——tokens 列位亦同，居 cost_usd 与
    * report_ref 之间）。tokens 序列化=JSON.stringify 原序（与 insertWorkRecord 同口径——
    * work_records.tokens 非 events 四桶 canonical 序，两列不同源，F2-04 只冻结 events 侧）。
+   * model（132-§6.1 单A·studio-dev-168）：收割 ResultStats.model 直落，同 COALESCE 口径。
    * 单条 UPDATE 即单事务，无中间态可观测。无此行=false（markRan 同风格）。
    */
   const endWorkRecord = (id: string, end: EndWorkRecord): boolean => {
@@ -1119,7 +1125,8 @@ export function openLedger(path: string): Ledger {
     }
     db.prepare(
       `UPDATE work_records SET ended_at = ?, status = ?,
-         cost_usd = COALESCE(?, cost_usd), tokens = COALESCE(?, tokens), report_ref = COALESCE(?, report_ref), summary_ref = COALESCE(?, summary_ref)
+         cost_usd = COALESCE(?, cost_usd), tokens = COALESCE(?, tokens), report_ref = COALESCE(?, report_ref), summary_ref = COALESCE(?, summary_ref),
+         model = COALESCE(?, model)
        WHERE id = ?`,
     ).run(
       r.ended_at,
@@ -1128,6 +1135,7 @@ export function openLedger(path: string): Ledger {
       r.tokens === undefined ? null : JSON.stringify(r.tokens),
       r.report_ref ?? null,
       r.summary_ref ?? null,
+      r.model ?? null,
       id,
     )
     return true

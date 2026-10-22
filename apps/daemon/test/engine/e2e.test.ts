@@ -68,6 +68,8 @@ interface StackOptions {
   gateRunner?: GateRunner
   limits?: { maxActionsPerTick?: number; maxInflight?: number }
   breakerThreshold?: number
+  /** 适配器注入面（132-§6.1 单A：四桶+model 账目收割回归用）；缺省=default fake */
+  adapter?: ReturnType<typeof createFakeAdapter>
 }
 
 function buildStack(id: string, opts?: StackOptions): TestStack {
@@ -81,7 +83,7 @@ function buildStack(id: string, opts?: StackOptions): TestStack {
   }
   const platform = createFakePlatform({ now: () => new Date(t).toISOString() })
   const registry = createRegistry()
-  registry.register(createFakeAdapter(), { default: true })
+  registry.register(opts?.adapter ?? createFakeAdapter(), { default: true })
   const person = snapshot.people[0] as PersonRef
   const engine = createEngine({
     platform,
@@ -437,7 +439,69 @@ describe('store v4 切换回归：daemon 全路径无自建 DDL', () => {
     expect(report.phases.account.heartbeat).toBe(true)
     expect(ledger.kvGet('tick.seq')).toBe('1')
     expect(schemaOf()).toBe(before)
-    expect(ledger.version()).toBe(7) // store migration v7（人事任务账 hr_sync_log ledgers/reports/probes_runs）——版本随库迁移面走，daemon 仍零 DDL
+    expect(ledger.version()).toBe(8) // store migration v8（work_records.model，132-§6.1 单A）——版本随库迁移面走，daemon 仍零 DDL
     ledger.close()
+  })
+})
+
+describe('收割账目面：tokens 四桶兼容读 + model 全链（132-§6.1 单A·studio-dev-168）', () => {
+  it('四桶 + model 适配器账 → work_records（tokens/model 列）+ GATE_PASS（tokens 四桶 + note 后缀 model=）', async () => {
+    const stack = buildStack('harvest-model', {
+      adapter: createFakeAdapter({
+        usage: { input: 1500, output: 100, cache_read: 640, cache_creation: 256 },
+        model: 'glm/GLM-5.3',
+      }),
+    })
+    try {
+      await stack.platform.issues.create({ title: '四桶+model 收割对账单', type: 'task', level: 0 })
+      stack.clock.advance(1000)
+      await stack.engine.tick() // DISPATCH
+      stack.clock.advance(1000)
+      const report = await stack.engine.tick() // 收割
+      expect(report.errors).toEqual([])
+      expect(ticketEvents(stack.ledger, 'T-1')).toEqual(['DISPATCH', 'GATE_PASS'])
+
+      // work_records：tokens 四桶原样 + model 列落归一形（v8 列全链首证）
+      const record = stack.ledger.listWorkRecords({ issue: 'T-1' })[0]
+      expect(record?.tokens).toEqual({ input: 1500, output: 100, cache_read: 640, cache_creation: 256 })
+      expect(record?.model).toBe('glm/GLM-5.3')
+
+      // GATE_PASS 事件：tokens 四桶 + note 后缀 model=…（events 列集冻结——model 只走
+      // work_records 列与本 note 后缀，132-§6.1「不扩 events 列」）
+      const gatePass = stack.ledger.queryEvents({ issue: 'T-1' }).find((e) => e.event === 'GATE_PASS')
+      expect(gatePass?.tokens).toEqual({ input: 1500, output: 100, cache_read: 640, cache_creation: 256 })
+      expect(gatePass?.note).toContain('model=glm/GLM-5.3')
+    } finally {
+      stack.ledger.close()
+    }
+  })
+
+  it('旧形 cached 适配器账（存量 85 行同形）→ events tokens 兼容读归 cache_read（读侧 cache_read ?? cached，G7 兼容）', async () => {
+    const stack = buildStack('harvest-cached-compat', {
+      adapter: createFakeAdapter({ usage: { input: 900, output: 120, cached: 45000 } }),
+    })
+    try {
+      await stack.platform.issues.create({ title: '旧形 cached 兼容读对账单', type: 'task', level: 0 })
+      stack.clock.advance(1000)
+      await stack.engine.tick()
+      stack.clock.advance(1000)
+      const report = await stack.engine.tick()
+      expect(report.errors).toEqual([])
+      expect(ticketEvents(stack.ledger, 'T-1')).toEqual(['DISPATCH', 'GATE_PASS'])
+
+      // GATE_PASS tokens（events F2-04 四桶列）：cached → cache_read 归并——新键落账，
+      // 旧键不透传（写侧一律新键）；cache_creation 无源=不落键
+      const gatePass = stack.ledger.queryEvents({ issue: 'T-1' }).find((e) => e.event === 'GATE_PASS')
+      expect(gatePass?.tokens).toEqual({ input: 900, output: 120, cache_read: 45000 })
+      expect(gatePass?.note).not.toContain('model=') // 未声明模型=note 无后缀（无从可知不猜）
+
+      // work_records.tokens（store 面）：收割直录 stats 原体——旧形键原样往返（store 不
+      // 重排不改写；读侧归并归 events 面与消费方，两列两责不混淆）
+      const record = stack.ledger.listWorkRecords({ issue: 'T-1' })[0]
+      expect(record?.tokens).toEqual({ input: 900, output: 120, cached: 45000 })
+      expect(record?.model).toBeUndefined()
+    } finally {
+      stack.ledger.close()
+    }
   })
 })

@@ -147,6 +147,13 @@ export interface DshSeatbeltOptions {
 /** DshAdapter 构造选项（v0 仅 seatbelt 面；cmd 仍第一位保持既有调用点零改动） */
 export interface DshAdapterOptions {
   seatbelt?: DshSeatbeltOptions
+  /**
+   * 模型归一形 `provider/model`（132-§6.1 单A·C3，studio-dev-168）：dsh 无 `--model`
+   * 旗标，模型=profile `agent-default-model` 插件配置——daemon 侧的部署声明镜像
+   * （agent.yaml executors.dsh.patches，agentconfig.ts 解析注入）。构造期注入、
+   * resultStats 原样回传；未给=不填（无从可知，不猜——存量收割 model 列 NULL）。
+   */
+  model?: string
 }
 
 /**
@@ -300,11 +307,13 @@ export class DshAdapter implements ExecutorAdapter {
 
   private readonly cmd: readonly string[]
   private readonly seatbelt: DshSeatbeltOptions | undefined
+  private readonly model: string | undefined
 
   /**
    * cmd 可注入（测试用假 CLI）；缺省 `dsh --profile headless --json`（17-§6）。
    * opts.seatbelt（DEV-29 原型 attempt3）：缺省不圈定（既有调用点零改动）；
    * mode='off' 同缺省。构造期校验 mode 形状（非法档位=结构拒收，不静默当 off）。
+   * opts.model（132-§6.1 单A）：缺省不填（resultStats.model 缺席=无从可知）。
    */
   constructor(cmd: readonly string[] = DSH_DEFAULT_CMD, opts?: DshAdapterOptions) {
     this.cmd = cmd.length > 0 ? cmd : DSH_DEFAULT_CMD
@@ -315,6 +324,7 @@ export class DshAdapter implements ExecutorAdapter {
       )
     }
     this.seatbelt = opts?.seatbelt
+    this.model = opts?.model
   }
 
   /** seatbelt 圈定是否实际生效（mode='auto' 且构造在案） */
@@ -578,10 +588,12 @@ export class DshAdapter implements ExecutorAdapter {
   /**
    * 账目汇总（只统计伴生状态里已消费的事件）：
    *   tokens：step_end 的 usage 求和（dsh 逐 step 记账且「不完整则整条省略」，docs/31-§3.2；
-   *           无任何 step usage 时记零账——kill 面/预运行失败面如实，不编造）
+   *           四桶直译 132-§6.1 单A——cache 读写桶不再坍缩；无任何 step usage 时记零账
+   *           ——kill 面/预运行失败面如实，不编造）
    *   turns：step_end 计数（dsh 一个 turn 含 N 个 step 的近似记法——契约无备注位）
    *   duration：launch→流收尾（未收尾取 now）
    *   cost：恒 {usd:0}——cost_native=false，「待价目表折算」（文件头注，不改 contract）
+   *   model：构造期注入的归一形原样回传（未给=不填，kernel.ResultStats.model 注）
    */
   async resultStats(h: Handle): Promise<ResultStats> {
     const state = requireState(h)
@@ -590,6 +602,7 @@ export class DshAdapter implements ExecutorAdapter {
       tokens: aggregateUsage(state.events),
       duration: (state.endedAt ?? Date.now()) - state.startedAt,
       turns: state.events.filter((e) => e.type === 'step_end').length,
+      ...(this.model !== undefined ? { model: this.model } : {}),
     }
   }
 
@@ -692,22 +705,41 @@ async function readTaskText(briefPath: string): Promise<string> {
 
 /**
  * usage 账目归并：只认 step_end usage 求和（docs/31-§3.2：真机 turn_end 恒无 usage，
- * 旧 turn_end 兜底分支已删）；无任何 step usage → 零账（kill 面/预运行失败面，不编造）
+ * 旧 turn_end 兜底分支已删）；四桶直译（132-§6.1 单A）——cache_read/cache_creation
+ * 各自求和，**任一 step_end 携带该桶才落键**（真值直录，不编造 0 桶；判负线⑤：真机流
+ * 含 cacheWriteTokens 时 cache_creation 不得归零/丢失）。无任何 step usage → 零账
+ * （kill 面/预运行失败面，不编造）。写侧一律新键——本函数与 toUsageDsh 均不产 `cached`。
  */
 function aggregateUsage(events: readonly StreamEvent[]): TokenCounts {
   let input = 0
   let output = 0
-  let cached = 0
+  let cacheRead = 0
+  let cacheCreation = 0
   let seen = false
+  let seenRead = false
+  let seenCreation = false
   for (const e of events) {
     if (e.type === 'step_end' && e.usage !== undefined) {
       seen = true
       input += e.usage.input
       output += e.usage.output
-      cached += e.usage.cached ?? 0
+      if (e.usage.cache_read !== undefined) {
+        seenRead = true
+        cacheRead += e.usage.cache_read
+      }
+      if (e.usage.cache_creation !== undefined) {
+        seenCreation = true
+        cacheCreation += e.usage.cache_creation
+      }
     }
   }
-  return seen ? { input, output, cached } : { input: 0, output: 0 }
+  if (!seen) return { input: 0, output: 0 }
+  return {
+    input,
+    output,
+    ...(seenRead ? { cache_read: cacheRead } : {}),
+    ...(seenCreation ? { cache_creation: cacheCreation } : {}),
+  }
 }
 
 /** ENOENT 判定（未安装）：execa reject:false 下 spawn 失败挂在 result.cause（实测 9.6.1→10.1 同形） */

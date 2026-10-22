@@ -156,9 +156,10 @@ describe('全链：launch→stream→wire 合流→resultStats（fixture：stdou
           expect(adapter.exitCode(h)).toBe(0) // fake CLI 正常退出（记录价值）
           expect(adapter.isCompleted(h)).toBe(true) // result 终态 + log 非空
 
-          // **本家独有难点**：tokens=wire 逐轮求和总账（1500+3300 / 220+910 / 0+1200）
+          // **本家独有难点**：tokens=wire 逐轮求和总账（1500+3300 / 220+910 / 0+1200；
+          // cached_tokens 源 → 新键 cache_read，132-§6.1 单A「写侧一律新键」）
           const stats = await adapter.resultStats(h)
-          expect(stats.tokens).toStrictEqual({ input: 4800, output: 1130, cached: 1200 })
+          expect(stats.tokens).toStrictEqual({ input: 4800, output: 1130, cache_read: 1200 })
           expect(stats.turns).toBe(1) // kimi stdout 无 step 级事件——turn_end 计数
           expect(stats.duration).toBeGreaterThanOrEqual(0) // 自持墙钟
         },
@@ -650,7 +651,7 @@ describe('伴生状态守卫 + streams 冻结锚（kimi 家族）', () => {
   it('sumWireUsage 导出=wire 逐轮求和（4800/1130/1200）；parseStream 冻结口径挂最后一个 turn_end——适配器合流与之一致', () => {
     const wireText = readFileSync(wireFixture, 'utf8')
     const summed = sumWireUsage(wireText)
-    expect(summed).toStrictEqual({ input: 4800, output: 1130, cached: 1200 })
+    expect(summed).toStrictEqual({ input: 4800, output: 1130, cache_read: 1200 })
     // 冻结锚：全文级 parseStream(text,'kimi',wire) 的 turn_end.usage 与求和一致——
     // 适配器 mergeWireUsage 挂的是同一个数（25-§3.1 裁决#4 假设口径，探针前不动）
     const merged = parseStream(stdoutText(), 'kimi', wireText)
