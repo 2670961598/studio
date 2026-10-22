@@ -12,7 +12,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve as resolvePath } from 'node:path'
 import type { CompanySnapshot, FlowPlatform } from '@studio-next/contract'
-import { redactOutbound } from '@studio-next/core'
+import { redactOutbound, type PeopleChange } from '@studio-next/core'
 import type { Ledger } from '@studio-next/store'
 import { buildContext } from '@studio-next/taiga'
 import {
@@ -126,8 +126,16 @@ export function hrApplySegment(args: {
   clock: () => number
   makeId: (ts: number) => string
   log: (line: string) => void
+  /**
+   * 变更双写面（129-C，studio-dev-178：hrPeopleWatch 开时 serve 注入 people-change
+   * 源的 publish）：入队后把 diff 变更全量双写为 data-change 意图（挂既有分类器之后，
+   * 零重复分类）。**publish 异常=捕获+log 不炸 apply 段**——数据面（三面任务链）是
+   * 主产物，意图面双写失败不得阻断本段既有 fail-closed 语义（与 ensureAiwsTree
+   * 「先于一切持有者替换」的抛错面分野：意图面非事务件）。
+   */
+  publish?: (changes: readonly PeopleChange[], batchId: string) => number
 }): HrEnqueueResult {
-  if (!args.enabled) return { batchId: null, summary: '', enqueued: 0 }
+  if (!args.enabled) return { batchId: null, summary: '', enqueued: 0, changes: [] }
   const ts = args.clock()
   const hr = enqueueHrBatch(args.ledger, {
     prev: args.prev,
@@ -138,6 +146,14 @@ export function hrApplySegment(args: {
   })
   if (hr.enqueued > 0) {
     args.log(`[serve] 人事批次 ${hr.batchId}：${hr.summary}（任务 ${String(hr.enqueued)} 条入队——哨兵票，相位尾消化器补单/执行）`)
+  }
+  if (args.publish !== undefined && hr.changes.length > 0) {
+    try {
+      const emitted = args.publish(hr.changes, hr.batchId ?? '')
+      args.log(`[serve] people-change 双写：${String(emitted)} 条 data-change 意图入队（批次 ${hr.batchId}——129-C，P0-A 人事变动唤起）`)
+    } catch (err) {
+      args.log(`[serve] people-change 双写失败（批次 ${hr.batchId}）：${err instanceof Error ? err.message : String(err)}——意图面隔离不炸 apply 段，三面任务链照旧（hrPeopleWatch 源侧排查）`)
+    }
   }
   return hr
 }

@@ -174,6 +174,21 @@ describe('daemon.yaml hrSync 配置面（DEV-48）', () => {
     expect(cfg.hrRetryLimit).toBe(3)
     expect(cfg.hrApplyingTimeoutMs).toBe(0) // 0=装配期按 10×tickMs 推导
     expect(cfg.hrTaigaInvitePolls).toBe(10)
+    expect(cfg.hrPeopleWatch).toBe(false) // 129-C：缺省关（模板 hooks 段惰性面）
+  })
+
+  it('hrPeopleWatch: true 缺 hrSync → 拒（源挂 hr-sync 分类器出口——无 hrSync 即无 diff 出口，129-C）', () => {
+    expect(() => parseDaemonConfig(`${BASE_YAML}\nhrPeopleWatch: true`)).toThrow(/hrPeopleWatch/)
+  })
+
+  it('hrSync: true + hrPeopleWatch: true → 过；false 显式过', () => {
+    const cfg = parseDaemonConfig(`${BASE_YAML}\nhrSync: true\nhrPeopleWatch: true`)
+    expect(cfg.hrPeopleWatch).toBe(true)
+    expect(parseDaemonConfig(`${BASE_YAML}\nhrSync: true\nhrPeopleWatch: false`).hrPeopleWatch).toBe(false)
+  })
+
+  it('hrPeopleWatch 坏值拒绝（布尔面）', () => {
+    expect(() => parseDaemonConfig(`${BASE_YAML}\nhrSync: true\nhrPeopleWatch: 3`)).toThrow(/hrPeopleWatch|布尔/)
   })
 
   it('hrSync: true + platform: taiga 缺 hrTaigaInviteLog → 拒（令牌只落日志——§6.1）', () => {

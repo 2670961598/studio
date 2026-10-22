@@ -326,6 +326,13 @@ export interface HrEnqueueResult {
   summary: string
   /** 实际新建任务行数（幂等命中不计） */
   enqueued: number
+  /**
+   * 变动全量（diff.changes 原样回传——129-C，studio-dev-178）：people-change 源双写
+   * data-change 意图的源料。**分类器只跑一次**（挂既有分类器之后双写，零重复分类
+   * ——129-§6.1① 注册模式）；无变动=[]。纯增量字段：不消费 changes 的既有调用面
+   * 字节不变。
+   */
+  changes: PeopleChange[]
 }
 
 /**
@@ -351,7 +358,7 @@ export function enqueueHrBatch(
   }
   const diff = diffPeople(args.prev, args.next, ledgerStatus)
   const summary = renderPeopleDiff(diff)
-  if (diff.changes.length === 0) return { batchId: null, summary, enqueued: 0 }
+  if (diff.changes.length === 0) return { batchId: null, summary, enqueued: 0, changes: [] }
   const nextById = new Map(args.next.people.map((p) => [p.id, p] as const))
   let enqueued = 0
   for (const change of diff.changes) {
@@ -386,5 +393,5 @@ export function enqueueHrBatch(
     }
   }
   if (enqueued > 0) ledger.kvSet(batchSummaryKey(args.batchId), summary)
-  return { batchId: args.batchId, summary, enqueued }
+  return { batchId: args.batchId, summary, enqueued, changes: diff.changes }
 }

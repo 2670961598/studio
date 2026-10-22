@@ -47,7 +47,7 @@
  *     （v0.1-M3 边界，validator.ts 头注），公司目录岗进台账归后续单；现行岗入口=快照/upsertJob 热更。
  *   - 唤起源注册表（v0.8 地基，22-§一）：scheduler 源（jobs: true）+ matrix 源（matrix: true+注入
  *     工厂）+ watch-file 源（fileWatch/fileWatchPath，22-§三.1 靶子）+ cadence 展开器（35-§3）
- *     + SLA/升级计时器（sla: true——escalate 意图+ESCALATE 落账；notify 归端口后续刀）。
+ *     + SLA/升级计时器（sla: true）+ people-change 源（129-C：hrSync+hrPeopleWatch 双写 data-change 意图，路由=org-config hooks.data_change.routes）。
  *     startAll 的 emit 统一进 engine.ingest——源零直驱（见 src/engine/sources.ts）。意图消费门
  *     在引擎（kind→handler 分发表，105-刀A A-2）：schedule｜mention 已开闸（mention=③混合：
  *     @工号 物化唤醒单派岗位，@宰相/@制作人 roles 映射同径派发）；webhook｜data-change 已开闸
@@ -90,6 +90,8 @@ import {
   type EngineConfig,
 } from '../engine/engine.ts'
 import { runEvolveStartupSelfCheck, type EvolveSelfCheckReport, type FrozenAsset } from '../evolve/evolve-guard.ts'
+import { mergeDataChangeRoutes } from '../engine/intents/taxonomy.ts' // 129-C：org-config hooks.data_change.routes（规范位）+ daemon.yaml dataChangeRoutes（逃生位）合并
+import { wirePeopleChangeSource } from '../engine/hrsync/people-change-source.ts' // 129-C：people-change 源注册件（hrPeopleWatch 开时挂 hr-sync 分类器出口）
 import { createFakeAdapter } from '../engine/fakes.ts'
 import { buildServeDirectiveDeps, parseWhitelistSpec } from '../engine/directive/index.ts'
 import { createDefaultGateRunner, createAcceptanceGateRunner } from '../engine/gate.ts'
@@ -581,8 +583,7 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'freshness':
         cfg.freshness = bool(value, key)
         break
-      // —— 人事同步器键组（DEV-48，docs/52-§九/§六.1/§七）——胁迫/校验细节收口在
-      //    assembly/hrsync/config.ts（coerceHrServeKey——键不属 hr 面则回落本 switch）
+      // —— 人事同步器键组（DEV-48，docs/52-§九/§六.1/§七；hrPeopleWatch=129-C）——胁迫/校验收口 assembly/hrsync/config.ts（不属 hr 面回落本 switch）
       case 'hrSync':
       case 'hrMaxPerTick':
       case 'hrRetryLimit':
@@ -592,6 +593,7 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'hrTaigaInviteLog':
       case 'hrTaigaInvitePolls':
       case 'hrTaigaInvitePollMs':
+      case 'hrPeopleWatch':
         coerceHrServeKey(cfg, key, value, { str, num, bool })
         break
       case 'reloadWatch':
@@ -1022,7 +1024,7 @@ export function buildServeRuntime(
   }
 
   // data-change 路由登记位（129-A）：坏形态 CONFIG_INVALID 明报拒启动（解析件在 engine/intents/taxonomy.ts）
-  const dataChangeRoutes = parseDataChangeRoutes(config.dataChangeRoutes)
+  const dataChangeRoutes = mergeDataChangeRoutes(snapshot.hooks, parseDataChangeRoutes(config.dataChangeRoutes)) // 129-C：org-config 规范位+daemon.yaml 逃生位逐键覆盖；合并空=undefined（路由闸 fail-closed 不变）
   // 人闸覆盖表解析（129-§6.2-R3，studio-dev-167 单B）：coerce 阶段已验过形态，此处取
   // Map 注入引擎（缺省不注入=表空，人闸走 maxInflightPerPerson 缺省帽）
   const personInflightOverrides = config.personInflightOverrides !== undefined
@@ -1149,6 +1151,8 @@ export function buildServeRuntime(
   const ingestSink = (intent: Parameters<Engine['ingest']>[0][number]): void => {
     engine.ingest([intent])
   }
+  // people-change 源（129-C P0-A，studio-dev-178）：hrSync+hrPeopleWatch 开=挂 hr-sync 分类器出口双写 data-change 意图（源本体 engine/hrsync/people-change-source.ts）
+  const peopleChangePublish = config.hrPeopleWatch ? wirePeopleChangeSource(sources, { company: config.company, sink: ingestSink, log }) : undefined
 
   let scheduler: Scheduler | null = null
   if (config.jobs) {
@@ -1263,7 +1267,7 @@ export function buildServeRuntime(
         //    （哨兵票；diff 基=台账镜像现值，零平台 IO；hrSync 关=零动作）——实现体在
         //    assembly/hrsync/assemble.ts（hrApplySegment）；抛错=apply 整体失败保持旧
         //    态（fail-closed，与上同面）。
-        const hr = hrApplySegment({ enabled: config.hrSync, ledger, prev: companyState.snapshot, next, company: config.company, clock, makeId: makeUlid, log })
+        const hr = hrApplySegment({ enabled: config.hrSync, ledger, prev: companyState.snapshot, next, company: config.company, clock, makeId: makeUlid, log, ...(peopleChangePublish !== undefined ? { publish: peopleChangePublish } : {}) })
         if (config.jobs) {
           // 台账段先行（幂等可重入——seedJobs 逐岗独立 upsert；失败重试下一形态自愈）
           const s = seedJobs(ledger, next.jobs, clock())

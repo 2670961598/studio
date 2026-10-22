@@ -150,6 +150,22 @@ workflows:
         verified: 复验通过
         delivered: 已交付
 
+# 事件钩子声明（129-C，129-§6.1①——可选，不声明=data-change 意图面 fail-closed 不派工）：
+# data-change 路由表 = 人事变更 → 联动单 assignee（变更类型七值：入/调/升/降/停/复/退）。
+# 建议口径（129-§6.3 P0-A）：入/退/调 → 对账岗（人事变动唤起对账单，docs/52-§13 C1-08）；
+# 升/降 → 规划线（编制调整走规划岗）。daemon.yaml `dataChangeRoutes` 可逐键覆盖（部署级逃生位）。
+# 惰性面：路由只在 daemon.yaml hrPeopleWatch: true 时生效（people-change 源挂 hr-sync 分类器出口）
+hooks:
+  data_change:
+    routes:
+      入: NET-1 # 新人入司 → 对账岗收件箱自动出现对账单（P0-A 验收样板，零手工派单）
+      调: NET-1
+      退: NET-1
+      升: NET-1
+      降: NET-1
+      停: NET-1
+      复: NET-1
+
 # YouTrack 账号锚点映射（账号=等级锚点，不随新增公司而新增账号）
 accounts:
   - login: net-eng
