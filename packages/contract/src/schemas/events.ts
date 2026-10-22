@@ -13,6 +13,10 @@
  *   - P3 增补（studio-dev-100 提案 §6.2-4，制作人 2026-10-21 全批——枚举进 contract 才
  *     实现，SCHEMA_EVOLVE 通道）：+`HARVEST_INCOMPLETE`/`HARVEST_DENIED` → 25 具体名 +
  *     2 前缀族 = 27 类；`REPORT_MISSING` 走 `REPORT_*` 前缀族既有通道（无需枚举项）。
+ *   - P6 增补（studio-dev-160 提案 §6.5，制作人 2026-10-22 全批——docs/49 落档）：
+ *     +`JUDGE_` 前缀族（micro-judge 判断调用可观测面：JUDGE_OK/JUDGE_FALLBACK——
+ *     判断调用零生命周期不进收割契约，事件族是其唯一台账锚）→ 25 具体名 +
+ *     3 前缀族 = 28 类。
  *   - tokens 四桶 = F2-04 冻结列名 input/output/cache_read/cache_creation（互斥桶，
  *     至少其一出现）。kernel.TokenCounts 是 executor 归一化层的三字段口径，不用于台账。
  *   - 拟稿待批（docs 未细化）：attempt 最小值取 1（首次尝试=1）；level 取 1..9
@@ -79,14 +83,14 @@ export const EVENT_NAMES = [
   'HARVEST_DENIED', // 收账面不可读（E12 chmod 类）：stat 兜底不静默（权限前移后的残险网）
 ] as const
 
-/** 前缀族：网关动作 / 报表产物（17-§3 以 `GW_*`/`REPORT_*` 记） */
-export const EVENT_PREFIX_FAMILIES = ['GW_', 'REPORT_'] as const
+/** 前缀族：网关动作 / 报表产物 / 判断调用（17-§3 `GW_*`/`REPORT_*`；P6 `JUDGE_*`——studio-dev-160 §6.5） */
+export const EVENT_PREFIX_FAMILIES = ['GW_', 'REPORT_', 'JUDGE_'] as const
 
 /**
- * 前缀族正则：`GW_`/`REPORT_` 后接至少一个大写字母数字段（可下划线续段，如 GW_KB_SEARCH）。
+ * 前缀族正则：`GW_`/`REPORT_`/`JUDGE_` 后接至少一个大写字母数字段（可下划线续段，如 GW_KB_SEARCH）。
  * 仅大写：台账事件名全大写（17-§3 清单如此），小写视作未知类型拒收（F2-02 验收口径）。
  */
-export const EVENT_NAME_PREFIX_PATTERN = /^(?:GW|REPORT)_[A-Z0-9]+(?:_[A-Z0-9]+)*$/
+export const EVENT_NAME_PREFIX_PATTERN = /^(?:GW|REPORT|JUDGE)_[A-Z0-9]+(?:_[A-Z0-9]+)*$/
 
 /** 双通道事件名：冻结枚举 ∪ 前缀族正则 */
 export const EventNameSchema = z.union([

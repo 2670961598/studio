@@ -7,12 +7,10 @@
  *   db: <台账库路径>            platform: localfile|fake      company: <slug>
  *   rootDir: <工位根>           tickMs: <拍间隔>              maxActionsPerTick / maxInflight
  *   stallAfterMs / laneTtlMs / breakerThreshold / autoApprove …（缺省见 DEFAULT_SERVE_CONFIG）
- *   mirrorRescanEveryTicks: <镜像对账重决策节流>（DEV-42①，缺省 30；0=关——每 N 拍把
- *     非闭环 mirror 单补进决策候选，兜底活动驱动候选漏单的永久搁置）
+ *   mirrorRescanEveryTicks: <镜像对账重决策节流>（DEV-42①，缺省 30；0=关——每 N 拍补非闭环 mirror 单进决策候选）
  *   jobs: true|false（定时岗调度开关，v0.4）   jobPollMs: <调度轮询间隔>（缺省 15000）
- *   models: <models.yaml 路径>（可选价目表，17-§4：装载→catalog 注入引擎——注入=估算
- *     态 A「estimateCost 校准+双帽」；缺省=态 B 降级「估算=适配器自报、仅票级帽」，
- *     两态详见 src/engine/budget-gate.ts 头注。**缺省不拷贝 models.example.yaml**）
+ *   models: <models.yaml 路径>（可选价目表，17-§4：注入=估算态 A「estimateCost 校准+双帽」；
+ *     缺省=态 B 降级（budget-gate.ts 头注两态）。**缺省不拷贝 models.example.yaml**）
  *   budgetTicketCapUsd / budgetPersonCapUsd（可选预算帽：票级恒生效；岗级仅态 A 生效）
  *   gateway: true|false（网关写收口开关，缺省开——17-§7；生产不得关）
  *   gatewaySecret: <网关 HMAC 密钥>（>=32B；缺省开发值——**生产必配**，见 DEV_GATEWAY_SECRET 警告）
@@ -22,17 +20,14 @@
  *   platformDir: <LocalFile 平台根>（可选；platform: localfile 时缺省 <rootDir>/platform）
  *   agentYaml: <agent.yaml 路径>（可选；给定时按 docs/17-§4 装载真 executor 注册表——
  *     loadAgentConfig+wireRegistry+builtinResolver；缺省 fake adapter（demo））
- *   acceptance: <冻结验收命令>（可选；给定时=真单模式——该命令是任务书 L4 / Blind 读面 /
- *     真验收闸门（createAcceptanceGateRunner 真执行）三消费面的**单一事实源**；缺省
- *     demo 占位常量+占位闸门（exit0 模拟）。多条命令写在一行内用 && / ; 连接——
- *     扁平 YAML 子集不收列表，多行拆分归真 YAML 装载后续刀）
+ *   acceptance: <冻结验收命令>（可选；给定时=真单模式——任务书 L4/Blind 读面/真验收闸门
+ *     三消费面的**单一事实源**；缺省 demo 占位（exit0 模拟）。多条命令一行内 && / ; 连接
+ *     ——扁平 YAML 子集不收列表，多行拆分归真 YAML 装载后续刀）
  *
  * v0 边界（诚实标注——v0.5 真单刀后仍差什么）：
- *   - platform: localfile **已接线**（@studio-next/localplatform，platformDir 可配）；
- *     taiga **已接线**（@studio-next/taiga，docs/30 推荐 + docs/32 真机试点——daemon.yaml
- *     键 taigaUrl/taigaProject/taigaEntity/taigaAuth/taigaFieldsFile；凭据只经进程 env
- *     TAIGA_USERNAME+TAIGA_PASSWORD 或 TAIGA_TOKEN(+TAIGA_REFRESH) 供给，值永不入
- *     daemon.yaml/日志/台账（红名单）；启动探针 fail-fast，见 wirePlatform/runServe）；
+ *   - platform: localfile **已接线**（platformDir 可配）；taiga **已接线**（docs/30+32——键
+ *     taigaUrl/Project/Entity/Auth/FieldsFile；凭据只经进程 env TAIGA_USERNAME+PASSWORD 或
+ *     TAIGA_TOKEN(+REFRESH)，值永不入配置/日志/台账（红名单）；启动探针 fail-fast）；
  *     YouTrack 接线归 platform 泳道后续单。
  *   - 配置解析为零依赖手写扁平 YAML 子集（注释/#、key: value、引号剥壳、数字/布尔推断）——
  *     真 YAML（yaml@2 带行号 AST）装载归 daemon 依赖登记后的后续刀（16-§二 选型纪律）。
@@ -41,50 +36,38 @@
  *     缺省=fake adapter（demo，行为不变）。dsh 真跑的外部依赖（CLI 在 PATH、凭据 env、
  *     profile patch）不在 daemon 面——凭据经进程 env 透传（TaskBrief.credentials 通道 +
  *     launch `...process.env`），凭据值永不入配置/日志/台账（红名单）。
- *     AGENTS.md 通道接线（v1.5#1，本刀）：dsh capabilities.agents_md='user_level'——
- *     dispatch 落指令临时文件（workspace 外）+ launch env STUDIO_NEXT_INSTRUCTIONS；
- *     bridge 插件 overlay 由启动期生成（见下方 provisioning 段），挂载归 agent.yaml cmd。
- *   - 网关（17-§7 写入全收口）：**平台写路径已过闸**（src/engine/gated-platform.ts——控制面 control key、
- *     署名注入、fail-closed；缺省开，daemon.yaml `gatewaySecret:` 配密钥、缺省开发值生产必换）。
- *     worker 级按单 wkey 已接（src/engine/worker-key.ts：dispatch 签发+TaskBrief.credentials
- *     env 注入、GATE_FAIL/断路/CLOSE 吊销）；仍欠：studio-tools stdio 入口（worker 进程内挂 MCP
- *     server 的入口单——工厂已备，须复用 createStudioToolsServer）与吊销集跨进程可见性
- *     （authority 落 store，gateway 包挂账）；审批流（呈批事件名待批示）同前。
- *   - 定时岗（v0.4，jobs: true）：scheduler（src/engine/scheduler.ts）+ 引擎意图入口（engine.ingest）
- *     全链已通（demo 样例岗=DEMO_SNAPSHOT.health-patrol）；**公司目录 jobs 段装载不进
- *     snapshot**——packages/company 校验器只收形状、toSnapshot 恒置 jobs:[]（v0.1-M3 边界，
- *     见 validator.ts 头注「留后续单」），本刀不动 packages/*——公司目录岗进台账归该单；
- *     现行岗入口=快照 jobs（demo）/upsertJob 热更（测试与 API）。
- *   - 唤起源注册表（v0.8 地基，22-§一）：scheduler 源（jobs: true 时注册——源开关=既有 jobs
- *     键，缺省语义不动）+ matrix 源（matrix: true + 注入工厂，daemon 不强依赖 @studio-next/matrix）
- *     + watch-file 示例源（fileWatch: true + fileWatchPath，22-§三.1 验收靶子）
- *     + cadence 档位展开器（cadence: true，35-§3 首刀——档位岗调度表生命周期源）
- *     + SLA/升级计时器（sla: true，35-§3 首刀——escalate 意图 + ESCALATE 落账；notify 发送
- *     归 notify 端口后续刀）。
- *     startAll 的 emit 统一进 engine.ingest——源零直驱（注册表与源实现见 src/engine/sources.ts）。
- *     意图消费门在引擎（kind→handler 分发表，105-刀A A-2）：schedule｜mention 已开闸
- *     （mention=③混合语义：@工号 物化唤醒单派该岗位，@宰相/@制作人 源侧 roles 映射成
- *     工号同径派发）；escalate 归刀B（notify 端口接线单）、webhook 等其余 kind 明报不
- *     支持（六源全通归 v0.8 后续刀）——注册面先行，消费面按刀推进。
- *   - SIGINT/SIGTERM 优雅停：等当前拍收口 → **先 stopAll 唤起源**（不再进新意图）→ 在途
- *     drain（v0=对内存 handle 优雅杀，work_records 留 running——重启由启动例行接管收口，
- *     docs/38-§2 R-B「在途接管收口」，见 takeOverRunningWorkRecords）→ 关台账。
- *     队列中未消费意图停机即弃（at-most-once，与调度器 markRan 已提交而 ingest 未消费的
- *     既有边界同语义——engine.ts 头注）。
- *   - L1 配置热重载（docs/38-§2 L1 / §4 R-A，src/control/hot-reload.ts）：companyDir 给定时
- *     每拍拍边界（tick 收口后）检查公司目录资产指纹（轻量 stat+mtime，reloadWatch 缺省开）
- *     与控制面 reload 请求（<rootDir>/control/）；变更且稳定/手动触发 → 重走装载面（校验 →
- *     快照 → 调度岗播种/移除 → 装配器/人员索引/署名上下文替换）→ RELOAD 落 SCHEMA_EVOLVE
- *     继续跑——零进程重启、不中断在途单。坏配置拒载保持旧态 + ESCALATE（面板可见）。
- *     daemon.yaml 自身与框架代码不在 L1 面（L2 归 R-C）。
- *   - 进化管线判负闸（v0 观察模式，src/evolve/evolve-guard.ts）：serve 启动对框架资产清单（v0
- *     极小样例集）跑 authorize（core assertChangeAuthorized ∘ 台账候选全集），unauthorized
- *     如实报告（日志+ESCALATE 事件）**不阻断启动**；空库首启跳过（零检查如实）。真单刀接
- *     阻断模式+资产面扩展+真生产改动路径拦截（头注冻结边界）。
+ *     AGENTS.md 通道接线（v1.5#1）：dsh agents_md='user_level'——dispatch 落指令临时文件
+ *     （workspace 外）+ env STUDIO_NEXT_INSTRUCTIONS；bridge overlay 启动期生成（下方段），挂载归 cmd。
+ *   - 网关（17-§7 写入全收口）：平台写路径已过闸（gated-platform.ts——control key/署名注入/
+ *     fail-closed；`gatewaySecret:` 缺省开发值生产必换）。worker 级按单 wkey 已接（worker-key.ts：
+ *     签发+credentials env 注入+GATE_FAIL/断路/CLOSE 吊销）；仍欠：studio-tools stdio 入口与
+ *     吊销集跨进程可见性（authority 落 store，挂账）；审批流（事件名待批示）同前。
+ *   - 定时岗（v0.4，jobs: true）：scheduler+engine.ingest 全链已通（demo 岗=health-patrol）；
+ *     **公司目录 jobs 段不进 snapshot**——company 校验器只收形状、toSnapshot 恒置 jobs:[]
+ *     （v0.1-M3 边界，validator.ts 头注），公司目录岗进台账归后续单；现行岗入口=快照/upsertJob 热更。
+ *   - 唤起源注册表（v0.8 地基，22-§一）：scheduler 源（jobs: true）+ matrix 源（matrix: true+注入
+ *     工厂）+ watch-file 源（fileWatch/fileWatchPath，22-§三.1 靶子）+ cadence 展开器（35-§3）
+ *     + SLA/升级计时器（sla: true——escalate 意图+ESCALATE 落账；notify 归端口后续刀）。
+ *     startAll 的 emit 统一进 engine.ingest——源零直驱（见 src/engine/sources.ts）。意图消费门
+ *     在引擎（kind→handler 分发表，105-刀A A-2）：schedule｜mention 已开闸（mention=③混合：
+ *     @工号 物化唤醒单派岗位，@宰相/@制作人 roles 映射同径派发）；escalate 归刀B、webhook 等
+ *     明报不支持——注册面先行，消费面按刀推进。
+ *   - SIGINT/SIGTERM 优雅停：等当前拍收口 → stopAll 唤起源 → 在途 drain（v0=内存 handle
+ *     优雅杀，work_records 留 running——重启由 takeOverRunningWorkRecords 接管收口，38-§2 R-B）
+ *     → 关台账。队列中未消费意图停机即弃（at-most-once，与 markRan 已提交未消费边界同语义）。
+ *   - L1 配置热重载（38-§2 L1/§4 R-A，src/control/hot-reload.ts）：companyDir 给定时每拍拍
+ *     边界检查公司目录资产指纹（stat+mtime，reloadWatch 缺省开）与控制面 reload 请求；变更且
+ *     稳定/手动 → 重走装载面（校验→快照→岗播种→装配器/署名上下文替换）→ RELOAD 落 SCHEMA_EVOLVE
+ *     继续跑——零重启不断单。坏配置拒载保旧态+ESCALATE。daemon.yaml 与框架代码不在 L1 面（L2 归 R-C）。
+ *   - 进化管线判负闸（v0 观察模式，src/evolve/evolve-guard.ts）：启动对框架资产清单跑
+ *     authorize（assertChangeAuthorized ∘ 台账候选全集），unauthorized 如实报告（日志+ESCALATE）
+ *     **不阻断启动**；空库首启跳过。真单刀接阻断模式+资产面扩展（头注冻结边界）。
  */
-import { createRegistry, loadAgentConfig, wireRegistry, builtinResolver } from '@studio-next/adapters'
+import { createRegistry, isJudgeExecutorName, loadAgentConfig, wireRegistry, builtinResolver } from '@studio-next/adapters'
 import { AIWS_DIR, ensureAiwsTree } from '@studio-next/company'
-import { createModelCatalog, fingerprint, parseModelsYaml, DEFAULT_FLOW_TABLE } from '@studio-next/core'
+import { assertJudgeRoleLow, createModelCatalog, fingerprint, parseModelsYaml, DEFAULT_FLOW_TABLE } from '@studio-next/core'
+import { dshJudgeAdapterFactory } from '../engine/judge/invoke.ts'
+import { configInvalid } from '@studio-next/contract'
 import { createGateway, CONTROL_TICKET } from '@studio-next/gateway'
 import type { SignatureContext } from '@studio-next/gateway'
 import { openLedger, type Ledger } from '@studio-next/store'
@@ -926,9 +909,11 @@ export function buildServeRuntime(
 
   // —— executor 注册双形态（v0.5 真单刀）：agentYaml=真注册表；缺省=fake（demo 不变）——
   const registry = createRegistry()
+  let agentConf: ReturnType<typeof loadAgentConfig> | undefined
   if (config.agentYaml !== undefined) {
     const agentText = readFileSync(path.resolve(config.agentYaml), 'utf8')
-    wireRegistry(registry, loadAgentConfig(agentText), builtinResolver)
+    agentConf = loadAgentConfig(agentText)
+    wireRegistry(registry, agentConf, builtinResolver)
     log(
       `[serve] executor 注册（agent.yaml=${config.agentYaml}）：${registry.list().map((e) => `${e.name}${e.default ? '(default)' : ''}`).join('、')}`,
     )
@@ -936,12 +921,10 @@ export function buildServeRuntime(
     registry.register(createFakeAdapter(), { default: true })
   }
 
-  // —— dsh bridge 插件 provisioning（docs/25-§3.1 v1.5#1 通道的装载自动化）：
-  //    注册表里有 bridge 通道 executor（agents_md≠native——能力路由既有面，零 if executor）
-  //    时，serve 启动生成运行时 overlay（<rootDir>/tmp/dsh-bridge-overlay.yml，
-  //    instructions-store.ts——装载法 B，docs/34-§3.1；不动机器全局 profile）。挂载声明
-  //    归部署的 agent.yaml：dsh cmd 追加 `--patch <overlay 路径>`（cmd=配置覆盖注入位）。
-  //    未挂载时 STUDIO_NEXT_INSTRUCTIONS 无消费者——注入不发生（明报提示，不拒启动）——
+  // —— dsh bridge 插件 provisioning（v1.5#1 通道装载自动化）：注册表含 bridge 通道
+  //    executor（agents_md≠native）时启动生成 overlay（<rootDir>/tmp/dsh-bridge-overlay.yml，
+  //    instructions-store.ts——装载法 B，34-§3.1）；挂载归 agent.yaml cmd --patch；未挂载
+  //    则 STUDIO_NEXT_INSTRUCTIONS 无消费者（明报不拒启动）——
   const bridgeChannelUsers = registry.list().filter((e) => e.capabilities.agents_md !== 'native')
   if (bridgeChannelUsers.length > 0) {
     const overlay = provisionDshBridgeOverlay(path.resolve(config.rootDir))
@@ -966,16 +949,30 @@ export function buildServeRuntime(
 
   // 价目表装载（可选，17-§4）：daemon.yaml models: 段 → parseModelsYaml → catalog 注入引擎
   // （态 A）；缺省不装载=态 B 降级——**不拷贝 models.example.yaml**（示例价入账=伪依据）。
-  // fingerprint 启动日志呈现（「价目表改动走批示」的可观测锚；台账事件锚归后续 daemon 单，
-  // 事件名待批示）。装载失败（语法/形状/缺 main_worker）→ CONFIG_INVALID 拒绝启动，不静默降级。
+  // fingerprint 启动日志呈现；台账事件锚归后续 daemon 单。装载失败 → CONFIG_INVALID 拒启动。
   let catalog: ModelCatalog | undefined
+  let modelRoles: Readonly<Record<string, string>> | undefined
   if (config.models !== undefined) {
     const text = readFileSync(path.resolve(config.models), 'utf8')
     const parsed = parseModelsYaml(text)
     catalog = createModelCatalog(parsed)
+    modelRoles = parsed.roles
     log(`[serve] 价目表装载：${config.models}（fingerprint=${fingerprint(parsed)}；估算态 A：estimateCost 校准+双帽）`)
   } else {
     log('[serve] 无价目表：预算闸态 B 降级（估算=适配器自报、仅票级帽——见 src/engine/budget-gate.ts 头注两态）')
+  }
+
+  // —— judge 注册位启动闸（studio-dev-164，红队 1 机制点）：agent.yaml 有 <family>-judge
+  //    位时三查：①家族=v1 冻结面 dsh ②价目表在场（三帽要价目）③roles.micro_judge
+  //    必显式 low（高档判断=成本事故，拦在启动面）——判断调用库本体的接线归单B ——
+  const judgeRegs = agentConf?.executors.filter((e) => isJudgeExecutorName(e.name)) ?? []
+  if (judgeRegs.length > 0) {
+    for (const reg of judgeRegs) dshJudgeAdapterFactory(reg)
+    if (catalog === undefined) {
+      configInvalid('judge/no-models', 'judge 注册位在场但 daemon.yaml 无 models 段——三帽估算要价目表（studio-dev-160 §6.4）')
+    }
+    assertJudgeRoleLow(modelRoles ?? {})
+    log(`[serve] judge 注册位：${judgeRegs.map((r) => r.name).join('、')}（v1=dsh 家派发面；三帽缺省 $0.01/次+$0.50/址/日+$5/公司/日）`)
   }
 
   const engineConfig: EngineConfig = {

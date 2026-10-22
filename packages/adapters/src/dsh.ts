@@ -40,48 +40,40 @@
  *     （17-§6 坑位，docs/31-§7 P-08 真机定性收口）：exitCode 只记录不参与判定；终态
  *     只认 turn_end.reason.kind（见上）。spawn 统一 reject:false——非零退出码/被信号
  *     杀死不抛错，退出码对收割只有证据价值
- *   - AGENTS.md 通道（2026-10-19 三件套之一，本刀接线收口）：插件通道——capabilities.
- *     agents_md='user_level'（daemon 据此路由：组装指令落每任务临时文件 <rootDir>/tmp/
- *     instructions/<单号>.md（workspace 外，0600）），agentsMdEnv 对 user_level/append_
- *     system_prompt 注 STUDIO_NEXT_INSTRUCTIONS=<target>，由 studio-next-bridge 宿主插件
- *     （packages/dsh-bridge）读文件注入系统提示 persona 前缀段；旧证伪变量 DSH_AGENTS_MD /
- *     DSH_APPEND_SYSTEM_PROMPT_FILE 已移除（docs/31-A1/§5-5，裁决 docs/25-§3.1 v1.5#1）；
- *     插件挂载=provisioning 面（agent.yaml cmd --patch overlay——serve 启动生成，
- *     apps/daemon/src/engine/instructions-store.ts），未挂载时 env 无消费者（注入不发生）；
- *     原生发现通道（launch cwd 向上扫 AGENTS.md，P-07 实证）与本通道可并存不冲突
+ *   - AGENTS.md 通道（2026-10-19 三件套之一）：插件通道——agents_md='user_level'（daemon
+ *     组装指令落 workspace 外临时文件 0600），agentsMdEnv 注 STUDIO_NEXT_INSTRUCTIONS=
+ *     <target>，由 studio-next-bridge 宿主插件（packages/dsh-bridge）注入系统提示；旧
+ *     证伪变量已移除（docs/31-A1，裁决 docs/25-§3.1 v1.5#1）；挂载=agent.yaml cmd
+ *     --patch overlay（instructions-store.ts），未挂载 env 无消费者；原生发现通道
+ *     （launch cwd 向上扫，P-07）可并存不冲突
  *   - 续跑：resumeWithSession(task, executorSessionId) 已接线（--session-id 透传，P-05
  *     实证形态）；capabilities.session_resume 仍 false——端口开关待「cwd 一致性落调度
  *     纪律」立项后翻转（docs/31-§5-7；cwd 逐字节一致约束见 resumeWithSession 注）
- *   - execa 已升 10.x（docs/27-§4.3 案 A 拍板，16-§二「唯一内建进程组杀法」兑现）：
- *     spawn 配 killDescendants:true——Unix 落法为独立进程组，kill() 信号直达整组
- *     （子+孙），kill 链语义升级为「SIGTERM 软杀整树 → graceMs → SIGKILL 硬杀整树」
- *   - 10.x 实测（10.1.1 类型+源码）：kill(signal, error) 第二参是 Error 实例，仍无
- *     per-call 宽限；forceKillAfterDelay 仍只支持 spawn 级——而 graceMs 是 kill() 的
- *     per-call 契约参数，故弃 spawn 级兜底（forceKillAfterDelay:false），升级链自持
- *   - 10.x Subprocess 不再是 ChildProcess/EventEmitter：无 .once/.on（逃生口
- *     .nodeChildProcess）、无 .exitCode/.signalCode 同步属性——落定态改由 launch 的
- *     promise 派生观察器维护（settled/settledExitCode 伴生字段）；kill() 等落定用
- *     派生分支（reject 分支吞掉，见 kill() 注）
+ *   - execa 已升 10.x（docs/27-§4.3 案 A 拍板）：spawn 配 killDescendants:true——Unix
+ *     落法为独立进程组，kill() 信号直达整组（子+孙），kill 链=「SIGTERM 软杀整树 →
+ *     graceMs → SIGKILL 硬杀整树」；10.x kill(signal, error) 无 per-call 宽限、
+ *     forceKillAfterDelay 仅 spawn 级——graceMs 是 kill() 契约参数，故弃 spawn 级兜底
+ *     （forceKillAfterDelay:false），升级链自持；Subprocess 非 EventEmitter（无 .once/
+ *     .exitCode），落定态由 launch 的 promise 派生观察器维护（settled/settledExitCode），
+ *     kill() 等落定用派生分支（reject 分支吞掉，见 kill() 注）
  *   - 宽限扫尾定时器不因父先退而取消（unref 不阻退出）：吞 TERM 的孙进程由宽限到点的
- *     整组 SIGKILL 收口（Unix 父退后 PGID 在组员存续期间保留，组杀仍可达；组已尽时
- *     为无害 no-op。理论 PID 复用误杀窗口系 upstream 文档化已知局限，概率极低）
+ *     整组 SIGKILL 收口（Unix 父退后 PGID 在组员存续期间保留，组杀仍可达；组已尽时为
+ *     无害 no-op。理论 PID 复用误杀窗口系 upstream 文档化已知局限，概率极低）
  *   - resultStats().cost 恒 {usd:0}：cost_native=false，待价目表折算；ResultStats 结构
  *     无备注字段，不改 contract——以本头注 + 汇报记录「待价目表折算」
  *   - 伴生状态 sessions 为模块级私有 Map：sessionId 用随机 UUID（框架侧 handle 主键）；
- *     dsh 侧 session-<uuid> 由 stream() 从流首 session 事件捕获，写进
- *     Handle.executorSessionId（P1 收存 docs/31-§5-6，契约 v1.5——2026-10-19 三件套之二，
- *     resumeWithSession/对账用；捕获前 Handle 无此键）；随 daemon 进程存续，v0 不做回收
- *     （台账落盘后状态可重建投影）
+ *     dsh 侧 session-<uuid> 由 stream() 从流首 session 事件捕获写进 Handle.
+ *     executorSessionId（P1 收存 docs/31-§5-6，契约 v1.5——resumeWithSession/对账用）；
+ *     随 daemon 进程存续，v0 不做回收（台账落盘后状态可重建投影）
  *   - stream() 一会话只许消费一次（一单一命、一流一收）；resultStats() 只汇总已消费
  *     的事件（收割流程固定先收流后收账）
  *   - estimate()：预算估算模型 v0 拟稿——任务书字符量粗估 + confidence 低值，v0.6 前细化
  *   - seatbelt 写域圈定（DEV-29 原型 attempt3，docs/43-§五 派发权限圈②——先行接线）：
  *     构造项 opts.seatbelt（缺省不圈定，既有行为/测试零改动）；mode='auto' 时 detect 追加
  *     后端可用性探测（不可用/非 darwin=ok:false fail-closed 不派），launch 侧 profile 随
- *     派发参数化生成（写域=task.workspace+DSH_HOME 重定向+追加产出位）并以 sandbox-exec
- *     包装 argv——生成器与包装见 seatbelt.ts（正交模块，纯函数可独测；attempt3 处置 (a)
- *     =删 strictRead 读收口形态——该构造类在本机未沙箱 apply 面 SIGABRT 崩溃，详见该
- *     文件头注与 deliverables/plan.md）
+ *     派发参数化生成并以 sandbox-exec 包装 argv——生成器见 seatbelt.ts（attempt3 处置 (a)
+ *     =删 strictRead 读收口；judge 派发面（studio-dev-164 红队 2）经 writeRootsOverride/
+ *     profileDir 复用：workspace 不入写域+profile 落工作区外=无工具只读档）
  */
 import { randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
@@ -125,27 +117,29 @@ const DETECT_TIMEOUT_MS = 5_000
 // ---------------------------------------------------------------------------
 
 /**
- * dsh 适配器的 seatbelt 启用面（原型档，DEV-29——先行接线：生成器与包装见 seatbelt.ts，
- * 本面只决定「派发时怎么参数化」；daemon 侧常驻接线随 .AIWS cwd 迁移单落位）：
+ * dsh 适配器的 seatbelt 启用面（原型档，DEV-29——先行接线：生成器见 seatbelt.ts，
+ * 本面只决定「派发时怎么参数化」）：
  *   - mode：'auto'=darwin 且后端可用才圈定（detect 前置探测，不可用=明报 gap 不派）；
  *     'off'=不圈定（缺省——不影响既有行为与测试）
  *   - dshHomeRedirect：per-attempt DSH_HOME 重定向目标（**须在写域内**，如
- *     <workspace>/.dsh-home——dsh boot 必写 $DSH_HOME/profiles/<name>/{cordis.yml,
- *     package.json,pnpm-workspace.yaml,…}+node_modules pnpm 状态+plugin-manager 日志，
- *     真机实测见验证记录；不重定向则 DSH_HOME 须由 extraWriteRoots 显式入白名单）
- *   - extraWriteRoots：写域追加根（指定产出位在 workspace 内则无需；跨目录产出位/
- *     pnpm store 等运行面由派发方点名）
+ *     <workspace>/.dsh-home——dsh boot 必写 $DSH_HOME/profiles/<name>/…，真机实测见
+ *     验证记录；不重定向则 DSH_HOME 须由 extraWriteRoots 显式入白名单）
+ *   - writeRootsOverride：**覆写整个写域**（给定后 task.workspace/extraWriteRoots/
+ *     dshHomeRedirect 全不并入——judge 派发面置 [一次性 DSH_HOME 重定向目录]：workspace
+ *     只读、跨目录产出位一并无——studio-dev-164 红队 2 的机制位，任务派工面勿用）
+ *   - profileDir：profile 落盘目录（缺省 workspace/.seatbelt/——证据随单走，docs/17-§6；
+ *     judge 派发面置一次性工作区外目录，配合 writeRootsOverride 保「调用毕目录空」断言面）
  *   - rpcEndpoints：回环宿主 RPC 白名单（缺省=DSH_HOST_RPC_DEFAULT 127.0.0.1:13800；
- *     空数组=禁回环——dsh 无回环依赖的部署面用）
- *   - outboundTcp：模型 API 出口白名单（缺省空=禁远程出口；macOS remote 过滤器 host
- *     仅认 localhost/*，域名出口=daemon 侧本地代理——见 seatbelt.ts 头注局限与 RPC 评估）
- *   - （attempt3 处置 (a)：无读域参数——strictRead 形态已删，读域宽放；背景与再引入
- *     红线见 seatbelt.ts 头注）
+ *     空数组=禁回环）/ outboundTcp：模型 API 出口白名单（缺省空=禁远程出口；host 仅认
+ *     localhost/*，域名出口=daemon 侧本地代理——见 seatbelt.ts 头注局限）
+ *   - （attempt3 处置 (a)：无读域参数——读域宽放，再引入红线见 seatbelt.ts 头注）
  */
 export interface DshSeatbeltOptions {
   mode: 'auto' | 'off'
   dshHomeRedirect?: string
   extraWriteRoots?: readonly string[]
+  writeRootsOverride?: readonly string[]
+  profileDir?: string
   rpcEndpoints?: readonly SeatbeltEndpoint[]
   outboundTcp?: readonly SeatbeltEndpoint[]
 }
@@ -430,19 +424,25 @@ export class DshAdapter implements ExecutorAdapter {
     const [binary = DSH_DEFAULT_CMD[0] ?? 'dsh', ...args] = this.cmd
     const taskText = await readTaskText(task.briefPath)
     // seatbelt 写域圈定（DEV-29 原型 attempt3，docs/43-§五②）：profile 随派发参数化生成
-    // ——写域=task.workspace（员工 tickets 单据子目录，指定产出位在其内）+ dshHomeRedirect
-    // + extraWriteRoots；网域=rpcEndpoints（缺省回环 13800）+outboundTcp。profile 落
-    // workspace/.seatbelt/（证据随单走——收割四要件查证面可见，docs/17-§6）；argv 以
-    // sandbox-exec 包装（应用点=未沙箱派发方，嵌套 apply 被拒——detect 前置已闸，spawn
-    // 层失败由 stream 如实收）。
+    // ——写域缺省=task.workspace+dshHomeRedirect+extraWriteRoots（judge 派发面走
+    // writeRootsOverride 覆写=仅一次性 DSH_HOME，studio-dev-164 红队 2）；profile 缺省落
+    // workspace/.seatbelt/（证据随单走，17-§6；judge 面 profileDir 移工作区外）；argv 以
+    // sandbox-exec 包装（应用点=未沙箱派发方，嵌套 apply 被拒——detect 前置已闸）。
     let wrappedArgv: string[] = [binary, ...args, ...extraArgs, '--', taskText]
     let dshHomeEnv: Record<string, string> = {}
     if (this.seatbeltEnabled()) {
       const opts = this.seatbelt
       if (opts !== undefined) {
-        const writeRoots: string[] = [task.workspace, ...(opts.extraWriteRoots ?? [])]
-        if (opts.dshHomeRedirect !== undefined) {
+        // 写域：writeRootsOverride 覆写面（judge 派发面=仅一次性 DSH_HOME——workspace
+        // 只读，studio-dev-164 红队 2）；缺省=task.workspace+extra+dshHomeRedirect
+        const writeRoots =
+          opts.writeRootsOverride !== undefined
+            ? [...opts.writeRootsOverride]
+            : [task.workspace, ...(opts.extraWriteRoots ?? [])]
+        if (opts.writeRootsOverride === undefined && opts.dshHomeRedirect !== undefined) {
           writeRoots.push(opts.dshHomeRedirect)
+        }
+        if (opts.dshHomeRedirect !== undefined) {
           dshHomeEnv = { DSH_HOME: opts.dshHomeRedirect }
           mkdirSync(opts.dshHomeRedirect, { recursive: true })
         }
@@ -452,7 +452,7 @@ export class DshAdapter implements ExecutorAdapter {
           ...(opts.outboundTcp !== undefined ? { outboundTcp: opts.outboundTcp } : {}),
           label: `${task.ticket}/att${String(task.attempt)}`,
         })
-        const profileDir = join(task.workspace, '.seatbelt')
+        const profileDir = opts.profileDir ?? join(task.workspace, '.seatbelt')
         mkdirSync(profileDir, { recursive: true })
         const profilePath = join(profileDir, seatbeltProfileFileName())
         writeFileSync(profilePath, profileText, 'utf8')

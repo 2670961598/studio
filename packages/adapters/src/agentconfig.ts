@@ -28,6 +28,10 @@
  *   - 注册序=agent.yaml 书写序（yaml@2 保序）——pick 无 default 存活时的确定性回退序。
  *   - 未知 executor 名（配置有而代码无）→ CONFIG_INVALID/agentconfig/unknown-executor：
  *     先写适配器再登记（18-§1.2），不存在「配置声明式注册」的旁路。
+ *   - judge 注册位（studio-dev-160 §6.3/§6.5，红队 1——单 164）：`<family>-judge`
+ *     （如 `dsh-judge`）=micro-judge 判断调用的专用 executor 位——按家族工厂解析
+ *     （judgeAwareResolver），能力镜像同家族比对；**不得标 default**（判断位不是
+ *     派工泳道，双 default 之外的第二道语义闸，wireRegistry 拒收）。
  *
  * 文档疑点（只记录，不改文档）：
  *   - docs/17-§4 示例里 dsh 的 `session_resume: true` 与 dsh 适配器声明（false，v0
@@ -171,6 +175,12 @@ export function wireRegistry(
         `配置有而代码无：${rec.name}（agent.yaml 登记了不存在适配器的 executor——先写适配器再登记，docs/18-§1.2）`,
       )
     }
+    if (rec.default && isJudgeExecutorName(rec.name)) {
+      configInvalid(
+        'agentconfig/judge-default',
+        `${rec.name} 是 judge 注册位（<family>-judge），不得标 default——判断位是 micro-judge 专用派发面，不是任务派工泳道（studio-dev-160 §6.3）`,
+      )
+    }
     const adapter = factory(rec.cmd) // cmd 覆盖注入（无 cmd=适配器缺省命令）
     checkCapabilityDrift(rec, adapter.capabilities)
     registry.register(adapter, { default: rec.default })
@@ -224,6 +234,57 @@ export function builtinResolver(name: string): AdapterFactory | undefined {
   return Object.hasOwn(BUILTIN_FACTORIES, name)
     ? (BUILTIN_FACTORIES[name as ExecutorFamily] as AdapterFactory)
     : undefined
+}
+
+// ---------------------------------------------------------------------------
+// judge 注册位（studio-dev-160 §6.3/§6.5，红队 1——单 164）：`<family>-judge`
+// ---------------------------------------------------------------------------
+
+/** judge 注册位后缀（`dsh-judge` 一类——家族名 + 本后缀） */
+export const JUDGE_EXECUTOR_SUFFIX = '-judge'
+
+/** 判定名是否 judge 注册位 */
+export function isJudgeExecutorName(name: string): boolean {
+  return judgeFamilyOf(name) !== undefined
+}
+
+/**
+ * judge 注册位 → 家族名（`dsh-judge`→`dsh`）；非 judge 形态或家族不存在 → undefined。
+ * 家族表=BUILTIN_FACTORIES 键（四家）——未配置家族的 judge 位由 resolver 明报，不静默。
+ */
+export function judgeFamilyOf(name: string): ExecutorFamily | undefined {
+  if (!name.endsWith(JUDGE_EXECUTOR_SUFFIX)) return undefined
+  const family = name.slice(0, -JUDGE_EXECUTOR_SUFFIX.length)
+  return Object.hasOwn(BUILTIN_FACTORIES, family) ? (family as ExecutorFamily) : undefined
+}
+
+/**
+ * 同族适配器**改名注册**（judge 位专用）：Object.create 原型链挂名——家族适配器本体
+ * 零侵入（dsh.ts 行基线不动）。方法经原型链委托到本尊实例（`this.*` 读写直达；TS
+ * `private` 是擦除型关键字、无 #品牌校验，委托安全）；`name` 不可写重遮蔽。
+ * 为什么必须改名：注册表以 adapter.name 为键去重（registry.register 同名拒收），
+ * judge 位与本尊是同族**两个注册实例**（不同 cmd=不同模型档），不改名即撞键。
+ */
+function renameExecutor(adapter: ExecutorAdapter, name: string): ExecutorAdapter {
+  return Object.create(adapter, { name: { value: name } })
+}
+
+/**
+ * judge 感知解析器：四家名走 base（缺省 builtinResolver）；`<family>-judge` 走该家族
+ * 工厂并以 judge 名注册（判断调用复用家族适配器——cmd 即配置层绑定位：低档模型/
+ * 无工具档由 agent.yaml 的 cmd 数组声明，17-§4「cmd=配置覆盖注入位」）。daemon 装载
+ * agent.yaml 时包在 builtinResolver 外即可让 judge 位注册成功。
+ */
+export function judgeAwareResolver(base: AdapterResolver = builtinResolver): AdapterResolver {
+  return (name: string): AdapterFactory | undefined => {
+    const judgeFamily = judgeFamilyOf(name)
+    if (judgeFamily !== undefined) {
+      const familyFactory = BUILTIN_FACTORIES[judgeFamily] as AdapterFactory
+      return (cmd: readonly string[] | undefined): ExecutorAdapter =>
+        renameExecutor(familyFactory(cmd), name)
+    }
+    return base(name)
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -56,11 +56,11 @@ const VALID_SUMMARY = { schema: 'summary/v1', conclusion: '完成', changed_file
 // —— 契约面：evt/rpt 域 ——————————————————————————————————————
 
 describe('契约语料（evt/rpt 域）', () => {
-  it('evt 5 条 + rpt 3 条全绿', async () => {
+  it('evt 6 条 + rpt 3 条全绿（P6 增补 JUDGE_ 前缀族正例 C-evt-006，studio-dev-160 §6.5）', async () => {
     const r = await runCases(manifest, { evt: evtSubject, rpt: rptSubject }, { domains: ['evt', 'rpt'] })
     expect(r.failed).toEqual([])
-    expect(r.total).toBe(8)
-    expect(r.passed).toBe(8)
+    expect(r.total).toBe(9)
+    expect(r.passed).toBe(9)
   })
 
   it('防恒反证：改坏 C-evt-003 期望的错误类别必红', async () => {
@@ -68,7 +68,7 @@ describe('契约语料（evt/rpt 域）', () => {
     const target = bad.cases.find((c) => c.id === 'C-evt-003')!
     target.expected.err.category = 'LLM_FAIL'
     const r = await runCases(bad, { evt: evtSubject, rpt: rptSubject }, { domains: ['evt', 'rpt'] })
-    expect(r.passed).toBe(7)
+    expect(r.passed).toBe(8)
     expect(r.failed[0]?.id).toBe('C-evt-003')
   })
 })
@@ -76,23 +76,23 @@ describe('契约语料（evt/rpt 域）', () => {
 // —— 事件名：冻结枚举 + 前缀族双通道（17-§3）——————————————————
 
 describe('事件名双通道（17-§3 冻结清单）', () => {
-  it('冻结清单计数互证：23 具体 + 2 前缀族 = 25 类；P3 增补后 25 具体 + 2 前缀族 = 27 类（F2-02 互证面随提案 §6.2-4 批示更新）', () => {
+  it('冻结清单计数互证：25 具体名 + 3 前缀族 = 28 类（P3 增补两具体名；P6 增补 JUDGE_ 前缀族——studio-dev-160 §6.5，2026-10-22 全批）', () => {
     expect(EVENT_NAMES).toHaveLength(25)
-    expect(EVENT_PREFIX_FAMILIES).toEqual(['GW_', 'REPORT_'])
+    expect(EVENT_PREFIX_FAMILIES).toEqual(['GW_', 'REPORT_', 'JUDGE_'])
   })
 
   it('23 个具体事件名全部命中枚举通道', () => {
     for (const name of EVENT_NAMES) expect(isEventName(name)).toBe(true)
   })
 
-  it('前缀族正则通道：GW_/REPORT_ 后接大写段放行（含多段下划线）', () => {
-    for (const name of ['GW_COMMENT', 'GW_KB_SEARCH', 'REPORT_DAILY', 'REPORT_MONTHLY_2026_10']) {
+  it('前缀族正则通道：GW_/REPORT_/JUDGE_ 后接大写段放行（含多段下划线）', () => {
+    for (const name of ['GW_COMMENT', 'GW_KB_SEARCH', 'REPORT_DAILY', 'REPORT_MONTHLY_2026_10', 'JUDGE_OK', 'JUDGE_FALLBACK', 'JUDGE_SITE_BREAKER_OPEN']) {
       expect(isEventName(name)).toBe(true)
     }
   })
 
   it('拒收：裸前缀、小写、无下划线续接、拼错的具体名、空串', () => {
-    for (const name of ['GW_', 'REPORT_', 'gw_comment', 'Report_Daily', 'REPORTX', 'DISPATCHED', '']) {
+    for (const name of ['GW_', 'REPORT_', 'JUDGE_', 'judge_ok', 'Judge_Fallback', 'REPORTX', 'DISPATCHED', '']) {
       expect(isEventName(name)).toBe(false)
     }
   })
