@@ -270,6 +270,7 @@ import {
   DEFAULT_QUEUE_AGE_STEP_MS,
 } from './todoqueue/queue.ts'
 import { ageBoostTier, type QueueRanker } from '@studio-next/core'
+import { consumePricingPublish, runPricingStaleCheck, type PricingStaleTickReport } from './pricing/pricing.ts'
 import type { TickActionResult, TickDecisionEntry, TickPhaseDispatchBudget, TickPhaseHarvest, TickReport } from './tick-report/types.ts'
 export type { TickDecisionEntry, TickReport } from './tick-report/types.ts'
 
@@ -1232,12 +1233,30 @@ export function createEngine(deps: EngineDeps): Engine {
         now,
         onProblem: (message) => errors.push(message),
       }).noteSuffix
+      // 定价更新单据化消费（132-§6.2 单B·studio-dev-169）：GATE_PASS 后置步——type='pricing'
+      // 单的 deliverables/pricing.yaml 附件→解析→覆盖校验→append price_snapshots（单据号
+      // 锚）。非定价单零行为；消费失败不回滚收割（DAILY_ALARM 唤醒发布岗，不静默）
+      const pricingNote = consumePricingPublish({
+        ledger,
+        ticket,
+        issueType: transitioned.type,
+        workspace: entry.workspace,
+        company: config.company,
+        personId: entry.personId,
+        declared: deps.catalog !== undefined ? deps.catalog.tiers() : undefined,
+        now,
+        makeId,
+        emitAlarm: (note) => {
+          makeEvent('DAILY_ALARM', transitioned, entry.attempt, tickEvents, { note })
+        },
+        onError: (message) => errors.push(message),
+      }).noteSuffix
       makeEvent('GATE_PASS', transitioned, entry.attempt, tickEvents, {
         tokens: tokenBuckets(stats),
         cost_usd: stats.cost.usd,
         duration_ms: stats.duration,
         // model 留痕走 note 后缀（132-§6.1 单A：events 列集冻结不动——`model=…` 尾缀）
-        note: `四要件齐（completed/非空/REPORT/exit0）；report=${gate.reportPath}${gate.summaryPath !== undefined ? `;summary=${gate.summaryPath}` : ''}${budgetNote}${outputNote}${stats.model !== undefined ? `;model=${stats.model}` : ''}`,
+        note: `四要件齐（completed/非空/REPORT/exit0）；report=${gate.reportPath}${gate.summaryPath !== undefined ? `;summary=${gate.summaryPath}` : ''}${budgetNote}${outputNote}${pricingNote}${stats.model !== undefined ? `;model=${stats.model}` : ''}`,
       })
       // bridge 通道指令临时文件：保留至收割完成→此刻删（v1.5#1 清理策略；内容指纹已在
       // DISPATCH note/payload_hash 落账——证据不依赖文件存活）
@@ -2132,6 +2151,32 @@ export function createEngine(deps: EngineDeps): Engine {
       maxMs: scheduleWaits.length > 0 ? Math.max(...scheduleWaits) : 0,
     }
     const queuePersons = new Set(todoQueueRows.map((r) => r.person)).size
+    // —— 相位 7 尾·定价 stale 检查（132-§6.2 单B·studio-dev-169，P5 每晨必更守夜）：
+    // 本地日 10:00 后首拍一日一跑（kv 日锚+事件 note 派生双层幂等）；stale≥2 或从未
+    // 定价 → DAILY_ALARM 挂心跳哨兵单。体在 engine/pricing/pricing.ts——engine 只留缝。
+    let pricingStale: PricingStaleTickReport | undefined
+    try {
+      pricingStale = runPricingStaleCheck({
+        ledger,
+        company: config.company,
+        declared: deps.catalog !== undefined ? deps.catalog.tiers() : undefined,
+        now,
+        emitAlarm: (note) => {
+          makeEvent(
+            'DAILY_ALARM',
+            heartbeatSentinelRecord(config.heartbeatIssue, config.deptFallback, now()),
+            1,
+            tickEvents,
+            { note },
+          )
+        },
+        onError: (message) => errors.push(message),
+      })
+      mutations += pricingStale.alarmed
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      errors.push(`定价 stale 检查失败：${msg}`)
+    }
 
     return {
       seq,
@@ -2166,6 +2211,7 @@ export function createEngine(deps: EngineDeps): Engine {
           eventsAppended: tickEvents.length + (hrSync?.eventsAppended ?? 0),
           heartbeat,
           ...(hrSync !== undefined ? { hrSync } : {}),
+          ...(pricingStale !== undefined ? { pricingStale } : {}),
         },
       },
       actions: decidedActions,

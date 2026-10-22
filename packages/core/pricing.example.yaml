@@ -1,0 +1,52 @@
+# pricing.example.yaml —— 定价更新单附件示例（132-§6.2 单B；docs/17-§4 价目表链）
+#
+# 这是 HF-1 财务岗每日发布物 deliverables/pricing.yaml 的形状样例（冻结，改动走批示）。
+# 消费链：定价单（type=pricing）收割 GATE_PASS 后置步读附件 → 解析（行号定位的 strict
+# 闸）→ 覆盖校验（表 ⊇ models.yaml 三档声明——晨间发布必须完整）→ 逐行入 price_snapshots
+# （append-only；同日修订 version+1 新行不回溯，docs/17-§3「日终定型不回溯」）。
+#
+# 键（camelCase，models.yaml 同风格）：
+#   priceDate：'YYYY-MM-DD' 引号串（真日历日——2-30 拒）；不必=发布日（补录/预发布皆合法）
+#   sourceNote：来源注记（落快照行 source_note——审计面「价从哪来」）
+#   models[]：
+#     provider/model：非空；同表内 provider/model 不得重复
+#     billingTrack：api（默认，按量）| coding_plan（包月摊销轨——必填 planMonthlyUsd，
+#                   与 api 行的月费互斥；132 补充令「摊销口径双轨」）
+#     planMonthlyUsd：coding_plan 轨的月费（正数）
+#     prices[]：slot peak（默认）/offpeak 不得重复；inputPerM/outputPerM 必填非负；
+#               cacheReadPerM/cacheCreationPerM 可省（=未定价，折算按 0 计+低估标记，
+#               供应商未公示缓存价时如实缺省——不伪造 0 价）
+#
+# 注意：以下数值为示例（DeepSeek 官网 2026-10 价目页形），以供应商实际账单为准，非承诺价。
+priceDate: '2026-10-23'
+sourceNote: DeepSeek 官网价目页（2026-10-23 晨采）
+models:
+  - provider: deepseek
+    model: deepseek-flash
+    billingTrack: api
+    prices:
+      - slot: peak
+        inputPerM: 0.30
+        outputPerM: 1.20
+        cacheReadPerM: 0.006
+        cacheCreationPerM: 0.30
+      - slot: offpeak
+        inputPerM: 0.15
+        outputPerM: 0.60
+        cacheReadPerM: 0.003
+        cacheCreationPerM: 0.15
+  - provider: deepseek
+    model: v4-pro
+    prices: # slot 省略=peak（保守缺省）
+      - inputPerM: 1.32
+        outputPerM: 3.96
+        cacheReadPerM: 0.044
+        cacheCreationPerM: 1.32
+  - provider: zhipu
+    model: glm-5.3
+    billingTrack: coding_plan
+    planMonthlyUsd: 30
+    prices:
+      - inputPerM: 0.60
+        outputPerM: 2.20
+        cacheReadPerM: 0.06 # 包月轨同样按 token 记量（单C 摊销折算消费）

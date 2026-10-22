@@ -441,6 +441,59 @@ const MIGRATIONS: readonly Migration[] = [
       '',
     ].join('\n'),
   },
+  {
+    // v10：132-B 定价面刀（原单拟 v9，与 129-B 撞号顺延——宰相亲批 2026-10-22）（studio-dev-169，132-§6.2 单B·制作人 2026-10-22 全批+补充令）：
+    //   price_snapshots 表——模型×日×峰谷档×缓存差异化四单价，append-only 触发器禁
+    //   UPDATE/DELETE（「日终定型不回溯」制作人令直译；132-§8 判负线①：未被触发器
+    //   拒绝的改史路径=废件）。
+    //   - 列集=132-§4 DDL 直译 + 三处申报偏差（studio-dev-169 deliverables/plan.md §2.1）：
+    //     ① source_ticket 独立列（S7「快照落账带单据号锚」机械化——note 文本不可校）；
+    //     ② billing_track/plan_monthly_usd 两列（制作人补充令：包月 plan 摊销口径双轨
+    //        入定价面——132-A 预设词表 BILLING_TRACKS 的消费落位：api=按量轨、
+    //        coding_plan=订阅轨（边际 $0+影子价，plan_monthly_usd=摊销轨锚））；
+    //     ③ 双 UNIQUE 索引（自然键版本唯一=version 单调机械保证；单据幂等键=同单同
+    //        模型同日同档至多一行，重收/崩溃重放不双写）。
+    //   - NULL=未定价语义：cache 两价 NULL→消费方按 0 计+低估标记（DEV-19；GLM cache
+    //     价续采位，P5 联动）——不是零价，是与 0 价可区分的缺价。
+    //   - 写口唯一纪律（S7）：本表唯一写面=ledger.appendPriceSnapshot（store 层形状闸），
+    //     生产调用方=daemon 定价单据化消费面（engine/pricing/）——无 CLI/脚本直写口。
+    version: 10,
+    name: '132-B 定价面刀：price_snapshots 表+append-only 触发器（studio-dev-169）',
+    sql: [
+      'CREATE TABLE price_snapshots (',
+      '  id TEXT PRIMARY KEY,',
+      '  company TEXT NOT NULL,',
+      '  provider TEXT NOT NULL,',
+      '  model TEXT NOT NULL,',
+      '  price_date TEXT NOT NULL,',
+      '  slot TEXT NOT NULL DEFAULT \'peak\',',
+      '  input_per_m REAL NOT NULL,',
+      '  output_per_m REAL NOT NULL,',
+      '  cache_read_per_m REAL,',
+      '  cache_creation_per_m REAL,',
+      '  currency TEXT NOT NULL DEFAULT \'USD\',',
+      '  billing_track TEXT NOT NULL DEFAULT \'api\',',
+      '  plan_monthly_usd REAL,',
+      '  source_note TEXT NOT NULL,',
+      '  source_ticket TEXT NOT NULL,',
+      '  published_by TEXT NOT NULL,',
+      '  published_at INTEGER NOT NULL,',
+      '  version INTEGER NOT NULL DEFAULT 1',
+      ');',
+      'CREATE UNIQUE INDEX idx_price_snapshots_nat ON price_snapshots (company, provider, model, price_date, slot, version);',
+      'CREATE UNIQUE INDEX idx_price_snapshots_ticket ON price_snapshots (company, source_ticket, provider, model, price_date, slot);',
+      'CREATE INDEX idx_price_snapshots_model_date ON price_snapshots (company, provider, model, price_date);',
+      'CREATE TRIGGER trg_price_snapshots_no_update BEFORE UPDATE ON price_snapshots',
+      'BEGIN',
+      '  SELECT RAISE(ABORT, \'price_snapshots append-only（17-§3；132-§6.2 日终定型不回溯）：UPDATE 被拒\');',
+      'END;',
+      'CREATE TRIGGER trg_price_snapshots_no_delete BEFORE DELETE ON price_snapshots',
+      'BEGIN',
+      '  SELECT RAISE(ABORT, \'price_snapshots append-only（17-§3；132-§6.2 日终定型不回溯）：DELETE 被拒\');',
+      'END;',
+      '',
+    ].join('\n'),
+  },
 ]
 
 /** 内置迁移的最高版本（0 = 无迁移可用，仅占位防呆） */

@@ -90,6 +90,9 @@ export * from './judge-gates.ts'
 // 员工待办队列排序键纯函数（129-§6.2-R1/R4，studio-dev-167 单B：score=优先级+ageBoost
 // 两档封顶、置顶恒首、并列 FIFO；规则缺省档——QueueRanker=160-B 小模型档升级位）
 export * from './queue.ts'
+// 定价面纯逻辑（132-§6.2 单B·studio-dev-169：附件解析/覆盖校验/取价规则/四桶折算/
+// stale 报告/models.yaml 桥——price_snapshots store v9 的消费地基）
+export * from './pricing.ts'
 
 /** 包名常量 */
 export const PACKAGE_NAME = '@studio-next/core'
