@@ -74,6 +74,7 @@ import type { SignatureContext } from '@studio-next/gateway'
 import { openLedger, type Ledger } from '@studio-next/store'
 import type {
   CompanySnapshot,
+  CostGuardConfig,
   InvokeSource,
   ModelCatalog,
   PersonRef,
@@ -98,8 +99,8 @@ import { createDefaultGateRunner, createAcceptanceGateRunner } from '../engine/g
 import { answerReloadNoCompanyDir, createHotReload, type HotReload, type HotReloadApplyReport } from '../control/hot-reload.ts'
 import { makeUlid } from '../engine/tools/id.ts'
 import { provisionDshBridgeOverlay } from '../engine/instructions-store.ts'
-import { CADENCE_SOURCE_MANIFEST, createCadenceSource, createSlaSource, SLA_SOURCE_MANIFEST } from '../engine/jobs-sources.ts'
-import { createFreshnessSource, FRESHNESS_SOURCE_MANIFEST, logJobContractWarnings } from '../engine/jobs/freshness.ts'
+import { logJobContractWarnings } from '../engine/jobs/freshness.ts'
+import { registerJobSources } from './sources/jobs.ts'
 import { createDefaultAssembler } from '../engine/prompt-assembly.ts'
 import type { PromptAssembler } from '../engine/prompt-assembly.ts'
 import { nextRunAt, type Scheduler } from '../engine/scheduler.ts'
@@ -244,6 +245,14 @@ export interface ServeConfig extends HrServeConfig {
    */
   sla: boolean
   /**
+   * 成本警戒源开关（132-§6.4 单C·studio-dev-177；缺省关）：true 时注册
+   * cost-threshold 源——tick 驱动扫当日用量投影+在途预留，达档产 escalate 意图 +
+   * ESCALATE 落账（src/engine/cost-guard/source.ts）。配置真源=公司目录
+   * org-config cost_guard 段（快照装载——本开关只控注册面；段不声明=源空转零唤醒）。
+   * 扫描轮询复用 jobPollMs。
+   */
+  costGuard: boolean
+  /**
    * 新鲜度窗哨兵源开关（127-A R2 批示④；缺省关）：tick 驱动越窗扫描——JOB_STALE/
    * LATE_FIRST_RUN 事件（同岗同槽幂等、零内存态，src/engine/jobs/freshness.ts）；只落事件
    * 不自动补跑（处置=CLI jobs catchup）。扫描轮询复用 jobPollMs。
@@ -365,6 +374,7 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   fileWatch: false,
   cadence: false,
   sla: false,
+  costGuard: false,
   freshness: false,
   reloadWatch: true,
   gateway: true,
@@ -579,6 +589,9 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         break
       case 'sla':
         cfg.sla = bool(value, key)
+        break
+      case 'costGuard':
+        cfg.costGuard = bool(value, key)
         break
       case 'freshness':
         cfg.freshness = bool(value, key)
@@ -1137,6 +1150,8 @@ export function buildServeRuntime(
     clock,
     config: engineConfig,
     people: snapshot.people, departments: snapshot.departments, // 130-P2（studio-dev-173）：部门索引随快照注入——父单立案 leader 解析
+    // cost_guard 段（132-§6.4 单C）：闸四 hard 线联动（R6）的引擎配置源；段不声明=不注入=面关
+    ...(snapshot.costGuard !== undefined ? { costGuard: snapshot.costGuard } : {}),
     ...(catalog !== undefined ? { catalog } : {}),
     // 批示归一层（studio-dev-171，docs/18-§2.5）：恒注入（装配缝=engine/directive/
     // serve-config.ts——leader 表随快照，热重载整组换）
@@ -1195,38 +1210,22 @@ export function buildServeRuntime(
     )
   }
 
-  // —— 岗位运作规格两新源（35-§3 首刀，src/engine/jobs-sources.ts）——
-  // cadence 档位展开器：档位岗调度表生命周期（start 播种/刷新/stop 移除）；到点意图走
-  // 既有 scheduler→scheduleIntent 链（复用调度器 tick 零新轮子——jobs: true 才有 tick 面）
-  if (config.cadence) {
-    sources.register(
-      createCadenceSource({
-        ledger,
-        clock,
-        intervalMs: config.jobPollMs,
-        jobs: (): readonly ScheduledJob[] => companyState.snapshot.jobs,
-        log,
-      }),
-      CADENCE_SOURCE_MANIFEST,
-    )
-  }
-
-  // SLA/升级计时器：tick 驱动扫在途岗单据——first-ack/升级链超时产 escalate 意图 + ESCALATE
-  // 落账（只产意图+落账；notify 发送与 escalate 意图的引擎消费归 notify 端口后续刀）
-  if (config.sla) {
-    sources.register(
-      createSlaSource({ ledger, clock, company: config.company, intervalMs: config.jobPollMs, log }),
-      SLA_SOURCE_MANIFEST,
-    )
-  }
-
-  // 新鲜度窗哨兵（127-A R2）：tick 驱动扫调度表——越窗落事件；处置=CLI jobs catchup 手动补跑
-  if (config.freshness) {
-    sources.register(
-      createFreshnessSource({ ledger, clock, company: config.company, intervalMs: config.jobPollMs, heartbeatIssue: engineConfig.heartbeatIssue, log }),
-      FRESHNESS_SOURCE_MANIFEST,
-    )
-  }
+  // —— 岗位域源群注册（cadence/SLA/新鲜度/成本警戒）——体拆至 sources-jobs.ts
+  //（20-§十五.三 先拆再增；cost-threshold=132-§6.4 单C：guard/people getter 闭包
+  // 快照——热更经 applyCompanyUpdate 整组换，摘段=undefined=面关零行为）
+  registerJobSources({
+    sources,
+    flags: { cadence: config.cadence, sla: config.sla, freshness: config.freshness, costGuard: config.costGuard, company: config.company, jobPollMs: config.jobPollMs },
+    ledger,
+    clock,
+    heartbeatIssue: engineConfig.heartbeatIssue,
+    deptFallback: engineConfig.deptFallback,
+    jobs: (): readonly ScheduledJob[] => companyState.snapshot.jobs,
+    people: (): readonly PersonRef[] => companyState.snapshot.people,
+    guard: (): CostGuardConfig | undefined => companyState.snapshot.costGuard,
+    declared: catalog !== undefined ? catalog.tiers() : undefined,
+    log,
+  })
 
   log(`[serve] 唤起源注册表：${sources.list().map((e) => e.source.name).join('、') || '（空）'}——emit 统一进 engine.ingest（22-§一 源零直驱）`)
 
@@ -1305,6 +1304,8 @@ export function buildServeRuntime(
           // 批示归一层 leader 表热换（studio-dev-171）：组织变动 fail-closed（换 leader/
           // 撤部即生效——防离任 leader 批示面残留）
           directives: new Map(next.departments.map((d) => [d.path, d.leader])),
+          // cost_guard 段热换（132-§6.4 单C）：恒传（摘段=undefined=闸四联动+源评估面关）
+          costGuard: next.costGuard,
         })
         identity.ctx.company = next.name
         identity.ctx.dept = next.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback

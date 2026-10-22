@@ -142,6 +142,12 @@ export interface BudgetGateInput {
   fallbackTicketCapUsd?: number
   /** 岗级帽（USD；仅态 A 生效——见头注两态） */
   personCapUsd?: number
+  /**
+   * 闸四·人日 hard 线（132-§6.4 单C R6）：今日已结+在途+估算 ≤ capUsd——capUsd=
+   * 人日预算×gate 档 at_pct%；段未声明=缺省不带（闸四缺席）。与岗级帽不同，
+   **独立于两态**（spent 来自 settle 行 actual_usd 实账，不依赖价目表）。
+   */
+  personDay?: { spentUsd: number; capUsd: number }
   now: number
 }
 
@@ -193,6 +199,9 @@ export async function gateDispatch(
     ...(deps.catalog !== undefined && input.personCapUsd !== undefined
       ? { personCap: { usd: input.personCapUsd } }
       : {}),
+    // 闸四·人日 hard 线（132-§6.4 单C R6）：直透 core reserve 闸四——refusal 归
+    // person-cap 族（reason='over-person-cap'，人日粒度族员；core/budget.ts 头注）
+    ...(input.personDay !== undefined ? { personDay: input.personDay } : {}),
     now: input.now,
   })
 

@@ -56,6 +56,13 @@ export interface PersonRef {
    * 不携带=建议面降档（role/dept 文本），零破坏。
    */
   skills?: readonly string[]
+  /**
+   * 人日预算覆盖（132-§6.4 单C·studio-dev-177，批示 P1「可按人覆盖 people[].cost_caps」）：
+   * org-config people[].cost_caps.daily_usd 可选携带（status/skills 同款扩法）。
+   * 未携带=用 cost_guard.daily_budget_usd.per_person_default 缺省帽；不携带=现状
+   * 行为零变化（cost_guard 段不声明时本键不参与任何判定）。
+   */
+  costCaps?: { dailyUsd: number }
 }
 
 /** D9 通用模型：一切唤起都是定时任务，挂在部门节点下（04-§三） */
@@ -118,6 +125,33 @@ export interface WorkflowTypeDecl {
 /** org-config workflows 段（types ≥1；不声明=现状行为，docs/51 v1.1） */
 export interface TicketWorkflows {
   types: WorkflowTypeDecl[]
+}
+
+// —— 成本警戒段（132-§6.4 单C·studio-dev-177；批示 P1/P2 载体=132 提案，制作人 2026-10-22 全批） ——
+
+/** 警戒动作值域（P2 直译四档动作；alarm=dispatch+notify 双动作） */
+export const COST_GUARD_ROUTES = ['notify', 'dispatch', 'dispatch+notify', 'gate'] as const
+export type CostGuardRoute = (typeof COST_GUARD_ROUTES)[number]
+
+/** 警戒档（比例线：at_pct 相对日预算的百分比，>100 合法=超支档如 hard 120） */
+export interface CostGuardTier {
+  /** 档名（org-config 段内唯一；如 watch/warn/alarm/hard） */
+  tier: string
+  /** 预算百分比线（正有限数） */
+  atPct: number
+  /** 达线动作（P2 四档） */
+  route: CostGuardRoute
+}
+
+/**
+ * org-config cost_guard 段（不声明=undefined=警戒面整体关闭，现状行为零变化）。
+ * 消费面：cost-threshold 唤起源（每拍评估）+ 派发闸 hard 线联动（route='gate' 档）。
+ */
+export interface CostGuardConfig {
+  /** 日预算（USD）：公司日预算 + 人日缺省帽（people[].cost_caps.daily_usd 可按人覆盖） */
+  dailyBudgetUsd: { company: number; perPersonDefault: number }
+  /** 警戒档（≥1，按 at_pct 升序评估，取最高达标档） */
+  alertTiers: readonly CostGuardTier[]
 }
 
 /**
@@ -190,6 +224,12 @@ export interface CompanySnapshot {
    * 不动 decide/状态机，不迁移平台状态（daemon 单点写纪律）。不声明=不映射。
    */
   stateMapping?: Readonly<Record<string, string>>
+  /**
+   * 成本警戒段（132-§6.4 单C·studio-dev-177；不声明=undefined=警戒面关闭）。
+   * 可选=快照向后兼容（workflows 同款扩法）；声明即经装载面交叉校验
+   * （档名/线值唯一、route='gate' 至多一档）。
+   */
+  costGuard?: CostGuardConfig
 }
 
 /** 校验器输出：结构不合法给 文件:行 + 修法（04-§九） */

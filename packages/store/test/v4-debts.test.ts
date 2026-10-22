@@ -95,19 +95,19 @@ function makeRunning(patch: Record<string, unknown> = {}): Record<string, unknow
 
 describe('v4 迁移（daemon_kv 接管）', () => {
   it('建库即到 v7（v4 daemon_kv 随建库齐备）：daemon_kv 在库；重开库 migrate 幂等（version 不涨、schema_version 恰七行、v4 不重放）', () => {
-    expect(ledger.version()).toBe(10)
+    expect(ledger.version()).toBe(11)
     const tables = (
       ledger.db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as Array<{ name: unknown }>
     ).map((r) => String(r.name))
     expect(tables).toContain('daemon_kv')
     const rows = ledger.db.prepare('SELECT version, sha8 FROM schema_version ORDER BY version').all() as Array<{ version: unknown; sha8: unknown }>
-    expect(rows.length).toBe(10)
+    expect(rows.length).toBe(11)
     for (const row of rows) expect(String(row.sha8)).toMatch(/^[0-9a-f]{8}$/)
 
     const again = openLedger(path.join(root, 'ledger.db'))
-    expect(again.version()).toBe(10)
+    expect(again.version()).toBe(11)
     const count = again.db.prepare('SELECT COUNT(*) AS c FROM schema_version').get() as { c?: unknown }
-    expect(Number(count.c)).toBe(10)
+    expect(Number(count.c)).toBe(11)
     again.close()
   })
 
@@ -128,9 +128,9 @@ describe('v4 迁移（daemon_kv 接管）', () => {
     l.kvSet('tick.seq', '4')
     l.kvSet('activity.cursor', '') // 空串=游标 null 持久形态（daemon 回读方还原 null 的那条路径）
     expect(schemaOf()).toBe(before)
-    expect(l.version()).toBe(10)
+    expect(l.version()).toBe(11)
     const versionRows = l.db.prepare('SELECT COUNT(*) AS c FROM schema_version').get() as { c?: unknown }
-    expect(Number(versionRows.c)).toBe(10)
+    expect(Number(versionRows.c)).toBe(11)
     // 存档语句与本面的读写互通仍成立（历史存量库数据的可读性）：存档 SET 写入 → 本面可读
     l.db.prepare(DAEMON_KV_SET_SQL).run('legacy.key', 'legacy-value')
     expect(l.kvGet('legacy.key')).toBe('legacy-value')
@@ -176,7 +176,7 @@ describe('v4 迁移（daemon_kv 接管）', () => {
 
     // ② 重开（openLedger 全量迁移）→ v4：IF NOT EXISTS 对存量表无操作，kv 数据原地接管
     const upgraded = openLedger(p)
-    expect(upgraded.version()).toBe(10)
+    expect(upgraded.version()).toBe(11)
     expect(upgraded.queryEvents().map((e) => e.id)).toEqual(['01ARZ3NDEKTSV4RRFFQ69G5FAV'])
     expect(upgraded.kvGet('activity.cursor')).toBe('legacy-cursor')
     expect(upgraded.kvGet('tick.seq')).toBe('12')

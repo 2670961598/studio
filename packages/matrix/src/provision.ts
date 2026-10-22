@@ -81,6 +81,8 @@ export interface ChannelMapInput {
   deptSlugs: Readonly<Record<string, string>>
   /** bot MXID（@studio-gateway:…——房间 creator/admin PL100；serverName 从此派生） */
   botMxid: string
+  /** 邀请节流毫秒（缺省 350——老 Synapse 限流礼让；测试传 0 免等） */
+  invitePaceMs?: number
   /** 制作人 MXID（神号全知——每群 PL100；缺省 @opengames:localhost，21A-§2.2） */
   producerMxid: string
 }
@@ -298,7 +300,7 @@ export async function ensureSpace(client: ProvisionClient, spec: { alias: string
 export async function ensureChannel(
   client: ProvisionClient,
   spec: ChannelSpec,
-  ids: { botMxid: string; producerMxid: string },
+  ids: { botMxid: string; producerMxid: string; invitePaceMs?: number | undefined },
 ): Promise<EnsureRoomResult> {
   let roomId: string | undefined
   try {
@@ -326,11 +328,11 @@ export async function ensureChannel(
     client.listMembers(roomId, 'invite'),
   ])
   const present = new Set([...joined, ...invited])
-  let invitePace = 0
+  const paceMs = ids.invitePaceMs ?? 350
   for (const member of spec.members) {
     if (present.has(member)) continue
     // 老 Synapse 限流礼让（2026-10-23 实证 M_LIMIT_EXCEEDED）：邀请间隔 350ms+429 退避重试 ×3
-    await sleep(350 + invitePace * 0)
+    await sleep(paceMs)
     let done = false
     for (let attempt = 0; attempt < 3 && !done; attempt += 1) {
       try {
@@ -343,7 +345,6 @@ export async function ensureChannel(
         throw err
       }
     }
-    invitePace += 1
   }
   // PL 目标快照全量覆盖（同值零写；moderator 50 槽按列基线）
   const target = powerLevelTarget(spec.power, { ...ids, ...(spec.moderatorMxid !== undefined ? { moderatorMxid: spec.moderatorMxid } : {}) })
@@ -393,7 +394,7 @@ export async function ensureCompanyChannels(client: ProvisionClient, input: Chan
   let created = 0
   for (const channel of plan.channels) {
     try {
-      const res = await ensureChannel(client, channel, { botMxid: input.botMxid, producerMxid: input.producerMxid })
+      const res = await ensureChannel(client, channel, { botMxid: input.botMxid, producerMxid: input.producerMxid, invitePaceMs: input.invitePaceMs })
       ensured += 1
       if (res.created) created += 1
       if (spaceRoomId !== undefined) {
@@ -473,7 +474,7 @@ export async function ensureTicketRoom(
     power: 'ticket',
     order: 0,
   }
-  const res = await ensureChannel(client, spec, { botMxid: input.botMxid, producerMxid: input.producerMxid })
+  const res = await ensureChannel(client, spec, { botMxid: input.botMxid, producerMxid: input.producerMxid, invitePaceMs: input.invitePaceMs })
   // 单据房间挂父空间（DEV-20 §5.1 挂接列）；失败面同房本体分离——挂接失败只记 note
   let note = resolved.note
   try {
