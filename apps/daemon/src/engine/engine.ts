@@ -144,11 +144,23 @@
  *   - ticket_mirror.created：IssueRecord 无 created 字段，以 updated 近似（镜像可重建，17-§3）。
  *   - HEARTBEAT 哨兵单号：events.issue 必填（contract），零动作拍挂 config.heartbeatIssue（'-'）。
  *
- * 意图消费口径（消费门=kind→handler 普适分发表，105-刀A A-2 开闸；schedule 面=v0.4 既有）：
+ * 意图消费口径（消费门=kind→handler 普适分发表，105-刀A A-2 开闸；schedule 面=v0.4 既有；
+ * 129-A 扩两行=webhook｜data-change，studio-dev-166）：
  *   - 前置共闸（全 kind 一致，无 kind 特判——判负线①）：公司匹配 → 分发表命中 → 无 ticket
  *     意图缺 dedupKey=HOLD_INTENT_MALFORMED 明报拒收（25-§3.4 v1.3，判负线②）；
- *   - 分发表已开：schedule（岗单据物化）｜mention（@唤醒单物化，105-刀A）；escalate 槽位
- *     归刀B notify 端口接线单，未注册即明报不支持（jobs-lifecycle 既有断言保持绿，S8）；
+ *   - 分发表已开：schedule（岗单据物化）｜mention（@唤醒单物化，105-刀A）｜webhook（外部
+ *     事件**只落单不派工**——终态锚点结构性不可派发，patrol 工件先例；人工分诊=平台复活；
+ *     落单链收口+派工链登记位缓开=批示⑥，129-A）｜data-change（联动单物化→路由表定
+ *     assignee→前向态进派发链，129-§6.1①；people-change 源与 org-config 路由表归拆单 C）；
+ *     escalate 槽位归刀B notify 端口接线单，未注册即明报不支持（jobs-lifecycle 既有断言
+ *     保持绿，S8）；
+ *   - webhook 双链收口（129 P1-A/C9）：API 触发端点与 watch-file 同产 webhook 意图走
+ *     ingest 统一链（同语义一条链）；dedupKey=事件指纹源侧设置（watch-file=mtime#行号，
+ *     API=幂等键同源），引擎不猜公式只做可表示性闸；
+ *   - data-change 幂等（129-§6.1 铁律2）：dedupKey=变更指纹 `person+classifier+prev→next`
+ *     源侧设置，引擎消费面断言一致（防伪造换键重投——mention dedupKey=eventId 同款）；
+ *     路由 fail-closed：路由未配/未命中/目标不在人事索引均明报拒收，无 defaultPersonId
+ *     兜底（宁拒不错派）；
  *   - 岗单据物化形态：type='task'、level=0（走 L0 状态流——定时岗无人审批环：岗的设立即
  *     授权，每跑再挂制作人审批与 48h 无人值守矛盾）、assignee=job.role（RoleName 恰为工号则
  *     精确命中，否则回退 defaultPersonId——岗位名→工号映射待人事档案面）；
@@ -167,7 +179,7 @@
  *   - markRan 已提交而进程崩溃于 ingest 消费前：该次触发丢失（at-most-once）——已物化岗单据
  *     经活动流重启后仍被主循环接管；mention 同径（源重启按 eventId 重投可追补；E17 停机
  *     不丢意图两预案进 spike 比选不预设——105-§5.3-3）；
- *   - 分发表外 kind（ticket/relay/resume/webhook/escalate）明报不支持（六源全通归 v0.8）。
+ *   - 分发表外 kind（ticket/relay/resume/escalate）明报不支持（六源全通归 v0.8）。
  */
 import { createHash } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -206,6 +218,28 @@ import type { ExecutorRegistry } from '@studio-next/adapters'
 import type { Ledger } from '@studio-next/store'
 import { gateDispatch, settleDispatch, type BudgetGateDeps } from './budget-gate.ts'
 import { crashHook } from './crash-points.ts'
+// 意图分类学消费件（mention=105-刀A ｜ webhook｜data-change=129-A studio-dev-166 拆出，
+// 20-§十五 尺寸门「先拆再增」）：契约面/指纹/路由解析/落单渲染+消费工厂；noteSafe 同源
+// （各消费路径共用，零漂移）。公面经本文件 re-export（组合根守护测试钉「源侧产物↔契约」
+// 兼容的既有口径——105-刀A checkMentionPayload 先例）。
+import {
+  checkMentionPayload,
+  createDataChangeConsumer,
+  createWebhookConsumer,
+  mentionTicketDescription,
+  mentionTicketTitle,
+  noteSafe,
+} from './intents/taxonomy.ts'
+export {
+  checkDataChangePayload,
+  checkMentionPayload,
+  checkWebhookPayload,
+  dataChangeFingerprint,
+  parseDataChangeRoutes,
+  type DataChangeIntentPayload,
+  type MentionIntentPayload,
+  type WebhookIntentPayload,
+} from './intents/taxonomy.ts'
 import { buildEventIndex, STALL_KILL_CLOSE_ANCHOR, type EventIndex } from './sentinel/events-index.ts'
 import type { GateRunner } from './gate.ts'
 import { accountJobOutput } from './jobs/output-account.ts'
@@ -251,6 +285,13 @@ export interface EngineConfig {
   actor: string
   /** 派工默认工号（issue.assignee 缺省时的人员索引回退位） */
   defaultPersonId: string
+  /**
+   * data-change 路由表登记位（129-§6.1①：变更类型 → 联动单 assignee；拆单 C 接线
+   * org-config hooks.data_change.routes——入/调/退→HF-1 对账〔docs/52-§13 C1-08 口径〕，
+   * 升/降→PLN 线）。引擎消费语义：命中路由且目标在人事索引→物化联动单；未配/未命中/
+   * 目标未知→明报拒收（fail-closed 无 defaultPersonId 兜底——mention 同款防错人纪律）。
+   */
+  dataChangeRoutes?: Readonly<Record<string, string>>
   /** events.dept / ticket_mirror.dept 兜底 */
   deptFallback: string
   /** issue.lane 缺省泳道 */
@@ -531,71 +572,6 @@ const PARKED = Symbol('harvest-parked')
 
 // ————————————————————————— mention 意图消费件（105-刀A A-2） —————————————————————————
 
-/**
- * mention 意图负载形状（105-刀A，语义定稿=③ 混合）：结构对齐 @studio-next/matrix 的
- * MentionPayload——daemon 不 import 适配器包（25-§一.2 依赖方向，判负线⑦），按契约
- * payload=unknown 做结构校验；两形状的兼容性由组合根守护测试钉死（apps/boot）。
- */
-export interface MentionIntentPayload {
-  /** 唤醒目标工号（@宰相/@制作人 等角色词已经源侧 roles 映射成工号） */
-  target: string
-  /** 唤醒词原文（如 @ENG-3 / @宰相） */
-  mention: string
-  /** 消息全文（m.text；仅文本可唤起，21-§三） */
-  text: string
-  /** Matrix eventId——幂等键源（dedupKey=eventId 源侧设置，21A-§5.10 勘误后口径） */
-  eventId: string
-  /** 发送者 MXID（溯源） */
-  sender: string
-  /** 房间 ID（溯源，S1 要求单据可查到 roomId） */
-  room: string
-  /** 频道名（溯源；源侧可缺） */
-  channel?: string
-}
-
-/**
- * 结构校验（频道内容按不可信输入对待，21-§三）：非对象/必填字符串缺失 → 错误原因串；
- * 过 → 收窄为 MentionIntentPayload（不拷贝、不猜未知字段——透传溯源原文）。
- * 导出面：组合根 apps/boot 的守护测试用它钉「matrix MentionPayload ↔ 本形状」结构
- * 兼容（两包互不 import，形状契约由组合根守）。
- */
-export function checkMentionPayload(payload: unknown): MentionIntentPayload | string {
-  if (typeof payload !== 'object' || payload === null) return 'payload 非对象'
-  const p = payload as Record<string, unknown>
-  for (const key of ['target', 'mention', 'text', 'eventId', 'sender', 'room'] as const) {
-    if (typeof p[key] !== 'string') return `${key} 缺失或非字符串`
-  }
-  if (p.channel !== undefined && typeof p.channel !== 'string') return 'channel 非字符串'
-  return payload as MentionIntentPayload
-}
-
-/** PATROL note 动态字段净化：分号/换行替换（键值分隔符与 note 行结构不可被频道内容注入） */
-function noteSafe(value: string): string {
-  return value.replaceAll(';', '；').replaceAll('\n', ' ').replaceAll('\r', ' ')
-}
-
-/** 正文摘录：空白折叠取前 40 字（标题一眼可辨；超长截断，全文在 description） */
-function mentionExcerpt(text: string): string {
-  return text.replace(/\s+/g, ' ').trim().slice(0, 40)
-}
-
-/** @唤醒单标题（S1：单据可查、带溯源锚点） */
-function mentionTicketTitle(p: MentionIntentPayload): string {
-  const excerpt = mentionExcerpt(p.text)
-  return excerpt === '' ? `[@唤醒] ${p.mention}` : `[@唤醒] ${p.mention} ${excerpt}`
-}
-
-/** @唤醒单描述：roomId+eventId+sender 溯源 + ③ 混合语义注 + 正文全文 */
-function mentionTicketDescription(p: MentionIntentPayload): string {
-  return [
-    `唤醒来源：Matrix 频道（room=${p.room}${p.channel !== undefined ? ` channel=${p.channel}` : ''}）`,
-    `事件：${p.eventId}（幂等键源 dedupKey=eventId，21A-§5.10 勘误后口径）`,
-    `发送者：${p.sender}`,
-    `唤醒词：${p.mention}（③ 混合语义：@工号=物化唤醒单派该岗位；@宰相/@制作人=API 落单通道）`,
-    '正文：',
-    p.text,
-  ].join('\n')
-}
 
 /**
  * 有界竞速：next() 就绪（含拒绝——原样传播走 WORKER_DEAD 面）则即时返回；ms 内未就绪
@@ -1583,14 +1559,37 @@ export function createEngine(deps: EngineDeps): Engine {
       }
     }
 
+    // webhook｜data-change handler（129-A）：本体拆在 engine/intent-taxonomy.ts（20-§十五
+    // 尺寸门「先拆再增」——129-§6.1 分类学消费件：契约面+消费工厂零引擎内部态持有）；
+    // 此处只以 tick 作用域依赖装配（共闸四件+落单面注入），分发表注册口径与 105-刀A 同构。
+    const consumerDeps = {
+      platform,
+      syncMirror,
+      makeEvent,
+      tickEvents,
+      config,
+      people,
+      errors,
+      drainSeen,
+      candidates,
+      onMutation: (): void => {
+        mutations += 1
+      },
+    }
+    const consumeWebhook = createWebhookConsumer(consumerDeps)
+    const consumeDataChange = createDataChangeConsumer(consumerDeps)
+
     // 普适分发表（105-刀A A-2）：新 kind 开闸=注册一个 handler，前置共闸/幂等零改。
-    // escalate：槽位归刀B（notify 端口接线单）——未注册即明报不支持（jobs-lifecycle 既有
-    // 断言 kind='escalate' 不支持 保持绿，S8）。
+    // 129-A 扩两行：webhook（只落单——落单链收口+派工链登记位）｜data-change（联动单
+    // 物化+路由指派）。escalate：槽位归刀B（notify 端口接线单）——未注册即明报不支持
+    // （jobs-lifecycle 既有断言 kind='escalate' 不支持 保持绿，S8）。
     const intentHandlers: {
       [K in InvokeIntent['kind']]?: (intent: InvokeIntent, intentKey: string) => Promise<void>
     } = {
       schedule: consumeSchedule,
       mention: consumeMention,
+      webhook: consumeWebhook,
+      'data-change': consumeDataChange,
     }
 
     for (const intent of drained) {
@@ -1601,7 +1600,7 @@ export function createEngine(deps: EngineDeps): Engine {
       const handler = intentHandlers[intent.kind]
       if (handler === undefined) {
         errors.push(
-          `意图消费：kind='${intent.kind}' 不支持（消费门分发表：schedule｜mention 已开（105-刀A）；escalate 归刀B；六源全通归 v0.8）——丢弃`,
+          `意图消费：kind='${intent.kind}' 不支持（消费门分发表：schedule｜mention 已开（105-刀A）；webhook｜data-change 已开（129-A）；escalate 归刀B；六源全通归 v0.8）——丢弃`,
         )
         continue
       }

@@ -14,11 +14,14 @@
  * 端点族：
  *   信息面  /v1/company、/v1/org、/v1/people、/v1/projects/{pid}/progress、/v1/issues/{id}、
  *           /v1/finance/summary、/v1/reports、/v1/docs
- *   触发面  POST /v1/requests、/v1/explore、/v1/tasks、/v1/intel（幂等键 → 查重 → 落单 → 绑锚 → 署名）
+ *   触发面  POST /v1/requests、/v1/explore、/v1/tasks、/v1/intel（幂等键 → 查重 → 产 webhook
+ *           意图进 daemon ingest → 引擎消费门物化 → 绑锚 → 署名——129-A 双链收口：落单链
+ *           统一走 webhook 意图（只落单不派工，与 watch-file 同语义一条链，22-§二 事件行；
+ *           旁路直落单面=旧稿收口）；幂等键承载在 intent.dedupKey，同键重投恒只物化一次）
  *   订阅    /v1/subscriptions（at-least-once + 幂等 + HMAC + 退避 + 熔断 + 死信）、
  *           /v1/events/stream（SSE 断线续传，按 event id 去重）
  *   名片    /v1/agent-card（由 org-config 生成，带版本与有效期）
- *   入站    /v1/hooks/*（签名校验 + 重放窗口 + payload 上限）
+ *   入站    /v1/hooks/*（签名校验 + 重放窗口 + payload 上限——产 webhook 意图同触发面收口）
  *
  * 安全：出站白名单 + 密钥扫描 + 防 SSRF（硬禁内网/回环）；外部调用全落 events 可回放。
  * MCP 侧：对外只做 exporter / server 面，内部 schema 才是唯一事实源。
