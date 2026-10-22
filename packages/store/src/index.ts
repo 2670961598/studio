@@ -168,6 +168,21 @@ export {
   type PricingFace,
 } from './pricing.ts'
 
+// perf 五指标聚合件（130-P4·studio-dev-175：批示⑥ 口径冻结，caliber=perf/v1 版本化）——
+// 面板部长视图/perf-weekly 报表/测试三方单一实现（S9 复算一致的单源保证）；纯函数零写入
+export {
+  UNATTRIBUTED_PERSON,
+  gateRate,
+  harvestHits,
+  perfPercentile,
+  perfPersonRows,
+  rejectionCount,
+  reportRate,
+  type PerfAggregationInput,
+  type PerfEventCounts,
+  type PerfPersonRow,
+} from './perf.ts'
+
 // work_records / sessions + v2 五表 + v3 jobs + v4 收口面 + v5 candidates + v6 报表三表
 // + v7 hr_sync_log 记录形状（store 层临时闸，contract schema 落地后替换）
 export {
