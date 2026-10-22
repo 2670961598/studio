@@ -173,7 +173,7 @@ export const lineBaseline = {
   "packages/panel/src/views.ts": 662,
   "packages/adapters/test/kimi.test.ts": 662, // 132-§6.1 单A 桶键统一(+1：cached→cache_read 断言注释——studio-dev-168；前值 661)
   "apps/daemon/test/evolve/evolution-e2e.test.ts": 652,
-  "packages/company/src/validator.ts": 654, // 170 127-C 州表卫生(+7：接线行——规则体/装载=state-hygiene.ts 拆出) // 前值 647
+  "packages/company/src/validator.ts": 655, // 130-P1 类型收件态(+1：接线行——规则体=type-inbox.ts 拆出) // 170 127-C 州表卫生(+7：接线行) // 前值 654/647
   "apps/daemon/test/evolve/gray.test.ts": 625,
   "apps/daemon/src/control/hot-reload.ts": 624,
   "packages/panel/src/overview/views.ts": 629, // 170 127-C 州表卫生映射层(+11：stateMapping 形参+口径注) // 前值 618=DEV-12 刀二

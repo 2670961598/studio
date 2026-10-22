@@ -126,6 +126,29 @@ workflows:
         evidence: 巡毕纪要
         verified: 巡毕复核
         delivered: 巡毕无产出
+    # 提案类型流（130-P1，studio-dev-172；studio-dev-130 §6.1.1 规范形）：approval 锚
+    # 「待批」=部长收件箱（decide 5b WAIT_APPROVAL 驻留——批示面归 P0 运行时）；
+    # 打回=声明边 待批→新单（显式意图可走、引擎绝不自动走；decide 5a 自动呈批回待批）
+    - id: proposal
+      entity: userstory # 绑定实体=单据承载实体（与平台建单实体同源）
+      states:
+        - 新单
+        - 待批
+        - 已派发
+        - 证据就绪
+        - 复验通过
+        - name: 已交付
+          final: true
+      edges:
+        - from: 待批 # 打回边：部长批示「打回」→ 新单重整
+          to: 新单
+      anchors:
+        inbox: 新单
+        approval: 待批
+        dispatched: 已派发
+        evidence: 证据就绪
+        verified: 复验通过
+        delivered: 已交付
 
 # YouTrack 账号锚点映射（账号=等级锚点，不随新增公司而新增账号）
 accounts:
@@ -148,6 +171,12 @@ yt:
     dept: 部门
     level: 等级
   flows: {} # 空=走框架默认 flow_by_level 模板（docs/18-§二）
+  # 类型收件态直改（130-P1，studio-dev-172）：建单落位第二优先级（显式 initialState >
+  # typeInbox[type] > states[0]）。workflows 声明时 anchors.inbox 自动派生（proposal
+  # 派生值=新单），此处逐键覆盖派生值（yt 同键胜出）——proposal 覆盖为待批=互查先于
+  # 建单、直落部长收件箱不经新单（studio-dev-130 §6.1.2）；值域须∈声明态全集（TI-2）
+  typeInbox:
+    proposal: 待批
 
 # executor 偏好覆盖（缺省继承框架级 agent.yaml；people[].executor 已逐人声明）
 executors: {}

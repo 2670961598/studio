@@ -173,6 +173,7 @@ export function deriveFieldProvision(
   }
   // workflows 折叠（DEV-43）：W-1..W-9 已过判定器（调用序=validate 先于 provision），
   // 此处只做推导不做校验；不声明=三个可选键不落（旧 map 形状零变化）
+  const ytTypeInbox = readYtTypeInbox(orgYt)
   if (workflows !== undefined && workflows.types.length > 0) {
     const typeInbox: Record<string, string> = {}
     const typeFlows: Record<string, Record<string, string[]>> = {}
@@ -201,13 +202,36 @@ export function deriveFieldProvision(
         for (const n of names) if (!states.includes(n)) states.push(n)
       }
     }
+    // yt.typeInbox 逐键覆盖（130-P1）：workflows 派生项（anchors.inbox）之上 yt 同键胜出
+    // ——收件态可经 yt 直改而不动类型声明；per-key 合并使未覆盖键保留派生值（跨刀共存）。
+    if (ytTypeInbox !== undefined) Object.assign(typeInbox, ytTypeInbox)
     return { fields, states, stateFlow, typeInbox, typeFlows, entities }
   }
+  // 无 workflows 也可单收 yt.typeInbox（无类型流声明的轻量落位面——收件态须已在
+  // yt.states/缺省五态内，validator typeInboxRules 拦未知态；typeFlows/entities 不落）
+  if (ytTypeInbox !== undefined) return { fields, states, stateFlow, typeInbox: { ...ytTypeInbox } }
   return { fields, states, stateFlow }
 }
 
 function isPlainRecord(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === 'object' && !Array.isArray(v)
+}
+
+/**
+ * yt.typeInbox 读取（130-P1，studio-dev-172）：`yt.typeInbox: {<type>: <收件态>}` 直改
+ * 建单落位（IssueCreate initialState 解析序第二级——packages/taiga fieldmap.initialStateFor）。
+ * 只读推导不校验（校验面归 validator typeInboxRules，调用序=validate 先于 provision）；
+ * 非字符串值防御性跳过（与 yt.fields/states/flows 同纪律），空 record=未声明。
+ */
+function readYtTypeInbox(orgYt: Record<string, unknown> | undefined): Record<string, string> | undefined {
+  if (orgYt === undefined) return undefined
+  const raw = orgYt['typeInbox']
+  if (!isPlainRecord(raw)) return undefined
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof v === 'string' && v.length > 0) out[k] = v
+  }
+  return Object.keys(out).length > 0 ? out : undefined
 }
 
 // ————————————————————————— git-url → 目录名 —————————————————————————
