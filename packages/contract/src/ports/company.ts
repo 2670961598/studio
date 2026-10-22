@@ -49,6 +49,13 @@ export interface PersonRef {
    * 分类器只认索引字段级变更）——快照仅承载 front-matter 索引键。
    */
   role?: string
+  /**
+   * 技能本体索引键（org-config people[].skills——内部工种映射表，不用自由文本）。
+   * 可选携带（130-P2，studio-dev-173；DEV-48 status/role 同款扩法）：源文/zod 早已
+   * 收此键，本键只把它带进快照供派工建议面（拆单候选打分 F1，提案 §6.5.2）消费；
+   * 不携带=建议面降档（role/dept 文本），零破坏。
+   */
+  skills?: readonly string[]
 }
 
 /** D9 通用模型：一切唤起都是定时任务，挂在部门节点下（04-§三） */
