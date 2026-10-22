@@ -225,14 +225,11 @@ import { crashHook } from './crash-points.ts'
 // 意图分类学消费件（mention=105-刀A ｜ webhook｜data-change=129-A studio-dev-166 拆出，
 // 20-§十五 尺寸门「先拆再增」）：契约面/指纹/路由解析/落单渲染+消费工厂；noteSafe 同源
 // （各消费路径共用，零漂移）。公面经本文件 re-export（组合根守护测试钉「源侧产物↔契约」
-// 兼容的既有口径——105-刀A checkMentionPayload 先例）。
+// 兼容的既有口径——105-刀A checkMentionPayload 先例）。mention 消费件 129-D（181）迁入。
 import {
-  checkMentionPayload,
   createDataChangeConsumer,
+  createMentionConsumer,
   createWebhookConsumer,
-  mentionTicketDescription,
-  mentionTicketTitle,
-  noteSafe,
 } from './intents/taxonomy.ts'
 export {
   checkDataChangePayload,
@@ -244,6 +241,14 @@ export {
   type MentionIntentPayload,
   type WebhookIntentPayload,
 } from './intents/taxonomy.ts'
+// escalate 消费件（129-D studio-dev-181；129-§6.1② 阈值类首开——cost-threshold 类）
+import { createEscalateConsumer, type CostThresholdNotice } from './intents/escalate.ts'
+export {
+  checkEscalatePayload,
+  costThresholdKey,
+  type CostThresholdNotice,
+  type EscalateIntentPayload,
+} from './intents/escalate.ts'
 import { createSplitMaterializer, type SplitDirectiveInput } from './split/materialize.ts' // 拆单物化件（130-P2 studio-dev-173；提案 §6.2.2/§6.2.3-R2）：批示:拆单→子单物化＋父单立案收口
 import { buildEventIndex, STALL_KILL_CLOSE_ANCHOR, type EventIndex } from './sentinel/events-index.ts'
 // 事件四要素形状＋人闸快照投影（自本件抽件——20-§十五「先拆再增」；BC-S2 清偿）
@@ -284,6 +289,7 @@ import {
   queueCandidateMeta,
   queueMembership,
   seedQueueCarry,
+  settlePendingQueuePriority,
   todoQueueDiffers,
   touchQueueCarry,
   type QueueCarry,
@@ -332,6 +338,19 @@ export interface EngineConfig {
    * 目标未知→明报拒收（fail-closed 无 defaultPersonId 兜底——mention 同款防错人纪律）。
    */
   dataChangeRoutes?: Readonly<Record<string, string>>
+  /**
+   * cost-threshold 缺省指派目标登记位（129-§6.3 P0-B「payload.target 缺省路由表」：
+   * escalate 警戒处置单 assignee——接线 org-config hooks.cost_threshold.target 规范位
+   * ＋daemon.yaml costThresholdTarget 逃生位合并）。解析序 payload.target＞本位＞明报
+   * 拒收；目标须在人事索引（fail-closed 无 defaultPersonId 兜底——同上防错人纪律）。
+   */
+  costThresholdTarget?: string
+  /**
+   * cost-threshold 警戒处置单泳道落位（129-D 181）：显式配置优先；未配回退指派目标
+   * 部门 lanes[0]（错位会跨部占道——lane 租约独占）；再无=不设（派发回退 defaultLane）。
+   * 规范位 org-config hooks.cost_threshold.lane＋逃生位 daemon.yaml costThresholdLane。
+   */
+  costThresholdLane?: string
   /** events.dept / ticket_mirror.dept 兜底 */
   deptFallback: string
   /** issue.lane 缺省泳道 */
@@ -528,6 +547,12 @@ export interface EngineDeps {
   rooms?: RoomDuty
   /** cost_guard 段（132-§6.4 单C）：快照装载面——闸四联动（R6）与源评估的配置源；缺省不注入=面关零行为 */
   costGuard?: CostGuardConfig
+  /**
+   * 成本警戒 notify 出口（129-§6.1②：escalate route=notify/dispatch+notify 的即时提醒
+   * 通道——批示项④ busy 场景队首+即时提醒；105-刀B IM 链的登记位）。缺省不注入=留痕
+   * note 记「notify=未接线」（登记位语义非承诺投递）；v0 serve 接 daemon log 行。
+   */
+  notify?: (notice: CostThresholdNotice) => void
 }
 
 // ————————————————————————— TickReport（17-§2「tick 返回结构化 actions」；各面类型驻 tick-report/types.ts） —————————————————————————
@@ -693,6 +718,10 @@ export function createEngine(deps: EngineDeps): Engine {
   // 重建，表即恢复源）；拍内 touch（种钟/抬峰）/drop（派发成功即出队）；GC 收口在
   // projectTodoQueue（离队单删条）。回滚再入队=新钟（attempt 轮次已可区分，不跨轮持久）。
   const queueCarry: QueueCarry = seedQueueCarry(ledger.listTodoQueue())
+  // 警戒单峰值优先级延拍落地（129-D，studio-dev-181）：物化拍新单不在拍首活集——直接
+  // 触钟会被投影 GC 当拍删条，故只记 pending、成员资格落地拍并入携带峰（落地件 queue.ts
+  // settlePendingQueuePriority；离队即失效+15 分钟兜底——仅警戒单入表，量小）
+  const pendingQueuePriority = new Map<TicketId, { priority: number; since: number }>()
   const queueAgeStepMs = config.queueAgeStepMs ?? DEFAULT_QUEUE_AGE_STEP_MS
   const pinnedTicketSet = (): ReadonlySet<TicketId> => new Set(config.pinnedTickets ?? [])
   const personOverrides = config.personInflightOverrides ?? {}
@@ -1627,67 +1656,12 @@ export function createEngine(deps: EngineDeps): Engine {
       }
     }
 
-    // mention handler：@唤醒单物化（105-刀A A-2；语义定稿=③ 混合，docs/21-§四/22-§二 同源
-    // 文字）——@工号 → 唤醒单直派该岗位；@宰相/@制作人 → 源侧 roles 映射成工号后同径派发
-    // （被唤醒者下游动作=对外 API :8788 落单，引擎不感知通道，两路同构）。
-    const consumeMention = async (intent: InvokeIntent, intentKey: string): Promise<void> => {
-      const checked = checkMentionPayload(intent.payload)
-      if (typeof checked === 'string') {
-        errors.push(`意图消费：mention 意图 payload 形状不符（${checked}）——丢弃（频道内容按不可信输入对待，21-§三）`)
-        return
-      }
-      // dedupKey=eventId 源侧设置契约（21A-§5.10 勘误后口径，判负线③）：不一致=伪造绕幂等
-      // 面或源侧漂移，明报拒收不静默
-      if (intent.dedupKey !== checked.eventId) {
-        errors.push(
-          `意图消费：mention 意图 dedupKey≠payload.eventId（${String(intent.dedupKey)} vs ${checked.eventId}）——丢弃（幂等键源侧契约，105-刀A）`,
-        )
-        return
-      }
-      // note 键值可表示性闸（PATROL note 幂等键层的物理约束，防御纵深）：eventId 含分号/
-      // 换行 → intent=<intentKey> 在 note 中无法无损表示（解析按 ; 切分——截断键会让两个
-      // 不同 eventId 静默撞车）。真实 Matrix eventId 字符集不含分号，此闸只防伪造源/上游
-      // 漂移——明报拒收不静默（频道内容按不可信输入对待，21-§三）。
-      if (/[;\r\n]/.test(checked.eventId)) {
-        errors.push('意图消费：mention 意图 eventId 含分号/换行（PATROL note 键值不可表示）——丢弃')
-        return
-      }
-      // 唤醒目标必须命中人事索引：未知工号明报丢弃——resolvePerson 的 defaultPersonId 回退
-      // 语义会把 typo 唤醒落错人，唤醒件不适用回退（resolvePerson 只服务岗单/兜底派发）
-      if (!people.some((p) => p.id === checked.target)) {
-        errors.push(`意图消费：mention 唤醒目标 ${checked.target} 不在人事索引——丢弃（未知工号明报，频道内容不可信）`)
-        return
-      }
-      try {
-        const created = await platform.issues.create({
-          title: mentionTicketTitle(checked),
-          description: mentionTicketDescription(checked),
-          type: 'task',
-          level: 0,
-          assignee: checked.target,
-        })
-        syncMirror(created)
-        // PATROL 留痕（事件词表冻结复用，不新增名）：note 携 intent=<intentKey> 进 patrolKeys
-        // （append-only 不释放）——同 eventId 重投/源重放恒只物化一次；note 刻意不含 job=
-        // 字段（jobs-sources 的 jobTickets 正则只认 job= 前缀——唤醒单对 SLA 扫描器结构性
-        // 不可见）；动态字段经 noteSafe 分号净化，防频道内容注入 job=/intent= 键。
-        makeEvent('PATROL', created, 1, tickEvents, {
-          note:
-            `intent=${noteSafe(intentKey)};target=${noteSafe(checked.target)};event=${noteSafe(checked.eventId)};` +
-            `room=${noteSafe(checked.room)}${checked.channel !== undefined ? `;channel=${noteSafe(checked.channel)}` : ''};` +
-            `sender=${noteSafe(checked.sender)};dedup=${String(intent.dedupKey)};来源=${intent.source}`,
-        })
-        mutations += 1
-        drainSeen.add(intentKey)
-        candidates.push({ ticket: created.id, intent })
-      } catch (err) {
-        errors.push(`意图消费：mention 唤醒单物化失败（event=${checked.eventId}）：${err instanceof Error ? err.message : String(err)}`)
-      }
-    }
-
     // webhook｜data-change handler（129-A）：本体拆在 engine/intent-taxonomy.ts（20-§十五
     // 尺寸门「先拆再增」——129-§6.1 分类学消费件：契约面+消费工厂零引擎内部态持有）；
     // 此处只以 tick 作用域依赖装配（共闸四件+落单面注入），分发表注册口径与 105-刀A 同构。
+    // mention 消费件同族迁入（129-D 181 先拆再增）；escalate 消费件（129-D）本体在
+    // engine/intents/escalate.ts——costGuard 活取（热重载感知）+notify 出口（刀B 登记位）
+    // +costThresholdTarget/Lane（缺省路由表/泳道落位）经 escalateDeps 追加注入。
     const consumerDeps = {
       platform,
       syncMirror,
@@ -1704,11 +1678,25 @@ export function createEngine(deps: EngineDeps): Engine {
     }
     const consumeWebhook = createWebhookConsumer(consumerDeps)
     const consumeDataChange = createDataChangeConsumer(consumerDeps)
+    const consumeMention = createMentionConsumer(consumerDeps)
+    const consumeEscalate = createEscalateConsumer({
+      ...consumerDeps,
+      ...(deps.departments !== undefined ? { departments: deps.departments } : {}),
+      costGuard: (): CostGuardConfig | undefined => costGuard,
+      ...(deps.notify !== undefined ? { notify: deps.notify } : {}),
+      // P0-B「priority=3 置顶」：物化拍登记意图峰值（延拍并入携带峰——见投影段 settle 调用）
+      touch: (ticket, intent): void => {
+        const p = Math.max(0, Math.min(3, intent.priority ?? 0))
+        if (p <= 0) return
+        const prev = pendingQueuePriority.get(ticket)
+        pendingQueuePriority.set(ticket, { priority: Math.max(prev?.priority ?? 0, p), since: prev?.since ?? now() })
+      },
+    })
 
     // 普适分发表（105-刀A A-2）：新 kind 开闸=注册一个 handler，前置共闸/幂等零改。
-    // 129-A 扩两行：webhook（只落单——落单链收口+派工链登记位）｜data-change（联动单
-    // 物化+路由指派）。escalate：槽位归刀B（notify 端口接线单）——未注册即明报不支持
-    // （jobs-lifecycle 既有断言 kind='escalate' 不支持 保持绿，S8）。
+    // 129-A 扩 webhook（只落单——落单链收口+派工链登记位）｜data-change（联动单物化+
+    // 路由指派）两行；129-D（181）开 escalate 槽——cost-threshold 类消费（处置单物化/
+    // notify 出口/gate 留痕，sla 类仍 class 级明报归刀B）。
     const intentHandlers: {
       [K in InvokeIntent['kind']]?: (intent: InvokeIntent, intentKey: string) => Promise<void>
     } = {
@@ -1716,6 +1704,7 @@ export function createEngine(deps: EngineDeps): Engine {
       mention: consumeMention,
       webhook: consumeWebhook,
       'data-change': consumeDataChange,
+      escalate: consumeEscalate,
     }
 
     for (const intent of drained) {
@@ -1725,7 +1714,7 @@ export function createEngine(deps: EngineDeps): Engine {
       }
       const handler = intentHandlers[intent.kind]
       if (handler === undefined) {
-        errors.push(`意图消费：kind='${intent.kind}' 不支持（消费门分发表：schedule｜mention 已开（105-刀A）；webhook｜data-change 已开（129-A）；escalate 归刀B；六源全通归 v0.8）——丢弃`)
+        errors.push(`意图消费：kind='${intent.kind}' 不支持（消费门分发表：schedule｜mention 已开（105-刀A）；webhook｜data-change 已开（129-A）；escalate 已开（129-D，class 级判别——sla 类仍归刀B）；六源全通归 v0.8）——丢弃`)
         continue
       }
       // HOLD_INTENT_MALFORMED 前置闸（25-§3.4 v1.3，判负线②）：无 ticket 意图必填
@@ -2127,8 +2116,13 @@ export function createEngine(deps: EngineDeps): Engine {
     // projectTodoQueue）；diff 才写（canonical JSON——updated_at 同拍恒等，跨拍仅
     // 成员/键变才落 replaceTodoQueue 整批换）。携带 GC 也在纯函数内（离队删条）。
     const liveTickets = new Set<TicketId>(issues.map((i) => i.id))
-    const todoQueueMembers = ledger
-      .listTicketMirrors()
+    const mirrorRows = ledger.listTicketMirrors()
+    const mirrorMemberOf = (ticket: TicketId): QueueMemberSource | undefined => {
+      const row = mirrorRows.find((r) => r.issue === ticket)
+      if (row === undefined) return undefined
+      return { id: row.issue, state: row.state, type: row.type, level: row.level, ...(row.assignee !== undefined ? { assignee: row.assignee } : {}) }
+    }
+    const todoQueueMembers = mirrorRows
       .filter((r) => r.company === config.company && liveTickets.has(r.issue))
       .map((r): QueueMemberSource => ({
         id: r.issue,
@@ -2137,6 +2131,11 @@ export function createEngine(deps: EngineDeps): Engine {
         level: r.level,
         ...(r.assignee !== undefined ? { assignee: r.assignee } : {}),
       }))
+    // 峰值优先级延拍落地（129-D）：物化拍记 pending，成员资格落地拍并入携带峰（queue.ts 纯函数）
+    settlePendingQueuePriority({
+      carry: queueCarry, pending: pendingQueuePriority, members: todoQueueMembers, mirrorMemberOf,
+      flowResolve: flowOf, now: now(), staleAfterMs: 15 * 60_000,
+    })
     const todoQueueRows = projectTodoQueue({
       members: todoQueueMembers,
       flowResolve: flowOf,

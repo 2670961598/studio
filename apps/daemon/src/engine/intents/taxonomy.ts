@@ -1,6 +1,7 @@
 /**
  * 意图分类学消费件（129-§6.1，studio-dev-166=拆单 A）——webhook｜data-change 两 kind 的
- * 纯函数契约面 + 消费 handler 工厂。
+ * 纯函数契约面 + 消费 handler 工厂（mention 消费件自 engine.ts 迁入——129-D
+ * studio-dev-181「先拆再增」让位 escalate 缝，与其 checker/renderer 同居）。
  *
  * 从 engine.ts 拆出（20-§十五.三.3 尺寸门「先拆再增」）：本文件零 IO 决策（落单动作经
  * deps.platform 注入），engine.ts 只注册分发表行（105-刀A A-2 普适分发表口径不变）。
@@ -396,6 +397,69 @@ export function createDataChangeConsumer(deps: IntentConsumerDeps): (intent: Inv
       deps.candidates.push({ ticket: created.id, intent })
     } catch (err) {
       deps.errors.push(`意图消费：data-change 联动单物化失败（指纹=${fingerprint}）：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+}
+
+/**
+ * mention 消费 handler（105-刀A A-2；语义定稿=③ 混合，docs/21-§四/22-§二 同源文字）
+ * ——自 engine.ts 迁入（129-D studio-dev-181 先拆再增，语义逐字保持）：
+ * @工号 → 唤醒单直派该岗位；@宰相/@制作人 → 源侧 roles 映射成工号后同径派发
+ * （被唤醒者下游动作=对外 API :8788 落单，引擎不感知通道，两路同构）。
+ */
+export function createMentionConsumer(deps: IntentConsumerDeps): (intent: InvokeIntent, intentKey: string) => Promise<void> {
+  return async (intent: InvokeIntent, intentKey: string): Promise<void> => {
+    const checked = checkMentionPayload(intent.payload)
+    if (typeof checked === 'string') {
+      deps.errors.push(`意图消费：mention 意图 payload 形状不符（${checked}）——丢弃（频道内容按不可信输入对待，21-§三）`)
+      return
+    }
+    // dedupKey=eventId 源侧设置契约（21A-§5.10 勘误后口径，判负线③）：不一致=伪造绕幂等
+    // 面或源侧漂移，明报拒收不静默
+    if (intent.dedupKey !== checked.eventId) {
+      deps.errors.push(
+        `意图消费：mention 意图 dedupKey≠payload.eventId（${String(intent.dedupKey)} vs ${checked.eventId}）——丢弃（幂等键源侧契约，105-刀A）`,
+      )
+      return
+    }
+    // note 键值可表示性闸（PATROL note 幂等键层的物理约束，防御纵深）：eventId 含分号/
+    // 换行 → intent=<intentKey> 在 note 中无法无损表示（解析按 ; 切分——截断键会让两个
+    // 不同 eventId 静默撞车）。真实 Matrix eventId 字符集不含分号，此闸只防伪造源/上游
+    // 漂移——明报拒收不静默（频道内容按不可信输入对待，21-§三）。
+    if (/[;\r\n]/.test(checked.eventId)) {
+      deps.errors.push('意图消费：mention 意图 eventId 含分号/换行（PATROL note 键值不可表示）——丢弃')
+      return
+    }
+    // 唤醒目标必须命中人事索引：未知工号明报丢弃——resolvePerson 的 defaultPersonId 回退
+    // 语义会把 typo 唤醒落错人，唤醒件不适用回退（resolvePerson 只服务岗单/兜底派发）
+    if (!deps.people.some((p) => p.id === checked.target)) {
+      deps.errors.push(`意图消费：mention 唤醒目标 ${checked.target} 不在人事索引——丢弃（未知工号明报，频道内容不可信）`)
+      return
+    }
+    try {
+      const created = await deps.platform.issues.create({
+        title: mentionTicketTitle(checked),
+        description: mentionTicketDescription(checked),
+        type: 'task',
+        level: 0,
+        assignee: checked.target,
+      })
+      deps.syncMirror(created)
+      // PATROL 留痕（事件词表冻结复用，不新增名）：note 携 intent=<intentKey> 进 patrolKeys
+      // （append-only 不释放）——同 eventId 重投/源重放恒只物化一次；note 刻意不含 job=
+      // 字段（jobs-sources 的 jobTickets 正则只认 job= 前缀——唤醒单对 SLA 扫描器结构性
+      // 不可见）；动态字段经 noteSafe 分号净化，防频道内容注入 job=/intent= 键。
+      deps.makeEvent('PATROL', created, 1, deps.tickEvents, {
+        note:
+          `intent=${noteSafe(intentKey)};target=${noteSafe(checked.target)};event=${noteSafe(checked.eventId)};` +
+          `room=${noteSafe(checked.room)}${checked.channel !== undefined ? `;channel=${noteSafe(checked.channel)}` : ''};` +
+          `sender=${noteSafe(checked.sender)};dedup=${String(intent.dedupKey)};来源=${intent.source}`,
+      })
+      deps.onMutation()
+      deps.drainSeen.add(intentKey)
+      deps.candidates.push({ ticket: created.id, intent })
+    } catch (err) {
+      deps.errors.push(`意图消费：mention 唤醒单物化失败（event=${checked.eventId}）：${err instanceof Error ? err.message : String(err)}`)
     }
   }
 }

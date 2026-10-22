@@ -131,8 +131,11 @@ describe('cost-threshold 源：面关与公司档', () => {
     expect(r.fired).toBe(2) // 公司 watch + 人档 ENG-1 hard（13.5/8=168.75%——人档同拍独立评估）
     expect(r.checked).toBe(1 + PEOPLE.length)
     const intent = got[0]
+    // ticket 不携（129-D 181 修）：心跳哨兵 '-' 不是单——无单意图走 dedupKey 路径
+    // （25-§3.4 v1.3 幂等键设计位；携 '-' 会坍缩成全警戒共用键，升档二醒被消费门吞掉）
+    expect(intent?.ticket).toBeUndefined()
     expect(intent).toMatchObject({
-      kind: 'escalate', company: 'demo', ticket: '-',
+      kind: 'escalate', company: 'demo',
       source: COST_THRESHOLD_SOURCE_NAME,
       dedupKey: `cost:company:day:${DAY}:watch`, priority: 3,
     })

@@ -147,3 +147,44 @@ describe('引用完整性（crossRules 指认到行）', () => {
     }
   })
 })
+
+describe('cost_threshold 缺省路由声明（129-D，129-§6.1②/§6.3 P0-B）', () => {
+  it('target+lane 全配过闸；snapshot.hooks 形状（与 data_change 并存）', () => {
+    const r = loadOk(dirWith(`${LEGAL_HOOKS}  cost_threshold:\n    target: AGENT-1\n    lane: core\n`))
+    expect(r.snapshot.hooks).toEqual({
+      data_change: { routes: { 入: 'AGENT-1', 调: 'AGENT-1', 退: 'AGENT-1', 升: 'AGENT-1', 降: 'AGENT-1', 停: 'AGENT-1', 复: 'AGENT-1' } },
+      cost_threshold: { target: 'AGENT-1', lane: 'core' },
+    })
+  })
+
+  it('只配 target（lane 可缺——泳道回退目标部门首泳道）', () => {
+    const r = loadOk(dirWith(`hooks:\n  cost_threshold:\n    target: AGENT-1\n`))
+    expect(r.snapshot.hooks).toEqual({ cost_threshold: { target: 'AGENT-1' } })
+  })
+
+  it('空段 → schema 层拒绝（声明即哑火=装载面明报，空对象不猜默认）', () => {
+    const rules = rulesOf(dirWith(`hooks:\n  cost_threshold: {}\n`))
+    expect(rules.length).toBeGreaterThan(0)
+  })
+
+  it('空串值 → schema 层拒绝（target/lane 必须非空串）', () => {
+    const rules = rulesOf(dirWith(`hooks:\n  cost_threshold:\n    target: ""\n`))
+    expect(rules.length).toBeGreaterThan(0)
+  })
+
+  it('未知子键 → strictObject 拒绝（不静默收额外面）', () => {
+    const rules = rulesOf(dirWith(`hooks:\n  cost_threshold:\n    target: AGENT-1\n    sms: true\n`))
+    expect(rules.length).toBeGreaterThan(0)
+  })
+
+  it('target 工号不在 people 索引 → dangling-ref 指认到行（错派比拒收危害大）', () => {
+    const r = loadCompanyDirectory(dirWith(`hooks:\n  cost_threshold:\n    target: GHOST-9\n`))
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      const hit = r.issues.find((i) => i.rule === 'org-config/dangling-ref')
+      expect(hit?.file).toBe('org-config.yaml')
+      expect(hit?.line).toBeGreaterThan(1)
+      expect(hit?.fix).toContain('GHOST-9')
+    }
+  })
+})

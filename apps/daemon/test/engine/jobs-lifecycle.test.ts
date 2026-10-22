@@ -13,7 +13,8 @@
  *      ② 百重复只唤一次（cadence=百次重复展开同档位同槽一意图；sla=百次重扫同窗同档一告）
  *      ③ 关源零影响（注销任一源，其他源与主循环零影响）
  *   5. 集成链：档位岗 → cadence 播种 → 既有 scheduler 到点产 schedule 意图 → 引擎物化
- *      派发 → SLA 计时器超时产 escalate 意图（引擎消费门如实明报不支持——notify 端口下刀）
+ *      派发 → SLA 计时器超时产 escalate 意图（escalate 消费门已开 129-D，但 v0 只开
+ *      cost-threshold 类——sla 类 payload 形状不符明报丢弃；notify 发送归 105-刀B）
  *   6. serve 接线：cadence/sla 配置解析 + buildServeRuntime 注册面
  */
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -518,10 +519,13 @@ describe('集成链：档位岗 → scheduler → 引擎派发 → SLA 超时 es
     const r = sla.poll((i) => got.push(i))
     expect(r.fired).toBe(1)
     expect(got[0]?.ticket).toBe(eventsOf(stack.ledger, 'PATROL')[0]?.issue)
-    // escalate 意图进主循环：消费门如实明报（escalate 消费+notify 发送归 notify 端口后续刀）
+    // escalate 意图进主循环：消费门已开（129-D）但分类学判别 payload.class——sla 类
+    // 无 class 字段=形状不符明报丢弃（cost-threshold 类才物化；sla notify 发送归 105-刀B）
     stack.engine.ingest(got as InvokeIntent[])
     const tick2 = await stack.engine.tick()
-    expect(tick2.errors.join('\n')).toContain("kind='escalate' 不支持")
+    const joined = tick2.errors.join('\n')
+    expect(joined).toContain('escalate 意图 payload 形状不符')
+    expect(joined).toContain("class 'undefined' 不支持")
     const escalates = eventsOf(stack.ledger, 'ESCALATE').filter((e) => e.note?.includes(`src=${SLA_SOURCE_NAME}`))
     expect(escalates).toHaveLength(1) // 落账在源侧（只产意图+落账口径）
     reg.stopAll()

@@ -29,15 +29,29 @@ const DataChangeRoutesSchema = z.record(z.string().min(1), z.string().min(1)).re
   message: 'hooks.data_change.routes 须至少一条 `变更类型: 工号`（空路由表=声明即哑火；不配 hooks 段=不启用）',
 })
 
-/** org-config `hooks:` 段结构闸（v0 只开 data_change；后续 hook 面走提案流扩段） */
+/**
+ * 成本警戒缺省路由形状（org-config `hooks.cost_threshold`，129-§6.3 P0-B——
+ * studio-dev-181 单 129-D）：target=缺省指派工号（route 档位动作归 cost_guard——
+ * 132 段，此处不管）；lane=处置单泳道落位。两键均可选（target 缺=引擎明报拒收
+ * fail-closed——缺省路由表没配等于警戒面哑火，装载面放行让引擎侧报错指认投放）。
+ */
+const CostThresholdHooksSchema = z.strictObject({
+  target: z.string().min(1).optional(),
+  lane: z.string().min(1).optional(),
+}).refine((v) => Object.keys(v).length > 0, {
+  message: 'hooks.cost_threshold 须至少一键 target/lane（空段=声明即哑火；不配 hooks 段=不启用）',
+})
+
+/** org-config `hooks:` 段结构闸（v0 开 data_change=129-C／cost_threshold=129-D；后续 hook 面走提案流扩段） */
 export const OrgHooksSchema = z.strictObject({
   data_change: z.strictObject({ routes: DataChangeRoutesSchema }).optional(),
+  cost_threshold: CostThresholdHooksSchema.optional(),
 })
 
 /**
  * 钩子声明引用完整性（129-C）：data_change.routes 目标工号须在 people 索引——
  * 悬空即装载失败（引擎侧路由闸还有第二道「目标不在人事索引」拒收，此为第一道
- * 指认到行的早失败面）。
+ * 指认到行的早失败面）。cost_threshold.target 同族悬空检（129-D——错派比拒收危害大）。
  */
 export function hooksCrossRules(
   doc: ReturnType<typeof parseDocument>,
@@ -47,16 +61,26 @@ export function hooksCrossRules(
 ): DirectoryIssue[] {
   const out: DirectoryIssue[] = []
   const routes = org.hooks?.data_change?.routes
-  if (routes === undefined) return out
-  for (const [kind, person] of Object.entries(routes)) {
-    if (!peopleIds.has(person)) {
-      out.push({
-        file: ORG_CONFIG_FILE,
-        line: lineOfPath(doc, lc, ['hooks', 'data_change', 'routes', kind]),
-        rule: 'org-config/dangling-ref',
-        fix: `hooks.data_change.routes 的 ${kind}→${person} 目标工号不在 people 索引中（悬空引用双检——联动单指派宁拒不错派）`,
-      })
+  if (routes !== undefined) {
+    for (const [kind, person] of Object.entries(routes)) {
+      if (!peopleIds.has(person)) {
+        out.push({
+          file: ORG_CONFIG_FILE,
+          line: lineOfPath(doc, lc, ['hooks', 'data_change', 'routes', kind]),
+          rule: 'org-config/dangling-ref',
+          fix: `hooks.data_change.routes 的 ${kind}→${person} 目标工号不在 people 索引中（悬空引用双检——联动单指派宁拒不错派）`,
+        })
+      }
     }
+  }
+  const costTarget = org.hooks?.cost_threshold?.target
+  if (costTarget !== undefined && !peopleIds.has(costTarget)) {
+    out.push({
+      file: ORG_CONFIG_FILE,
+      line: lineOfPath(doc, lc, ['hooks', 'cost_threshold', 'target']),
+      rule: 'org-config/dangling-ref',
+      fix: `hooks.cost_threshold.target 的 ${costTarget} 目标工号不在 people 索引中（悬空引用双检——警戒处置单指派宁拒不错派）`,
+    })
   }
   return out
 }
@@ -66,5 +90,15 @@ export function hooksCrossRules(
  * 只读映射不重排；可选键不落显式 undefined，groups/workflows 同款扩法）。
  */
 export function toHooks(hooks: NonNullable<OrgConfig['hooks']>): OrgHooksDecl {
-  return hooks.data_change !== undefined ? { data_change: { routes: { ...hooks.data_change.routes } } } : {}
+  return {
+    ...(hooks.data_change !== undefined ? { data_change: { routes: { ...hooks.data_change.routes } } } : {}),
+    ...(hooks.cost_threshold !== undefined
+      ? {
+          cost_threshold: {
+            ...(hooks.cost_threshold.target !== undefined ? { target: hooks.cost_threshold.target } : {}),
+            ...(hooks.cost_threshold.lane !== undefined ? { lane: hooks.cost_threshold.lane } : {}),
+          },
+        }
+      : {}),
+  }
 }

@@ -187,6 +187,13 @@ export interface OrgHooksDecl {
    * daemon.yaml `dataChangeRoutes` 为逐键覆盖位（部署级逃生——合并面在装配层）。
    */
   data_change?: { routes: Record<string, string> }
+  /**
+   * 成本警戒缺省路由（129-§6.3 P0-B「payload.target 缺省路由表」，studio-dev-181
+   * 单 129-D）：cost-threshold 意图的缺省指派目标+处置单泳道落位（route 档位动作
+   * 归 cost_guard.alert_tiers——132；本段只管缺省 target/lane）。daemon.yaml
+   * `costThresholdTarget`/`costThresholdLane` 为覆盖位（部署级逃生——合并面在装配层）。
+   */
+  cost_threshold?: { target?: string; lane?: string }
 }
 
 export interface CompanySnapshot {

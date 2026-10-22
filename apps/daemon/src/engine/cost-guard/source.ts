@@ -37,6 +37,9 @@ import type {
 import { highestReachedTier, localDateKey, usageCellsCostUsd, type UnitPrice } from '@studio-next/core'
 import type { Ledger } from '@studio-next/store'
 import { makeUlid } from '../tools/id.ts'
+// 幂等键公式单一实现同引（129-§6.1 铁律2：源侧设置=引擎校验——129-D 181 收敛，
+// dataChangeFingerprint 先例；本文件原内联公式逐字相同，132-C 测试守护零行为变化）
+import { costThresholdKey } from '../intents/escalate.ts'
 import { makeBasisResolver, personDailyBudgetUsd, personReservedUsd, type ResolvedUnit } from './fold.ts'
 
 /** cost-threshold 源名 */
@@ -105,7 +108,7 @@ function firedKeys(events: readonly EventRecord[]): Set<string> {
     const scope = /(?:^|;)scope=([^;]+)/.exec(e.note ?? '')
     const period = /(?:^|;)period=([^;]+)/.exec(e.note ?? '')
     const tier = /(?:^|;)tier=([^;]+)/.exec(e.note ?? '')
-    if (scope !== null && period !== null && tier !== null) keys.add(`cost:${scope[1]}:${period[1]}:${tier[1]}`)
+    if (scope !== null && period !== null && tier !== null) keys.add(costThresholdKey({ scope: scope[1] ?? '', period: period[1] ?? '', tier: tier[1] ?? '' }))
   }
   return keys
 }
@@ -166,7 +169,7 @@ export function createCostThresholdSource(deps: CostThresholdSourceDeps): CostTh
       pct: number,
       attemptAnchor: number,
     ): void => {
-      const dedupKey = `cost:${scope}:${period}:${tierName}`
+      const dedupKey = costThresholdKey({ scope, period, tier: tierName })
       if (fired.has(dedupKey)) return
       if (emit === undefined) return // 无出口不落账（防意图丢失——SLA 源同款）
       const facts = {
@@ -183,7 +186,11 @@ export function createCostThresholdSource(deps: CostThresholdSourceDeps): CostTh
       emit({
         kind: 'escalate',
         company: deps.company,
-        ticket: issueForEvent.issue,
+        // ticket 只携真实单号：心跳哨兵（'-'）不是单——携它会让意图幂等键（25-§3.4 v1.3
+        // `source|kind|company|ticket ?? dedupKey`）坍缩成全警戒共用的 `…|-`，升档/同拍
+        // 多档第二醒在消费门被 patrolKeys 静默吞掉（129-D 181 修——无单意图走 dedupKey
+        // 路径=公式设计位）。ESCALATE 落账锚不随动：appendEvent.issue 恒挂心跳哨兵单。
+        ...(issueForEvent.issue !== '-' && issueForEvent.issue !== '' ? { ticket: issueForEvent.issue } : {}),
         payload: { class: 'cost-threshold', facts },
         source: COST_THRESHOLD_SOURCE_NAME,
         dedupKey,
