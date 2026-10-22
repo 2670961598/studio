@@ -1,0 +1,348 @@
+# Studio Next · 公司组织配置（org-config.yaml）—— company-5-level（部门化骨架）
+#
+# 逐级部门表依据：docs/33-§3（L5 部门化）；生成器 packages/company/src/gen-template.ts
+# （结构源=level-specs.ts，花名种子=company-5-level 冻结——手改本文件会被再生成覆盖）
+# 契约依据：docs/04-公司目录与等级体系.md §二；校验规则见 packages/company zod schema。
+#
+# 骨架口径（双口径）：编制目标 100-250 人、跨度 5-8——本模板只放 13 名
+# 骨架（负责人＋单岗＋代表执行）；填满编制归 company create 向导（docs/36-§4 M-B）。
+# 示范要点：工程/质量/产品策划/人事/财务五职能部＋综合部（对外与战略情报单岗）
+
+schema: studio-next/org@1 # 本文件的 schema 版本（须与 .studio-next.yaml 的 schema 一致）
+
+company:
+  name: 示例公司 # 公司名（init 替换占位）
+  slug: example-corp # 目录 slug（init 替换占位）；概览路由 http://<host>:8789/<slug>/...
+  mission: 用一条可验证的交付链，把需求变成有证据的产出 # 使命（L1）
+  charter_ref: charter.md # 公司章程路径（相对公司目录根）
+  level: 5 # 公司等级 2-9（docs/33-§3 L5 部门化）
+  level_distribution: # 等级分布（骨架实数，与 people[].level 逐档相等；编制目标另见顶部双口径注记）
+    2: 2
+    3: 5
+    4: 5
+    5: 1
+
+# 部门索引：部门领导 = 该部门 config.yaml 的 leader；部门成员 = people/ 内档案
+# dept.level = 公司等级（沿 2 级模板先例）；部门嵌套深度看目录（6 根部门）
+departments:
+  - name: 工程部
+    path: departments/工程部 # 相对本目录根；即该部门的目录
+    leader: ENG-0 # 主管工号（指向 people 索引与人事档案）
+    level: 5
+    parent: null # 上级部门 path；根部门为 null
+    lanes: [core] # 泳道 = 资源标签 + 并行开发单元（锁粒度）
+    functions: [交付] # 部门职能
+    relations: [] # 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}（C2-02）
+  - name: 质量部
+    path: departments/质量部 # 相对本目录根；即该部门的目录
+    leader: QA-0
+    level: 5
+    parent: null # 上级部门 path；根部门为 null
+    lanes: [qa] # 泳道 = 资源标签 + 并行开发单元（锁粒度）
+    functions: [质量] # 部门职能
+    relations: [] # 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}（C2-02）
+  - name: 产品策划部
+    path: departments/产品策划部 # 相对本目录根；即该部门的目录
+    leader: PLN-0
+    level: 5
+    parent: null # 上级部门 path；根部门为 null
+    lanes: [core] # 泳道 = 资源标签 + 并行开发单元（锁粒度）
+    functions: [策划] # 部门职能
+    relations: [] # 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}（C2-02）
+  - name: 人事部
+    path: departments/人事部 # 相对本目录根；即该部门的目录
+    leader: HR-0
+    level: 5
+    parent: null # 上级部门 path；根部门为 null
+    lanes: [ops] # 泳道 = 资源标签 + 并行开发单元（锁粒度）
+    functions: [人事] # 部门职能
+    relations: [] # 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}（C2-02）
+  - name: 财务部
+    path: departments/财务部 # 相对本目录根；即该部门的目录
+    leader: FIN-0
+    level: 5
+    parent: null # 上级部门 path；根部门为 null
+    lanes: [ops] # 泳道 = 资源标签 + 并行开发单元（锁粒度）
+    functions: [财务] # 部门职能
+    relations: [] # 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}（C2-02）
+  - name: 综合部
+    path: departments/综合部 # 相对本目录根；即该部门的目录
+    leader: PRIME-0
+    level: 5
+    parent: null # 上级部门 path；根部门为 null
+    lanes: [ops] # 泳道 = 资源标签 + 并行开发单元（锁粒度）
+    functions: [管理, 对外, 情报] # 部门职能
+    relations: [] # 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}（C2-02）
+
+# 人员索引（只留派工索引；职责正文以人事档案为准）。name=花名（命名器确定性生成，种子冻结）
+people:
+  - id: PRIME-0 # 工号 = 文件名 = 永不变主键
+    name: 溪笛
+    login: prime-0 # YouTrack 账号锚点（账号=等级锚点，工号=人）
+    level: 5
+    dept: departments/综合部
+    role: 总经理 # 岗位（岗位 → 模型档映射见框架级 models.yaml）
+    reports_to: null # 汇报线（上级工号）
+    skills: [管理] # 技能本体（内部工种映射表，不用自由文本）
+    status: active # active | paused | retired（只改状态不删号，历史不悬空）
+    executor: dsh # executor 偏好；缺省继承框架默认（docs/06-§三）
+    file: departments/综合部/people/PRIME-0.md # 人事档案路径（正文在此）
+  - id: EXT-1
+    name: 叙檐
+    login: ext-1
+    level: 3
+    dept: departments/综合部
+    role: 对外（单岗）
+    reports_to: PRIME-0
+    skills: [对外]
+    status: active
+    executor: dsh
+    file: departments/综合部/people/EXT-1.md
+  - id: INT-1
+    name: 知井
+    login: int-1
+    level: 3
+    dept: departments/综合部
+    role: 战略情报（单岗）
+    reports_to: PRIME-0
+    skills: [情报]
+    status: active
+    executor: dsh
+    file: departments/综合部/people/INT-1.md
+  - id: ENG-0
+    name: 望河
+    login: eng-0
+    level: 4
+    dept: departments/工程部
+    role: 工程部长
+    reports_to: PRIME-0
+    skills: [typescript]
+    status: active
+    executor: dsh
+    file: departments/工程部/people/ENG-0.md
+  - id: ENG-1
+    name: 松峰
+    login: eng-1
+    level: 3
+    dept: departments/工程部
+    role: 工程师
+    reports_to: ENG-0
+    skills: [typescript]
+    status: active
+    executor: dsh
+    file: departments/工程部/people/ENG-1.md
+  - id: QA-0
+    name: 澈禾
+    login: qa-0
+    level: 4
+    dept: departments/质量部
+    role: 质量部长
+    reports_to: PRIME-0
+    skills: [测试]
+    status: active
+    executor: dsh
+    file: departments/质量部/people/QA-0.md
+  - id: QA-1
+    name: 叙潮
+    login: qa-1
+    level: 3
+    dept: departments/质量部
+    role: 质量工程师
+    reports_to: QA-0
+    skills: [测试]
+    status: active
+    executor: dsh
+    file: departments/质量部/people/QA-1.md
+  - id: PLN-0
+    name: 煦鲸
+    login: pln-0
+    level: 4
+    dept: departments/产品策划部
+    role: 产品策划部长
+    reports_to: PRIME-0
+    skills: [策划]
+    status: active
+    executor: dsh
+    file: departments/产品策划部/people/PLN-0.md
+  - id: PLN-1
+    name: 叙樵
+    login: pln-1
+    level: 3
+    dept: departments/产品策划部
+    role: 策划
+    reports_to: PLN-0
+    skills: [策划]
+    status: active
+    executor: dsh
+    file: departments/产品策划部/people/PLN-1.md
+  - id: HR-0
+    name: 直帆
+    login: hr-0
+    level: 4
+    dept: departments/人事部
+    role: 人事部长
+    reports_to: PRIME-0
+    skills: [人事]
+    status: active
+    executor: dsh
+    file: departments/人事部/people/HR-0.md
+  - id: HR-1
+    name: 直灯
+    login: hr-1
+    level: 2
+    dept: departments/人事部
+    role: 人事专员
+    reports_to: HR-0
+    skills: [人事]
+    status: active
+    executor: dsh
+    file: departments/人事部/people/HR-1.md
+  - id: FIN-0
+    name: 疏笛
+    login: fin-0
+    level: 4
+    dept: departments/财务部
+    role: 财务部长
+    reports_to: PRIME-0
+    skills: [财务]
+    status: active
+    executor: dsh
+    file: departments/财务部/people/FIN-0.md
+  - id: FIN-1
+    name: 川舟
+    login: fin-1
+    level: 2
+    dept: departments/财务部
+    role: 财务专员
+    reports_to: FIN-0
+    skills: [财务]
+    status: active
+    executor: dsh
+    file: departments/财务部/people/FIN-1.md
+
+# 定时岗清单（D9 通用模型）：每个根部门 2 岗——health-patrol-<部门>（巡查：结构性零产出，
+# 不声明 output——127-A）＋ daily-report-<部门>（日报）；shape 沿 2 级模板。
+jobs:
+  - id: health-patrol-工程部 # 巡查岗：5 分钟巡逻（巡检台账/在途/心跳，随事件留痕）
+    dept: departments/工程部
+    cron: "*/5 * * * *" # 每 5 分钟（本地时区）
+    role: 工程部长 # 岗位
+    level: 5 # 该岗等级
+    type: patrol # patrol×output=结构性零产出，不声明 output（127-A）
+    model_tier: low
+    budget_cap: 1 # USD/次
+  - id: daily-report-工程部 # 日报岗：每日汇总叶子节点产出
+    dept: departments/工程部 # 所属部门节点
+    cron: "0 18 * * *" # 本地时区
+    role: 工程部长 # 岗位
+    level: 5 # 该岗等级
+    type: report # 任务类型（report | audit | ...，自由扩展，框架不写死）
+    model_tier: low # 模型档：high | mid | low
+    budget_cap: 2 # 预算帽（USD/次；预留-结算，超额在调用前拒绝）
+    output: reports/工程部/ # 产出落点（报表按 <date>-<type>-<节点>-<总结>.md 命名）
+  - id: health-patrol-质量部
+    dept: departments/质量部
+    cron: "*/5 * * * *" # 每 5 分钟（本地时区）
+    role: 质量部长 # 岗位
+    level: 5 # 该岗等级
+    type: patrol
+    model_tier: low
+    budget_cap: 1 # USD/次
+  - id: daily-report-质量部
+    dept: departments/质量部 # 所属部门节点
+    cron: "0 18 * * *" # 本地时区
+    role: 质量部长 # 岗位
+    level: 5 # 该岗等级
+    type: report # 任务类型（report | audit | ...，自由扩展，框架不写死）
+    model_tier: low # 模型档：high | mid | low
+    budget_cap: 2 # 预算帽（USD/次；预留-结算，超额在调用前拒绝）
+    output: reports/质量部/ # 产出落点（报表按 <date>-<type>-<节点>-<总结>.md 命名）
+  - id: health-patrol-产品策划部
+    dept: departments/产品策划部
+    cron: "*/5 * * * *" # 每 5 分钟（本地时区）
+    role: 产品策划部长 # 岗位
+    level: 5 # 该岗等级
+    type: patrol
+    model_tier: low
+    budget_cap: 1 # USD/次
+  - id: daily-report-产品策划部
+    dept: departments/产品策划部 # 所属部门节点
+    cron: "0 18 * * *" # 本地时区
+    role: 产品策划部长 # 岗位
+    level: 5 # 该岗等级
+    type: report # 任务类型（report | audit | ...，自由扩展，框架不写死）
+    model_tier: low # 模型档：high | mid | low
+    budget_cap: 2 # 预算帽（USD/次；预留-结算，超额在调用前拒绝）
+    output: reports/产品策划部/ # 产出落点（报表按 <date>-<type>-<节点>-<总结>.md 命名）
+  - id: health-patrol-人事部
+    dept: departments/人事部
+    cron: "*/5 * * * *" # 每 5 分钟（本地时区）
+    role: 人事部长 # 岗位
+    level: 5 # 该岗等级
+    type: patrol
+    model_tier: low
+    budget_cap: 1 # USD/次
+  - id: daily-report-人事部
+    dept: departments/人事部 # 所属部门节点
+    cron: "0 18 * * *" # 本地时区
+    role: 人事部长 # 岗位
+    level: 5 # 该岗等级
+    type: report # 任务类型（report | audit | ...，自由扩展，框架不写死）
+    model_tier: low # 模型档：high | mid | low
+    budget_cap: 2 # 预算帽（USD/次；预留-结算，超额在调用前拒绝）
+    output: reports/人事部/ # 产出落点（报表按 <date>-<type>-<节点>-<总结>.md 命名）
+  - id: health-patrol-财务部
+    dept: departments/财务部
+    cron: "*/5 * * * *" # 每 5 分钟（本地时区）
+    role: 财务部长 # 岗位
+    level: 5 # 该岗等级
+    type: patrol
+    model_tier: low
+    budget_cap: 1 # USD/次
+  - id: daily-report-财务部
+    dept: departments/财务部 # 所属部门节点
+    cron: "0 18 * * *" # 本地时区
+    role: 财务部长 # 岗位
+    level: 5 # 该岗等级
+    type: report # 任务类型（report | audit | ...，自由扩展，框架不写死）
+    model_tier: low # 模型档：high | mid | low
+    budget_cap: 2 # 预算帽（USD/次；预留-结算，超额在调用前拒绝）
+    output: reports/财务部/ # 产出落点（报表按 <date>-<type>-<节点>-<总结>.md 命名）
+  - id: health-patrol-综合部
+    dept: departments/综合部
+    cron: "*/5 * * * *" # 每 5 分钟（本地时区）
+    role: 总经理 # 岗位
+    level: 5 # 该岗等级
+    type: patrol
+    model_tier: low
+    budget_cap: 1 # USD/次
+  - id: daily-report-综合部
+    dept: departments/综合部 # 所属部门节点
+    cron: "0 18 * * *" # 本地时区
+    role: 总经理 # 岗位
+    level: 5 # 该岗等级
+    type: report # 任务类型（report | audit | ...，自由扩展，框架不写死）
+    model_tier: low # 模型档：high | mid | low
+    budget_cap: 2 # 预算帽（USD/次；预留-结算，超额在调用前拒绝）
+    output: reports/综合部/ # 产出落点（报表按 <date>-<type>-<节点>-<总结>.md 命名）
+
+# YouTrack 账号锚点映射（账号=等级锚点，不随新增公司而新增账号）——根部门负责人
+accounts:
+  - login: eng-0
+    level: 5 # 账号锚定的等级（与人档案的工号解耦）
+    note: 工程部长（工程部负责人）
+  - login: qa-0
+    level: 5 # 账号锚定的等级（与人档案的工号解耦）
+    note: 质量部长（质量部负责人）
+  - login: pln-0
+    level: 5 # 账号锚定的等级（与人档案的工号解耦）
+    note: 产品策划部长（产品策划部负责人）
+  - login: hr-0
+    level: 5 # 账号锚定的等级（与人档案的工号解耦）
+    note: 人事部长（人事部负责人）
+  - login: fin-0
+    level: 5 # 账号锚定的等级（与人档案的工号解耦）
+    note: 财务部长（财务部负责人）
+  - login: prime-0
+    level: 5 # 账号锚定的等级（与人档案的工号解耦）
+    note: 总经理（综合部负责人）

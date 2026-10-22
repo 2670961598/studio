@@ -11,7 +11,8 @@
  *   README.md：
  *     3. 标题「# 示例公司（公司自述）」→「# <name>（公司自述）」
  *   .studio-next.yaml：
- *     4. template: company-2-level → 模板目录 basename（默认即不变，替换兼作占位存在性断言）
+ *     4. template: <模板名>（行级键替换——D8 泛化，DEV-14：值域不再绑定 2 级字面量，
+ *        分级模板 company-3..9-level 同走此链；行内注释保留，2 级路径行为不变）
  *     5. created_at: null → init 时间（ISO 8601）
  *     6. last_validated_at: null → 自检通过时间（先检后写，pass 不先盖）
  *     7. last_validation: null → pass（仅在自检真过后写入）
@@ -93,6 +94,26 @@ function replaceOnce(content: string, find: string, replace: string, what: strin
     configInvalid('init/template-placeholder-drift', `占位符「${what}」应在模板中恰好出现 1 次，实得 ${hits} 次（模板漂移：停手改模板对齐，不迁就代码）`)
   }
   return content.replace(find, replace)
+}
+
+/**
+ * 行级键替换（DEV-14 D8 泛化）：`.studio-next.yaml` 的 `template:` 行恰好 1 行——值位整段
+ * 换成实际模板名，行内注释保留。原实现锚定字面量 `company-2-level`（分级模板 company-3..9
+ * init 即占位 0 次 CONFIG_INVALID）；泛化为「行级键」锚后任意分级模板可 init，2 级路径
+ * 行为不变（值替换+尾注保留，与旧 replaceOnce 输出逐字节一致）。
+ */
+function replaceTemplateKey(content: string, templateName: string, what: string): string {
+  const lines = content.split('\n')
+  const hits: number[] = []
+  for (let i = 0; i < lines.length; i++) {
+    if (/^template:\s*\S/.test(lines[i] ?? '')) hits.push(i)
+  }
+  if (hits.length !== 1) {
+    configInvalid('init/template-placeholder-drift', `占位符「${what}」应为恰好 1 行 \`template: <值>\`，实得 ${hits.length} 行（模板漂移：停手改模板对齐，不迁就代码）`)
+  }
+  const idx = hits[0]!
+  lines[idx] = (lines[idx] as string).replace(/^(template:\s*)(\S+)(.*)$/, (_m, p1: string, _p2: string, p3: string) => `${p1}${yamlScalar(templateName)}${p3}`)
+  return lines.join('\n')
 }
 
 function formatIssues(issues: DirectoryIssue[]): string {
@@ -183,7 +204,7 @@ export async function initCompany(opts: InitOptions): Promise<InitResult> {
 
     const now = new Date().toISOString()
     let meta = await readFile(metaPath, 'utf8')
-    meta = replaceOnce(meta, 'template: company-2-level', `template: ${yamlScalar(templateName)}`, '.studio-next.yaml template')
+    meta = replaceTemplateKey(meta, templateName, '.studio-next.yaml template（行级键——D8 泛化：值域不限 2 级模板名）')
     meta = replaceOnce(meta, 'created_at: null', `created_at: ${yamlScalar(now)}`, '.studio-next.yaml created_at')
     await writeFile(metaPath, meta)
 

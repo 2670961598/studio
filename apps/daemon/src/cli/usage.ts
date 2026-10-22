@@ -11,6 +11,16 @@
 export const SECTION = {
   init: `  studio-next init <slug> [--name <公司名>] [--dir <目录>] [--template <模板目录>]
       从模板生成公司目录（默认模板 templates/company-2-level）：复制 → 占位替换 → 自检 → git 首提
+      --template 可指任意分级模板（templates/company-3..9-level，DEV-14——.studio-next.yaml
+      的 template 行为行级键替换，值域不限 2 级模板名）
+`,
+  'gen-templates': `  studio-next gen-templates [--out <目录>]
+      分级公司模板生成器（DEV-14；docs/36-§4 M-A，结构源=docs/33-§3 逐级部门表）：
+      渲染 company-{3..9}-level 七套骨架模板（部门树+人事档案六节格式+每根部门 2 定时
+      岗+accounts=根部门负责人；花名=命名器确定性生成，种子=模板名冻结）→ 逐套自检
+      （loadCompanyDirectory 目录校验 + init 占位恰好一次断言）红即不落盘 → 写盘。
+      --out 缺省仓根 templates/；再生成字节零 diff（手改产物会被覆盖——改结构先改
+      packages/company/src/level-specs.ts，文档先行）
 `,
   company: `  studio-next company add <git-url> [名] [--dir <目录>] [--work-root <根>]
                             [--plugin-root <目录>] [--platform-root <目录>]
@@ -178,8 +188,13 @@ export const SECTION = {
 export const CONCISE = {
   init: `init <slug> —— 从模板生成公司目录（默认模板 templates/company-2-level）：复制→占位替换→自检→git 首提
   studio-next init <slug> [--name <公司名>] [--dir <目录>] [--template <模板目录>]
-  例：studio-next init my-company
+  例：studio-next init my-company（--template 可指 company-3..9-level 分级模板——DEV-14）
   本命令全文：studio-next init --help
+`,
+  'gen-templates': `gen-templates —— 分级模板生成器：渲染 company-{3..9}-level 七套骨架（docs/33-§3 逐级部门表+确定性花名），逐套自检红即不落盘
+  studio-next gen-templates [--out <目录>]
+  例：studio-next gen-templates（--out 缺省仓根 templates/；再生成零 diff——种子冻结）
+  本命令全文：studio-next gen-templates --help
 `,
   company: `company <子命令> —— 公司面命令组：add（git 网址即公司导入）/ validate（仓库判定器）/ create（一条命令创建编排）/ check（目录结构校验——接棒顶级 validate）
   例：studio-next company add <git-url> my-corp

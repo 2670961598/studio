@@ -49,10 +49,11 @@ describe('单源装配对账（S1a：usage.ts=命令文档唯一源）', () => {
     expect(USAGE).toBe(USAGE_HEADER + Object.values(SECTION).join('') + USAGE_TAIL)
   })
 
-  it('17 顶级命令齐全（main.ts 分发表=SECTION 键集）', () => {
+  it('18 顶级命令齐全（main.ts 分发表=SECTION 键集——DEV-14 增 gen-templates）', () => {
     expect(Object.keys(SECTION)).toEqual([
-      'init', 'company', 'validate', 'ledger', 'candidates', 'jobs', 'sandbox', 'cutover', 'gray',
-      'postmortem', 'panel', 'overview', 'external', 'serve', 'taiga-cure', 'reload', 'stop',
+      'init', 'gen-templates', 'company', 'validate', 'ledger', 'candidates', 'jobs', 'sandbox',
+      'cutover', 'gray', 'postmortem', 'panel', 'overview', 'external', 'serve', 'taiga-cure',
+      'reload', 'stop',
     ])
   })
 
@@ -190,7 +191,7 @@ describe('七态矩阵（流分面+退出码——E7 治理面）', () => {
     const res = spawnSync(process.execPath, [BIN, 'sandboxe', '--db', 'x'], { encoding: 'utf8' })
     expect(res.status).toBe(1)
     expect(res.stderr).toContain('未知子命令：sandboxe——是否想说 sandbox？')
-    expect(res.stdout).toContain('已知命令：init、company、validate、ledger')
+    expect(res.stdout).toContain('已知命令：init、gen-templates、company、validate、ledger')
     expect(res.stdout).not.toContain('删库重建演习')
   })
 

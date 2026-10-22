@@ -77,3 +77,12 @@ export * from './dependencies.ts'
 // 公司创建编排内核（DEV-15 / docs/36-§4 M-B 骨架刀：init→provision→全员建号→jobs→
 // 插件 provisioning→验收报告，一条命令、幂等、--dry-run；端口注入面——daemon/CLI 组装依赖）
 export * from './create.ts'
+
+// 员工花名随机命名器（DEV-14，docs/36-§4 M-A：种子确定性+批内唯一——分级模板消费；
+// 词池人工冻结，改池=重新冻结黄金序列，属口味变更）
+export * from './namer.ts'
+
+// 分级公司模板规格+生成器（DEV-14，docs/36-§4 M-A：docs/33-§3 逐级部门表单一事实源 →
+// company-{3..9}-level 七套骨架；渲染后自检（目录校验+init 占位断言）红即不落盘）
+export * from './level-specs.ts'
+export * from './gen-template.ts'

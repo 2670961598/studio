@@ -12,14 +12,16 @@
  *（产品代码署名走 git 默认配置，测试注入只作用于测试进程，不改产品行为）。
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { cp, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { simpleGit } from 'simple-git'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { initCompany, loadCompanyDirectory, readDirectoryFiles } from '../src/index.ts'
+
+const templatesRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../templates')
 
 const GIT_ENV: Record<string, string> = {
   GIT_AUTHOR_NAME: 'studio-next-init-test',
@@ -173,6 +175,66 @@ describe('initCompany 全链（复制 / 占位替换 / 自检 / git 首提）', 
       message: expect.stringContaining('org-config.yaml:6'),
     })
     expect(existsSync(target)).toBe(false)
+  })
+})
+
+describe('D8 泛化：.studio-next.yaml template 行为行级键替换（DEV-14——分级模板 init 通道）', () => {
+  it('5 级模板 init 全链：template 值换成 company-5-level、占位零残留、目录校验绿、level 回读 5', async () => {
+    const target = path.join(root, 'five-level-corp')
+    const result = await initCompany({
+      slug: 'five-corp',
+      name: '五级演示',
+      targetDir: target,
+      templateDir: path.join(templatesRoot, 'company-5-level'),
+    })
+    expect(result.gitCommit).toMatch(/^[0-9a-f]{40}$/)
+
+    const files = await readDirectoryFiles(target)
+    expect(files['.studio-next.yaml']).toContain('template: company-5-level')
+    expect(files['.studio-next.yaml']).not.toContain('company-2-level')
+    expect(files['org-config.yaml']).toContain('slug: five-corp')
+    expect(files['org-config.yaml']).not.toContain('example-corp')
+    expect(files['README.md']).toContain('# 五级演示（公司自述）')
+
+    // 分级模板的骨架面一起回读：6 部门 / 13 人 / 12 定时岗（docs/33-§3 L5 部门化）
+    const mounted = loadCompanyDirectory(files)
+    expect(mounted.ok).toBe(true)
+    if (mounted.ok) {
+      expect(mounted.snapshot.level).toBe(5)
+      expect(mounted.snapshot.departments).toHaveLength(6)
+      expect(mounted.snapshot.people).toHaveLength(13)
+      expect(mounted.snapshot.jobs).toHaveLength(12)
+    }
+  })
+
+  it('特殊字符模板名：值位退 JSON 双引号（yamlScalar 通道），行内注释保留', async () => {
+    const oddTpl = path.join(root, 'tpl:v2')
+    await rm(oddTpl, { recursive: true, force: true })
+    await cp(path.join(templatesRoot, 'company-2-level'), oddTpl, { recursive: true })
+    const target = path.join(root, 'odd-name-corp')
+    await initCompany({ slug: 'odd-corp', targetDir: target, templateDir: oddTpl })
+    const meta = readFileSync(path.join(target, '.studio-next.yaml'), 'utf8')
+    expect(meta).toMatch(/^template: "tpl:v2" #.*$/m)
+  })
+
+  it('template 行漂移（0 行或 ≥2 行）→ CONFIG_INVALID(init/template-placeholder-drift)', async () => {
+    for (const [label, meta] of [
+      ['zero', 'schema: org-config/v1\ncreated_at: null\n'],
+      ['two', 'schema: org-config/v1\ntemplate: a\ntemplate: b\n'],
+    ] as const) {
+      const broken = path.join(root, `meta-drift-${label}`)
+      await rm(broken, { recursive: true, force: true })
+      await mkdir(path.join(broken, 'departments/工程部/people'), { recursive: true })
+      await writeFile(path.join(broken, 'org-config.yaml'), BROKEN_ORG_CONFIG.replace('level: 1', 'level: 2'))
+      await writeFile(path.join(broken, 'README.md'), BROKEN_README)
+      await writeFile(path.join(broken, '.studio-next.yaml'), meta)
+      const target = path.join(root, `meta-drift-product-${label}`)
+      await expect(initCompany({ slug: 'drift-corp', targetDir: target, templateDir: broken })).rejects.toMatchObject({
+        category: 'CONFIG_INVALID',
+        subcause: 'init/template-placeholder-drift',
+      })
+      expect(existsSync(target)).toBe(false)
+    }
   })
 })
 

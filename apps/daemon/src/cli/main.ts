@@ -23,6 +23,7 @@ function cliVersion(): string {
   return pkg.version ?? 'unknown'
 }
 import { cmdInit } from './init.ts'
+import { cmdGenTemplates } from './gen-templates.ts'
 import { cmdCompany } from './company.ts'
 import { cmdValidate } from './validate.ts'
 import { cmdLedger } from './ledger.ts'
@@ -44,6 +45,8 @@ async function main(): Promise<number> {
   switch (command) {
     case 'init':
       return cmdInit(rest)
+    case 'gen-templates':
+      return cmdGenTemplates(rest)
     case 'company':
       return cmdCompany(rest)
     case 'validate':
