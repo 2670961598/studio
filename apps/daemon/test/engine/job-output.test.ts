@@ -168,9 +168,9 @@ describe('accountJobOutput：空收账三态与失败留痕（永不抛——收
 
   it('面未开（companyDir 缺省）与非岗单（无 PATROL job= 锚）=空收账非错', () => {
     const ledger = ledgerOf('unit-closed')
-    expect(accountJobOutput({ ledger, ticket: 'T-1', reportPath, companyDir: undefined, now: () => T0 })).toEqual({ noteSuffix: '' })
+    expect(accountJobOutput({ ledger, ticket: 'T-1', reportPath, companyDir: undefined, now: () => T0 })).toEqual({ noteSuffix: '', sidecarSuffix: '' })
     const plain = ledgerOf('unit-plain') // 空白台账（无 PATROL）——普通单语义
-    expect(accountJobOutput({ ledger: plain, ticket: 'T-9', reportPath, companyDir: reportDir, now: () => T0 })).toEqual({ noteSuffix: '' })
+    expect(accountJobOutput({ ledger: plain, ticket: 'T-9', reportPath, companyDir: reportDir, now: () => T0 })).toEqual({ noteSuffix: '', sidecarSuffix: '' })
     ledger.close()
     plain.close()
   })
@@ -179,7 +179,7 @@ describe('accountJobOutput：空收账三态与失败留痕（永不抛——收
     const ledger = ledgerOf('unit-nodecl')
     appendPatrol(ledger, 'T-1', 'no-decl-job', T0)
     ledger.upsertJob(reportJob('no-decl-job', { type: 'patrol' }))
-    expect(accountJobOutput({ ledger, ticket: 'T-1', reportPath, companyDir: reportDir, now: () => T0 })).toEqual({ noteSuffix: '' })
+    expect(accountJobOutput({ ledger, ticket: 'T-1', reportPath, companyDir: reportDir, now: () => T0 })).toEqual({ noteSuffix: '', sidecarSuffix: '' })
     ledger.close()
   })
 
@@ -224,7 +224,7 @@ describe('accountJobOutput：空收账三态与失败留痕（永不抛——收
     ledger.upsertJob(reportJob('daily-report-工程部', { type: 'report', output: 'reports/工程部/' }))
     const r = accountJobOutput({ ledger, ticket: 'T-1', reportPath, companyDir: reportDir, now: () => T0 })
     const target = path.join(reportDir, 'reports/工程部/2026-10-16-report-工程部-T-1.md')
-    expect(r).toEqual({ noteSuffix: `;output=${target}`, target })
+    expect(r).toEqual({ noteSuffix: `;output=${target}`, target, sidecarSuffix: '' }) // 无 summaryPath 入参=无侧车面（127-A R1）
     expect(readFileSync(target, 'utf8')).toContain('落位收账单元语料')
     writeFileSync(reportPath, '# REPORT\nv2 覆写语料\n', { flag: 'w' })
     accountJobOutput({ ledger, ticket: 'T-1', reportPath, companyDir: reportDir, now: () => T0 })

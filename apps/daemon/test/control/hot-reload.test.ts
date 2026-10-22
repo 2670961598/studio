@@ -373,11 +373,11 @@ describe('增员增岗重装载：people/jobs 热生效', () => {
     expect(reloadEvents(stack.ledger).lastNote).toContain('people=2')
   })
 
-  it('加岗（第三岗）→ jobs=+1 进 note、getJob 命中', async () => {
+  it('加岗（第三岗）→ jobs=+1 进 note、getJob 命中（127-A R3：插岗锚改挂 workflows 段头注释）', async () => {
     const text = readFileSync(path.join(companyDir, 'org-config.yaml'), 'utf8')
     const next = text.replace(
-      /\n# YouTrack 账号锚点映射/,
-      '\n  - id: reload-probe-岗\n    dept: departments/工程部\n    cron: "7 3 * * *"\n    role: AGENT-2\n    type: probe\n    model_tier: low\n\n# YouTrack 账号锚点映射',
+      /\n# 单据类型流声明/,
+      '\n  - id: reload-probe-岗\n    dept: departments/工程部\n    cron: "7 3 * * *"\n    role: AGENT-2\n    type: probe\n    model_tier: low\n\n# 单据类型流声明',
     )
     writeCompanyFile('org-config.yaml', next)
     await stack.hot.check()
@@ -390,9 +390,9 @@ describe('增员增岗重装载：people/jobs 热生效', () => {
 
   it('撤岗 → jobs 表移除（他岗不动）', async () => {
     const text = readFileSync(path.join(companyDir, 'org-config.yaml'), 'utf8')
-    const block = '\n  - id: reload-probe-岗\n    dept: departments/工程部\n    cron: "7 3 * * *"\n    role: AGENT-2\n    type: probe\n    model_tier: low\n\n# YouTrack 账号锚点映射'
+    const block = '\n  - id: reload-probe-岗\n    dept: departments/工程部\n    cron: "7 3 * * *"\n    role: AGENT-2\n    type: probe\n    model_tier: low\n\n# 单据类型流声明'
     if (!text.includes(block)) throw new Error('测试夹具漂移：reload-probe 岗块不在预期位')
-    writeCompanyFile('org-config.yaml', text.replace(block, '\n# YouTrack 账号锚点映射'))
+    writeCompanyFile('org-config.yaml', text.replace(block, '\n# 单据类型流声明'))
     await stack.hot.check()
     stack.clock.advance(1000)
     const report = await stack.hot.check()

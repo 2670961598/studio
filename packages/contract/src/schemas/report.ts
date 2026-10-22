@@ -84,6 +84,19 @@ export const SummarySidecarSchema = z.strictObject({
   changed_files: z.array(z.string().min(1)),
   /** 打回理由：打回单必带、交付单可省（QA_BACK 复盘的原始输入） */
   rejection_reason: z.string().min(1).optional(),
+  /**
+   * 定时岗产出哨兵（127-A R1，批示③：落点=summary.json 框架字段——结构化免解析）。
+   * 框架字段：daemon 派发时随任务书 L4 下发 `{job,run_at,nonce}`，worker 原样回写；
+   * optional——非定时岗单不带（哨兵管辖面=工单型岗单，patrol 工件无 worker 读任务书）；
+   * 岗单缺省=P3 对账步 fail-closed（SENTINEL_MISSING），schema 宽松只挡形状不代验证。
+   */
+  sentinel: z
+    .strictObject({
+      job: z.string().min(1),
+      run_at: z.number().int().min(0),
+      nonce: z.string().length(64),
+    })
+    .optional(),
 })
 
 export type SummarySidecar = z.infer<typeof SummarySidecarSchema>

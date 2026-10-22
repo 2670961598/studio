@@ -23,6 +23,18 @@
  *     工位已有交付物 → `HARVEST_INCOMPLETE` 事件（attempt 作用域）——进重派/回收决策
  *     的视野，不自动补收不代写。
  *
+ * 127-A R4 扩判据（studio-dev-127 §4.5，制作人 2026-10-22 全批——同一扫描循环只扩
+ * 判据不加机制，节流拍复用）：
+ *   ④ 最小内容门：收割成功单归档件 `存在 + 非空 + 非纯占位`——Unicode 字母/数字计数
+ *     <16 = 空壳（空 markdown 骨架/模板占位全灭）→ `HARVEST_INVALID`（recon-key 幂等）；
+ *   ⑤ 哨兵门：工单型岗收割成功单归档旁车 `<归档名>.summary.json` 的 sentinel 三元组
+ *     核验（期望值从 PATROL 锚 dedup 槽时刻复原重算——抄旧槽必 mismatch）→ 非 ok 即
+ *     `SENTINEL_MISSING`（**欠账不重派**——批示⑤：哨兵缺=该槽收割证据链断，补跑走
+ *     新槽，不自动重派旧槽烧预算）；
+ *   ⑥ patrol 巡毕面计数：PATROL job= 锚的巡查物化单计观测数（patrolArtifacts）——
+ *     零派发单无收割语义**不逐单事件化**（spam 防线；诚实性由 R3 丁案终态结构性保证、
+ *     组合面由装载警告治源）。
+ *
  * 边界（提案 §4.5 冻结）：company/reports/ 仍 daemon 单点写；补收目标名与 DEV-50
  * reportFileName 同公式（防双命名源）；对账只治「写错位/漏收」，不治「没写」（病根归因
  * 留给事件流）；四要件判定与 GATE_PASS/FAIL 语义零改动。
@@ -34,6 +46,7 @@ import { isSafeRelativeOutputPath, parseJobOps } from '@studio-next/company'
 import type { IssueRecord, TicketId } from '@studio-next/contract'
 import type { Ledger } from '@studio-next/store'
 import { reportFileName } from './output-account.ts'
+import { expectedSentinel, verifySidecarSentinelAtPath } from './sentinel.ts'
 
 // —— ② 权限前移（P3，提案 §4.3-2）——
 
@@ -115,8 +128,14 @@ export interface HarvestReconDeps {
   /**
    * 事件落账口（engine makeEvent 接线——单→岗锚单据镜像 dept/level 由此解析）；
    * 对账步只产事实，不拼事件记录（company/actor/attempt 塔在 engine）。
+   * 127-A R4：emit 词表扩 SENTINEL_MISSING/HARVEST_INVALID（REPORT_MISSING 增补面同构）。
    */
-  emit: (name: 'REPORT_MISSING' | 'HARVEST_INCOMPLETE', ticket: TicketId, attempt: number, note: string) => void
+  emit: (
+    name: 'REPORT_MISSING' | 'HARVEST_INCOMPLETE' | 'SENTINEL_MISSING' | 'HARVEST_INVALID',
+    ticket: TicketId,
+    attempt: number,
+    note: string,
+  ) => void
   /** 异常上报口（engine tick errors 面；不接=只留事件痕） */
   onProblem?: (message: string) => void
 }
@@ -131,6 +150,14 @@ export interface HarvestReconResult {
   repaired: number
   /** 哈希异/补收失败转人工数（绝不覆盖；事件已落） */
   manual: number
+  /** 127-A R4⑤：哨兵核验通过数（sidecar 三元组=期望重算） */
+  sentinelOk: number
+  /** 127-A R4⑤：SENTINEL_MISSING 落账数（欠账不重派——批示⑤） */
+  sentinelMissing: number
+  /** 127-A R4④：HARVEST_INVALID 落账数（空壳/损坏——存在+非空+非占位不过） */
+  invalid: number
+  /** 127-A R4⑥：patrol 巡查物化单计数（零收割语义——只计观测不事件化） */
+  patrolArtifacts: number
 }
 
 /** 单文件 sha256（内容哈希幂等的判定基元；读失败=undefined——调用面转人工） */
@@ -177,27 +204,105 @@ function reportedKeyOf(note: string | undefined): string | undefined {
  */
 export function runHarvestRecon(deps: HarvestReconDeps): HarvestReconResult {
   const { ledger, companyDir, emit } = deps
-  const result: HarvestReconResult = { scanned: 0, inPlace: 0, repaired: 0, manual: 0 }
+  const result: HarvestReconResult = {
+    scanned: 0,
+    inPlace: 0,
+    repaired: 0,
+    manual: 0,
+    sentinelOk: 0,
+    sentinelMissing: 0,
+    invalid: 0,
+    patrolArtifacts: 0,
+  }
+  /** 最小内容门读回（127-A R4④）：Unicode 字母/数字计数——空骨架/占位符全灭 */
+  const contentGate = (file: string): { ok: boolean; alnum: number; bytes: number } => {
+    try {
+      const buf = readFileSync(file)
+      const alnum = (buf.toString('utf8').match(/[\p{L}\p{N}]/gu) ?? []).length
+      return { ok: buf.length > 0 && alnum >= 16, alnum, bytes: buf.length }
+    } catch {
+      return { ok: false, alnum: -1, bytes: -1 }
+    }
+  }
   try {
     // 事件派生索引（单次全量扫描——与 buildEventIndex 同量级，节流拍才跑）：
     const events = ledger.queryEvents()
-    const jobIdOf = new Map<TicketId, string>() // PATROL job= 锚（首条口径与 accountJobOutput 同）
+    const anchorOf = new Map<TicketId, { jobId: string; company: string; note: string | undefined }>() // PATROL 锚（首条口径与 accountJobOutput 同）
     const gatePass = new Map<TicketId, { ts: number; note: string | undefined; attempt: number }>()
-    const reported = new Set<string>() // 既有 REPORT_MISSING recon-key（幂等去重）
+    const reported = new Set<string>() // 既有对账事件 recon-key（幂等去重——三类同键位）
     for (const e of events) {
       if (e.event === 'PATROL') {
         const m = /(?:^|;)job=([^;]+)/.exec(e.note ?? '')
-        if (m !== null && !jobIdOf.has(e.issue)) jobIdOf.set(e.issue, m[1] as string)
+        if (m !== null && !anchorOf.has(e.issue)) anchorOf.set(e.issue, { jobId: m[1] as string, company: e.company, note: e.note })
       } else if (e.event === 'GATE_PASS' && !gatePass.has(e.issue)) {
         gatePass.set(e.issue, { ts: e.ts, note: e.note, attempt: e.attempt })
-      } else if (e.event === 'REPORT_MISSING') {
+      } else if (e.event === 'REPORT_MISSING' || e.event === 'SENTINEL_MISSING' || e.event === 'HARVEST_INVALID') {
         const key = reportedKeyOf(e.note)
         if (key !== undefined) reported.add(key)
       }
     }
-    for (const [ticket, jobId] of jobIdOf) {
-      const job = ledger.getJob(jobId)
+    /**
+     * 归档在位后的读回门（127-A R4④⑤，inPlace/补收核过两处调用）：
+     *   内容门 → HARVEST_INVALID（空壳/占位）；哨兵门 → SENTINEL_MISSING（欠账不重派）。
+     * 信号支配序：内容门先（归档件本身的存废），哨兵门后（证据链核验）；单信号已转人工
+     * （conflict 类）不重复进本门——对账不叠事件（spam 防线）。
+     */
+    const postArchiveGates = (
+      ticket: TicketId,
+      anchor: { jobId: string; company: string; note: string | undefined },
+      gate: { attempt: number },
+      target: string,
+    ): void => {
+      // ④ 内容门（recon-key 含内容哈希前缀：内容改好后重扫自然换键再报）
+      const content = contentGate(target)
+      if (!content.ok) {
+        const hash12 = (sha256Of(target) ?? 'unreadable').slice(0, 12)
+        const key = `${ticket}|invalid|${hash12}`
+        if (!reported.has(key)) {
+          emit(
+            'HARVEST_INVALID',
+            ticket,
+            gate.attempt,
+            `归档件空壳/损坏（存在+非空+非占位不过）→欠账可见；src=recon;kind=invalid;recon-key=${key};bytes=${content.bytes};有效字符=${content.alnum};target=${target};处置=人工核对该槽产出（不自动重派）`,
+          )
+        }
+        result.invalid += 1
+        return // 内容已坏——哨兵门无意义（证据链的载体先没了）
+      }
+      // ⑤ 哨兵门（工单型岗——patrol 已在循环头分流；期望值从 PATROL dedup 槽复原重算）。
+      // dedup 槽形=<job_id>@<runAt>（scheduler.ts:200 同源）——取 @ 后段；他形不可解 =
+      // 哨兵面不适用（明跳过——与 sentinel.ts ticketSentinelAnchor 同口径）
+      const dedup = /(?:^|;)dedup=([^;]+)/.exec(anchor.note ?? '')
+      const raw = dedup !== null ? (dedup[1] as string) : ''
+      const at = raw.lastIndexOf('@')
+      const runAt = at > 0 ? Number.parseInt(raw.slice(at + 1), 10) : Number.NaN
+      if (!Number.isFinite(runAt) || runAt <= 0) return // 锚不可解（他源 PATROL 混入？）——哨兵面不适用
+      const expected = expectedSentinel(anchor.company, anchor.jobId, runAt)
+      const status = verifySidecarSentinelAtPath(`${target}.summary.json`, expected)
+      if (status === 'ok') {
+        result.sentinelOk += 1
+        return
+      }
+      const key = `${ticket}|sentinel|${status}`
+      if (!reported.has(key)) {
+        emit(
+          'SENTINEL_MISSING',
+          ticket,
+          gate.attempt,
+          `收割成功单 sidecar 哨兵${status === 'missing' ? '缺' : status === 'mismatch' ? '不符（抄旧槽/改值）' : '不可读'}→欠账不重派（批示⑤——补跑走新槽：jobs catchup）；src=recon;kind=sentinel;状态=${status};recon-key=${key};sidecar=${target}.summary.json;job=${anchor.jobId};run_at=${runAt}`,
+        )
+      }
+      result.sentinelMissing += 1
+    }
+    for (const [ticket, anchor] of anchorOf) {
+      const job = ledger.getJob(anchor.jobId)
       if (job === undefined) continue // job 失联（热更移除？）——无落点声明可对
+      // 127-A R4⑥/R3 丁案：巡查物化单零收割语义——计观测数即止（不事件化；诚实性由
+      // 终态结构性保证，patrol+output 组合面由装载警告治源）
+      if (((job.payload as { type?: unknown } | undefined)?.type) === 'patrol') {
+        result.patrolArtifacts += 1
+        continue
+      }
       const output = parseJobOps(job.payload).output
       if (output === undefined) continue // 岗未声明 output
       const gate = gatePass.get(ticket)
@@ -227,6 +332,7 @@ export function runHarvestRecon(deps: HarvestReconDeps): HarvestReconResult {
         const srcHash = source !== undefined ? sha256Of(source) : undefined
         if (srcHash === undefined || srcHash === targetHash) {
           result.inPlace += 1
+          postArchiveGates(ticket, anchor, gate, target) // 127-A R4：读回门（内容门+哨兵门）
         } else {
           const conflictKey = `${key}|conflict`
           if (!reported.has(conflictKey)) {
@@ -283,7 +389,9 @@ export function runHarvestRecon(deps: HarvestReconDeps): HarvestReconResult {
         const after = sha256Of(target)
         if (after === srcHash) {
           result.repaired += 1
-        } else {          result.manual += 1
+          postArchiveGates(ticket, anchor, gate, target) // 127-A R4：补收件同过读回门
+        } else {
+          result.manual += 1
           deps.onProblem?.(`对账补收 ${ticket}：回读哈希不符（${after?.slice(0, 12) ?? '读失败'}≠${srcHash.slice(0, 12)}）——现场保留待人工`)
         }
       } catch (err) {

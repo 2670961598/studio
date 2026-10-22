@@ -100,6 +100,7 @@ import { answerReloadNoCompanyDir, createHotReload, type HotReload, type HotRelo
 import { makeUlid } from '../engine/tools/id.ts'
 import { provisionDshBridgeOverlay } from '../engine/instructions-store.ts'
 import { CADENCE_SOURCE_MANIFEST, createCadenceSource, createSlaSource, SLA_SOURCE_MANIFEST } from '../engine/jobs-sources.ts'
+import { createFreshnessSource, FRESHNESS_SOURCE_MANIFEST, logJobContractWarnings } from '../engine/jobs/freshness.ts'
 import { createDefaultAssembler } from '../engine/prompt-assembly.ts'
 import type { PromptAssembler } from '../engine/prompt-assembly.ts'
 import { nextRunAt, type Scheduler } from '../engine/scheduler.ts'
@@ -225,6 +226,12 @@ export interface ServeConfig extends HrServeConfig {
    */
   sla: boolean
   /**
+   * 新鲜度窗哨兵源开关（127-A R2 批示④；缺省关）：tick 驱动越窗扫描——JOB_STALE/
+   * LATE_FIRST_RUN 事件（同岗同槽幂等、零内存态，src/engine/jobs/freshness.ts）；只落事件
+   * 不自动补跑（处置=CLI jobs catchup）。扫描轮询复用 jobPollMs。
+   */
+  freshness: boolean
+  /**
    * L1 配置热重载·自动指纹监听开关（docs/38-§2 L1 / §4 R-A；缺省开，仅 companyDir 给定
    * 时生效）：每拍轻量 stat+mtime 扫公司目录，变更且稳定 → 拍边界重装载（零进程重启）。
    * false=只剩手动通道（`studio-next reload`）。坏配置拒载保持旧态（RELOAD_CONFIG_INVALID
@@ -339,6 +346,7 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   fileWatch: false,
   cadence: false,
   sla: false,
+  freshness: false,
   reloadWatch: true,
   gateway: true,
 }
@@ -534,6 +542,9 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         break
       case 'sla':
         cfg.sla = bool(value, key)
+        break
+      case 'freshness':
+        cfg.freshness = bool(value, key)
         break
       // —— 人事同步器键组（DEV-48，docs/52-§九/§六.1/§七）——胁迫/校验细节收口在
       //    assembly/hrsync/config.ts（coerceHrServeKey——键不属 hr 面则回落本 switch）
@@ -926,6 +937,8 @@ export function buildServeRuntime(
   if (typeFlows !== undefined) {
     log(`[serve] 类型流装载：${Object.keys(typeFlows).length} 类（${Object.keys(typeFlows).join('、')}）——T 键叠缺省表（docs/18-§2.1.1）`)
   }
+  // 岗契约装载警告（127-A R3 配套，§4.1 诚实化——不阻断）：patrol 缺 T:patrol 流①＋patrol×output②
+  logJobContractWarnings(snapshot.jobs, typeFlows, log)
   // daemon 网关身份（共享活对象——reload 时 mutate ctx 三字段，署名跟随新组织）
   const identity = daemonIdentity(config, snapshot)
 
@@ -1202,6 +1215,14 @@ export function buildServeRuntime(
     )
   }
 
+  // 新鲜度窗哨兵（127-A R2）：tick 驱动扫调度表——越窗落事件；处置=CLI jobs catchup 手动补跑
+  if (config.freshness) {
+    sources.register(
+      createFreshnessSource({ ledger, clock, company: config.company, intervalMs: config.jobPollMs, heartbeatIssue: engineConfig.heartbeatIssue, log }),
+      FRESHNESS_SOURCE_MANIFEST,
+    )
+  }
+
   log(`[serve] 唤起源注册表：${sources.list().map((e) => e.source.name).join('、') || '（空）'}——emit 统一进 engine.ingest（22-§一 源零直驱）`)
 
   // —— L1 配置热重载执行体（docs/38-§2 L1 / §4 R-A；companyDir 给定时装配）——
@@ -1257,6 +1278,8 @@ export function buildServeRuntime(
         //（resolveTicketFlow 同函数；跨边界遇未知态=既有 L1 热重载纪律 NOOP_UNKNOWN_STATE，
         //  状态权威在平台侧、不猜不动）；无 workflows=flows:undefined=回内置缺省表
         const nextTypeFlows = flowsFromWorkflows(next.workflows)
+        // 岗契约装载警告（127-A）：热重载 apply 同面——拍边界随新快照重算，不阻断
+        logJobContractWarnings(next.jobs, nextTypeFlows, log, '（reload）')
         engine.applyCompanyUpdate({
           people: next.people,
           assembler: makeAssembler(),

@@ -92,25 +92,20 @@ function cronShapeOk(expr: string): boolean {
  *   id          → job_id                原样（必填非空；跨司唯一性归 store jobs 表主键口径【M4-⑧】）
  *   （无）      → company               = company.slug 本司注入（D9 挂公司目录，快照即本司）
  *   dept        → dept                  原样；缺省=根部门 path（首个 parent:null，兜底 departments[0]）【M4-①】
- *   cron        → cron                  原样；**与 triggers.cadence 恰给其一**【M5-⓪】（自定义 cron 或
- *                                      档位二选一——docs/35-§3「节奏档位枚举……不写死表达式」）
- *   triggers.cadence/at → cron 展开     cron=expandCadence(tier, at)（装载期即展开成真 cron——
- *                                      contract ScheduledJob.cron 必填；缺省时刻表【M5-①】见 cadence.ts）
+ *   cron        → cron                  原样；**与 triggers.cadence 恰给其一**【M5-⓪】（档位二选一，docs/35-§3）
+ *   triggers.cadence/at → cron 展开     cron=expandCadence(tier, at)（装载期即展开；缺省时刻表【M5-①】见 cadence.ts）
  *   triggers.*  → payload.cadence_tier/_at  档位原样留观测（daemon cadence 源选岗面）【M5-③】
- *   sla         → payload.sla           {first_ack_ms, resolve_hint_ms}——"15m"/"4h" 形时长解析
- *                                      为 ms【M5-⑤】；执行面=daemon SLA 计时器源（first-ack 产
- *                                      escalate 意图；resolve-hint 本刀只解析）
- *   escalate    → payload.escalate      [{after_ms, unacked}]——升级链档（notify 目标原样串）
- *                                      【M5-⑥】；语义执行（notify 链发送）归 notify 端口后续刀
+ *   sla         → payload.sla           {first_ack_ms, resolve_hint_ms}——"15m"/"4h"→ms【M5-⑤】；执行面
+ *                                      =daemon SLA 计时器源（first-ack 产 escalate 意图；resolve-hint 本刀只解析）
+ *   grace       → payload.grace_ms      新鲜度宽限逐岗声明（"30m"/"2h"→ms，127-A R2 批示④；
+ *                                      分档缺省之上逐岗可覆盖——解析序与缺省表见 daemon freshness 源）
+ *   escalate    → payload.escalate      [{after_ms, unacked}]——升级链档【M5-⑥】；notify 链发送归 notify 端口后续刀
  *   outputs     → payload.outputs       string[] 产出物清单（报表模板名；模板绑定归报表面后续刀）【M5-④】
  *   role        → role                  原样（RoleName 开放串，不设枚举）；缺省=type（岗位缺省随任务类型兜底）【M4-②】
- *   type        → payload.type          任务类型不进顶层，随 payload 透传（与 daemon demo 岗
- *                                      payload={type,…} 同形；report|audit|…自由扩展不写死）【M4-④】
+ *   type        → payload.type          任务类型不进顶层，随 payload 透传（与 daemon demo 岗 payload={type,…} 同形）【M4-④】
  *   output      → payload.output        产出落点随 payload 透传（报表命名约定见 04-§三）【M4-④】
- *   level       → level                 缺省=company.level（岗未标级即随公司级）【M4-⑤】；界 1-9 同
- *                                      store JobRecord 与 04-§四 agent 等级
- *   model_tier  → model_tier            冻结枚举 'high'|'mid'|'low'（contract ModelTier['tier']）；
- *                                      缺省='low'（定时岗缺省低档省成本）【M4-⑥】
+ *   level       → level                 缺省=company.level（岗未标级即随公司级）【M4-⑤】；界 1-9 同 store JobRecord
+ *   model_tier  → model_tier            冻结枚举 'high'|'mid'|'low'（contract ModelTier['tier']）；缺省='low'（定时岗省成本）【M4-⑥】
  *   budget_cap  → budget_cap={usd:n}    yaml 裸数（USD/次）→ Money 形状变换【M4-⑦】；缺省=不设帽
  *
  *   payload 组装：{type?, output?, cadence_tier?, cadence_at?, outputs?, sla?, escalate?} 只收已
@@ -181,6 +176,8 @@ const OrgJobSchema = z
         message: 'sla 段至少给 first-ack / resolve-hint 其一（docs/35-§3）',
       })
       .optional(),
+    /** → payload.grace_ms（可选——127-A R2 批示④；新鲜度宽限逐岗声明，时长形态闸，ms 变换在装载） */
+    grace: DurationSchema.optional(),
     /** → payload.escalate（可选——M5-⑥；升级链档，notify 语义执行归 notify 端口后续刀） */
     escalate: z
       .array(z.strictObject({ after: DurationSchema, unacked: z.string().min(1) }))
@@ -377,6 +374,7 @@ function toJobs(org: OrgConfig): ScheduledJob[] {
               ...(j.escalate !== undefined
                 ? { escalate: j.escalate.map((e) => ({ after_ms: parseJobDuration(e.after) as number, unacked: e.unacked })) } // M5-⑥
                 : {}),
+              ...(j.grace !== undefined ? { grace_ms: parseJobDuration(j.grace) as number } : {}), // 127-A R2 批示④
             },
           }
         : {}),
@@ -384,7 +382,7 @@ function toJobs(org: OrgConfig): ScheduledJob[] {
   })
 }
 
-/** ops 段存在性（payload 组装前置：type/output 既有 + cadence/outputs/sla/escalate 新段——全缺则不设 payload） */
+/** ops 段存在性（payload 组装前置：type/output 既有 + cadence/outputs/sla/escalate/grace 段——全缺则不设 payload） */
 function hasOpsPayload(
   j: {
     type?: string | undefined
@@ -392,6 +390,7 @@ function hasOpsPayload(
     outputs?: string[] | undefined
     triggers?: { cadence?: string | undefined; at?: string | undefined } | undefined
     escalate?: Array<{ after: string; unacked: string }> | undefined
+    grace?: string | undefined
   },
   sla?: { 'first-ack'?: string | undefined; 'resolve-hint'?: string | undefined } | undefined,
 ): boolean {
@@ -401,7 +400,8 @@ function hasOpsPayload(
     j.outputs !== undefined ||
     j.triggers?.cadence !== undefined ||
     sla !== undefined ||
-    j.escalate !== undefined
+    j.escalate !== undefined ||
+    j.grace !== undefined
   )
 }
 

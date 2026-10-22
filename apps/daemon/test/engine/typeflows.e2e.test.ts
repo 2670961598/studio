@@ -175,9 +175,11 @@ beforeAll(async () => {
   const companyDir = path.join(root, 'company')
   const init = await initCompany({ slug: 'demo-corp', targetDir: companyDir })
   expect(init.gitCommit).toBeTruthy()
-  // 公司包改动=纯配置：只改 org-config.yaml 字符串（追加 workflows 段），不动任何代码
+  // 公司包改动=纯配置：只改 org-config.yaml 字符串（换 workflows 段——模板自带 T:patrol
+  // 段拆掉，本包语料 spike/defect 为唯一 workflows 面；127-A R3），不动任何代码
   const files = await readDirectoryFiles(companyDir)
-  files['org-config.yaml'] = `${files['org-config.yaml'] ?? ''}${WORKFLOWS_YAML}`
+  const base = (files['org-config.yaml'] ?? '').replace(/\n# 单据类型流声明[\s\S]*?(?=\n# YouTrack 账号锚点映射)/, '')
+  files['org-config.yaml'] = `${base}${WORKFLOWS_YAML}`
   const mounted = loadCompanyDirectory(files)
   if (!mounted.ok) throw new Error(`公司目录挂载失败：${mounted.issues.map((i) => `${i.file}:${i.line} ${i.rule}`).join('；')}`)
   snapshot = mounted.snapshot
