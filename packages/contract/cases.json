@@ -1327,6 +1327,288 @@
           "converged": true
         }
       }
+    },
+    {
+      "id": "C-mj-001",
+      "domain": "mj",
+      "docs": "17-§6",
+      "title": "三闸全过：pick 裁决（enum 候选集内）采纳",
+      "input": {
+        "raw": "{\"op\":\"pick\",\"params\":{\"target\":\"KT-102\"}}",
+        "vocab": {
+          "ops": [
+            {
+              "op": "pick",
+              "params": {
+                "target": {
+                  "kind": "enum",
+                  "values": [
+                    "KT-101",
+                    "KT-102",
+                    "KT-103"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "out": {
+          "op": "pick",
+          "params": {
+            "target": "KT-102"
+          }
+        }
+      }
+    },
+    {
+      "id": "C-mj-002",
+      "domain": "mj",
+      "docs": "17-§6",
+      "title": "三闸全过：order 裁决（string-list 域）采纳",
+      "input": {
+        "raw": "{\"op\":\"order\",\"params\":{\"keys\":[\"KT-101\",\"KT-103\",\"KT-102\"]}}",
+        "vocab": {
+          "ops": [
+            {
+              "op": "order",
+              "params": {
+                "keys": {
+                  "kind": "string-list"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "out": {
+          "op": "order",
+          "params": {
+            "keys": [
+              "KT-101",
+              "KT-103",
+              "KT-102"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "C-mj-003",
+      "domain": "mj",
+      "docs": "17-§6",
+      "title": "三闸全过：append 裁决（开放 string 域）采纳",
+      "input": {
+        "raw": "{\"op\":\"append\",\"params\":{\"note\":\"队列积压：请复核 KT-101 的阻塞面\"}}",
+        "vocab": {
+          "ops": [
+            {
+              "op": "append",
+              "params": {
+                "note": {
+                  "kind": "string"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "out": {
+          "op": "append",
+          "params": {
+            "note": "队列积压：请复核 KT-101 的阻塞面"
+          }
+        }
+      }
+    },
+    {
+      "id": "C-mj-004",
+      "domain": "mj",
+      "docs": "17-§6",
+      "title": "闸①：前后缀噪声（解说文字包裹 JSON）拒收——不抢救",
+      "input": {
+        "raw": "好的，我的判断是：{\"op\":\"pick\",\"params\":{\"target\":\"KT-102\"}}",
+        "vocab": {
+          "ops": [
+            {
+              "op": "pick",
+              "params": {
+                "target": {
+                  "kind": "enum",
+                  "values": [
+                    "KT-101",
+                    "KT-102",
+                    "KT-103"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "LLM_FAIL",
+          "subcause": "judge/bad-json"
+        }
+      }
+    },
+    {
+      "id": "C-mj-005",
+      "domain": "mj",
+      "docs": "17-§6",
+      "title": "闸①：顶层未知键（夹带 confidence）拒收——只接受 {op,params}",
+      "input": {
+        "raw": "{\"op\":\"pick\",\"params\":{\"target\":\"KT-102\"},\"confidence\":0.9}",
+        "vocab": {
+          "ops": [
+            {
+              "op": "pick",
+              "params": {
+                "target": {
+                  "kind": "enum",
+                  "values": [
+                    "KT-101",
+                    "KT-102",
+                    "KT-103"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "LLM_FAIL",
+          "subcause": "judge/bad-json"
+        }
+      }
+    },
+    {
+      "id": "C-mj-006",
+      "domain": "mj",
+      "docs": "17-§6",
+      "title": "闸②：op 不在冻结词表（delegate=越权执行语义）拒收——模型无词表扩展权",
+      "input": {
+        "raw": "{\"op\":\"delegate\",\"params\":{\"target\":\"KT-102\"}}",
+        "vocab": {
+          "ops": [
+            {
+              "op": "pick",
+              "params": {
+                "target": {
+                  "kind": "enum",
+                  "values": [
+                    "KT-101",
+                    "KT-102",
+                    "KT-103"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "LLM_FAIL",
+          "subcause": "judge/op-not-in-vocab"
+        }
+      }
+    },
+    {
+      "id": "C-mj-007",
+      "domain": "mj",
+      "docs": "17-§6",
+      "title": "闸③：enum 值在候选集外（幻觉单号）拒收——候选集=上下文候选，语义细化面",
+      "input": {
+        "raw": "{\"op\":\"pick\",\"params\":{\"target\":\"KT-999\"}}",
+        "vocab": {
+          "ops": [
+            {
+              "op": "pick",
+              "params": {
+                "target": {
+                  "kind": "enum",
+                  "values": [
+                    "KT-101",
+                    "KT-102",
+                    "KT-103"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "LLM_FAIL",
+          "subcause": "judge/params-domain"
+        }
+      }
+    },
+    {
+      "id": "C-mj-008",
+      "domain": "mj",
+      "docs": "17-§6",
+      "title": "闸③：参数未知键（模型造键 why）拒收——未知键拒绝=无词表扩展权（160-§6.1）",
+      "input": {
+        "raw": "{\"op\":\"pick\",\"params\":{\"target\":\"KT-102\",\"why\":\"最紧急\"}}",
+        "vocab": {
+          "ops": [
+            {
+              "op": "pick",
+              "params": {
+                "target": {
+                  "kind": "enum",
+                  "values": [
+                    "KT-101",
+                    "KT-102",
+                    "KT-103"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "LLM_FAIL",
+          "subcause": "judge/params-domain"
+        }
+      }
+    },
+    {
+      "id": "C-evt-006",
+      "domain": "evt",
+      "docs": "17-§3",
+      "title": "JUDGE_ 前缀族事件名（枚举外、正则通道）放行——P6 增补的正例（160-§6.5）",
+      "input": {
+        "id": "01BX5ZZKBKACTAV9WEVGEMMVRZ",
+        "ts": 1790000120000,
+        "company": "demo-corp",
+        "issue": "mj-pick-next",
+        "event": "JUDGE_FALLBACK",
+        "actor": "daemon:micro-judge",
+        "attempt": 1,
+        "level": 1,
+        "dept": "framework",
+        "tokens": {
+          "input": 0
+        },
+        "note": "reason=bad-json site=mj-pick-next"
+      },
+      "expected": {
+        "out": {
+          "ok": true
+        }
+      }
     }
   ]
 }

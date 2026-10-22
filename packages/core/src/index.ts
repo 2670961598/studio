@@ -81,6 +81,12 @@ export * from './hrsync.ts'
 // 出站密钥扫描/脱敏（DEV-48，docs/52-§十二 + AGENTS 纪律 6「出站内容过密钥扫描」）
 export * from './secrets.ts'
 
+// micro-judge 原语·纯面（studio-dev-160 §6.1，单 164：词表+三道闸 parseJudgeVerdict）
+export * from './judge.ts'
+
+// micro-judge 原语·策略面（studio-dev-160 §6.2/§6.4：三帽/降级枚举/按址熔断/拍闸/roles 闸）
+export * from './judge-gates.ts'
+
 /** 包名常量 */
 export const PACKAGE_NAME = '@studio-next/core'
 

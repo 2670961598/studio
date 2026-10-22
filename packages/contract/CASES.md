@@ -46,8 +46,9 @@
 |---|---|---|
 | `meta` | contract 自身（runner 自证） | 机制本身 |
 | `dir` | company 校验器 | 语义（规则命中）；行号定位由 company 单测负责 |
-| `evt` / `rpt` | contract 自身（src/schemas/，M1.2 已落：evt 5 条 + rpt 3 条） | 事件记录/REPORT+summary 格式 |
+| `evt` / `rpt` | contract 自身（src/schemas/，M1.2 已落：evt 6 条 + rpt 3 条） | 事件记录/REPORT+summary 格式（evt 6=P6 增补 JUDGE_ 前缀族正例） |
 | `deps` | company 依赖清单引擎（DEV-26 已落：17 条——解析/绑定求值/版本并集/决策纯面/指纹） | 语义（43-§四+§十5-8 / 51-D）；隔离根安装/registry+log+confirm/热重载 IO 面由 company 单测负责 |
+| `mj` | core 判定面（studio-dev-164 已落：8 条——parseJudgeVerdict 三道闸） | 语义（160-§6.1：严格 JSON 闸/op 枚举闸/params 域闸+严格键集）；三帽/熔断/拍闸策略面与调用库 IO 面由 core/daemon 单测负责 |
 | `exe` / `inv` / `mdl` / `gw` | 各泳道 | 端口冒烟 case |
 | `plat` | 各平台实现（yt/localfile 已接线，taiga 挂到期——见下方 v1 语义说明） | **错误分类一致性**（102-P2-①：只断言 category 全等）；端口冒烟正例归 P1 批次未兑现 |
 
@@ -128,6 +129,30 @@ docs/04-§二 契约全貌；实现 packages/company/src/multifile.ts）。`dir`
   （真机 400 `Duplicated name` 二写读回吸收——B 轴的实现体）归 taiga 包单测
   `fields.test.ts`（FakeTaiga 脚本化 400 形状对齐真机实测，S3 证据 docs/32-§九），
   不进契约面——机制是实现自由度，收敛是契约冻结面。
+
+
+### mj 域 v1 语义说明（studio-dev-160 提案 §6.1/§6.6-C1，制作人 2026-10-22 全批；单 164 落 case）
+
+> micro-judge 判断调用的**裁决解析语义**契约面：subject=core 纯函数 `parseJudgeVerdict`
+> （packages/core/src/judge.ts；core 测试内接线 `runCases(manifest, { mj: subject })`）。
+> 策略面（三帽/按址熔断/拍闸）与调用库 IO 面（合成 brief/一次性工作区/落账/事件）不进
+> 契约——归 core（judge-gates.test.ts）/daemon（engine/judge/）单测。
+
+- **输入路由**：case 输入 `{raw, vocab}`——raw=模型原始输出串（不预处理：围栏/解说
+  文字/前后缀噪声原样进），vocab=调用方冻结词表（结构形 `{ops:[{op, params:{键:域}}]}`，
+  enum 域带 values 候选集）。
+- **三道闸语义**（160-§6.1 冻结）：闸① `judge/bad-json`——raw 必须解析为单一对象
+  `{op:string, params:object}`，**前后缀噪声与顶层未知键拒收**（不抢救：判断输出是
+  机器消费面）；闸② `judge/op-not-in-vocab`——op ∈ 词表（模型无词表扩展权）；
+  闸③ `judge/params-domain`——params 键集**恰等**词表键集（未知键=造键，缺键=半成品）
+  且逐键过域（enum ∈ 候选集=上下文候选的语义细化面 / string 非空 / string-list
+  全非空串）。
+- **err 通道全给 subcause**（区别于 plat 域只断 category）：mj 是单实现（core 判定面），
+  subcause 即三道闸的闸位标识，跨闸漂移=语义漂移，契约直接钉死。
+- **词表语义白名单**（§8-S10：选择/排序/过滤——pick/order/front/append/collect/skip）
+  是**注册闸**（assertJudgeVocab，CONFIG_INVALID）不是解析闸，不进本域 case；白名单
+  断言归 core 单测。
+- **反证纪律**：core 测试内含「改坏期望必红」反证（同 deps 域先例——防全绿假象）。
 
 
 ## 运行方式
