@@ -257,6 +257,51 @@ export function todoQueueDiffers(prev: string | undefined, rows: readonly TodoQu
   return prev !== JSON.stringify(rows)
 }
 
+// ————————————————————————— 峰值优先级延拍落地（129-D，studio-dev-181） —————————————————————————
+
+/** 延拍登记条目（引擎内存态）：priority=物化拍意图峰值钳后；since=登记时刻（防膨胀锚） */
+export interface PendingPriorityEntry {
+  priority: number
+  since: number
+}
+
+/** 延拍落地入参（纯函数——引擎拍内单写者纪律不变） */
+export interface SettlePendingPriorityInput {
+  carry: QueueCarry
+  pending: Map<TicketId, PendingPriorityEntry>
+  members: readonly QueueMemberSource[]
+  /** 镜像行适配面（成员资格判负用——过派发位/终态的 pending 失效） */
+  mirrorMemberOf: (ticket: TicketId) => QueueMemberSource | undefined
+  flowResolve: (member: QueueMemberSource) => StateFlow | undefined
+  now: number
+  staleAfterMs: number
+}
+
+/**
+ * 峰值优先级延拍落地（129-D）：警戒单物化拍不在拍首活集（成员=镜像∩拍首活集缺位），
+ * 直接触钟会被投影 GC 当拍删条——故物化拍只记 pending，成员资格落地拍并入携带峰
+ * （129-B 机制原样：取 max 不降峰）。离队（过派发位/终态）即失效；超时兜底删
+ * （仅警戒单入表——量小，防膨胀双保险）。
+ */
+export function settlePendingQueuePriority(input: SettlePendingPriorityInput): void {
+  if (input.pending.size === 0) return
+  const memberIds = new Set(input.members.map((m) => m.id))
+  for (const [ticket, pending] of [...input.pending]) {
+    if (memberIds.has(ticket)) {
+      const entry = input.carry.get(ticket)
+      if (entry !== undefined) entry.priority = clampPriority(Math.max(entry.priority, pending.priority))
+      input.pending.delete(ticket)
+      continue
+    }
+    const mirror = input.mirrorMemberOf(ticket)
+    if (mirror !== undefined && queueMembership(mirror, input.flowResolve(mirror)) === false) {
+      input.pending.delete(ticket) // 已离队（过派发位/终态）——峰值随出队失效
+    } else if (input.now - pending.since > input.staleAfterMs) {
+      input.pending.delete(ticket) // 兜底防膨胀（平台真删除等孤儿面）
+    }
+  }
+}
+
 // ————————————————————————— daemon.yaml 扁平键解析 —————————————————————————
 
 /**
@@ -296,3 +341,21 @@ export function parsePinnedTickets(raw: string): readonly string[] {
 
 /** 本单常量出口（serve 缺省装配与测试同源） */
 export { DEFAULT_QUEUE_AGE_STEP_MS }
+
+/**
+ * daemon.yaml 队列面扁平键装配（129-§6.2；serve 装配缝）：人闸覆盖表+置顶单集+年龄
+ * 步长 → EngineConfig 结构片（coerce 阶段已验形态；坏覆盖表此处抛 CONFIG_INVALID 拒启动）。
+ */
+export function queueServeOverrides(raw: {
+  personInflightOverrides?: string
+  pinnedTickets?: string
+  queueAgeStepMs?: number
+}): { queueAgeStepMs?: number; personInflightOverrides?: Record<string, number>; pinnedTickets?: readonly string[] } {
+  const overrides = raw.personInflightOverrides !== undefined ? parsePersonInflightOverrides(raw.personInflightOverrides) : undefined
+  const pinned = raw.pinnedTickets !== undefined ? parsePinnedTickets(raw.pinnedTickets) : undefined
+  return {
+    ...(raw.queueAgeStepMs !== undefined ? { queueAgeStepMs: raw.queueAgeStepMs } : {}),
+    ...(overrides !== undefined && overrides.size > 0 ? { personInflightOverrides: Object.fromEntries(overrides) } : {}),
+    ...(pinned !== undefined && pinned.length > 0 ? { pinnedTickets: pinned } : {}),
+  }
+}

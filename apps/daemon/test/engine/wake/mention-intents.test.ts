@@ -367,11 +367,11 @@ describe('消费门：schedule 零回归 + escalate 槽位（S8）', () => {
     s.ledger.close()
   })
 
-  it('escalate 仍明报不支持（槽位归刀B notify 端口接线单，S8）', async () => {
+  it('escalate 槽位已开（129-D）但 sla 类 payload 形状不符仍明报丢弃（notify 发送归刀B，S8）', async () => {
     const s = buildEngineStack('escalate')
     s.engine.ingest([{ kind: 'escalate', company: 'demo', source: 'sla-timer', dedupKey: 'esc-1' }])
     const report = await s.engine.tick()
-    expect(report.errors.join('\n')).toContain("kind='escalate' 不支持")
+    expect(report.errors.join('\n')).toContain('escalate 意图 payload 形状不符')
     expect(await s.platform.issues.list({})).toHaveLength(0)
     s.ledger.close()
   })

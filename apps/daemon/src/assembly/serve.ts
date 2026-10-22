@@ -92,6 +92,7 @@ import {
 } from '../engine/engine.ts'
 import { runEvolveStartupSelfCheck, type EvolveSelfCheckReport, type FrozenAsset } from '../evolve/evolve-guard.ts'
 import { mergeDataChangeRoutes } from '../engine/intents/taxonomy.ts' // 129-C：org-config hooks.data_change.routes（规范位）+ daemon.yaml dataChangeRoutes（逃生位）合并
+import { createCostNotifyOutlet, mergeCostThresholdDefaults } from '../engine/intents/escalate.ts' // 129-D：cost-threshold 缺省路由合并+notify 出口（刀B 登记位）
 import { wirePeopleChangeSource } from '../engine/hrsync/people-change-source.ts' // 129-C：people-change 源注册件（hrPeopleWatch 开时挂 hr-sync 分类器出口）
 import { createFakeAdapter } from '../engine/fakes.ts'
 import { buildServeDirectiveDeps, parseWhitelistSpec } from '../engine/directive/index.ts'
@@ -210,6 +211,8 @@ export interface ServeConfig extends HrServeConfig {
   matrixRoles?: string
   /** data-change 路由表登记位（129-A；分号对 变更类型=工号，如 入=HR-1;升=PLN-1；org-config 接线归拆单 C） */
   dataChangeRoutes?: string
+  costThresholdTarget?: string // 129-D 缺省指派逃生位（org-config hooks.cost_threshold.target 规范位）
+  costThresholdLane?: string // 129-D 泳道逃生位（org-config hooks.cost_threshold.lane 规范位）
   /** 轮询间隔 ms（缺省 3000——源节奏；@studio-next/matrix adapter 同名缺省） */
   matrixPollMs?: number
   /** 增量 sync 长轮询超时 ms（缺省 25000——空闲期挂连接，A-4；基线拉取恒 0） */
@@ -427,7 +430,7 @@ export function parseDaemonConfig(text: string): ServeConfig {
 // daemon.yaml 标量强制件拆在 assembly/serveconfig/coerce.ts（129-A 接线时腾位，零行为漂移）
 import { bool, num, str } from './serveconfig/coerce.ts'
 // 员工待办队列配置解析件（129-§6.2，studio-dev-167 单B——engine/todoqueue 域件同源）
-import { parsePersonInflightOverrides, parsePinnedTickets } from '../engine/todoqueue/queue.ts'
+import { parsePersonInflightOverrides, queueServeOverrides } from '../engine/todoqueue/queue.ts'
 import { crossValidateMatrixChannels, reEnsureChannels, startChannelSupply, wireRoomFace } from './channels/channels.ts'
 
 function coerceServeConfig(raw: Record<string, string | number | boolean>): ServeConfig {
@@ -562,6 +565,12 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         break
       case 'dataChangeRoutes':
         cfg.dataChangeRoutes = str(value, key)
+        break
+      case 'costThresholdTarget':
+        cfg.costThresholdTarget = str(value, key)
+        break
+      case 'costThresholdLane':
+        cfg.costThresholdLane = str(value, key)
         break
       case 'matrixPollMs':
         cfg.matrixPollMs = num(value, key)
@@ -1038,13 +1047,6 @@ export function buildServeRuntime(
 
   // data-change 路由登记位（129-A）：坏形态 CONFIG_INVALID 明报拒启动（解析件在 engine/intents/taxonomy.ts）
   const dataChangeRoutes = mergeDataChangeRoutes(snapshot.hooks, parseDataChangeRoutes(config.dataChangeRoutes)) // 129-C：org-config 规范位+daemon.yaml 逃生位逐键覆盖；合并空=undefined（路由闸 fail-closed 不变）
-  // 人闸覆盖表解析（129-§6.2-R3，studio-dev-167 单B）：coerce 阶段已验过形态，此处取
-  // Map 注入引擎（缺省不注入=表空，人闸走 maxInflightPerPerson 缺省帽）
-  const personInflightOverrides = config.personInflightOverrides !== undefined
-    ? parsePersonInflightOverrides(config.personInflightOverrides)
-    : undefined
-  // 置顶单集解析（129-§6.2-R4）：逗号清单→数组（引擎侧每拍现算 Set——改配置即刻生效）
-  const pinnedTickets = config.pinnedTickets !== undefined ? parsePinnedTickets(config.pinnedTickets) : undefined
 
   const engineConfig: EngineConfig = {
     ...ENGINE_CONFIG_DEFAULTS,
@@ -1055,6 +1057,7 @@ export function buildServeRuntime(
     aiwsRoot,
     defaultPersonId: (snapshot.people[0] as PersonRef | undefined)?.id ?? '',
     ...(dataChangeRoutes !== undefined ? { dataChangeRoutes } : {}), // 129-A 路由登记位（未配=闸面 fail-closed）
+    ...mergeCostThresholdDefaults(snapshot.hooks, config.costThresholdTarget, config.costThresholdLane), // 129-D 缺省路由登记位（org 规范位+daemon 逃生位整体覆盖；全缺=引擎 fail-closed）
     deptFallback: snapshot.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback,
     defaultLane: snapshot.departments[0]?.lanes[0] ?? ENGINE_CONFIG_DEFAULTS.defaultLane,
     limits: {
@@ -1063,12 +1066,7 @@ export function buildServeRuntime(
       // 人闸缺省帽（129-§6.2-R3）：缺省不注入=引擎兜底 1（串行）；批量执行岗走覆盖表
       ...(config.maxInflightPerPerson !== undefined ? { maxInflightPerPerson: config.maxInflightPerPerson } : {}),
     },
-    // 员工待办队列面（129-§6.2，studio-dev-167 单B）：步长/覆盖表/置顶集/排序器注入位
-    ...(config.queueAgeStepMs !== undefined ? { queueAgeStepMs: config.queueAgeStepMs } : {}),
-    ...(personInflightOverrides !== undefined && personInflightOverrides.size > 0
-      ? { personInflightOverrides: Object.fromEntries(personInflightOverrides) }
-      : {}),
-    ...(pinnedTickets !== undefined && pinnedTickets.length > 0 ? { pinnedTickets } : {}),
+    ...queueServeOverrides(config), // 队列面三键（129-§6.2 单B：步长/人闸覆盖表/置顶集——解析件 todoqueue/queue.ts）
     stallAfterMs: config.stallAfterMs,
     stallKillAfterAlarms: config.stallKillAfterAlarms,
     harvestSliceMs: config.harvestSliceMs,
@@ -1152,6 +1150,8 @@ export function buildServeRuntime(
     people: snapshot.people, departments: snapshot.departments, // 130-P2（studio-dev-173）：部门索引随快照注入——父单立案 leader 解析
     // cost_guard 段（132-§6.4 单C）：闸四 hard 线联动（R6）的引擎配置源；段不声明=不注入=面关
     ...(snapshot.costGuard !== undefined ? { costGuard: snapshot.costGuard } : {}),
+    // 成本警戒 notify 出口（129-D 181）：v0 接 log 行（刀B IM 链登记位——结构化交接件零重解析）
+    notify: createCostNotifyOutlet(log),
     ...(catalog !== undefined ? { catalog } : {}),
     // 批示归一层（studio-dev-171，docs/18-§2.5）：恒注入（装配缝=engine/directive/
     // serve-config.ts——leader 表随快照，热重载整组换）
