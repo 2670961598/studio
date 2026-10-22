@@ -143,6 +143,8 @@ export interface JobOps {
   output?: string
   sla?: JobOpsSla
   escalate?: JobOpsEscalateTier[]
+  /** 127-A R2：新鲜度宽限逐岗声明（grace_ms）——daemon freshness 源消费 */
+  grace_ms?: number
 }
 
 /**
@@ -165,6 +167,7 @@ export function parseJobOps(payload: unknown): JobOps {
     out.outputs = p.outputs as string[]
   }
   if (typeof p.output === 'string' && p.output !== '') out.output = p.output
+  if (typeof p.grace_ms === 'number' && p.grace_ms > 0) out.grace_ms = p.grace_ms // 127-A R2 批示④
   const sla = p.sla
   if (typeof sla === 'object' && sla !== null && !Array.isArray(sla)) {
     const s = sla as Record<string, unknown>

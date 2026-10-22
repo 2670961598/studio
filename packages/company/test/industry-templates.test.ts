@@ -99,7 +99,7 @@ describe.each(PACKAGES)('DEV-30 · 行业模板包 $dir（docs/43-§三）', (pk
       const patrol = byId.get('net-site-patrol')
       expect(patrol?.cron).toBe('*/10 * * * *')
       expect(patrol?.payload?.type).toBe('patrol')
-      expect(patrol?.payload?.output).toBe('reports/研发部/')
+      expect(patrol?.payload?.output).toBeUndefined() // 127-A R3：patrol 不声明 output（结构性零产出）
       expect(patrol?.payload?.sla?.first_ack_ms).toBe(10 * 60_000)
       const daily = byId.get('net-growth-daily')
       expect(daily?.cron).toBe('30 18 * * *') // daily@18:30 展开形态
@@ -107,6 +107,7 @@ describe.each(PACKAGES)('DEV-30 · 行业模板包 $dir（docs/43-§三）', (pk
       expect(daily?.payload?.cadence_at).toBe('18:30')
       expect(daily?.payload?.outputs).toEqual(['daily-growth-report'])
       expect(daily?.payload?.sla?.resolve_hint_ms).toBe(4 * 3_600_000)
+      expect(daily?.payload?.grace_ms).toBe(2 * 3_600_000) // 127-A R2：grace → payload.grace_ms
     } else {
       const smoke = byId.get('game-build-smoke')
       expect(smoke?.cron).toBe('0 9 * * 1-5')

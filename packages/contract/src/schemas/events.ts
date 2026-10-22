@@ -21,6 +21,7 @@
  *     注记同批）：+`FOREIGN_KNOWN`（州表卫生白名单层：已知外来态（org-config
  *     `yt.known_foreign_states`）不升 ESCALATE UNKNOWN_STATE，降为观察级事件每单每态
  *     一条；未声明新漂移仍 ESCALATE——负对照保护）→ 26 具体名 + 3 前缀族 = 29 类。
+ *   - 127-A 增补（同上批）：+JOB_STALE/LATE_FIRST_RUN/SENTINEL_MISSING/HARVEST_INVALID（R2×2+R1/R4）→ 30 具体名 + 3 前缀族 = 33 类。
  *   - tokens 四桶 = F2-04 冻结列名 input/output/cache_read/cache_creation（互斥桶，
  *     至少其一出现）。kernel.TokenCounts 是 executor 归一化层的三字段口径，不用于台账。
  *   - 拟稿待批（docs 未细化）：attempt 最小值取 1（首次尝试=1）；level 取 1..9
@@ -57,7 +58,7 @@ export const UlidSchema = z
 
 // —— 事件名：冻结枚举 + 前缀族双通道（17-§3）——
 
-/** 26 个具体事件名（17-§3 冻结清单 23 项，序即文档序；+P3 增补 2 项——studio-dev-100 §6.2-4 批示；+127-C 增补 1 项——studio-dev-127 §4.7/§4.8 批示） */
+/** 30 个具体事件名（17-§3 冻结清单 23 项+P3 增补 2 项+127-C 增补 1 项+127-A 增补 4 项——序即文档序） */
 export const EVENT_NAMES = [
   'DISPATCH',
   'GATE_PASS',
@@ -87,6 +88,11 @@ export const EVENT_NAMES = [
   'HARVEST_DENIED', // 收账面不可读（E12 chmod 类）：stat 兜底不静默（权限前移后的残险网）
   // —— 127-C 州表卫生（studio-dev-127 提案 §4.7/§4.8，2026-10-22 制作人全批，SCHEMA_EVOLVE 通道——docs/17-§3 注记）——
   'FOREIGN_KNOWN', // 已知外来态（yt.known_foreign_states 白名单）：观察级替代 ESCALATE UNKNOWN_STATE（每单每态一条）；未声明新漂移仍 ESCALATE（负对照保护）
+  // —— 127-A 定时岗收割契约（studio-dev-127 §4.8，制作人 2026-10-22 全批）——
+  'JOB_STALE', // R2 新鲜度：now>next_run_at+grace(+DST 豁免)——四元组分诊 note（红队 R2-3）
+  'LATE_FIRST_RUN', // R2 新鲜度·首跑面：同判据但 last_run_at 空（配置坏≠跑了没产出）
+  'SENTINEL_MISSING', // R1 哨兵：收割成功单 sidecar 哨兵缺/不符——欠账不重派（批示⑤）
+  'HARVEST_INVALID', // R4 读回门：output 落点空壳/损坏（存在+非空+非占位不过）
 ] as const
 
 /** 前缀族：网关动作 / 报表产物 / 判断调用（17-§3 `GW_*`/`REPORT_*`；P6 `JUDGE_*`——studio-dev-160 §6.5） */

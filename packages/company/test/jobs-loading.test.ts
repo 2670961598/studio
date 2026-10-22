@@ -219,7 +219,8 @@ describe('模板 jobs 段自检（init 链路回归面）', () => {
         level: 2,
         model_tier: 'low',
         budget_cap: { usd: 1 },
-        payload: { type: 'patrol', output: 'reports/工程部/' },
+        // 127-A R3：patrol 不再声明 output（结构性零产出——巡逻纪要随事件留痕）
+        payload: { type: 'patrol' },
       })
       expect(r.snapshot.jobs[1]?.cron).toBe('0 18 * * *')
       expect(r.snapshot.jobs[1]?.payload).toEqual({ type: 'report', output: 'reports/工程部/' })

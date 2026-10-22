@@ -49,16 +49,16 @@ describe('单源装配对账（S1a：usage.ts=命令文档唯一源）', () => {
     expect(USAGE).toBe(USAGE_HEADER + Object.values(SECTION).join('') + USAGE_TAIL)
   })
 
-  it('16 顶级命令齐全（main.ts 分发表=SECTION 键集）', () => {
+  it('17 顶级命令齐全（main.ts 分发表=SECTION 键集）', () => {
     expect(Object.keys(SECTION)).toEqual([
-      'init', 'company', 'validate', 'ledger', 'candidates', 'sandbox', 'cutover', 'gray',
+      'init', 'company', 'validate', 'ledger', 'candidates', 'jobs', 'sandbox', 'cutover', 'gray',
       'postmortem', 'panel', 'overview', 'external', 'serve', 'taiga-cure', 'reload', 'stop',
     ])
   })
 
   it('每条简段自带看全文指引（错误面是路标不是死端）', () => {
     for (const [key, text] of Object.entries(CONCISE)) {
-      expect(text.includes(key === 'company' || key === 'ledger' ? '本组全文' : '本命令全文'), `${key} 简段缺看全文指引`).toBe(true)
+      expect(text.includes(key === 'company' || key === 'ledger' || key === 'jobs' ? '本组全文' : '本命令全文'), `${key} 简段缺看全文指引`).toBe(true)
     }
   })
 

@@ -58,11 +58,11 @@ const VALID_SUMMARY = { schema: 'summary/v1', conclusion: '完成', changed_file
 // —— 契约面：evt/rpt 域 ——————————————————————————————————————
 
 describe('契约语料（evt/rpt 域）', () => {
-  it('evt 6 条 + rpt 3 条全绿（P6 增补 JUDGE_ 前缀族正例 C-evt-006，studio-dev-160 §6.5）', async () => {
+  it('evt 7 条 + rpt 5 条全绿（P6 增补 JUDGE_ 正例 C-evt-006；127-A 增补 JOB_STALE 正例 C-evt-007 + 哨兵框架字段 C-rpt-004/005——studio-dev-127 §4.8/§4.2 批示）', async () => {
     const r = await runCases(manifest, { evt: evtSubject, rpt: rptSubject }, { domains: ['evt', 'rpt'] })
     expect(r.failed).toEqual([])
-    expect(r.total).toBe(9)
-    expect(r.passed).toBe(9)
+    expect(r.total).toBe(12)
+    expect(r.passed).toBe(12)
   })
 
   it('防恒反证：改坏 C-evt-003 期望的错误类别必红', async () => {
@@ -70,7 +70,7 @@ describe('契约语料（evt/rpt 域）', () => {
     const target = bad.cases.find((c) => c.id === 'C-evt-003')!
     target.expected.err.category = 'LLM_FAIL'
     const r = await runCases(bad, { evt: evtSubject, rpt: rptSubject }, { domains: ['evt', 'rpt'] })
-    expect(r.passed).toBe(8)
+    expect(r.passed).toBe(11)
     expect(r.failed[0]?.id).toBe('C-evt-003')
   })
 })
@@ -78,10 +78,11 @@ describe('契约语料（evt/rpt 域）', () => {
 // —— 事件名：冻结枚举 + 前缀族双通道（17-§3）——————————————————
 
 describe('事件名双通道（17-§3 冻结清单）', () => {
-  it('冻结清单计数互证：26 具体名 + 3 前缀族 = 29 类（P3 增补两具体名；P6 增补 JUDGE_ 前缀族——studio-dev-160 §6.5；127-C 增补 FOREIGN_KNOWN——studio-dev-127 §4.7/§4.8，均 SCHEMA_EVOLVE 全批）', () => {
-    expect(EVENT_NAMES).toHaveLength(26)
+  it('冻结清单计数互证：30 具体名 + 3 前缀族 = 33 类（P3 +2；P6 JUDGE_ 前缀族；127-C +FOREIGN_KNOWN；127-A +四具体名——studio-dev-127 §4.7/§4.8 批示，宰相合并态 2026-10-22）', () => {
+    expect(EVENT_NAMES).toHaveLength(30)
     expect(EVENT_PREFIX_FAMILIES).toEqual(['GW_', 'REPORT_', 'JUDGE_'])
     expect(EVENT_NAMES).toContain('FOREIGN_KNOWN')
+    expect(EVENT_NAMES).toContain('SENTINEL_MISSING')
   })
 
   it('23 个具体事件名全部命中枚举通道', () => {

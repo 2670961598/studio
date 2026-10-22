@@ -55,10 +55,9 @@ jobs:
     cron: "*/5 * * * *" # 每 5 分钟（本地时区）
     role: 工程负责人 # 岗位
     level: 2 # 该岗等级
-    type: patrol # 巡逻岗：巡检台账/在途/心跳，产出巡逻纪要
+    type: patrol # 巡逻岗：巡检台账/在途/心跳，产出巡逻纪要（随事件留痕——无归档落点，127-A：patrol×output=结构性零产出，不声明 output）
     model_tier: low
     budget_cap: 1 # USD/次
-    output: reports/工程部/
   - id: daily-report-工程部
     dept: departments/工程部 # 所属部门节点
     cron: "0 18 * * *" # 本地时区（cron 一律按制作人机器本地时区解析）
@@ -68,6 +67,26 @@ jobs:
     model_tier: low # 模型档：high | mid | low
     budget_cap: 2 # 预算帽（USD/次；预留-结算，超额在调用前拒绝）
     output: reports/工程部/ # 产出落点（报表按 <date>-<type>-<节点>-<总结>.md 命名）
+
+# 单据类型流声明（DEV-43，docs/51 v1.1；127-A R3 丁案）：T:patrol=巡查岗工件流——
+# 巡查工件不是工单：daemon 物化即落 delivered 终态（结构性不可派发，不烧配额）；
+# 五态链满足 W-8 锚点链（物化单从不走中间态，链是给「人肉巡查单」留的完整语义）
+workflows:
+  types:
+    - id: patrol
+      states:
+        - 待巡查
+        - 巡查中
+        - 巡毕纪要
+        - 巡毕复核
+        - name: 巡毕无产出
+          final: true
+      anchors:
+        inbox: 待巡查
+        dispatched: 巡查中
+        evidence: 巡毕纪要
+        verified: 巡毕复核
+        delivered: 巡毕无产出
 
 # YouTrack 账号锚点映射（账号=等级锚点，不随新增公司而新增账号）
 accounts:

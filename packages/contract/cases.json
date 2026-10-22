@@ -1609,6 +1609,88 @@
           "ok": true
         }
       }
+    },
+    {
+      "id": "C-evt-007",
+      "domain": "evt",
+      "docs": "17-§3",
+      "title": "127-A 枚举增补事件名（JOB_STALE）放行——R2 新鲜度哨兵正例（127 §4.8）",
+      "input": {
+        "id": "01BX5ZZKBKACTAV9WEVGEMMVRZ",
+        "ts": 1790000120000,
+        "company": "demo-corp",
+        "issue": "-",
+        "event": "JOB_STALE",
+        "actor": "daemon",
+        "attempt": 1,
+        "level": 1,
+        "dept": "framework",
+        "tokens": {
+          "input": 0
+        },
+        "note": "src=freshness;job=hf-finance-daily;slot=1790000000000;grace=7200000;adj=0;hb_age=60000;job_status=active;patrol_age=90000;last_success_age=86400000;处置=手动补跑(jobs catchup)"
+      },
+      "expected": {
+        "out": {
+          "ok": true
+        }
+      }
+    },
+    {
+      "id": "C-rpt-004",
+      "domain": "rpt",
+      "docs": "17-§3",
+      "title": "summary sidecar 携定时岗哨兵框架字段（sentinel 三元组）通过——127-A R1（批示③）",
+      "input": {
+        "report": "# 日报\n\n## 结论\n数据面正常。\n\n## 改动\n- reports/2026-10-23.md\n\n## 验证\n- 闸门 exit=0",
+        "summary": {
+          "schema": "summary/v1",
+          "conclusion": "数据面正常",
+          "changed_files": [
+            "reports/2026-10-23.md"
+          ],
+          "sentinel": {
+            "job": "hf-finance-daily",
+            "run_at": 1790000000000,
+            "nonce": "3f2a9c1e8b7d4f6a0c5e2b9d8a7f4e6c1b3d5f7a9c2e4b6d8f1a3c5e7b9d2f4a"
+          }
+        }
+      },
+      "expected": {
+        "out": {
+          "ok": true,
+          "summary": {
+            "ok": true
+          }
+        }
+      }
+    },
+    {
+      "id": "C-rpt-005",
+      "domain": "rpt",
+      "docs": "17-§3",
+      "title": "sentinel 框架字段形状错（nonce 非 64 位十六进制）拒收——127-A R1 负例",
+      "input": {
+        "report": "# 日报\n\n## 结论\n数据面正常。\n\n## 改动\n- reports/2026-10-23.md\n\n## 验证\n- 闸门 exit=0",
+        "summary": {
+          "schema": "summary/v1",
+          "conclusion": "数据面正常",
+          "changed_files": [
+            "reports/2026-10-23.md"
+          ],
+          "sentinel": {
+            "job": "hf-finance-daily",
+            "run_at": 1790000000000,
+            "nonce": "short"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID",
+          "subcause": "rpt/invalid:summary"
+        }
+      }
     }
   ]
 }

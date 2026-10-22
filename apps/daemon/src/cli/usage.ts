@@ -59,6 +59,16 @@ export const SECTION = {
        id/状态/资产类型/blast_radius/version/谱系父/资产路径/diff 哈希（(created_at,id) 升序）；
        库不存在即拒（只读面不代建库）
 `,
+  jobs: `  studio-next jobs list --db <库路径>
+        调度表只读列表（127-A R2，docs/17-§2）：岗逐行 job_id/cron/dept/status/型/
+        下跑槽/末跑槽（next_run_at 升序——越窗分诊先看这里）；库不存在即拒（只读面
+        不代建库）
+  studio-next jobs catchup --db <库路径> --job <job_id>
+        手动补跑（127-A 批示④）：next_run_at 推到当下——等价「槽已到期」，下一拍
+        scheduler 即物化岗单照常走派发-收割链。只挪槽不派工（到点意图仍走 jobs 源
+        tick 面）；停跑根因不在此治（JOB_STALE/LATE_FIRST_RUN 哨兵事件分诊——freshness 源）；
+        last_run_at 真实末跑事实不被本命令覆盖
+`,
   sandbox: `  studio-next sandbox --db <库路径> --candidate <id> [--command <冻结验收命令>]
                        [--file <变更文件>] [--timeout <ms>] [--root <资产根目录>]
        进化链沙箱执行器（20-§九沙箱环节，src/evolve/sandbox.ts）：临时目录拷贝资产最小集 → 应用
@@ -187,6 +197,10 @@ export const CONCISE = {
   studio-next candidates list --db <库路径>
   例：studio-next candidates list --db var/ledger.sqlite
   本命令全文：studio-next candidates list --help
+`,
+  jobs: `jobs <子命令> —— 调度岗面命令组（127-A R2）：list（调度表只读列表）/ catchup（手动补跑——next_run_at 推到当下，下一拍 scheduler 照常物化）
+  例：studio-next jobs catchup --db var/ledger.sqlite --job hf-finance-daily
+  本组全文：studio-next jobs --help（各子命令 -h 看分面全文）
 `,
   sandbox: `sandbox —— 进化链沙箱执行器（候选资产+同目录测试→跑冻结验收命令→落证据；生产零触碰）
   studio-next sandbox --db <库路径> --candidate <id> [--command <冻结验收命令>] [--file <变更文件>] [--timeout <ms>] [--root <资产根目录>]

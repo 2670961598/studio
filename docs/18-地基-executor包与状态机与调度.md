@@ -74,9 +74,13 @@ flow_by_level:
 - **锚点**：五锚 inbox/dispatched/evidence/verified/delivered 必填且须构成主干相邻链
   （approval 可选第六锚，只许插 inbox 后/verified 后两槽——docs/51 W-8）；approval
   缺省以空串哨兵隔离（decide 5a/5b 构造性不命中）。
-- **保留词表**：`bug`（断路器自动开单——不定级、待人定级后派）与 `task`（定时岗单物化
-  type）为系统保留，workflows 不得声明同 id（docs/51 W-9）——防止公司流静默劫持引擎
-  写死行为。岗单/断路单恒走等级回退。
+- **保留词表**：`bug`（断路器自动开单——不定级、待人定级后派）与 `task`（**工单型**定时岗单
+  物化 type）为系统保留，workflows 不得声明同 id（docs/51 W-9）——防止公司流静默劫持引擎
+  写死行为。断路单/工单型岗单恒走等级回退。例外（127-A 丁案，studio-dev-127 §4.4
+  2026-10-22 批）：patrol 巡查物化单 type=`patrol` **不在保留表**——按类型流解析序走
+  `T:patrol`（org-config workflows 声明，模板自带五态链：待巡查→巡查中→巡毕纪要→
+  巡毕复核→巡毕无产出）；未声明回退 `L<level>`（装载警告面 `jobContractLoadWarnings`
+  提示语义退化，不阻断）。
 - **合并序（冻结）**：注入表构造序=DEFAULT_FLOW_TABLE（L 键基底）→（后续刀：org-config
   `yt.flows` 覆盖 L 键）→ `T:<type>` 键**永远最上**。与查表优先级（解析序）正交。
 - **平台面**：类型可声明 `entity`（userstory/issue/task）——provision 把该类状态建到

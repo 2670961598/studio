@@ -15,7 +15,7 @@
  * 诚实边界：fake adapter 的「工作产出」是固定文本——不跑真模型、不跑真验收命令；
  * 失败形态（mode）只覆盖收割四要件的缺失面，供断路器/回滚链路测试注入。
  */
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import type {
   ActivityPage,
@@ -239,6 +239,8 @@ export type FakeAdapterMode =
   | 'no_report' // 要件 3 缺：不落 REPORT/summary（闸门侧报）
   | 'stalled' // 静默工人（DEV-44 注入面）：流驻留永不收尾、零事件零产物——收割恒 streaming，单卡已派发等看门狗
   | 'external_error' // 外部服务错误（DEV-46 注入面）：产物照落（REPORT/summary/log 全真）、流照收尾，但 turn_end.completed=false + error/errorCode（GLM 外部限速 429 同型，studio-dev-78 实况）——四要件缺「终态 completed」，错误文本经 turn_end.error 进 GATE_FAIL note 断路面
+  | 'sentinel' // 127-A R1 worker 契约替身：读任务书 brief.md 哨兵段原样并入 summary.json 顶层 sentinel 字段（真 worker「读任务书→回写」面的机械模拟）
+  | 'sentinel_old' // 同上但 run_at 挪 7 天——抄旧槽注入面（verify 必 mismatch）
 
 /**
  * fake 适配器选项。
@@ -352,6 +354,24 @@ export function createFakeAdapter(opts?: FakeAdapterOptions): ExecutorAdapter {
         mkdirSync(task.workspace, { recursive: true })
         writeFileSync(path.join(task.workspace, 'REPORT.md'), FAKE_REPORT_MD, 'utf8')
         writeFileSync(path.join(task.workspace, 'summary.json'), FAKE_SUMMARY_JSON, 'utf8')
+        if (mode === 'sentinel' || mode === 'sentinel_old') {
+          // 127-A R1：真 worker 契约=读任务书（brief.md）→ 哨兵三元组原样并入 summary.json
+          // 顶层 sentinel 字段。brief 段不可读=维持无哨兵 summary（missing 注入面）——
+          // fake 不猜不代写（与 daemon 不代写 REPORT 同纪律）。
+          try {
+            const brief = readFileSync(path.join(task.workspace, 'brief.md'), 'utf8')
+            const m = /\{"sentinel":\{[^}]+\}\}/.exec(brief)
+            if (m !== null) {
+              const triple = (JSON.parse(m[0] as string) as { sentinel: { job: string; run_at: number; nonce: string } }).sentinel
+              if (mode === 'sentinel_old') triple.run_at += 7 * 24 * 3_600_000 // 抄旧槽
+              const summary = JSON.parse(FAKE_SUMMARY_JSON) as Record<string, unknown>
+              summary.sentinel = triple
+              writeFileSync(path.join(task.workspace, 'summary.json'), JSON.stringify(summary, null, 2), 'utf8')
+            }
+          } catch {
+            /* brief 缺=哨兵段未注入（普通单/patrol 工件）——missing 面 */
+          }
+        }
       }
       const events: StreamEvent[] = []
       if (mode === 'stalled') {

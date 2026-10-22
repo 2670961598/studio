@@ -39,6 +39,11 @@ export interface JobOutputAccountInput {
   now: () => number
   /** 收账异常上报口（engine tick errors 面；不接=只留 note 痕） */
   onProblem?: (message: string) => void
+  /**
+   * 工位 summary.json 落点（gate 侧侧车；127-A R1 批示③）：收账同拷为
+   * `<归档名>.summary.json`——P3 对账步哨兵核验的事实源（框架字段 sentinel 随件归档）。
+   */
+  summaryPath?: string
 }
 
 /** 收账结果：noteSuffix 拼进 GATE_PASS note（证据面）；target=实际落位（成功时） */
@@ -46,6 +51,10 @@ export interface JobOutputAccountResult {
   /** ''=无收账（非岗单/未声明落点/面未开）；';output=<目标>' 成功；';output-err=<因>' 失败 */
   noteSuffix: string
   target?: string
+  /** sidecar 归档 note 后缀（127-A R1）：''=无面；';sidecar=<路径>' 成功；';sidecar-err=<因>' 失败 */
+  sidecarSuffix: string
+  /** sidecar 归档落位（成功时）——P3 哨兵核验读面 */
+  sidecarTarget?: string
 }
 
 /** 文件名段消毒：非法字符折叠为 '-'（保 CJK；防空段/路径分隔注入） */
@@ -75,20 +84,20 @@ export function accountJobOutput(input: JobOutputAccountInput): JobOutputAccount
   const { ledger, ticket, reportPath, companyDir, now } = input
   const fail = (why: string): JobOutputAccountResult => {
     input.onProblem?.(`岗产物落位收账 ${ticket}：${why}`)
-    return { noteSuffix: `;output-err=${why}` }
+    return { noteSuffix: `;output-err=${why}`, sidecarSuffix: '' }
   }
-  if (companyDir === undefined) return { noteSuffix: '' } // 面未开（companyDir 未注入）——非错
+  if (companyDir === undefined) return { noteSuffix: '', sidecarSuffix: '' } // 面未开（companyDir 未注入）——非错
   // 单→岗锚：本单 PATROL note 的 job= 段（与 jobs-sources jobTickets 同形）；非岗单=不适用
   const patrol = ledger
     .queryEvents({ issue: ticket })
     .find((e) => e.event === 'PATROL' && /(?:^|;)job=([^;]+)/.exec(e.note ?? '') !== null)
   const anchor = patrol !== undefined ? /(?:^|;)job=([^;]+)/.exec(patrol.note ?? '') : null
-  if (anchor === null) return { noteSuffix: '' } // 非定时岗单——无落点声明可收
+  if (anchor === null) return { noteSuffix: '', sidecarSuffix: '' } // 非定时岗单——无落点声明可收
   const jobId = anchor[1] as string
   const job = ledger.getJob(jobId)
   if (job === undefined) return fail(`job 不在台账(job=${jobId}，热更移除？)`)
   const output = parseJobOps(job.payload).output
-  if (output === undefined) return { noteSuffix: '' } // 岗未声明 output——空收账非错
+  if (output === undefined) return { noteSuffix: '', sidecarSuffix: '' } // 岗未声明 output——空收账非错
   if (!isSafeRelativeOutputPath(output)) return fail(`落点不合法(output=${output})`)
   const companyRoot = path.resolve(companyDir)
   const targetDir = path.resolve(companyRoot, output)
@@ -96,6 +105,7 @@ export function accountJobOutput(input: JobOutputAccountInput): JobOutputAccount
     return fail(`落点逃逸公司目录(output=${output})`)
   }
   const target = path.join(targetDir, reportFileName(job, ticket, now()))
+  const sidecarTarget = `${target}.summary.json`
   try {
     mkdirSync(targetDir, { recursive: true })
     copyFileSync(reportPath, target)
@@ -103,5 +113,15 @@ export function accountJobOutput(input: JobOutputAccountInput): JobOutputAccount
     const msg = err instanceof Error ? err.message : String(err)
     return fail(`写失败(${msg})`)
   }
-  return { noteSuffix: `;output=${target}`, target }
+  // sidecar 同拷（127-A R1 批示③：哨兵随件归档——P3 对账步事实源）；失败不回滚收账，
+  // 如实留痕（哨兵门 P3 面读不到即 SENTINEL_MISSING fail-closed——此处只记观测）
+  if (input.summaryPath === undefined) return { noteSuffix: `;output=${target}`, target, sidecarSuffix: '' }
+  try {
+    copyFileSync(input.summaryPath, sidecarTarget)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    input.onProblem?.(`岗产物 sidecar 收账 ${ticket}：${msg}`)
+    return { noteSuffix: `;output=${target}`, target, sidecarSuffix: `;sidecar-err=${msg}` }
+  }
+  return { noteSuffix: `;output=${target}`, target, sidecarSuffix: `;sidecar=${sidecarTarget}`, sidecarTarget }
 }

@@ -243,6 +243,7 @@ export {
 import { buildEventIndex, STALL_KILL_CLOSE_ANCHOR, type EventIndex } from './sentinel/events-index.ts'
 import type { GateRunner } from './gate.ts'
 import { accountJobOutput } from './jobs/output-account.ts'
+import { sentinelBriefBlock, sentinelDutyForTicket, verifySidecarSentinelAtPath } from './jobs/sentinel.ts'
 import { deliverablesOf, reconIssueRecord, runHarvestRecon, statHarvestDenial, WORKSPACE_UMASK, type HarvestReconResult } from './jobs/harvest-recon.ts'
 import { makeUlid } from './tools/id.ts'
 import { instructionsTarget, removeInstructions, writeInstructions } from './instructions-store.ts'
@@ -952,8 +953,13 @@ export function createEngine(deps: EngineDeps): Engine {
       }
       // 任务书追加 wkey 指引行（workerKeys 启用面；追加在六层组装产物之外、任务书是
       // per-attempt 操作面——指引行只指路不含凭据值，env 通道定调见 worker-key.ts 头注）
-      const briefText =
-        workerKeys === undefined ? assembled.brief.text : `${assembled.brief.text}\n${workerKeyGuidance()}\n`
+      // ＋定时岗产出哨兵段（127-A R1 批示③：工单型岗单注入三元组回写义务——per-attempt
+      // 操作面同位；patrol 工件/普通单结构性不注入）
+      const sentinelDuty = sentinelDutyForTicket(ledger, ticket)
+      const briefParts = [assembled.brief.text]
+      if (workerKeys !== undefined) briefParts.push(`${workerKeyGuidance()}\n`)
+      if (sentinelDuty !== undefined) briefParts.push(sentinelBriefBlock(sentinelDuty))
+      const briefText = briefParts.join('\n')
       writeFileSync(briefPath, briefText, 'utf8')
       const taskBrief = assembled.brief.taskBrief
       // 预算闸（TaskBrief 构造后、launch 前——20-§六.8 机制点）：估算（两态）→ reserve
@@ -1225,14 +1231,23 @@ export function createEngine(deps: EngineDeps): Engine {
       }
       // 岗产物落位收账（DEV-50，docs/04-§三）：GATE_PASS 后置步——jobs[].output 声明
       // 落点收账工位 REPORT（四要件冻结口径不动；收账失败不回滚收割，如实留痕上报）
-      const outputNote = accountJobOutput({
+      // ＋summary sidecar 同拷（127-A R1 批示③：哨兵随件归档——P3 对账步事实源）
+      const account = accountJobOutput({
         ledger,
         ticket,
         reportPath: gate.reportPath,
         companyDir: config.companyDir,
         now,
         onProblem: (message) => errors.push(message),
-      }).noteSuffix
+        ...(gate.summaryPath !== undefined ? { summaryPath: gate.summaryPath } : {}),
+      })
+      // 哨兵观测（127-A R1）：工位 sidecar 即时核验——不拦收割（P3 对账步才是权威事件
+      // 面），note 尾缀留痕；非岗单/patrol 工件无义务不加缀
+      const harvestSentinel = sentinelDutyForTicket(ledger, ticket)
+      const sentinelNote =
+        harvestSentinel === undefined
+          ? ''
+          : `;sentinel=${verifySidecarSentinelAtPath(gate.summaryPath, harvestSentinel)}`
       // 定价更新单据化消费（132-§6.2 单B·studio-dev-169）：GATE_PASS 后置步——type='pricing'
       // 单的 deliverables/pricing.yaml 附件→解析→覆盖校验→append price_snapshots（单据号
       // 锚）。非定价单零行为；消费失败不回滚收割（DAILY_ALARM 唤醒发布岗，不静默）
@@ -1256,7 +1271,7 @@ export function createEngine(deps: EngineDeps): Engine {
         cost_usd: stats.cost.usd,
         duration_ms: stats.duration,
         // model 留痕走 note 后缀（132-§6.1 单A：events 列集冻结不动——`model=…` 尾缀）
-        note: `四要件齐（completed/非空/REPORT/exit0）；report=${gate.reportPath}${gate.summaryPath !== undefined ? `;summary=${gate.summaryPath}` : ''}${budgetNote}${outputNote}${pricingNote}${stats.model !== undefined ? `;model=${stats.model}` : ''}`,
+        note: `四要件齐（completed/非空/REPORT/exit0）；report=${gate.reportPath}${gate.summaryPath !== undefined ? `;summary=${gate.summaryPath}` : ''}${budgetNote}${account.noteSuffix}${pricingNote}${account.sidecarSuffix}${sentinelNote}${stats.model !== undefined ? `;model=${stats.model}` : ''}`,
       })
       // bridge 通道指令临时文件：保留至收割完成→此刻删（v1.5#1 清理策略；内容指纹已在
       // DISPATCH note/payload_hash 落账——证据不依赖文件存活）
@@ -1601,27 +1616,28 @@ export function createEngine(deps: EngineDeps): Engine {
         return
       }
       try {
-        // 物化岗单据：L0 流（无人审批环）+ job.role 命工号则精确指派（口径见文件头注）。
-        // 落位分型（DEV-40，2026-10-20 哨查事故防复发，docs/25-§3.2 IssueCreate.initialState）：
-        //   - 工单型岗（report/cadence 等产出实工件）：不指定落位→适配器落流程初态（新单），
-        //     照走 v0.4 派发-收割链（16-§四）；budget_cap 正因会派发才存在。
-        //   - 巡查岗（payload.type='patrol'，公司目录 type 语义「巡检台账/在途/心跳，产出
-        //     巡逻纪要」）：巡查工件不是工单——落终态锚点（delivered 无前向边=结构性不可
-        //     派发），decide 恒走回收 CLOSE（宰相批注：落新单会被派发烧配额——镜像 18 张
-        //     New 积压即此类）。L0 流缺失时不指定落位：单据落平台态，decide
-        //     NOOP_UNKNOWN_FLOW 经 noop 观测面（serve noop 日志行）可见，不静默。
+        // 物化岗单据：岗流 + job.role 命工号则精确指派（口径见文件头注）。
+        // 落位分型（DEV-40 + 127-A R3 丁案——studio-dev-127 §4.4 批示①，2026-10-22）：
+        //   - 工单型岗（report/cadence 等产出实工件）：type='task' 不指定落位→适配器落流程
+        //     初态（新单），照走 v0.4 派发-收割链（16-§四）；budget_cap 正因会派发才存在。
+        //   - 巡查岗（payload.type='patrol'）：**type='patrol' 丁案**——终态名走
+        //     workflows T:patrol 类型流声明（推荐「巡毕无产出」final；W-9 只保留 bug/task，
+        //     patrol 可声明——DEV-43 类型优先解析）；镜像 state≠「已交付」→报表已交付计数
+        //     结构性不含巡查工件（spike-② 判负线）。T:patrol 未声明→L0 delivered 兜底
+        //     （现状行为原样；装载警告面 jobContractLoadWarnings 让退化可见，不炸既有配置）。
+        //     巡查工件不是工单——落终态锚点结构性不可派发，decide 恒走回收 CLOSE。
         const isPatrolArtifact = ((job.payload as { type?: unknown } | undefined)?.type) === 'patrol'
-        // 岗单物化流：按 type='task' 走类型优先解析（DEV-43）——W-9 保留词表判定器不收
-        // T:task 声明，故解析恒落 L0 回退（现状语义原样）；换写法只为与 decide/flowOf
-        // 同一函数同一序（两处定流永不漂移）
-        const l0Flow = resolveTicketFlow(config.flows ?? DEFAULT_FLOW_TABLE, 'task', 0)
+        // 岗单物化流：resolveTicketFlow 同函数同序（与 decide/flowOf 永不漂移）——工单型走
+        // 'task'（W-9 不收 T:task，恒落 L0 回退=现状）；巡查型走 'patrol'（T 优先 L 回退）
+        const materializeType = isPatrolArtifact ? 'patrol' : 'task'
+        const artifactFlow = resolveTicketFlow(config.flows ?? DEFAULT_FLOW_TABLE, materializeType, 0)
         const created = await platform.issues.create({
           title: `[定时岗] ${job.job_id} ${new Date(startedAt).toISOString()}`,
-          type: 'task',
+          type: materializeType,
           dept: job.dept,
           level: 0,
           assignee: job.role,
-          ...(isPatrolArtifact && l0Flow !== undefined ? { initialState: flowAnchors(l0Flow).delivered } : {}),
+          ...(isPatrolArtifact && artifactFlow !== undefined ? { initialState: flowAnchors(artifactFlow).delivered } : {}),
         })
         syncMirror(created)
         makeEvent('PATROL', created, 1, tickEvents, {
