@@ -31,6 +31,9 @@
  * boot 组合根负责装配），不 import @studio-next/daemon（依赖方向冻结，docs/20-§十五）。
  * PL 基线/频道规格类型/同值判据拆至 power-levels.ts（20-§十五「先拆再增」）。
  */
+/** 毫秒睡（邀请节流/限流退避——2026-10-23） */
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
 import { jsonEqual, powerLevelTarget, powerLevelsMatch, type ChannelMapPlan, type ChannelSpec } from './power-levels.ts'
 
 // 公共 API 同源 re-export（拆件后消费面 import 路径不变——index.ts/测试零改动）
@@ -323,13 +326,24 @@ export async function ensureChannel(
     client.listMembers(roomId, 'invite'),
   ])
   const present = new Set([...joined, ...invited])
+  let invitePace = 0
   for (const member of spec.members) {
     if (present.has(member)) continue
-    try {
-      await client.invite(roomId, member)
-    } catch (err) {
-      if (!isAlreadyInRoomError(err)) throw err
+    // 老 Synapse 限流礼让（2026-10-23 实证 M_LIMIT_EXCEEDED）：邀请间隔 350ms+429 退避重试 ×3
+    await sleep(350 + invitePace * 0)
+    let done = false
+    for (let attempt = 0; attempt < 3 && !done; attempt += 1) {
+      try {
+        await client.invite(roomId, member)
+        done = true
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (isAlreadyInRoomError(err)) { done = true; break }
+        if (msg.includes('M_LIMIT_EXCEEDED') && attempt < 2) { await sleep(5000); continue }
+        throw err
+      }
     }
+    invitePace += 1
   }
   // PL 目标快照全量覆盖（同值零写；moderator 50 槽按列基线）
   const target = powerLevelTarget(spec.power, { ...ids, ...(spec.moderatorMxid !== undefined ? { moderatorMxid: spec.moderatorMxid } : {}) })

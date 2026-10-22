@@ -47,7 +47,9 @@ export function powerLevelTarget(
   column: PowerLevelColumn,
   ids: { botMxid: string; producerMxid: string; moderatorMxid?: string },
 ): PowerLevelsContent {
-  const users: Record<string, number> = { [ids.botMxid]: 100, [ids.producerMxid]: 100 }
+  // creator（bot）不列进 users——Synapse M_UNKNOWN「Creator must not appear in content.users」；
+  // creator 隐含 PL100，列了反而拒写（2026-10-23 宰相亲批修正）
+  const users: Record<string, number> = { [ids.producerMxid]: 100 }
   if (column === 'dept' && ids.moderatorMxid !== undefined) users[ids.moderatorMxid] = 50
   const events: Record<string, number> = {}
   for (const t of STRUCTURAL_EVENTS) events[t] = 100

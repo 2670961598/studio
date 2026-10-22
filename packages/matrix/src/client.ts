@@ -82,7 +82,7 @@ export class MatrixClient {
       {
         body: {
           type: 'm.login.password',
-          identifier: { type: 'm.user.user', user: userId },
+          identifier: { type: 'm.id.user', user: userId },
           password,
         },
       },

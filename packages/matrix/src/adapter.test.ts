@@ -70,7 +70,7 @@ describe('client + notifier · 发送路径请求形状', () => {
     expect(call.url).toBe('http://127.0.0.1:8008/_matrix/client/v3/login')
     expect(JSON.parse(call.init.body ?? '{}')).toEqual({
       type: 'm.login.password',
-      identifier: { type: 'm.user.user', user: '@bot:localhost' },
+      identifier: { type: 'm.id.user', user: '@bot:localhost' },
       password: 'pw',
     })
 
