@@ -29,6 +29,9 @@
  *   GET /api/inbox?company=&limit=
  *                            收件箱卡（129-§6.2 R2/R5）：todo_queue 投影读序化——行序=核心
  *                            排序键（置顶恒首→score 降→FIFO→单号）；limit 缺省 100 上限 100
+ *   GET /api/judge?days=&company=
+ *                            判断调用卡（160 §6.5 单D）：JUDGE_* 事件按址聚合只读投影——
+ *                            调用量/费用/降级率（窗口内）+熔断态（全量史重放，见 judge.ts）
  *
  * 只读纪律：panel 对 SQLite **零写**。台账 WAL（单写多读）使 panel 与 daemon 写进程同库并存
  * 天然安全（store/driver.ts journal_mode=WAL）。注意 openLedger 对不存在的路径会建库迁移
@@ -53,6 +56,11 @@ import { configInvalid, isEventName, type EventRecord } from '@studio-next/contr
 import { openLedger, type Ledger } from '@studio-next/store'
 import { PANEL_LEGACY_ROUTE, renderDashboardShell } from './shell.ts'
 import { buildInboxSnapshot, INBOX_MAX_ROWS } from './inbox.ts'
+import {
+  DEFAULT_JUDGE_DAYS,
+  MAX_JUDGE_DAYS,
+  buildJudgeSnapshot,
+} from './judge.ts'
 import { VENDOR_FILES, mountPanelStatic } from './static.ts'
 import {
   DEFAULT_BREAKER_DAYS,
@@ -242,6 +250,17 @@ export function createPanelApp(opts: PanelAppOptions): PanelApp {
       buildInboxSnapshot(getLedger(), {
         ...(company !== undefined ? { company } : {}),
         limit: clampLimit(c.req.query('limit'), INBOX_MAX_ROWS),
+      }),
+    )
+  })
+
+  // 判断调用卡（160 §6.5 单D）：JUDGE_* 事件按址聚合只读投影——窗口统计+熔断重放（judge.ts）
+  app.get('/api/judge', (c) => {
+    const company = c.req.query('company')
+    return c.json(
+      buildJudgeSnapshot(getLedger(), {
+        days: clampDays(c.req.query('days'), DEFAULT_JUDGE_DAYS, MAX_JUDGE_DAYS),
+        ...(company !== undefined ? { company } : {}),
       }),
     )
   })

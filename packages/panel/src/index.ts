@@ -9,6 +9,8 @@
  *     order=desc/event= 四维）、/api/events/stream（SSE 轮询新事件，Last-Event-ID 续传）、
  *     /api/snapshot、/api/breakers（断路器告警：CIRCUIT_BREAK 族事件 (单号,签名) 聚合）、
  *     /api/costs（成本趋势：LLM 岛/收割/预算三类按 UTC 日分列——docs/26 C1 展示面）、
+ *     /api/judge（判断调用：micro-judge 按址统计调用量/降级率/实费/熔断态——JUDGE_* 事件
+ *     聚合只读投影，studio-dev-160 §6.5 单D；纯函数层 ./judge.ts），
  *     /（Vue 页壳：importmap + /ui/main.js——Naive UI + ECharts 换装，docs/37-§5.1 路线 I；
  *     旧单页迁 /legacy 保回滚）、/vendor/:file 与 /ui/*（静态面，static.ts）。
  *     数据全部读 SQLite 台账（WAL 单写多读，panel 零写）；漂移告警待 daemon 侧判据冻结。
@@ -54,6 +56,10 @@
  *       换装 tab（ui/overview ReportsCard）——metadata-only 清单（部门分组＋最新件优先＋
  *       大小/mtime 辅助列）＋新鲜度灯（台账事件为源：R2 新鲜度＋P3 对账＋GATE_PASS
  *       output= 落位）＋公司级汇总；正文端点与口径待批示后开（v2 登记位已留）
+ *   [x] :8787 判断调用卡（160-D，studio-dev-180）：/api/judge JSON 读面＋换装卡（ui/
+ *       components JudgeCard）——按址统计（调用量/费用/降级率窗口聚合＋熔断态全量史
+ *       重放投影，core judge-gates 值语义镜像——对齐测试钉 daemon）；legacy 旧页不扩
+ *       （同 inbox 卡先例——换装期新卡只进 Vue 壳）
  *   [ ] :8789 项目 tab（v0.7 后续刀——原「项目/报表 tab」待办的另半张）
  *   [ ] 编辑中心：草稿态 → 批示 → 写回链路（带前值快照可逐字 diff；daemon 单点写回）
  *   [ ] :8788 SSE 订阅真实现（events.subscribe 语义归后续刀——现 501 占位）
@@ -116,6 +122,31 @@ export { PANEL_IMPORTMAP, PANEL_LEGACY_ROUTE, PANEL_UI_ENTRY, renderDashboardShe
 // 静态层：/vendor/* 与 /ui/* 路由（static.ts——本刀唯一新增 IO 文件）
 export { VENDOR_FILES, mountPanelStatic } from './static.ts'
 export type { PanelStaticOptions } from './static.ts'
+
+// 收件箱层：todo_queue 投影读序化（inbox.ts——129-§6.2 单B；独立入口同包 ./inbox）
+export { INBOX_MAX_ROWS, buildInboxSnapshot, compareInboxRows } from './inbox.ts'
+export type { InboxOptions, InboxRow, InboxSnapshot } from './inbox.ts'
+
+// 判断调用层：JUDGE_* 事件按址聚合只读投影（judge.ts——160 §6.5 单D；独立入口 ./judge）
+export {
+  DEFAULT_JUDGE_DAYS,
+  JUDGE_BREAKER_THRESHOLD_PROJECTION,
+  JUDGE_REASON_UNKNOWN,
+  JUDGE_SNAPSHOT_NOTE,
+  MAX_JUDGE_DAYS,
+  buildJudgeSnapshot,
+  isJudgeEvent,
+  parseFallbackReason,
+  replayJudgeBreakers,
+} from './judge.ts'
+export type {
+  JudgeBreakerProjection,
+  JudgeOptions,
+  JudgeReasonCount,
+  JudgeSiteRow,
+  JudgeSnapshot,
+  JudgeTotals,
+} from './judge.ts'
 
 // 服务器层：Hono app 工厂 + 真监听壳（server.ts）
 export {

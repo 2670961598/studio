@@ -9,7 +9,8 @@
     ".": "./src/index.ts",
     "./overview": "./src/overview/index.ts",
     "./external": "./src/external/index.ts",
-    "./inbox": "./src/inbox.ts"
+    "./inbox": "./src/inbox.ts",
+    "./judge": "./src/judge.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
