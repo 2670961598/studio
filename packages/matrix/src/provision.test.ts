@@ -17,6 +17,7 @@ import {
   powerLevelTarget,
   resolveTicketMembers,
   ticketAliasLocalpart,
+  ticketRoomAliases,
   ticketRoomName,
   type ChannelMapInput,
   type ProvisionClient,
@@ -336,10 +337,23 @@ describe('ensureCompanyChannels（§5.4 ensure：首拍建齐→重拍零写）'
 // ————————————————————————— 单据房间（D7 成员＋P10 归档只读） —————————————————————————
 
 describe('ticket 命名与成员解析（DEV-20 §5.1/P4＋D7 v1.1）', () => {
-  it('单号别名段：小写化＋非法字符剥除（DEV-20 → studio-dev-dev-20 照录公式）', () => {
-    expect(ticketAliasLocalpart('studio-dev', 'DEV-20')).toBe('studio-dev-dev-20')
-    expect(ticketAliasLocalpart('studio-dev', 'studio-dev-174')).toBe('studio-dev-studio-dev-174')
+  it('单号别名段：小写化＋非法字符剥除＋slug 恰一次（studio-dev-218 修订公式）', () => {
+    expect(ticketAliasLocalpart('studio-dev', 'DEV-20')).toBe('studio-dev-dev-20') // YouTrack 形：不带 slug，行为不变
+    // Taiga ref 形（<project>-<n> 已携 slug）不再叠前缀——旧照录公式产生 studio-dev-studio-dev-174
+    // 双 slug 别名，directory 探测 #studio-dev-174 M_NOT_FOUND（taiga18 实证→studio-dev-218）
+    expect(ticketAliasLocalpart('studio-dev', 'studio-dev-174')).toBe('studio-dev-174')
+    expect(ticketAliasLocalpart('studio-dev', 'STUDIO-DEV-212')).toBe('studio-dev-212') // 大写 ref 同收敛
     expect(ticketAliasLocalpart('studio-dev', '任务#九')).toBe('studio-dev-') // CJK/非法全剥
+  })
+
+  it('别名候选：canonical 在前、旧照录形随后（仅当不同——骑缝收敛面）', () => {
+    // Taiga ref 形：canonical(slug 恰一次) ≠ legacy(旧照录双叠) → 两候选，canonical 优先
+    expect(ticketRoomAliases('studio-dev', 'studio-dev-212', 'mx.test')).toEqual([
+      '#studio-dev-212:mx.test',
+      '#studio-dev-studio-dev-212:mx.test',
+    ])
+    // YouTrack 形：单号不带 slug → 旧照录形与 canonical 合一 → 单候选（无骑缝面）
+    expect(ticketRoomAliases('studio-dev', 'DEV-20', 'mx.test')).toEqual(['#studio-dev-dev-20:mx.test'])
   })
 
   it('显示名：<单号> ｜ <标题>（48 字截断）', () => {
@@ -408,6 +422,40 @@ describe('ensureTicketRoom / archiveTicketRoom（派发开群→CLOSE 归档生�
     const a = await archiveTicketRoom(syn, inputOf(), { ticket: 'DEV-404' })
     expect(a).toMatchObject({ archived: false, found: false })
     expect(a.note).toContain('不存在')
+  })
+
+  it('studio-dev-218 复现（bug 形状照录）：Taiga ref 形派发 → 房间建在 #studio-dev-212 非 #studio-dev-studio-dev-212', async () => {
+    const syn = new FakeSynapse()
+    const r = await ensureTicketRoom(syn, inputOf(), { ticket: 'studio-dev-212', title: '单据房间未随派发开', dept: 'departments/研发部', assignee: 'ENG-6' })
+    expect(r.created).toBe(true)
+    expect(r.alias).toBe('#studio-dev-212:mx.test') // slug 恰一次
+    // directory 探测面（taiga18 实证场景：探测 #studio-dev-212 曾 M_NOT_FOUND）
+    expect(await syn.resolveAlias('#studio-dev-212:mx.test')).toBe(r.roomId)
+    // 双叠形不存在——寻址面不再错位
+    expect(syn.byAlias.has('#studio-dev-studio-dev-212:mx.test')).toBe(false)
+  })
+
+  it('studio-dev-218 骑缝收敛：pre-fix 双叠存量房 → ensure 首中即用修补旧房，不另开新房（一单一房不变式）', async () => {
+    const syn = new FakeSynapse()
+    // 模拟 fix 前 daemon 已开的房：旧照录公式别名（真机实证 #studio-dev-studio-dev-213 形）
+    const legacy = await syn.createRoom({ name: 'studio-dev-213 ｜ 旧照录', aliasName: 'studio-dev-studio-dev-213' })
+    const r = await ensureTicketRoom(syn, inputOf(), { ticket: 'studio-dev-213', title: '骑缝单重派', dept: 'departments/研发部', assignee: 'ENG-6' })
+    expect(r.created).toBe(false)
+    expect(r.alias).toBe('#studio-dev-studio-dev-213:mx.test') // 首中即用=legacy
+    expect(r.roomId).toBe(legacy.roomId)
+    expect(syn.byAlias.has('#studio-dev-213:mx.test')).toBe(false) // 未另开 canonical 新房
+    const room = syn.byAlias.get('#studio-dev-studio-dev-213:mx.test') as FakeRoom
+    expect((room.state.get('m.room.name|') as { name: string }).name).toBe('studio-dev-213 ｜ 骑缝单重派') // 显示名修补到新值
+  })
+
+  it('studio-dev-218 骑缝收敛：pre-fix 双叠存量房 → close 探 legacy 命中归档不悬空', async () => {
+    const syn = new FakeSynapse()
+    await syn.createRoom({ name: 'studio-dev-215 ｜ 旧照录', aliasName: 'studio-dev-studio-dev-215' })
+    const a = await archiveTicketRoom(syn, inputOf(), { ticket: 'studio-dev-215' })
+    expect(a).toMatchObject({ archived: true, found: true })
+    const room = syn.byAlias.get('#studio-dev-studio-dev-215:mx.test') as FakeRoom
+    expect((room.state.get('m.room.power_levels|') as { events_default: number }).events_default).toBe(50)
+    expect((room.state.get('m.room.name|') as { name: string }).name).toBe(`${ARCHIVED_PREFIX}studio-dev-215 ｜ 旧照录`)
   })
 })
 
