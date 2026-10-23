@@ -651,7 +651,7 @@ describe('estimate（拟稿：预算估算模型 v0——v0.6 前细化）', () 
   })
 })
 
-describe('resumeWithSession（v1.5 三件套之二接线：--session-id 透传——docs/31-§7 P-05 真机形态/§3.4 约束；capabilities.session_resume 仍 false）', () => {
+describe('resumeWithSession（v1.5 三件套之二接线：--session-id 透传——docs/31-§7 P-05 真机形态/§3.4 约束；capabilities.session_resume 已翻 true＝studio-dev-230 P0）', () => {
   it('argv 注入：--session-id <id> 插在 `--` 任务串之前（dsh 旗标区）', async () => {
     await withFakeEnv({ FAKE_ECHO_ARGS: '1' }, async () => {
       const adapter = fakeAdapter()

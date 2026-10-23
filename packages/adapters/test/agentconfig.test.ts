@@ -67,7 +67,8 @@ function captureConfigInvalid(fn: () => unknown): Error & ClassifiedError {
   throw new Error('期望抛出 CONFIG_INVALID，实际未抛出')
 }
 
-/** 合法全文样本（capabilities 镜像与四家代码声明一致——漂移检查的对照基准） */
+/** 合法全文样本（capabilities 镜像与四家代码声明一致——漂移检查的对照基准；
+ *  dsh.session_resume=true 随 studio-dev-230 P0 翻转，2026-10-23） */
 const legalYaml = `executors:
   dsh:
     default: true
@@ -76,7 +77,7 @@ const legalYaml = `executors:
     capabilities:
       budget_cap: false
       cancel_turn: false
-      session_resume: false
+      session_resume: true
       agents_md: user_level
       cost_native: false
     patches:
@@ -102,7 +103,7 @@ describe('loadAgentConfig：四态与边界', () => {
     expect(dsh?.capabilities).toStrictEqual({
       budget_cap: false,
       cancel_turn: false,
-      session_resume: false,
+      session_resume: true, // studio-dev-230 P0 翻转（2026-10-23）
       agents_md: 'user_level',
       cost_native: false,
     })
@@ -265,12 +266,12 @@ describe('wireRegistry：配置 → 注册表接线', () => {
     const registry = wireRegistry(
       createRegistry(),
       loadAgentConfig(
-        'executors:\n  dsh:\n    default: true\n    capabilities: { session_resume: false }\n  kimi:\n    capabilities:\n      budget_cap: false\n      cancel_turn: false\n      session_resume: true\n      agents_md: native\n      cost_native: false\n',
+        'executors:\n  dsh:\n    default: true\n    capabilities: { session_resume: true }\n  kimi:\n    capabilities:\n      budget_cap: false\n      cancel_turn: false\n      session_resume: true\n      agents_md: native\n      cost_native: false\n',
       ),
       builtinResolver,
     )
     expect(registry.list().map((e) => e.name)).toStrictEqual(['dsh', 'kimi'])
-    expect(registry.pick({ sessionResume: true })?.name).toBe('kimi')
+    expect(registry.pick({ sessionResume: true })?.name).toBe('dsh') // 两家皆可续——default（dsh）优先（studio-dev-230 P0 翻转后 dsh 亦满足过滤）
   })
 
   it('双 default 配置 → wireRegistry 经注册表拒收（CONFIG_INVALID/executor/dup-default）', () => {

@@ -47,8 +47,8 @@
  *     --patch overlay（instructions-store.ts），未挂载 env 无消费者；原生发现通道
  *     （launch cwd 向上扫，P-07）可并存不冲突
  *   - 续跑：resumeWithSession(task, executorSessionId) 已接线（--session-id 透传，P-05
- *     实证形态）；capabilities.session_resume 仍 false——端口开关待「cwd 一致性落调度
- *     纪律」立项后翻转（docs/31-§5-7；cwd 逐字节一致约束见 resumeWithSession 注）
+ *     实证形态）；capabilities.session_resume 已翻 true（studio-dev-230 P0，2026-10-23：原工位
+ *     原 cwd 跨进程复验 turn:N+1 缓存命中；cwd 调度纪律随单落档 docs/25-§3.4 注记，50c#10 销账）
  *   - execa 已升 10.x（docs/27-§4.3 案 A 拍板）：spawn 配 killDescendants:true——Unix
  *     落法为独立进程组，kill() 信号直达整组（子+孙），kill 链=「SIGTERM 软杀整树 →
  *     graceMs → SIGKILL 硬杀整树」；10.x kill(signal, error) 无 per-call 宽限、
@@ -300,7 +300,7 @@ export class DshAdapter implements ExecutorAdapter {
   readonly capabilities: ExecutorCapabilities = {
     budget_cap: false, // 17-§6 dsh 行无预算帽旗标；预算管控走框架断路（价目表折算后）
     cancel_turn: false, // 无单轮取消原语，只能整进程 kill
-    session_resume: false, // v0 不声明续跑；不支持时明报并降级新派（调度侧职责）
+    session_resume: true, // P0 翻转（studio-dev-230，2026-10-23）：--session-id 续跑真机直证（P-05 及原工位原 cwd 复验）；cwd 逐字节一致=调度纪律（docs/25-§3.4 注记）；不支持的家仍明报降级新派（调度侧职责）
     agents_md: 'user_level', // bridge 插件通道（docs/25-§3.1 v1.5#1 落地）：daemon 落指令临时文件（workspace 外）→ 本适配器注 STUDIO_NEXT_INSTRUCTIONS → studio-next-bridge 注入系统提示 persona 段；原生发现通道（P-07）仍在，无插件时 env 无消费者（注入不发生——provisioning 归 agent.yaml cmd --patch 挂载）
     cost_native: false, // 17-§6：tokens 有，成本无价目表折算
   }
@@ -419,8 +419,8 @@ export class DshAdapter implements ExecutorAdapter {
    * 硬约束（docs/31-§3.4 源码级，调度侧纪律）：cwd 必须与原会话记录的 cwd **逐字节一致**
    * （header.cwd !== cwd → dsh 立即报错）；未知 id → stdout 0 事件即败（经 stream() 消费
    * 为空流 + exit 1，isCompleted=false 如实）；subagent/fork 会话不可 adopt。
-   * 注意：capabilities.session_resume 仍 false——端口开关（路由进调度）待「cwd 一致性落
-   * 调度纪律」单独立项后翻转，本方法先行接线不声明能力（docs/31-§5-7）。
+   * 翻转注记（studio-dev-230 P0，2026-10-23）：capabilities.session_resume 已随本单翻 true——cwd
+   * 一致由调度纪律结构性保证（工位路径确定性派生+员工家永不删，docs/25-§3.4 注记）；复验=原工位原 cwd 跨进程 turn:N+1 cacheReadTokens>0。
    */
   async resumeWithSession(task: TaskBrief, executorSessionId: string): Promise<Handle> {
     if (executorSessionId.trim() === '') {
