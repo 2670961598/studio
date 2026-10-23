@@ -1522,6 +1522,7 @@ export async function runServe(
     ...(opts?.matrixSource !== undefined ? { matrixSource: opts.matrixSource } : {}),
     ...(opts?.matrixRoomFace !== undefined ? { matrixRoomFace: opts.matrixRoomFace } : {}),
     ...(opts?.notifyBroadcast !== undefined ? { notifyBroadcast: opts.notifyBroadcast } : {}),
+    ...(opts?.hrMatrixFace !== undefined ? { hrMatrixFace: opts.hrMatrixFace } : {}),
   })
 
   // 未挂公司目录的 daemon：L1 热重载不适用——reload 请求仍回执拒绝（不悬空 CLI 轮询）
