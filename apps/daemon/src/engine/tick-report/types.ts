@@ -13,6 +13,7 @@ import type { HarvestReconResult } from '../jobs/harvest-recon.ts'
 import type { PricingStaleTickReport } from '../pricing/pricing.ts'
 import type { CostCloseTickReport } from '../cost-close/close.ts'
 import type { QueueSiteJudgeReport } from '../judge/sites129.ts'
+import type { MergeQueueFace } from '../merge/merge-lease.ts'
 
 /** 采集相位汇报 */
 export interface TickPhaseCollect {
@@ -124,7 +125,8 @@ export interface TickReport {
     }
     dispatch: { dispatched: number; approvals: number; results: readonly TickActionResult[] } & TickPhaseDispatchBudget & { scheduleToStart: TickDispatchScheduleToStart }
     harvest: TickPhaseHarvest
-    merge: { merged: number }
+    /** 合并队列栏（202-P4，studio-dev-234）：只读投影——等待单（merge-lease-busy 顺延）/在跑单/租约态 */
+    merge: { merged: number; queue: MergeQueueFace }
     recycle: { recycled: number }
     account: {
       eventsAppended: number
