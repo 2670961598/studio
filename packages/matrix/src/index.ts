@@ -34,6 +34,10 @@ export type {
 } from './client.ts'
 export { createMatrixNotifier, createMentionSource } from './adapter.ts'
 export type { MentionSourceOptions } from './adapter.ts'
+// 105-刀B notify 广播面（studio-dev-219；daemon 侧结构同形接口 NotifyBroadcastFace 的
+// Matrix 实现——逻辑频道角色→alias→room_id→发送；逐频道软失败不抛出，刀B-6 回退语义）
+export { createMatrixBroadcastFace, targetAlias } from './broadcast.ts'
+export type { BroadcastTargets, BroadcastFailure, BroadcastReport, BroadcastFaceOptions } from './broadcast.ts'
 // DEV-48 人事同步器执行面（docs/52-§七；ensure-shape 业务幂等层——daemon 侧结构同形接口注入）
 export { createMatrixHrFace, matrixLevelFor } from './hr-face.ts'
 export type { MatrixHrFaceOptions, MatrixHrTarget } from './hr-face.ts'

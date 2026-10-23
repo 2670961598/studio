@@ -21,9 +21,11 @@ import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { InvokeSource } from '@studio-next/contract'
 import { checkMentionPayload } from '@studio-next/daemon/engine'
-import { parseDaemonConfig, type MatrixRoomFace, type MatrixRoomFaceContext, type ServeResult } from '@studio-next/daemon/serve'
+import { parseDaemonConfig, type MatrixRoomFace, type MatrixRoomFaceContext, type NotifyBroadcastFace, type ServeResult } from '@studio-next/daemon/serve'
 import type { FetchLike, MentionPayload } from '@studio-next/matrix'
 import {
+  assembleMatrixBroadcastFace,
+  assembleMatrixLogin,
   assembleMatrixProvisionFace,
   assembleMatrixSource,
   bootServe,
@@ -442,5 +444,69 @@ describe('bootServe：双开形态（matrix: true + matrixChannels: true）', ()
     expect(seen[0]?.opts?.matrixSource).toBeDefined()
     expect(seen[0]?.opts?.matrixRoomFace).toBeDefined()
     expect(calls).toHaveLength(1) // 双开共用一次登录（token 只留进程内存）
+  })
+})
+
+// ————————————————————————— notify 广播面（105-刀B-1，studio-dev-219） —————————————————————————
+
+describe('assembleMatrixBroadcastFace（登录 + 广播面，105-刀B-1）', () => {
+  it('matrixChannels: false 调装配 → CONFIG_INVALID（开关面与装配面一致）', async () => {
+    const config = parseDaemonConfig(channelsYaml().replace('matrixChannels: true', 'matrixChannels: false'))
+    const ff = fakeFetchWithLogin([])
+    const login = await assembleMatrixLogin(config, ENV, { fetch: ff.fetch })
+    expect(() => assembleMatrixBroadcastFace(config, ENV, { login })).toThrow('CONFIG_INVALID')
+  })
+
+  it('合法：send 可调（结构同形 NotifyBroadcastFace）；日志点名广播面', async () => {
+    const config = parseDaemonConfig(channelsYaml())
+    const ff = fakeFetchWithLogin([])
+    const logs: string[] = []
+    const login = await assembleMatrixLogin(config, ENV, { fetch: ff.fetch, log: (l) => logs.push(l) })
+    const face = assembleMatrixBroadcastFace(config, ENV, { login, log: (l) => logs.push(l) })
+    expect(typeof face.send).toBe('function')
+    expect(logs.some((l) => l.includes('notify 广播面已装配'))).toBe(true)
+  })
+})
+
+describe('bootServe：notifyBroadcast 注入面（105-刀B-1）', () => {
+  it('matrixChannels 开 → runServe 收 notifyBroadcast；login 仍恰一次（三面共用登录）', async () => {
+    const calls: { url: string; body?: string }[] = []
+    const ff = fakeFetchWithLogin(calls)
+    const yamlPath = path.join(root, 'boot-notify.yaml')
+    await writeFile(yamlPath, channelsYaml(), 'utf8')
+    const seen: { path?: string; opts?: Record<string, unknown> }[] = []
+    await bootServe({
+      configPath: yamlPath,
+      env: ENV,
+      fetch: ff.fetch,
+      log: () => {},
+      serve: async (configPath, opts) => {
+        seen.push({ path: configPath, opts: opts as Record<string, unknown> })
+        return { ticks: 0, stopReason: 'stop-request' }
+      },
+    })
+    expect(seen[0]?.opts?.notifyBroadcast).toBeDefined()
+    expect(typeof (seen[0]?.opts?.notifyBroadcast as NotifyBroadcastFace).send).toBe('function')
+    expect(calls).toHaveLength(1) // 供给面+广播面+源共用一次 bot 登录
+  })
+
+  it('只开 matrix 不开 matrixChannels → 无 notifyBroadcast（开关面独立）', async () => {
+    const calls: { url: string; body?: string }[] = []
+    const ff = fakeFetchWithLogin(calls)
+    const yamlPath = path.join(root, 'boot-notify-off.yaml')
+    await writeFile(yamlPath, matrixYaml(), 'utf8')
+    const seen: { path?: string; opts?: Record<string, unknown> }[] = []
+    await bootServe({
+      configPath: yamlPath,
+      env: ENV,
+      fetch: ff.fetch,
+      log: () => {},
+      serve: async (configPath, opts) => {
+        seen.push({ path: configPath, opts: opts as Record<string, unknown> })
+        return { ticks: 0, stopReason: 'stop-request' }
+      },
+    })
+    expect(seen[0]?.opts?.notifyBroadcast).toBeUndefined()
+    expect(seen[0]?.opts?.matrixSource).toBeDefined()
   })
 })

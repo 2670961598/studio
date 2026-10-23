@@ -77,6 +77,7 @@ import { openLedger, type Ledger } from '@studio-next/store'
 import type {
   CompanySnapshot,
   CostGuardConfig,
+  EventRecord,
   InvokeSource,
   ModelCatalog,
   PersonRef,
@@ -108,13 +109,16 @@ import { logJobContractWarnings } from '../engine/jobs/freshness.ts'
 import { registerJobSources } from './sources/jobs.ts'
 import { createDefaultAssembler } from '../engine/prompt-assembly.ts'
 import type { PromptAssembler } from '../engine/prompt-assembly.ts'
-import { nextRunAt, type Scheduler } from '../engine/scheduler.ts'
+import { type Scheduler } from '../engine/scheduler.ts'
 import { flowsFromWorkflows } from '../engine/typeflows.ts'
 import { consumeStopRequest, readStopRequest, STOP_LAST_SEEN_KV_KEY, writeStopResult } from '../control/stop-channel.ts'
 import type { WorkerKeyDeps } from '../engine/worker-key.ts'
 import type { MatrixHrFace } from '../engine/hrsync/hrsync.ts'
 // 频道供给面（130-P3，130 提案 §6.7）：结构同形接口——daemon 不 import matrix 包
 import type { MatrixRoomFace, MatrixRoomFaceContext } from '../engine/rooms/room-duty.ts'
+// notify 广播面（105-刀B，studio-dev-219）：结构同形接口+装配体（daemon 不 import matrix 包）
+import { wireNotifyAssembly } from './notify/notify.ts'
+import type { NotifyBroadcastFace } from '../engine/notify/broadcast.ts'
 // 人事同步器装配（DEV-48，docs/52-§九）——hr 配置面/装配体/平台接线件（BC-S2 先拆再增）
 import { assembleHrSync, hrApplySegment } from './hrsync/assemble.ts'
 import { coerceHrServeKey, HR_SERVE_DEFAULTS, validateHrServeCross, type HrServeConfig } from './hrsync/config.ts'
@@ -122,6 +126,8 @@ import { loadTaigaFieldMap, provisionDeclaredStates, resolveTaigaAuth, wireGated
 export { resolveTaigaAuth, loadTaigaFieldMap, wirePlatform }
 // 频道供给面类型再出（130-P3）：boot 组合根从 '@studio-next/daemon/serve' 消费工厂签名
 export type { MatrixRoomFace, MatrixRoomFaceContext } from '../engine/rooms/room-duty.ts'
+// notify 广播面类型再出（105-刀B）：boot 组合根从 '@studio-next/daemon/serve' 消费接口签名
+export type { NotifyBroadcastFace, NotifyBroadcastTargets, NotifySendReport } from '../engine/notify/broadcast.ts'
 import {
   createFileWatchSource,
   createSchedulerSource,
@@ -806,77 +812,10 @@ function wireWorkerKeys(config: ServeConfig, identity: ReturnType<typeof daemonI
 
 // ————————————————————————— 定时岗：播种与运行栈 —————————————————————————
 
-/** 播种缺省隔离窗（与 scheduler 缺省一致；坏 cron 走统一隔离路径——scheduler 会再计数+推后） */
-const SEED_QUARANTINE_MS = 60 * 60_000
-
-/** 播种结果（serve 启动面观测） */
-export interface SeedJobsResult {
-  seeded: number
-  /** 既有行保序数（next_run_at 原样保留——欠账不清，首拍补跑） */
-  kept: number
-}
-
-/**
- * 快照 jobs → 台账 jobs 表播种（jobs: true 时启动调用；18-§三 daemon 侧落点——现行
- * 入口=快照 jobs，公司目录 jobs 段装载归 packages/company 后续单）。新岗 next_run_at=
- * cron 下一槽不抢跑；**既有行原样保留**——重启不清欠账，错过槽位首拍补跑一次
- * （coalesce）；last_run_at 不在 upsert 列（store 契约）跑史恒真；坏 cron=now+隔离窗。
- */
-export function seedJobs(
-  ledger: Ledger,
-  jobs: readonly ScheduledJob[],
-  now: number,
-): SeedJobsResult {
-  let seeded = 0
-  let kept = 0
-  for (const job of jobs) {
-    const existing = ledger.getJob(job.job_id)
-    let next: number
-    if (existing !== undefined) {
-      next = existing.next_run_at
-      kept += 1
-    } else {
-      try {
-        const computed = nextRunAt(job.cron, now)
-        next = computed === null ? now + SEED_QUARANTINE_MS : computed
-      } catch {
-        next = now + SEED_QUARANTINE_MS
-      }
-    }
-    ledger.upsertJob({
-      job_id: job.job_id,
-      company: job.company,
-      dept: job.dept,
-      cron: job.cron,
-      role: job.role,
-      level: job.level,
-      model_tier: job.model_tier,
-      ...(job.budget_cap !== undefined ? { budget_cap: job.budget_cap.usd } : {}),
-      ...(job.payload !== undefined ? { payload: job.payload } : {}),
-      next_run_at: next,
-    })
-    if (existing === undefined) seeded += 1
-  }
-  return { seeded, kept }
-}
-
-/**
- * L1 热重载·调度岗移除（docs/38-§2 L1；18-§三「重注册对应岗、不动其他岗」的移除对偶）：
- * jobs 表中 company=本司、已不在新快照的岗 → removeJob（他司岗与其他来源岗不动）。
- * 在途岗单据照常走收割链（调度器只管「不再触发」）；意图消费面对消失岗已有明报丢弃面
- * （engine.ts「job 不在台账（热更移除？）——丢弃」）。
- */
-export function removeMissingJobs(ledger: Ledger, snapshot: CompanySnapshot): number {
-  const keep = new Set(snapshot.jobs.map((j) => j.job_id))
-  let removed = 0
-  for (const job of ledger.listJobs()) {
-    if (job.company === snapshot.slug && !keep.has(job.job_id)) {
-      ledger.removeJob(job.job_id)
-      removed += 1
-    }
-  }
-  return removed
-}
+// 定时岗播种族（seedJobs/removeMissingJobs）拆至 assembly/jobs-seed/（studio-dev-219，
+// BC-S2 先拆再增纪律）——re-export 保既有 import 路径（scheduler.test.ts 消费面零变）
+import { seedJobs, removeMissingJobs } from './jobs-seed/jobs-seed.ts'
+export { seedJobs, removeMissingJobs, type SeedJobsResult } from './jobs-seed/jobs-seed.ts'
 
 /** serve 运行栈（engine + 唤起源注册表 + 统一停机面；runServe 与测试共用装配） */
 export interface ServeRuntime {
@@ -901,6 +840,13 @@ export interface ServeRuntime {
    * 测试与后续 CLI `studio resume <单号>`（50a-B4 归档在册——命令面另批，此处先露面）。
    */
   resumePublish?: (ticket: TicketId, cause?: string) => boolean
+  /**
+   * notify 事件中继（105-刀B，studio-dev-219；notifyBroadcast 注入时存在）：
+   * runServe 主循环在拍边界（tick() 收口后）以本拍新事件 TickReport.events 调用——
+   * 按冻结路由表广播 #alert/部门频道/总览（docs/17-§2 七相位结构不动：中继在相位外
+   * 只读消费）。永不抛（软失败=日志+计量 failed 数，面板仍第一落点——刀B-6）。
+   */
+  notifyRelay?: (events: readonly EventRecord[]) => Promise<void>
   /**
    * 优雅停：先 stopAll 唤起源（不再进新意图）→ 在途 drain → 关台账
    * （SIGINT/SIGTERM 同一收口；可重入）。队列中未消费意图停机即弃（at-most-once，
@@ -953,6 +899,15 @@ export function buildServeRuntime(
      * 公司快照（L1 热重载新鲜面）——daemon 只收工厂不持 Matrix 网络面。
      */
     matrixRoomFace?: (ctx: MatrixRoomFaceContext) => MatrixRoomFace
+    /**
+     * notify 广播面（105-刀B，studio-dev-219；matrixChannels: true 时由 boot 注入）：
+     * createMatrixBroadcastFace 产物（结构同形 engine/notify/broadcast NotifyBroadcastFace
+     * ——daemon 不 import @studio-next/matrix，同注入纪律）。注入后：①拍边界中继把本拍
+     * 新事件（TickReport.events）按冻结路由表广播到 #alert/部门频道/总览；②engine escalate
+     * cost-threshold 警戒出口从 v0 日志线切到 IM 即时广播（129 批示项④）。不注入=面关零
+     * 行为（v0 出口保留——面板第一落点语义不变）。
+     */
+    notifyBroadcast?: NotifyBroadcastFace
     /** 出站脱敏补充秘密面（DEV-48，docs/52-§十二；matrix shared_secret 等装配单元持有物） */
     hrKnownSecrets?: readonly string[]
     /**
@@ -1196,6 +1151,28 @@ export function buildServeRuntime(
   //    matrixChannels 关=零装配零注入，既有行为字节不变（同 hrSync 纪律）。
   let roomFace: MatrixRoomFace | undefined
   if (config.matrixChannels) roomFace = wireRoomFace(opts?.matrixRoomFace, () => companyState.snapshot)
+  // —— notify 广播中继装配（105-刀B，studio-dev-219；面注入=开，缺省=零装配零行为）：
+  //    装配体拆至 assembly/notify/（三件套：拍边界事件中继+cost 警戒 IM 出口+惊动计量
+  //    PATROL；matrix 挂=IM 副本缺失，面板仍第一落点）。
+  const wiredNotify =
+    opts?.notifyBroadcast !== undefined
+      ? wireNotifyAssembly({
+          face: opts.notifyBroadcast,
+          company: config.company,
+          heartbeatIssue: engineConfig.heartbeatIssue,
+          actor: engineConfig.actor,
+          deptFallback: engineConfig.deptFallback,
+          ledger,
+          clock,
+          people: companyState.snapshot.people,
+          log,
+        })
+      : undefined
+  if (wiredNotify !== undefined) {
+    log('[serve] notify 广播面已装配：事件中继（拍边界）+cost 警戒即时出口+惊动计量（105-刀B，studio-dev-219）——matrix 挂=IM 副本缺失，面板仍第一落点')
+  }
+  // cost 警戒出口（181 EngineDeps.notify 注入件）：面注入=IM 即时广播叠加（129 批示项④）
+  const costNotifyOutlet = wiredNotify?.costNoticeOutlet ?? createCostNotifyOutlet(log)
   const engine = createEngine({
     // 写路径网关收口（17-§7）：raw platform 包一层 gated 代理——engine 写调用签名不变（透明）
     platform: wireGatedPlatform(rawPlatform, config, identity, clock, log),
@@ -1216,8 +1193,9 @@ export function buildServeRuntime(
     people: snapshot.people, departments: snapshot.departments, // 130-P2（studio-dev-173）：部门索引随快照注入——父单立案 leader 解析
     // cost_guard 段（132-§6.4 单C）：闸四 hard 线联动（R6）的引擎配置源；段不声明=不注入=面关
     ...(snapshot.costGuard !== undefined ? { costGuard: snapshot.costGuard } : {}),
-    // 成本警戒 notify 出口（129-D 181）：v0 接 log 行（刀B IM 链登记位——结构化交接件零重解析）
-    notify: createCostNotifyOutlet(log),
+    // 成本警戒 notify 出口（129-D 181）：v0 接 log 行（结构化交接件零重解析）；刀B 面注入
+    // =IM 即时广播叠加（costNotifyOutlet 上方装配块）
+    notify: costNotifyOutlet,
     ...(catalog !== undefined ? { catalog } : {}),
     // 批示归一层（studio-dev-171，docs/18-§2.5）：恒注入（装配缝=engine/directive/
     // serve-config.ts——leader 表随快照，热重载整组换）
@@ -1416,6 +1394,8 @@ export function buildServeRuntime(
     ...(hotReload !== undefined ? { hotReload } : {}),
     // 129-E（184）：续命意图推送面露头（resume: true 时；调用面归 B4 CLI resume——另批）
     ...(resumePublish !== undefined ? { resumePublish } : {}),
+    // 105-刀B（219）：拍边界事件中继露头（notifyBroadcast 注入时；runServe 主循环接线）
+    ...(wiredNotify !== undefined ? { notifyRelay: wiredNotify.relayEvents } : {}),
     async stop(): Promise<void> {
       // 先停源（不再进新意图）→ 再停引擎（在途 drain）→ 关台账（SIGINT 停机顺序，22-§三.3）
       sources.stopAll()
@@ -1476,6 +1456,12 @@ export async function runServe(
      * 构造 createMatrixProvisionFace 产物）；缺省不注入（开而未注入=CONFIG_INVALID）。
      */
     matrixRoomFace?: (ctx: MatrixRoomFaceContext) => MatrixRoomFace
+    /**
+     * notify 广播面（105-刀B，studio-dev-219）：boot 组合根注入 createMatrixBroadcastFace
+     * 产物（daemon 不 import @studio-next/matrix，同注入纪律）；注入后 serve 把它交给
+     * buildServeRuntime（拍边界事件中继+escalate 警戒 IM 出口）。缺省不注入=面关零行为。
+     */
+    notifyBroadcast?: NotifyBroadcastFace
   },
 ): Promise<ServeResult> {
   const config = parseDaemonConfig(readFileSync(path.resolve(configPath), 'utf8'))
@@ -1529,9 +1515,10 @@ export async function runServe(
     }
   }
 
-  const { engine, sources, stop, hotReload } = buildServeRuntime(config, ledger, snapshot, {
+  const { engine, sources, stop, hotReload, notifyRelay } = buildServeRuntime(config, ledger, snapshot, {
     ...(opts?.matrixSource !== undefined ? { matrixSource: opts.matrixSource } : {}),
     ...(opts?.matrixRoomFace !== undefined ? { matrixRoomFace: opts.matrixRoomFace } : {}),
+    ...(opts?.notifyBroadcast !== undefined ? { notifyBroadcast: opts.notifyBroadcast } : {}),
   })
 
   // 未挂公司目录的 daemon：L1 热重载不适用——reload 请求仍回执拒绝（不悬空 CLI 轮询）
@@ -1572,6 +1559,13 @@ export async function runServe(
       // noop 观测面（见 renderNoopDecision 头注）：静默 noop=观察黑洞，逐条落行
       for (const line of noopLinesOf(report)) console.log(line)
       for (const err of report.errors) console.error(`[serve] tick#${report.seq} 错误：${err}`)
+      // —— notify 事件中继（105-刀B，studio-dev-219；notifyBroadcast 注入时存在）：拍边界
+      //    只读本拍新事件（TickReport.events）按冻结路由表广播 #alert/部门频道/总览。
+      //    fire-and-forget：IM 投递永不阻塞/打断主循环（沟通面非执行前置，刀B-6——矩阵
+      //    挂=软失败日志+计量 failed，面板仍第一落点）；relayEvents 恒不抛（双保险 catch）。
+      if (notifyRelay !== undefined && report.events.length > 0) {
+        void notifyRelay(report.events).catch((): void => {})
+      }
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err)
       stopReason = 'error'

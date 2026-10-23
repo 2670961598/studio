@@ -50,4 +50,28 @@ describe('formatNotification', () => {
     expect(formatNotification({ kind: 'k', title: '', body: '只有正文' })).toBe('[k]\n只有正文')
     expect(formatNotification({ kind: '', title: '', body: '' })).toBe('')
   })
+
+  // —— from 署名渲染（105-刀B-4/E6，studio-dev-219：契约字段存在而出口未消费是缺陷）——
+
+  it('from 署名渲染为尾行「—— <from>」（bot 代发署名，docs/21-§三二选一）', () => {
+    const n: Notification = {
+      kind: 'gate',
+      title: '过闸 STUDIO-100',
+      body: '四要件齐',
+      from: 'daemon@studio-dev（bot 代发）',
+    }
+    expect(formatNotification(n)).toBe('[gate] **过闸 STUDIO-100**\n四要件齐\n—— daemon@studio-dev（bot 代发）')
+  })
+
+  it('from 署名在 links 之后（署名恒尾行）；空白 from 省略', () => {
+    const withLinks: Notification = {
+      kind: 'cost',
+      title: 'T',
+      body: 'B',
+      links: [{ label: '面板', url: 'https://panel.local/studio-dev' }],
+      from: 'daemon',
+    }
+    expect(formatNotification(withLinks)).toBe('[cost] **T**\nB\n- [面板](https://panel.local/studio-dev)\n—— daemon')
+    expect(formatNotification({ kind: 'k', title: 'T', body: 'B', from: '   ' })).toBe('[k] **T**\nB')
+  })
 })

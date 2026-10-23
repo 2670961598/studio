@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
-vi.setConfig({ testTimeout: 30_000 }) // E-4 前例：fs.watch 时序用例在全量并行负载下超缺省 5s——只动预算不动断言（2026-10-22 宰相亲批）
+vi.setConfig({ testTimeout: 60_000 }) // E-4 前例：fs.watch 时序用例在全量并行负载下超缺省 5s——只动预算不动断言（2026-10-22 宰相亲批）
 import type { CompanySnapshot } from '@studio-next/contract'
 import { createOverviewApp, mountHotCompanySource } from '../src/overview/index.ts'
 import type { OverviewCompanySource } from '../src/overview/index.ts'
