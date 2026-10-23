@@ -514,7 +514,7 @@ export function renderDashboardPage(): string {
 </style>
 </head>
 <body>
-<h1>Studio Next 监控（:8787 只读面）</h1>
+<h1>Studio Next 监控（:8791 只读面）</h1>
 <div id="meta">schema v<span id="schema">-</span> · 快照 <span id="stamp">-</span> · 每 3s 轮询 + SSE 实时事件</div>
 <div class="grid">
   <section>
