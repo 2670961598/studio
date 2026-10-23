@@ -45,7 +45,7 @@ export default {
   template: `
 <n-card size="small" :bordered="true" style="margin-bottom:12px" title="花名册">
   <template #header-extra>
-    <span style="color:#90a4ae;font-size:12px">{{ (data?.people?.length ?? 0) > 0 ? `${String(data.people.length)} 人` : '' }}</span>
+    <span style="color:#90a4ae;font-size:12px">{{ (data?.people?.length ?? 0) > 0 ? String(data.people.length) + ' 人' : '' }}</span>
   </template>
   <snapshot-badge :as-of="data?.asOf ?? ''" :meta="data?.snapshotMeta ?? null" :fetched-at-ms="asOfMs" />
   <n-alert v-if="error" type="error" size="small" style="margin-top:8px" title="取数失败（展示最后一次有效数据）">{{ error }}</n-alert>

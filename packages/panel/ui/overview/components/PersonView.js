@@ -22,7 +22,7 @@ export default {
   },
   components: { SnapshotBadge },
   template: `
-<n-card size="small" :bordered="true" style="margin-bottom:12px" :title="data ? `${data.person.id} ${data.person.name}` : personId">
+<n-card size="small" :bordered="true" style="margin-bottom:12px" :title="data ? data.person.id + ' ' + data.person.name : personId">
   <template #header-extra>
     <n-button size="tiny" tertiary @click="back">← 花名册</n-button>
   </template>

@@ -51,7 +51,7 @@ export default {
   template: `
 <n-card size="small" title="公司清单" :bordered="true" style="margin-bottom:12px">
   <template #header-extra>
-    <span style="color:#90a4ae;font-size:12px">{{ rows.length ? `已挂载 ${String(rows.length)} 家公司` : '' }}</span>
+    <span style="color:#90a4ae;font-size:12px">{{ rows.length ? '已挂载 ' + String(rows.length) + ' 家公司' : '' }}</span>
   </template>
   <snapshot-badge :asOf="data?.asOf ?? ''" :meta="meta" :fetched-at-ms="asOfMs" />
   <n-alert v-if="error" type="error" size="small" style="margin-top:8px" title="取数失败（展示最后一次有效数据）">{{ error }}</n-alert>
