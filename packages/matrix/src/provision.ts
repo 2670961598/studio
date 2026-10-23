@@ -109,17 +109,40 @@ export function aliasLocalpart(alias: string): string {
 }
 
 /**
- * 单号 → 频道别名 localpart 段（DEV-20 §5.1/P4 冻结公式：`<slug>-<单号小写化、
- * 非法字符剥除>`；MXID/alias localpart 域 `a-z 0-9 . _ = - / +`——21A-§2.2/§2.4，
- * CJK/大写剥除）。DEV-20 → studio-dev-174 → studio-dev-studio-dev-174：前缀重复是
- * 公式冻结的既视结果（照录不美化——幂等寻址只要确定性）。
+ * 单号 → 频道别名 localpart 段（DEV-20 §5.1/P4 公式 `#<slug>-<单号小写>`——docs/21-§二:18；
+ * MXID/alias localpart 域 `a-z 0-9 . _ = - / +`——21A-§2.2/§2.4，CJK/大写剥除）。
+ * **slug 恰一次语义**（studio-dev-218 修订，2026-10-23）：单号已携本家 slug 前缀
+ * （Taiga ref 形 `<project>-<n>`，如 studio-dev-212）时不再叠前缀——旧照录公式产生
+ * `studio-dev-studio-dev-212` 双 slug 别名，directory 探测 `#studio-dev-212` M_NOT_FOUND
+ * （taiga18 实证：钩已触发、房已建，寻址面错位）。YouTrack 形单号（DEV-20）不带
+ * slug，行为不变（studio-dev-dev-20）。
  */
 export function ticketAliasLocalpart(slug: string, ticket: string): string {
-  const cleaned = ticket
+  const cleaned = cleanTicketId(ticket)
+  return cleaned.startsWith(`${slug}-`) ? cleaned : `${slug}-${cleaned}`
+}
+
+/** 单号 → localpart 合法段（小写化＋非法字符剥除；21A-§2.2/§2.4 域 `a-z 0-9 . _ = - / +`） */
+function cleanTicketId(ticket: string): string {
+  return ticket
     .toLowerCase()
     .replace(/[^a-z0-9._=/+-]/g, '')
     .replace(/^[.=_/-]+|[.=_/-]+$/g, '')
-  return `${slug}-${cleaned}`
+}
+
+/**
+ * 单据房间别名候选（studio-dev-218 骑缝收敛面）：canonical（slug 恰一次形）在前；
+ * 旧照录公式形（`<slug>-<cleaned>`——pre-fix 存量双 slug 房）随后，仅当与 canonical
+ * 不同（单号不带 slug 时两形合一——YouTrack 形无骑缝面）。ensure 首中即用（一单一房
+ * 不变式：骑缝单重派修补旧房不另开新房）；archive 逐候选找房（fix 前开房、fix 后关单
+ * 的骑缝单不悬空——幂等重跑收敛，S8）。
+ */
+export function ticketRoomAliases(slug: string, ticket: string, server: string): [string] | [string, string] {
+  const canonical = ticketAliasLocalpart(slug, ticket)
+  const legacy = `${slug}-${cleanTicketId(ticket)}`
+  return legacy === canonical
+    ? [`#${canonical}:${server}`]
+    : [`#${canonical}:${server}`, `#${legacy}:${server}`]
 }
 
 /** 单据房间显示名：`<单号> ｜ <标题截断>`（DEV-20 §5.1 命名法；长标题截 48 防 Synapse name 上限） */
@@ -464,7 +487,20 @@ export async function ensureTicketRoom(
 ): Promise<EnsureRoomResult & { alias: string; note: string }> {
   const server = serverNameOf(input.botMxid)
   const resolved = resolveTicketMembers(input, args)
-  const alias = `#${ticketAliasLocalpart(input.slug, args.ticket)}:${server}`
+  // 别名候选首中即用（studio-dev-218）：canonical 在前、pre-fix 双 slug 存量房随后
+  // ——骑缝单（fix 前开房）重派修补旧房不另开新房（一单一房不变式）；全缺则建 canonical。
+  const candidates = ticketRoomAliases(input.slug, args.ticket, server)
+  let alias: string | undefined
+  for (const candidate of candidates) {
+    try {
+      await client.resolveAlias(candidate)
+      alias = candidate
+      break
+    } catch (err) {
+      if (!isNotFoundError(err)) throw err
+    }
+  }
+  if (alias === undefined) alias = candidates[0]
   const spec: ChannelSpec = {
     kind: 'ticket',
     alias,
@@ -499,13 +535,22 @@ export async function archiveTicketRoom(
   args: { ticket: string },
 ): Promise<{ archived: boolean; found: boolean; note: string }> {
   const server = serverNameOf(input.botMxid)
-  const alias = `#${ticketAliasLocalpart(input.slug, args.ticket)}:${server}`
-  let roomId: string
-  try {
-    roomId = await client.resolveAlias(alias)
-  } catch (err) {
-    if (isNotFoundError(err)) return { archived: false, found: false, note: `房间 ${alias} 不存在——无房可归档（开房面失败的对账输入，不是错误）` }
-    throw err
+  // 逐候选找房（studio-dev-218）：fix 前开房、fix 后关单的骑缝单挂在旧双 slug 别名
+  // ——canonical 未中再探 legacy，关单归档面不悬空；全缺=对账输入不是错误，no-op。
+  const candidates = ticketRoomAliases(input.slug, args.ticket, server)
+  let roomId: string | undefined
+  let alias: string | undefined
+  for (const candidate of candidates) {
+    try {
+      roomId = await client.resolveAlias(candidate)
+      alias = candidate
+      break
+    } catch (err) {
+      if (!isNotFoundError(err)) throw err
+    }
+  }
+  if (roomId === undefined || alias === undefined) {
+    return { archived: false, found: false, note: `房间 ${candidates[0]}（含骑缝候选）不存在——无房可归档（开房面失败的对账输入，不是错误）` }
   }
   // PL events_default→50（只读化：PL0 不可发言）——全量目标快照口径（同值零写；含
   // events_default=50 的目标与现状全键比较，漂移/未归档均收敛到归档基线）

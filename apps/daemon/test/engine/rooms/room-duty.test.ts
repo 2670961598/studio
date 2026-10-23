@@ -6,6 +6,9 @@
  *   3. CLOSE 后 onClosed({ticket})（回收相位挂归档）
  *   4. onClosed 失败：ESCALATE 不阻断回收（CLOSE 落账、recycled 照计）
  *   5. 未注入（缺省关闭面）：零行为变更（回归锚）
+ *   6. 岗单物化路径（schedule 意图→同拍物化+派发）同样挂房——studio-dev-218 复现：
+ *      212 实证场景（pln-daily-review 定时岗派发无 #房）；派发挂房只有 executeDispatch
+ *      一条路径，物化单与人工单同径（「装配≠触发」疑点结构性钉死）
  * 断言只对 seam 契约（参数形状/时序/失败语义）负责——房间供给算法在 packages/matrix
  * provision.test.ts 单测钉死，此处 fake RoomDuty 替身。
  */
@@ -154,6 +157,42 @@ describe('DISPATCH 相位挂单据房间（DEV-20 P9）', () => {
     const escalate = stack.ledger.queryEvents({ issue: 'T-1' }).find((e) => e.event === 'ESCALATE')
     expect(escalate?.note).toContain('单据房间供给失败')
     expect(escalate?.note).toContain('不阻派发')
+    stack.ledger.close()
+  })
+})
+
+describe('岗单物化路径派发同样挂房（studio-dev-218 复现：212=定时岗 pln-daily-review 场景）', () => {
+  it('schedule 意图 → 同拍物化+派发 → onDispatched 收到物化单（派发挂房单路径，无第二路径可漏）', async () => {
+    const { stack } = buildStack('job-materialize')
+    // 定时岗入台账（212 实证场景：pln-daily-review 研发部定时岗）
+    stack.ledger.upsertJob({
+      company: SNAPSHOT.slug,
+      job_id: 'pln-daily-review',
+      dept: 'departments/工程部',
+      cron: '0 1 * * *',
+      role: 'AGENT-1',
+      level: 2,
+      model_tier: 'low',
+      next_run_at: 0,
+    })
+    // schedule 意图（sources.ts/scheduler.ts 同形：dedupKey=job_id@触发时刻、priority=2）
+    stack.engine.ingest([{
+      kind: 'schedule',
+      company: SNAPSHOT.slug,
+      payload: { job_id: 'pln-daily-review' },
+      source: 'scheduler',
+      dedupKey: `pln-daily-review@${stack.clock.now()}`,
+      priority: 2,
+    }])
+    stack.clock.advance(1000)
+    const report = await stack.engine.tick()
+    expect(report.errors).toEqual([])
+    expect(report.phases.stateDiff.candidates).toBe(1) // 意图消费→岗单物化
+    expect(report.phases.dispatch.dispatched).toBe(1) // 同拍派发
+    // 挂房收到物化单：[定时岗] 前缀 title、job.dept、assignee=job.role 精确命中
+    expect(stack.rooms.dispatched).toHaveLength(1)
+    expect(stack.rooms.dispatched[0]).toMatchObject({ ticket: 'T-1', dept: 'departments/工程部', assignee: 'AGENT-1' })
+    expect(stack.rooms.dispatched[0]?.title).toContain('[定时岗] pln-daily-review')
     stack.ledger.close()
   })
 })

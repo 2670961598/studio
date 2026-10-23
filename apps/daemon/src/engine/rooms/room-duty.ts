@@ -23,9 +23,11 @@ export interface RoomDutyDispatchArgs {
 }
 
 export interface RoomDuty {
-  /** 派发成功 → 开/修补单据房间 `#<slug>-<单号小写>`（成员按 D7 规则解析——装配侧持快照） */
+  /** 派发成功 → 开/修补单据房间 `#<slug>-<单号小写>`（成员按 D7 规则解析——装配侧持快照）。
+   * slug 恰一次语义（studio-dev-218）：单号已携 slug 前缀（Taiga ref 形 studio-dev-212）
+   * 不再叠前缀——别名公式见 packages/matrix ticketAliasLocalpart。 */
   onDispatched(args: RoomDutyDispatchArgs): Promise<void>
-  /** 关单 → 房间只读归档（幂等：重复 PUT 同值收敛） */
+  /** 关单 → 房间只读归档（幂等：重复 PUT 同值收敛；骑缝单先探 canonical 再探旧双 slug 形） */
   onClosed(args: { ticket: TicketId }): Promise<void>
 }
 
