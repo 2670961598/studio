@@ -22,7 +22,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { InvokeSource } from '@studio-next/contract'
 import { checkMentionPayload } from '@studio-next/daemon/engine'
 import { parseDaemonConfig, type MatrixRoomFace, type MatrixRoomFaceContext, type NotifyBroadcastFace, type ServeResult } from '@studio-next/daemon/serve'
-import type { FetchLike, MentionPayload } from '@studio-next/matrix'
+import type { FetchLike, MentionPayload, MatrixHrTarget } from '@studio-next/matrix'
+import type { RunServeOpts } from '../../daemon/src/assembly/hrsync/run-serve-opts.ts'
 import {
   assembleMatrixBroadcastFace,
   assembleMatrixLogin,
@@ -33,6 +34,8 @@ import {
   loadDeptSlugs,
   parseMatrixRoles,
   MATRIX_BOT_PASSWORD_ENV,
+  assembleMatrixHrFace,
+  MATRIX_HR_SHARED_SECRET_ENV,
 } from './boot.ts'
 
 // ————————————————————————— 测试基建 —————————————————————————
@@ -78,6 +81,12 @@ function fakeFetchWithLogin(calls: { url: string; body?: string }[]): {
 
 const ENV: Record<string, string | undefined> = { [MATRIX_BOT_PASSWORD_ENV]: 'bot-pw' }
 
+/** hr 面 env 夹具（shared secret 双名其一——与 daemon collectHrSecrets 同扫口径） */
+const ENV_HR: Record<string, string | undefined> = {
+  ...ENV,
+  [MATRIX_HR_SHARED_SECRET_ENV]: 'hr-secret-0123456789abcdef',
+}
+
 /** serve 注入面的契约记录（不真跑主循环） */
 type ServeSpy = (
   configPath: string,
@@ -85,7 +94,7 @@ type ServeSpy = (
 ) => Promise<ServeResult>
 
 function serveStub(
-  seen: { path?: string; opts?: { matrixSource?: () => InvokeSource; matrixRoomFace?: (ctx: MatrixRoomFaceContext) => MatrixRoomFace } }[],
+  seen: { path?: string; opts?: RunServeOpts }[],
 ): ServeSpy {
   return async (configPath, opts) => {
     seen.push({ ...(configPath !== undefined ? { path: configPath } : {}), ...(opts !== undefined ? { opts } : {}) })
@@ -508,5 +517,119 @@ describe('bootServe：notifyBroadcast 注入面（105-刀B-1）', () => {
     })
     expect(seen[0]?.opts?.notifyBroadcast).toBeUndefined()
     expect(seen[0]?.opts?.matrixSource).toBeDefined()
+  })
+})
+
+// ————————————————————————— hrMatrix 人事面（studio-dev-217，docs/52-§七） —————————————————————————
+
+/** hr 键组 daemon.yaml（matrix/matrixChannels 关=hr 面独立灰度形态） */
+function hrYaml(overrides: Record<string, string> = {}): string {
+  return [
+    `db: ${path.join(root, 'ledger.sqlite')}`,
+    `rootDir: ${path.join(root, 'work')}`,
+    'hrSync: true',
+    'hrMatrix: true',
+    "hrMatrixRooms: 'company=#hall:studio.local;departments/工程部=#eng-hall:studio.local'",
+    'matrix: false',
+    'matrixChannels: false',
+    'matrixHomeserverUrl: http://127.0.0.1:18008',
+    'matrixUserId: @demo-bot:studio.local',
+    ...Object.entries(overrides).map(([k, v]) => `${k}: ${v}`),
+  ].join('\n')
+}
+
+describe('assembleMatrixHrFace（登录 + 人事执行面，studio-dev-217）', () => {
+  it('hrSync/hrMatrix 未开下调用 → CONFIG_INVALID（装配面与开关面不一致明报）', async () => {
+    const config = parseDaemonConfig(matrixYaml()) // matrix 键组基座：hr 面全缺省关
+    await expect(assembleMatrixHrFace(config, ENV_HR)).rejects.toThrow('CONFIG_INVALID')
+  })
+
+  it('缺 shared secret env（两名俱缺）→ CONFIG_INVALID 且点名 env 键（红名单）', async () => {
+    const config = parseDaemonConfig(hrYaml())
+    await expect(assembleMatrixHrFace(config, ENV)).rejects.toThrow(MATRIX_HR_SHARED_SECRET_ENV)
+  })
+
+  it('合法：login 一次 → 四面齐（建号/入房/PL/踢出）', async () => {
+    const calls: { url: string; body?: string }[] = []
+    const ff = fakeFetchWithLogin(calls)
+    const config = parseDaemonConfig(hrYaml())
+    const logs: string[] = []
+    const face = await assembleMatrixHrFace(config, ENV_HR, { fetch: ff.fetch, log: (l) => logs.push(l) })
+    expect(calls).toHaveLength(1) // 恰一次 login（bot 管理账号，52-§7.2）
+    expect(typeof face.ensureAccount).toBe('function')
+    expect(typeof face.ensureMembership).toBe('function')
+    expect(typeof face.ensurePowerLevel).toBe('function')
+    expect(typeof face.kickFromRoom).toBe('function')
+    expect(logs.some((l) => l.includes('人事面已装配'))).toBe(true)
+  })
+
+  it('次选名 MATRIX_SHARED_SECRET 同样可注入（daemon collectHrSecrets 同扫口径）', async () => {
+    const calls: { url: string; body?: string }[] = []
+    const ff = fakeFetchWithLogin(calls)
+    const config = parseDaemonConfig(hrYaml())
+    const face = await assembleMatrixHrFace(config, { ...ENV, MATRIX_SHARED_SECRET: 'fallback-secret-0123456789' }, { fetch: ff.fetch })
+    expect(typeof face.ensureAccount).toBe('function')
+    expect(calls).toHaveLength(1)
+  })
+})
+
+describe('bootServe：hr-only 形态（matrix: false + matrixChannels: false + hrMatrix: true）', () => {
+  it('runServe 收 hrMatrixFace、无 matrixSource/matrixRoomFace；login 恰一次', async () => {
+    const calls: { url: string; body?: string }[] = []
+    const ff = fakeFetchWithLogin(calls)
+    const yamlPath = path.join(root, 'boot-hr.yaml')
+    await writeFile(yamlPath, hrYaml(), 'utf8')
+    const seen: Parameters<typeof serveStub>[0] = []
+    await bootServe({ configPath: yamlPath, env: ENV_HR, fetch: ff.fetch, serve: serveStub(seen) })
+    expect(seen[0]?.opts?.matrixSource).toBeUndefined() // 只开人事面不开唤醒源/频道供给
+    expect(seen[0]?.opts?.matrixRoomFace).toBeUndefined()
+    const factory = seen[0]?.opts?.hrMatrixFace
+    if (factory === undefined) throw new Error('runServe 未收到 hrMatrixFace 工厂')
+    const face: MatrixHrTarget = factory()
+    expect(typeof face.ensureAccount).toBe('function')
+    expect(calls).toHaveLength(1) // 恰一次 login——hr 面独开亦走同一 bot 登录面
+  })
+
+  it('缺 bot 密码 env → CONFIG_INVALID 且点名 hrMatrix 开关（登录必配键同源）', async () => {
+    const yamlPath = path.join(root, 'boot-hr-nopw.yaml')
+    await writeFile(yamlPath, hrYaml(), 'utf8')
+    const seen: unknown[] = []
+    await expect(
+      bootServe({
+        configPath: yamlPath,
+        env: { [MATRIX_HR_SHARED_SECRET_ENV]: 'hr-secret-0123456789abcdef' },
+        serve: async (...args) => {
+          seen.push(args)
+          return { ticks: 0, stopReason: 'signal' }
+        },
+      }),
+    ).rejects.toThrow('hrMatrix')
+    expect(seen).toEqual([]) // 未到 serve 步——fail-fast 在装配面
+  })
+})
+
+describe('bootServe：三开形态（matrix + matrixChannels + hrMatrix）', () => {
+  it('三面齐注入且 login 恰一次（同一 bot 账号——多面共用登录）', async () => {
+    const calls: { url: string; body?: string }[] = []
+    const ff = fakeFetchWithLogin(calls)
+    const yamlPath = path.join(root, 'boot-triple.yaml')
+    await writeFile(
+      yamlPath,
+      [
+        channelsYaml(), // matrix: false + matrixChannels: true 基座
+        'hrSync: true',
+        'hrMatrix: true',
+        "hrMatrixRooms: 'company=#hall:studio.local'",
+      ]
+        .join('\n')
+        .replace('matrix: false', 'matrix: true'),
+      'utf8',
+    )
+    const seen: Parameters<typeof serveStub>[0] = []
+    await bootServe({ configPath: yamlPath, env: ENV_HR, fetch: ff.fetch, serve: serveStub(seen) })
+    expect(seen[0]?.opts?.matrixSource).toBeDefined()
+    expect(seen[0]?.opts?.matrixRoomFace).toBeDefined()
+    expect(seen[0]?.opts?.hrMatrixFace).toBeDefined()
+    expect(calls).toHaveLength(1) // 三开共用一次登录（token 只留进程内存）
   })
 })

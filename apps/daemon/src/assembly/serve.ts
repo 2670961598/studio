@@ -1462,6 +1462,9 @@ export async function runServe(
      * buildServeRuntime（拍边界事件中继+escalate 警戒 IM 出口）。缺省不注入=面关零行为。
      */
     notifyBroadcast?: NotifyBroadcastFace
+    /** matrix 人事执行面工厂（studio-dev-217，docs/52-§七）：boot 组合根注入
+     * assembleMatrixHrFace 产物；缺省不注入（hrMatrix: true 且未注入=CONFIG_INVALID） */
+    hrMatrixFace?: () => MatrixHrFace
   },
 ): Promise<ServeResult> {
   const config = parseDaemonConfig(readFileSync(path.resolve(configPath), 'utf8'))

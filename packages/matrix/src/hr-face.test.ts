@@ -71,26 +71,42 @@ describe('registerWithSharedSecret（21A-§2.3 字节口径）', () => {
 })
 
 describe('ensureAccount（§7.1 + §7.4 冲突≈已建号）', () => {
-  it('新号：注册成功 + displayname 设置；created=true', async () => {
+  it('新号：注册成功 + 以注册一次性会话设 displayname + logout；created=true', async () => {
     const { face, log } = await loggedInFace({
       'GET /_synapse/admin/v1/register': { nonce: 'n1' },
       'POST /_synapse/admin/v1/register': { user_id: '@xin:mx.test', access_token: 'at-2' },
       'PUT /_matrix/client/v3/profile/@xin:mx.test/displayname': {},
+      'POST /_matrix/client/v3/logout': {},
     })
     const r = await face.ensureAccount({ username: 'xin', displayName: '新同学', password: 'pw' })
     expect(r).toEqual({ userId: '@xin:mx.test', created: true })
-    expect(log.some((c) => c.path.includes('/displayname'))).toBe(true)
+    // 真机口径（studio-dev-217 实证）：displayname PUT 用新号本人一次性 token，非 bot 会话
+    const put = log.find((c) => c.path.includes('/displayname') && c.method === 'PUT')
+    expect(put).toBeDefined()
+    expect(log.some((c) => c.method === 'POST' && c.path.endsWith('/logout'))).toBe(true)
   })
 
-  it('已存在（M_USER_IN_USE）：收敛不抛 + 补设 displayname；created=false', async () => {
+  it('已存在（M_USER_IN_USE）+ 异值 displayname：bot 代改 403 → 能力边界收敛不抛；created=false', async () => {
     const { face } = await loggedInFace({
       'GET /_synapse/admin/v1/register': { nonce: 'n2' },
       'POST /_synapse/admin/v1/register': new Error('User ID already taken'),
-      'PUT /_matrix/client/v3/profile/@xin:mx.test/displayname': {},
+      'GET /_matrix/client/v3/profile/@xin:mx.test/displayname': { displayname: '旧名' },
+      'PUT /_matrix/client/v3/profile/@xin:mx.test/displayname': new Error('M_FORBIDDEN: Cannot set another user'),
     })
     const r = await face.ensureAccount({ username: 'xin', displayName: '新同学', password: 'pw' })
     expect(r.created).toBe(false)
     expect(r.userId).toBe('@xin:mx.test') // server 后缀从 bot userId 截取推导
+  })
+
+  it('已存在（M_USER_IN_USE）+ 同值 displayname：零写收敛（无 PUT）', async () => {
+    const { face, log } = await loggedInFace({
+      'GET /_synapse/admin/v1/register': { nonce: 'n3' },
+      'POST /_synapse/admin/v1/register': new Error('User ID already taken'),
+      'GET /_matrix/client/v3/profile/@xin:mx.test/displayname': { displayname: '新同学' },
+    })
+    const r = await face.ensureAccount({ username: 'xin', displayName: '新同学', password: 'pw' })
+    expect(r.created).toBe(false)
+    expect(log.some((c) => c.method === 'PUT' && c.path.includes('/displayname'))).toBe(false)
   })
 
   it('非冲突错误如实上抛（不吞——EXTERNAL_REJECT 归 daemon 断路）', async () => {

@@ -39,10 +39,20 @@ import {
   MatrixClient,
   type ChannelMapInput,
   type FetchLike,
+  createMatrixHrFace,
+  type MatrixHrTarget,
 } from '@studio-next/matrix'
 
 /** bot 密码 env 名（红名单：值永不入 daemon.yaml/日志/台账） */
 export const MATRIX_BOT_PASSWORD_ENV = 'MATRIX_BOT_PASSWORD'
+
+/**
+ * hr 建号 shared secret env 名（studio-dev-217，docs/52-§7.2/§十二；红名单同 bot 密码）：
+ * 值=homeserver.yaml 侧 `registration_shared_secret`（21A-§2.3 冻结建号通道），经 env
+ * 注入不落盘；次选 MATRIX_SHARED_SECRET（daemon collectHrSecrets 同扫两名——出站
+ * 脱敏单一口径，不另立第三名）。
+ */
+export const MATRIX_HR_SHARED_SECRET_ENV = 'MATRIX_HR_SHARED_SECRET'
 
 /** 制作人 MXID 缺省（神号全知，130 §6.7.2；21A-§2.2 冻结锚） */
 export const DEFAULT_PRODUCER_MXID = '@opengames:localhost'
@@ -293,11 +303,40 @@ export function assembleMatrixBroadcastFace(
  * 仍是合法入口）。配置解析在 daemon 收口（runServe 内部再读同一文件——单一解析器，
  * boot 不重造）。
  */
+/**
+ * matrix 人事执行面装配（studio-dev-217，docs/52-§七；hrSync+hrMatrix: true 时）：
+ * login（bot 管理账号代操作，§7.2「网关 bot 一个管理账号」）+ env shared secret →
+ * createMatrixHrFace。密钥取值序：MATRIX_HR_SHARED_SECRET > MATRIX_SHARED_SECRET
+ * （与 daemon collectHrSecrets 同两名——出站脱敏单一口径）；缺=CONFIG_INVALID 明报。
+ * ensure-shape 幂等（注册冲突≈已建号/邀请 M_FORBIDDEN≈已在房/PL 同值不写）归 matrix
+ * 包 hr-face（§7.4）——boot 不重造业务幂等。
+ */
+export async function assembleMatrixHrFace(
+  config: ServeConfig,
+  env: Record<string, string | undefined>,
+  options?: AssembleOptions,
+): Promise<MatrixHrTarget> {
+  if (!config.hrSync || !config.hrMatrix) {
+    throw new Error('CONFIG_INVALID：assembleMatrixHrFace 在 hrSync/hrMatrix 面未开下被调用（装配面与开关面不一致）')
+  }
+  const secret = env[MATRIX_HR_SHARED_SECRET_ENV] ?? env['MATRIX_SHARED_SECRET']
+  if (secret === undefined || secret === '') {
+    throw new Error(
+      `CONFIG_INVALID：hrMatrix: true 需 env ${MATRIX_HR_SHARED_SECRET_ENV}` +
+        '（=homeserver.yaml 侧 registration_shared_secret，21A-§2.3 冻结建号通道；红名单——永不入 daemon.yaml/日志/台账，docs/52-§十二）',
+    )
+  }
+  const { client } = options?.login ?? (await assembleMatrixLogin(config, env, options, 'hrMatrix'))
+  options?.log?.('[boot] matrix 人事面已装配（shared-secret 建号+入房+PL，docs/52-§七）——ensure 幂等收敛')
+  return createMatrixHrFace({ client, sharedSecret: secret })
+}
+
 export async function bootServe(options: BootOptions): Promise<ServeResult> {
   const log = options.log ?? ((line: string): void => console.log(line))
   const config = parseDaemonConfig(readFileSync(path.resolve(options.configPath), 'utf8'))
   const serve = options.serve ?? runServe
-  if (!config.matrix && !config.matrixChannels) {
+  const hrFaceNeeded = config.hrSync === true && config.hrMatrix === true // studio-dev-217：hr 面独立灰度形态（matrix/matrixChannels 关也不早退）
+  if (!config.matrix && !config.matrixChannels && !hrFaceNeeded) {
     log('[boot] matrix: false、matrixChannels: false——@唤醒源/频道供给面/notify 广播面均未装配（组合根透传 runServe）')
     return serve(options.configPath)
   }
@@ -305,7 +344,7 @@ export async function bootServe(options: BootOptions): Promise<ServeResult> {
   // parseDaemonConfig 交叉校验面收口——serve.ts coerceServeConfig）；两开关独立
   //（只开供给不开唤醒源=合法灰度形态：频道先建、mention 后开）。
   const faceOpts: AssembleOptions = { ...(options.fetch !== undefined ? { fetch: options.fetch } : {}), log }
-  const login = await assembleMatrixLogin(config, options.env ?? process.env, faceOpts, config.matrix ? 'matrix' : 'matrixChannels')
+  const login = await assembleMatrixLogin(config, options.env ?? process.env, faceOpts, config.matrix ? 'matrix' : config.matrixChannels ? 'matrixChannels' : 'hrMatrix')
   const shared = { ...faceOpts, login }
   let matrixSource: (() => InvokeSource) | undefined
   let matrixRoomFace: ((ctx: MatrixRoomFaceContext) => MatrixRoomFace) | undefined
@@ -323,9 +362,15 @@ export async function bootServe(options: BootOptions): Promise<ServeResult> {
     // 105-刀B（219）：广播面与供给面同键组同 bot——目标频道即供给面确保的 alias 批
     notifyBroadcast = assembleMatrixBroadcastFace(config, options.env ?? process.env, shared)
   }
+  let hrMatrixFace: (() => MatrixHrTarget) | undefined
+  if (config.hrSync === true && config.hrMatrix === true) {
+    const face = await assembleMatrixHrFace(config, options.env ?? process.env, shared)
+    hrMatrixFace = (): MatrixHrTarget => face
+  }
   return serve(options.configPath, {
     ...(matrixSource !== undefined ? { matrixSource } : {}),
     ...(matrixRoomFace !== undefined ? { matrixRoomFace } : {}),
     ...(notifyBroadcast !== undefined ? { notifyBroadcast } : {}),
+    ...(hrMatrixFace !== undefined ? { hrMatrixFace } : {}),
   })
 }

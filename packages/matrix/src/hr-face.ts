@@ -41,6 +41,11 @@ function isUserExistsError(err: unknown): boolean {
 
 /** 错误文本是否「已在房/已被邀请」形（invite 的 M_FORBIDDEN≈目标态已达成） */
 function isAlreadyInRoomError(err: unknown): boolean {
+  return isForbiddenError(err)
+}
+
+/** 错误文本是否 M_FORBIDDEN 形（真机另一定式：bot 代改他人 profile 403——能力边界） */
+function isForbiddenError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err)
   return msg.includes('M_FORBIDDEN')
 }
@@ -80,12 +85,23 @@ export function createMatrixHrFace(opts: MatrixHrFaceOptions): MatrixHrTarget {
         const reg = await opts.client.registerWithSharedSecret({ username, password, sharedSecret: opts.sharedSecret })
         userId = reg.userId
         created = true
+        // displayname 以注册响应的一次性会话（本人身份）设置——真机实证（Synapse 1.163，
+        // studio-dev-217 部署切片）：client API 禁 bot 代改他人 profile（403 M_FORBIDDEN
+        // "Cannot set another user's displayname"）；设毕即 logout——身份锚账号不残留凭据
+        await opts.client.setDisplayName(userId, displayName, reg.accessToken)
+        await opts.client.logout(reg.accessToken)
       } catch (err) {
         if (!isUserExistsError(err)) throw err
         userId = userIdOf(username, opts.client.userId ?? '@:localhost')
+        // 已建号路径：displayname 幂等校验（同值零写）；异值时 bot 无代改权——尽力试写，
+        // M_FORBIDDEN 视为能力边界收敛（改名的运维通道=服务端 admin API，部署剧本收口）
+        try {
+          const cur = await opts.client.getDisplayName(userId)
+          if (cur !== displayName) await opts.client.setDisplayName(userId, displayName)
+        } catch (err2) {
+          if (!isForbiddenError(err2)) throw err2
+        }
       }
-      // displayname 幂等（重复 PUT 同值无害；注册冲突路径也补设——收敛目标态）
-      await opts.client.setDisplayName(userId, displayName)
       return { userId, created }
     },
 

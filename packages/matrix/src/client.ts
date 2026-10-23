@@ -187,11 +187,36 @@ export class MatrixClient {
     return { userId: res.user_id }
   }
 
-  /** 显示名设置（PUT /profile/{userId}/displayname；幂等——重复 PUT 同值无害） */
-  async setDisplayName(userId: string, name: string): Promise<void> {
+  /**
+   * 显示名设置（PUT /profile/{userId}/displayname；幂等——重复 PUT 同值无害）。
+   * token 覆写（studio-dev-217 真机联调）：Synapse client API 禁 bot 代改他人 profile
+   * （403 M_FORBIDDEN "Cannot set another user's displayname"）——建号路径以注册响应的
+   * 一次性会话（本人身份）设名；缺省用当前登录会话（设自己的）。
+   */
+  async setDisplayName(userId: string, name: string, token?: string): Promise<void> {
     await this.request('PUT', `/_matrix/client/v3/profile/${encodeURIComponent(userId)}/displayname`, {
       auth: true,
+      ...(token !== undefined ? { token } : {}),
       body: { displayname: name },
+    })
+  }
+
+  /** 显示名读取（GET /profile/{userId}/displayname；无需登录——幂等校验用，未设置返回 null） */
+  async getDisplayName(userId: string): Promise<string | null> {
+    const res = await this.request<{ displayname?: unknown }>(
+      'GET',
+      `/_matrix/client/v3/profile/${encodeURIComponent(userId)}/displayname`,
+      {},
+    )
+    return typeof res.displayname === 'string' ? res.displayname : null
+  }
+
+  /** 注销会话（POST /logout；token 覆写=注销一次性会话——建号设名用毕即弃，不残留可用凭据） */
+  async logout(token?: string): Promise<void> {
+    await this.request('POST', '/_matrix/client/v3/logout', {
+      auth: true,
+      ...(token !== undefined ? { token } : {}),
+      body: {},
     })
   }
 
@@ -355,14 +380,15 @@ export class MatrixClient {
   private async request<T>(
     method: string,
     path: string,
-    init: { body?: unknown; auth?: boolean; query?: Record<string, string> },
+    init: { body?: unknown; auth?: boolean; query?: Record<string, string>; token?: string },
   ): Promise<T> {
     const url = new URL(this.baseUrl + path)
     for (const [key, value] of Object.entries(init.query ?? {})) url.searchParams.set(key, value)
     const headers: Record<string, string> = {}
     if (init.auth === true) {
-      if (this.accessToken === undefined) throw new Error(`matrix ${method} ${path}: 未登录（无 access_token）`)
-      headers.Authorization = `Bearer ${this.accessToken}`
+      const token = init.token ?? this.accessToken // token 覆写：一次性会话（hr-face 建号设名，studio-dev-217）
+      if (token === undefined) throw new Error(`matrix ${method} ${path}: 未登录（无 access_token）`)
+      headers.Authorization = `Bearer ${token}`
     }
     let body: string | undefined
     if (init.body !== undefined) {
