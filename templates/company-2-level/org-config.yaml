@@ -110,6 +110,33 @@ workflows:
         evidence: 证据就绪
         verified: 复验通过
         delivered: 已交付
+    # 策划验收位类型流（202-P1，studio-dev-231；202-§5.1 声明形）：approval 锚「待验收」
+    # 居复验锚之后=验收位（呈批位之外的第二个合法 approval 槽，W-8）——复验通过的完工件
+    # 由派单策划验收。验收位批示位别律（R3）：批准不查派单律（对象是已完工复验件）；
+    # 合法批示人=dept leader∪组织锚∪制作人∪本单 dispatcher（镜像列 F2-07）。
+    # 打回=声明回退边 待验收→已派发：机器过渡已派发（边命中）→回新单重做位→物化
+    # resume 意图（cause=策划验收打回）——F1-15 既有消费门唤起原 worker 带前情重做
+    # （attempt 续号、causation 链上次工时单、前情摘要含打回理由）。
+    # 「待验收」与 L2「待批」异名（W-9 同款消歧考量）；生产部署按需增删类型段。
+    - id: devtask
+      states:
+        - 新单
+        - 已派发
+        - 证据就绪
+        - 复验通过
+        - 待验收
+        - name: 已交付
+          final: true
+      edges:
+        - from: 待验收 # 验收位打回边：策划批示「打回」→ 已派发（声明回退边）
+          to: 已派发
+      anchors:
+        inbox: 新单
+        approval: 待验收
+        dispatched: 已派发
+        evidence: 证据就绪
+        verified: 复验通过
+        delivered: 已交付
 
 # 事件钩子声明（129-C，129-§6.1①——可选，不声明=data-change 意图面 fail-closed 不派工）：
 # data-change 路由表 = 人事变更 → 联动单 assignee（变更类型七值：入/调/升/降/停/复/退）。

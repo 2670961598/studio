@@ -265,6 +265,7 @@ import { parkRace, PARKED } from './harvest/park.ts'
 // wire 接线体＋serve 装配缝——20-§十五 contrib 模式子文件夹，BC-V3）
 import {
   buildDirectiveAuthorizer,
+  engineDirectiveDeps,
   reboundSuppressed,
   runDirectiveLayer,
   type DirectiveAuthorizer,
@@ -1644,25 +1645,23 @@ export function createEngine(deps: EngineDeps): Engine {
     })
     mutations += unknownStateAlarmed + foreignKnown + statusSetDrift + declaredStatusMissing + platformStatusExtra
 
-    // —— 相位 1 尾：批示归一层（studio-dev-171，docs/18-§2.5；接线体=engine/directive/
-    //    wire.ts——解析/校验/站立/打回过渡、幂等与 fail-closed 语义见该件头注）。
+    // —— 相位 1 尾：批示归一层（studio-dev-171，docs/18-§2.5；202-P1 位别两扩——
+    //    dispatcher 源/验收位打回链/resume 物化，组装体=directive/wire.ts 工厂）
     const dLayer =
       directives === undefined
         ? undefined
-        : await runDirectiveLayer({
-            platform,
-            gate: directives,
-            affected,
-            issueById,
-            consumedKeys: index.directiveKeys,
-            attemptOf: (t) => index.attemptOf(t),
-            flowOf,
-            afterTransition: syncMirror,
-            emit: (event, issue, attempt, note) => makeEvent(event, issue, attempt, tickEvents, { note }),
-            onError: (msg) => {
-              errors.push(msg)
-            },
-          })
+        : await runDirectiveLayer(
+            engineDirectiveDeps({
+              platform, gate: directives, affected, issueById,
+              directiveKeys: index.directiveKeys, attemptOf: (t) => index.attemptOf(t), flowOf,
+              dispatcherOf: (t) => ledger.getTicketMirror(t)?.dispatcher,
+              materializeResumeIntent: (t, cause, note) => { intentQueue.push({ kind: 'resume', company: config.company, source: 'directive', ticket: t, payload: { cause, note } }) },
+              releaseLane: (t) => { lanes.release(issueById.get(t)?.lane ?? config.defaultLane, t) },
+              syncMirror,
+              emit: (event, issue, attempt, note) => makeEvent(event, issue, attempt, tickEvents, { note }),
+              onError: (msg) => { errors.push(msg) },
+            }),
+          )
     const directiveReport = dLayer?.report ?? { tickets: 0, consumed: 0, rejected: 0 }
     const directiveVerbNow: ReadonlyMap<TicketId, DirectiveVerb> = dLayer?.verbsNow ?? new Map()
     mutations += dLayer?.mutations ?? 0

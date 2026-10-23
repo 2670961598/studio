@@ -78,19 +78,24 @@ export function checkRelayPayload(payload: unknown): RelayIntentPayload | string
 /**
  * resume 意图负载形状（129-§6.1⑥ 续命类）：cause=触发溯源（「重启接管」/「CLI resume」），
  * 同 relay——纯展示位。**不含** executor/session_id 覆盖位（断点解析单一事实源=work_records，
- * 见文件头注）。
+ * 见文件头注）。note=续跑缘由注入位（202-P1，studio-dev-231）：策划验收打回理由经
+ * wire 物化意图携带，消费门透传计划→前情摘要节追加行（判负线「理由丢失=判负」的前情面
+ * 闭环——cause 是给事件流的，note 是给 worker 的）。
  */
 export interface ResumeIntentPayload {
   /** 触发溯源（展示性） */
   cause?: string
+  /** 续跑缘由（前情摘要注入行——如「策划验收打回：<理由>」；展示位之外的行为位） */
+  note?: string
 }
 
-/** 结构校验：同 checkRelayPayload（payload 可整体缺省；cause 在场时须为串——展示位不苛长度） */
+/** 结构校验：同 checkRelayPayload（payload 可整体缺省；cause/note 在场时须为串——展示位不苛长度） */
 export function checkResumePayload(payload: unknown): ResumeIntentPayload | string {
   if (payload === undefined) return {}
   if (typeof payload !== 'object' || payload === null) return 'payload 非对象'
   const p = payload as Record<string, unknown>
   if (p.cause !== undefined && (typeof p.cause !== 'string' || p.cause === '')) return 'cause 非字符串或空串'
+  if (p.note !== undefined && (typeof p.note !== 'string' || p.note === '')) return 'note 非字符串或空串'
   return payload as ResumeIntentPayload
 }
 
@@ -114,6 +119,11 @@ export interface ResumeDispatchPlan {
   causationId: string
   /** 上次誓号（观测面：detail/note 溯源「续自第 N 誓」） */
   lastAttempt: number
+  /**
+   * 续跑缘由（202-P1：策划验收打回理由注入——意图 note 位透传；前情摘要节追加
+   * 「本次续跑缘由」行。缺省无行（既有 CLI/重启接管续跑零改）。
+   */
+  note?: string
 }
 
 /** 断点解析结果：计划 | 不可续原因（明报降级用——失败面恒有话说，不静默） */
@@ -278,7 +288,8 @@ export function createResumeConsumer(
         `意图消费：resume 断点不可解析，降级为新派候选（${plan.unavailable}）——F1-15「不支持续跑明报并降级为新派」`,
       )
     } else {
-      deps.planResume(intent.ticket, plan)
+      // note 位透传（202-P1：策划验收打回理由——前情摘要节注入行；缺省零改）
+      deps.planResume(intent.ticket, checked.note === undefined ? plan : { ...plan, note: checked.note })
     }
     if (deps.candidates.some((c) => c.ticket === intent.ticket)) {
       deps.drainSeen.add(intentKey)

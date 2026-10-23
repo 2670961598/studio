@@ -45,6 +45,8 @@ export interface BriefContext {
     summaryPath: string
     /** 上次 summary.json 内容（SummarySidecar 形状，contract schemas/report.ts） */
     summary: SummarySidecar
+    /** 续跑缘由（202-P1：策划验收打回理由等——前情摘要节追加「本次续跑缘由」行；缺省无行） */
+    note?: string
   }
 }
 
@@ -105,6 +107,9 @@ export function renderTaskBrief(kind: BriefKind, ctx: BriefContext): BriefRender
     )
     if (summary.rejection_reason !== undefined) {
       parts.push(`- 打回理由（本次须针对性回应）：${summary.rejection_reason}`)
+    }
+    if (ctx.resume.note !== undefined) {
+      parts.push(`- 本次续跑缘由（批示注入）：${ctx.resume.note}`)
     }
   }
 
