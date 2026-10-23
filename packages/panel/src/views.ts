@@ -483,7 +483,7 @@ export function renderDashboardPage(): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Studio Next 监控 :8787</title>
+<title>Studio Next 监控 :8791</title>
 <style>
   :root { color-scheme: dark; }
   body { font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; background: #101418; color: #cfd8dc; margin: 0; padding: 16px; }

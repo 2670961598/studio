@@ -74,7 +74,7 @@ export default {
   <n-global-style />
   <div style="max-width:1440px;margin:0 auto;padding:16px">
     <header style="display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;padding:4px 2px 12px">
-      <h1 style="font-size:16px;font-weight:600;margin:0;color:#eceff1">Studio Next 监控（:8787 只读面）</h1>
+      <h1 style="font-size:16px;font-weight:600;margin:0;color:#eceff1">Studio Next 监控（:8791 只读面）</h1>
       <span style="color:#90a4ae;font-size:12px">{{ headMeta }}</span>
       <span style="margin-left:auto">
         <a href="/legacy" style="color:#80cbc4;font-size:12px">/legacy 旧版</a>
