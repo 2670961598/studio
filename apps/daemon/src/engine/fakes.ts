@@ -241,6 +241,7 @@ export type FakeAdapterMode =
   | 'external_error' // 外部服务错误（DEV-46 注入面）：产物照落（REPORT/summary/log 全真）、流照收尾，但 turn_end.completed=false + error/errorCode（GLM 外部限速 429 同型，studio-dev-78 实况）——四要件缺「终态 completed」，错误文本经 turn_end.error 进 GATE_FAIL note 断路面
   | 'sentinel' // 127-A R1 worker 契约替身：读任务书 brief.md 哨兵段原样并入 summary.json 顶层 sentinel 字段（真 worker「读任务书→回写」面的机械模拟）
   | 'sentinel_old' // 同上但 run_at 挪 7 天——抄旧槽注入面（verify 必 mismatch）
+  | 'sentinel_deliverables' // studio-dev-216：三元组照读任务书并入，但 sidecar 只落 deliverables/summary.json（212 worker 实况复刻——写读形状失配注入面：值全对、落位偏一格）
 
 /**
  * fake 适配器选项。
@@ -353,8 +354,11 @@ export function createFakeAdapter(opts?: FakeAdapterOptions): ExecutorAdapter {
       if (mode !== 'no_report' && mode !== 'stalled') {
         mkdirSync(task.workspace, { recursive: true })
         writeFileSync(path.join(task.workspace, 'REPORT.md'), FAKE_REPORT_MD, 'utf8')
-        writeFileSync(path.join(task.workspace, 'summary.json'), FAKE_SUMMARY_JSON, 'utf8')
-        if (mode === 'sentinel' || mode === 'sentinel_old') {
+        if (mode !== 'sentinel_deliverables') {
+          // 216 复刻形态例外：正位不落 summary（212 实况=只有 deliverables/summary.json）
+          writeFileSync(path.join(task.workspace, 'summary.json'), FAKE_SUMMARY_JSON, 'utf8')
+        }
+        if (mode === 'sentinel' || mode === 'sentinel_old' || mode === 'sentinel_deliverables') {
           // 127-A R1：真 worker 契约=读任务书（brief.md）→ 哨兵三元组原样并入 summary.json
           // 顶层 sentinel 字段。brief 段不可读=维持无哨兵 summary（missing 注入面）——
           // fake 不猜不代写（与 daemon 不代写 REPORT 同纪律）。
@@ -366,7 +370,13 @@ export function createFakeAdapter(opts?: FakeAdapterOptions): ExecutorAdapter {
               if (mode === 'sentinel_old') triple.run_at += 7 * 24 * 3_600_000 // 抄旧槽
               const summary = JSON.parse(FAKE_SUMMARY_JSON) as Record<string, unknown>
               summary.sentinel = triple
-              writeFileSync(path.join(task.workspace, 'summary.json'), JSON.stringify(summary, null, 2), 'utf8')
+              // 216：落位由形态定——正位（127-A 契约）或 deliverables/（212 实况复刻）
+              const dest =
+                mode === 'sentinel_deliverables'
+                  ? path.join(task.workspace, 'deliverables', 'summary.json')
+                  : path.join(task.workspace, 'summary.json')
+              mkdirSync(path.dirname(dest), { recursive: true })
+              writeFileSync(dest, JSON.stringify(summary, null, 2), 'utf8')
             }
           } catch {
             /* brief 缺=哨兵段未注入（普通单/patrol 工件）——missing 面 */

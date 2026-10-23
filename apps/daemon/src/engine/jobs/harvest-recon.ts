@@ -152,6 +152,8 @@ export interface HarvestReconResult {
   manual: number
   /** 127-A R4⑤：哨兵核验通过数（sidecar 三元组=期望重算） */
   sentinelOk: number
+  /** studio-dev-216：哨兵核验通过中经工位副本回填归档侧车的数（既有误报欠账清账路径） */
+  sentinelBackfilled: number
   /** 127-A R4⑤：SENTINEL_MISSING 落账数（欠账不重派——批示⑤） */
   sentinelMissing: number
   /** 127-A R4④：HARVEST_INVALID 落账数（空壳/损坏——存在+非空+非占位不过） */
@@ -210,6 +212,7 @@ export function runHarvestRecon(deps: HarvestReconDeps): HarvestReconResult {
     repaired: 0,
     manual: 0,
     sentinelOk: 0,
+    sentinelBackfilled: 0,
     sentinelMissing: 0,
     invalid: 0,
     patrolArtifacts: 0,
@@ -246,11 +249,17 @@ export function runHarvestRecon(deps: HarvestReconDeps): HarvestReconResult {
      *   内容门 → HARVEST_INVALID（空壳/占位）；哨兵门 → SENTINEL_MISSING（欠账不重派）。
      * 信号支配序：内容门先（归档件本身的存废），哨兵门后（证据链核验）；单信号已转人工
      * （conflict 类）不重复进本门——对账不叠事件（spam 防线）。
+     *
+     * studio-dev-216 清账路径（哨兵门内）：归档侧车缺（R1 上线前的存量单/gate 盲视窗）而
+     * 工位副本在（正位或 deliverables/ 兜底）且三元组核验 ok → **回填归档**（copy+回读核，
+     * 在位绝不覆盖——REPORT_MISSING 补收同纪律）→ sentinelOk 计数、零事件——「写错位」
+     * 属对账职责面（本文件头注：只治写错位/漏收）；「没写」（副本也无/三元组不符）照旧
+     * fail-closed 落 SENTINEL_MISSING，不代写不放松。
      */
     const postArchiveGates = (
       ticket: TicketId,
       anchor: { jobId: string; company: string; note: string | undefined },
-      gate: { attempt: number },
+      gate: { attempt: number; note: string | undefined },
       target: string,
     ): void => {
       // ④ 内容门（recon-key 含内容哈希前缀：内容改好后重扫自然换键再报）
@@ -278,10 +287,34 @@ export function runHarvestRecon(deps: HarvestReconDeps): HarvestReconResult {
       const runAt = at > 0 ? Number.parseInt(raw.slice(at + 1), 10) : Number.NaN
       if (!Number.isFinite(runAt) || runAt <= 0) return // 锚不可解（他源 PATROL 混入？）——哨兵面不适用
       const expected = expectedSentinel(anchor.company, anchor.jobId, runAt)
-      const status = verifySidecarSentinelAtPath(`${target}.summary.json`, expected)
+      const sidecarTarget = `${target}.summary.json`
+      const status = verifySidecarSentinelAtPath(sidecarTarget, expected)
       if (status === 'ok') {
         result.sentinelOk += 1
         return
+      }
+      // 216 清账路径：归档侧车**缺**（非在位坏——在位件绝不覆盖）→ 工位副本回填。
+      // 候选=正位＋deliverables/ 兜底（与 gate.ts discoverSummaryPath 同表）；任一核验
+      // ok 即回填（先 copy 后回读核——不核=负，spike-3 判负线）；全不 ok 落既有欠账面。
+      if (!existsSync(sidecarTarget)) {
+        const wsReport = reportPathOfGatePass(gate.note)
+        if (wsReport !== undefined) {
+          const wsDir = path.dirname(wsReport)
+          for (const cand of [path.join(wsDir, 'summary.json'), path.join(wsDir, 'deliverables', 'summary.json')]) {
+            if (!existsSync(cand) || verifySidecarSentinelAtPath(cand, expected) !== 'ok') continue
+            try {
+              copyFileSync(cand, sidecarTarget)
+              if (verifySidecarSentinelAtPath(sidecarTarget, expected) === 'ok') {
+                result.sentinelOk += 1
+                result.sentinelBackfilled += 1
+                return // 误报欠账清账：证据链补齐即过门，零新事件
+              }
+            } catch {
+              // 搬运失败如实落既有欠账面（下方事件）——不静默不代写
+            }
+            break // 首 ok 候选回填失败（读回核不过/搬运异常）→ 不试第二副本（同源同值）
+          }
+        }
       }
       const key = `${ticket}|sentinel|${status}`
       if (!reported.has(key)) {
@@ -289,7 +322,7 @@ export function runHarvestRecon(deps: HarvestReconDeps): HarvestReconResult {
           'SENTINEL_MISSING',
           ticket,
           gate.attempt,
-          `收割成功单 sidecar 哨兵${status === 'missing' ? '缺' : status === 'mismatch' ? '不符（抄旧槽/改值）' : '不可读'}→欠账不重派（批示⑤——补跑走新槽：jobs catchup）；src=recon;kind=sentinel;状态=${status};recon-key=${key};sidecar=${target}.summary.json;job=${anchor.jobId};run_at=${runAt}`,
+          `收割成功单 sidecar 哨兵${status === 'missing' ? '缺' : status === 'mismatch' ? '不符（抄旧槽/改值）' : '不可读'}→欠账不重派（批示⑤——补跑走新槽：jobs catchup）；src=recon;kind=sentinel;状态=${status};recon-key=${key};sidecar=${sidecarTarget};job=${anchor.jobId};run_at=${runAt}`,
         )
       }
       result.sentinelMissing += 1

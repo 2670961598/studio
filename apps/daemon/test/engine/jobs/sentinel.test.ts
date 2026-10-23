@@ -212,4 +212,12 @@ describe('sentinelBriefBlock：任务书 L4 注入段', () => {
     expect(block).toContain('数据源断链')
     expect(block).toContain('不证产出质量') // 诚实边界明示
   })
+  it('studio-dev-216 写读对齐：注入段明示 sidecar 落点（与读面 gate 发现/随件归档逐字对齐）', () => {
+    const block = sentinelBriefBlock(expectedSentinel('demo', 'daily-report', SLOT))
+    // 落点限定逐字在场：正位=与 REPORT.md 同目录（docs/17-§6「REPORT 旁落」）＋反例明示
+    expect(block).toContain('与 REPORT.md 同目录')
+    expect(block).toContain('REPORT 旁落')
+    expect(block).toContain('不是 deliverables/ 子目录')
+    expect(block).toContain('docs/17-§6')
+  })
 })

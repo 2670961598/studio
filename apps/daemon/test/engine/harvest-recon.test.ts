@@ -15,6 +15,9 @@
  *     产物权限 ≥0644。
  *   - 判负线（负断言）：补收后哈希不核=负（断言回读核过）；工况二被「修复」成自动生成
  *     REPORT=负（断言 REPORT 不被代写）；仅打日志不进事件=负（断言全部走台账 queryEvents）。
+ *
+ * studio-dev-216 迁出注记：R4 读回门域（内容门④/哨兵门⑤/patrol 计数⑥）已迁至
+ * `jobs/harvest-recon-r4.test.ts`（本件增补后超 BC-S2 尺寸阈 600 行——域拆分，覆盖零增减）。
  */
 import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -32,7 +35,6 @@ import { createDefaultGateRunner } from '../../src/engine/gate.ts'
 import { createDefaultAssembler } from '../../src/engine/prompt-assembly.ts'
 import { DEMO_SNAPSHOT } from '../../src/assembly/serve.ts'
 import { deliverablesOf, statHarvestDenial } from '../../src/engine/jobs/harvest-recon.ts'
-import { expectedSentinel } from '../../src/engine/jobs/sentinel.ts'
 
 let root = ''
 
@@ -360,140 +362,3 @@ describe('工况三：chmod 000 → HARVEST_DENIED 不静默；umask 前移后�
   })
 })
 
-// ————————————————————————— R4 读回门（127-A：内容门④＋哨兵门⑤＋patrol 计数⑥） —————————————————————————
-
-/** T:patrol 类型流（丁案语料：终态=巡毕无产出——与 templates org-config 同形） */
-const PATROL_FLOWS: FlowTable = {
-  ...DEFAULT_FLOW_TABLE,
-  'T:patrol': {
-    mainline: ['待巡查', '巡查中', '巡毕纪要', '巡毕复核', '巡毕无产出'],
-    finalStates: ['巡毕无产出'],
-    anchors: { fresh: '待巡查', approval: '', dispatched: '巡查中', evidenceReady: '巡毕纪要', verified: '巡毕复核', delivered: '巡毕无产出' },
-  },
-}
-
-describe('R4 读回门：工单型岗归档件 内容门④＋哨兵门⑤（127-A §4.5）', () => {
-  const SLOT = T0 + 5 * 60_000 // 槽时刻（scheduler dedupKey=job@firedAt 同源）
-
-  it('哨兵 ok 全链：worker 回写三元组 → sidecar 随件归档＋GATE_PASS note sentinel=ok＋对账 sentinelOk、零事件', async () => {
-    const stack = buildStack('r4-ok', 'sentinel')
-    stack.ledger.upsertJob(reportJob('daily-report-工程部', { type: 'report', output: 'reports/工程部/' }))
-    stack.engine.ingest([scheduleIntent('daily-report-工程部', `daily-report-工程部@${SLOT}`)])
-    await dispatchAndHarvest(stack)
-    const target = archivedFileOf(stack.reportsDir)
-    // 批示③：哨兵随件归档——`<归档名>.summary.json` 三元组=期望重算（nonce 机械落法）
-    const sidecar = `${target}.summary.json`
-    expect(existsSync(sidecar)).toBe(true)
-    const parsed = JSON.parse(readFileSync(sidecar, 'utf8')) as { sentinel: unknown }
-    expect(parsed.sentinel).toEqual(expectedSentinel('demo', 'daily-report-工程部', SLOT))
-    // GATE_PASS 即时观测（不拦收割——P3 才是权威事件面）
-    expect(eventsOf(stack.ledger, 'GATE_PASS', 'T-1')[0]?.note).toContain(';sentinel=ok')
-    // 对账步：哨兵门过
-    expect(eventsOf(stack.ledger, 'SENTINEL_MISSING', 'T-1')).toHaveLength(0)
-    stack.clock.advance(1000)
-    const reconTick = await stack.engine.tick()
-    expect(eventsOf(stack.ledger, 'SENTINEL_MISSING', 'T-1')).toHaveLength(0) // 幂等：ok 恒不落事件
-    expect(reconTick.phases.harvest.recon).toMatchObject({ sentinelOk: 1, sentinelMissing: 0, invalid: 0 })
-    await stack.engine.dispose()
-    stack.ledger.close()
-  })
-
-  it('哨兵缺（worker 未回写）→ GATE_PASS note sentinel=missing＋SENTINEL_MISSING 欠账不重派（recon-key 幂等）', async () => {
-    const stack = buildStack('r4-missing')
-    stack.ledger.upsertJob(reportJob('daily-report-工程部', { type: 'report', output: 'reports/工程部/' }))
-    stack.engine.ingest([scheduleIntent('daily-report-工程部', `daily-report-工程部@${SLOT}`)])
-    await dispatchAndHarvest(stack)
-    expect(eventsOf(stack.ledger, 'GATE_PASS', 'T-1')[0]?.note).toContain(';sentinel=missing')
-    // 对账步（收割拍尾即首告）：欠账不重派——批示⑤
-    const missings = eventsOf(stack.ledger, 'SENTINEL_MISSING', 'T-1')
-    expect(missings).toHaveLength(1)
-    expect(missings[0]?.note).toContain('欠账不重派')
-    expect(missings[0]?.note).toContain('jobs catchup')
-    expect(missings[0]?.note).toContain(`run_at=${SLOT}`)
-    expect(missings[0]?.issue).toBe('T-1')
-    stack.clock.advance(1000)
-    const reconTick = await stack.engine.tick()
-    expect(eventsOf(stack.ledger, 'SENTINEL_MISSING', 'T-1')).toHaveLength(1) // recon-key 去重
-    expect(reconTick.phases.harvest.recon).toMatchObject({ sentinelMissing: 1, sentinelOk: 0 })
-    await stack.engine.dispose()
-    stack.ledger.close()
-  })
-
-  it('哨兵不符（抄旧槽——run_at 挪 7 天）→ note sentinel=mismatch＋SENTINEL_MISSING 状态=mismatch', async () => {
-    const stack = buildStack('r4-stale', 'sentinel_old')
-    stack.ledger.upsertJob(reportJob('daily-report-工程部', { type: 'report', output: 'reports/工程部/' }))
-    stack.engine.ingest([scheduleIntent('daily-report-工程部', `daily-report-工程部@${SLOT}`)])
-    await dispatchAndHarvest(stack)
-    expect(eventsOf(stack.ledger, 'GATE_PASS', 'T-1')[0]?.note).toContain(';sentinel=mismatch')
-    const missings = eventsOf(stack.ledger, 'SENTINEL_MISSING', 'T-1')
-    expect(missings).toHaveLength(1)
-    expect(missings[0]?.note).toContain('状态=mismatch')
-    expect(missings[0]?.note).toContain('抄旧槽')
-    await stack.engine.dispose()
-    stack.ledger.close()
-  })
-
-  it('内容门④：归档件空壳（有效字符<16）→ HARVEST_INVALID 转人工（不叠哨兵事件）；修复后 recon-key 换键可再报', async () => {
-    const stack = buildStack('r4-shell', 'sentinel')
-    stack.ledger.upsertJob(reportJob('daily-report-工程部', { type: 'report', output: 'reports/工程部/' }))
-    stack.engine.ingest([scheduleIntent('daily-report-工程部', `daily-report-工程部@${SLOT}`)])
-    await dispatchAndHarvest(stack)
-    const target = archivedFileOf(stack.reportsDir)
-    expect(eventsOf(stack.ledger, 'HARVEST_INVALID', 'T-1')).toHaveLength(0)
-    // 归档后被篡改成空壳（骨架/占位面——R4④ 判据）：工位副本与归档同改同内容——
-    // 哈希同走 inPlace 读回门（哈希异会先进 conflict 转人工支配序，那是工况一既有面）
-    const shell = '# REPORT\n\n## 结论\n\n（略）\n'
-    writeFileSync(target, shell, 'utf8')
-    writeFileSync(path.join(stack.workspaceOf('T-1'), 'REPORT.md'), shell, 'utf8')
-    stack.clock.advance(1000)
-    const reconTick = await stack.engine.tick()
-    const invalids = eventsOf(stack.ledger, 'HARVEST_INVALID', 'T-1')
-    expect(invalids).toHaveLength(1)
-    expect(invalids[0]?.note).toContain('空壳')
-    expect(invalids[0]?.note).toContain('不自动重派')
-    // 信号支配序：内容门先红 → 哨兵门不叠事件（sidecar 仍 ok 也不计数）
-    expect(eventsOf(stack.ledger, 'SENTINEL_MISSING', 'T-1')).toHaveLength(0)
-    expect(reconTick.phases.harvest.recon).toMatchObject({ invalid: 1 })
-    stack.clock.advance(1000)
-    await stack.engine.tick()
-    expect(eventsOf(stack.ledger, 'HARVEST_INVALID', 'T-1')).toHaveLength(1) // recon-key（含哈希）幂等
-    await stack.engine.dispose()
-    stack.ledger.close()
-  })
-
-  it('⑥ patrol 巡查物化单：T:patrol 终态物化零派发＋对账只计观测数（不事件化）', async () => {
-    const stack = buildStack('r4-patrol', 'ok', PATROL_FLOWS)
-    stack.ledger.upsertJob(reportJob('health-patrol-工程部', { type: 'patrol' }))
-    stack.engine.ingest([scheduleIntent('health-patrol-工程部', `health-patrol-工程部@${SLOT}`)])
-    stack.clock.advance(1000)
-    const tick1 = await stack.engine.tick()
-    // 丁案：巡查工件落 T:patrol delivered 终态（结构性不可派发——不烧配额）
-    const issue = await stack.platform.issues.get('T-1')
-    expect(issue.type).toBe('patrol')
-    expect(issue.state).toBe('巡毕无产出')
-    expect(eventsOf(stack.ledger, 'PATROL', 'T-1')).toHaveLength(1)
-    expect(tick1.phases.dispatch.dispatched).toBe(0)
-    // 对账步：计观测数即止——无收割语义无事件（spam 防线）
-    const recon = tick1.phases.harvest.recon
-    expect(recon).toMatchObject({ patrolArtifacts: 1, scanned: 0 })
-    for (const name of ['SENTINEL_MISSING', 'HARVEST_INVALID', 'REPORT_MISSING'] as const) {
-      expect(eventsOf(stack.ledger, name, 'T-1')).toHaveLength(0)
-    }
-    await stack.engine.dispose()
-    stack.ledger.close()
-  })
-
-  it('⑥ T:patrol 未声明 → L0 delivered 兜底（现状行为原样；装载警告面治源不炸配置）', async () => {
-    const stack = buildStack('r4-patrol-l0')
-    stack.ledger.upsertJob(reportJob('health-patrol-工程部', { type: 'patrol' }))
-    stack.engine.ingest([scheduleIntent('health-patrol-工程部', `health-patrol-工程部@${SLOT}`)])
-    stack.clock.advance(1000)
-    const tick1 = await stack.engine.tick()
-    const issue = await stack.platform.issues.get('T-1')
-    expect(issue.type).toBe('patrol')
-    expect(issue.state).toBe('已交付') // L0 兜底——语义退化由 jobContractLoadWarnings 可见
-    expect(tick1.phases.harvest.recon).toMatchObject({ patrolArtifacts: 1 })
-    await stack.engine.dispose()
-    stack.ledger.close()
-  })
-})
