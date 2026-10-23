@@ -310,6 +310,7 @@ import { costCloseDeps, runCostCloseTick } from './cost-close/close.ts'
 import type { TickActionResult, TickDecisionEntry, TickPhaseDispatchBudget, TickPhaseHarvest, TickReport } from './tick-report/types.ts'
 import { personViewOf, type QueueJudgeCandidate, type QueueJudgeHook } from './judge/sites129.ts' // 160-B 两址接线体（studio-dev-182）
 import { closeOutMergeHarvest, failMergeHarvest, runMergeAction, type MergeRunDeps, type MergeRunHost } from './merge/merge-run.ts' // 202-P2 相位 5 合并跑机器（studio-dev-232）
+import { createMergeLeaseRegistry, mergeQueueFace, renewMergeLeases } from './merge/merge-lease.ts' // 202-P4 合并租约簿（TTL+续租+死主回收）＋合并队列栏投影（studio-dev-234）
 export type { TickDecisionEntry, TickReport } from './tick-report/types.ts'
 
 // ————————————————————————— 配置 —————————————————————————
@@ -371,6 +372,8 @@ export interface EngineConfig {
   limits: ConcurrencyLimits
   /** 泳道租约 TTL（ms；续租/死主回收归后续刀） */
   laneTtlMs: number
+  /** 合并租约 TTL（ms；202-P4——每拍续租+死主回收，跨进程归后续刀） */
+  mergeLeaseTtlMs: number
   /** 在工静默告警阈值（ms；只盯已派发态，decide 4 号判定） */
   stallAfterMs: number
   /**
@@ -505,6 +508,7 @@ export const ENGINE_CONFIG_DEFAULTS: EngineConfig = {
   intentSource: 'activity',
   limits: { maxActionsPerTick: 4, maxInflight: 2 },
   laneTtlMs: 30 * 60_000,
+  mergeLeaseTtlMs: 30 * 60_000, // 202-P4 合并租约缺省=泳道同款（daemon.yaml 可覆盖）
   stallAfterMs: 60 * 60_000,
   stallKillAfterAlarms: 2,
   harvestSliceMs: 50,
@@ -731,6 +735,7 @@ export function createEngine(deps: EngineDeps): Engine {
   // —— 进程内状态（持久化边界见文件头注「v0 占位」） ——
   let breaker: BreakerState = emptyBreakerState()
   const lanes = createLaneRegistry(config.laneTtlMs)
+  const mergeLeases = createMergeLeaseRegistry(config.mergeLeaseTtlMs) // 202-P4 合并租约簿（per-engine——merge-run.ts 经 mergeHost 注入）
   const inflight = new Map<TicketId, Inflight>()
   const intentQueue: InvokeIntent[] = []
   const splitQueue: SplitDirectiveInput[] = []
@@ -743,20 +748,17 @@ export function createEngine(deps: EngineDeps): Engine {
   const rooms = deps.rooms // 单据房间义务面（130-P3）：缺省=零行为
   const onWorkComplete = deps.onWorkComplete // 收割完成钩（129-E F1-11 接力产面）：缺省=零行为
 
-  // daemon_kv：store v4 正式面（活动流游标/拍序的家——ledger.kvGet/kvSet；本引擎自建 DDL
-  // 与 prepared 语句已删，存量数据原地续用，见文件头注「已清偿」两条与 migrations v4 头注）
+  // daemon_kv：store v4 正式面（活动流游标/拍序的家——ledger.kvGet/kvSet；自建 DDL/prepared 已删，存量原地续用——文件头注「已清偿」与 migrations v4 头注）
   const seqSeed = Number.parseInt(ledger.kvGet(TICK_SEQ_KEY) ?? '0', 10)
   if (Number.isInteger(seqSeed) && seqSeed > 0) seq = seqSeed
 
   // —— 员工待办队列携带态（129-§6.2，studio-dev-167 单B）——
-  // 首见钟是「非事件可导携带列」（jobs.last_run_at 先例）：事件面只有 DISPATCH（出队锚）
-  // 无入队锚，FIFO 钟只能携带。启动从 todo_queue 表种子（seqSeed 同款恢复面——投影可
-  // 重建，表即恢复源）；拍内 touch（种钟/抬峰）/drop（派发成功即出队）；GC 收口在
-  // projectTodoQueue（离队单删条）。回滚再入队=新钟（attempt 轮次已可区分，不跨轮持久）。
+  // 首见钟是「非事件可导携带列」（jobs.last_run_at 先例）：事件面只有 DISPATCH（出队锚）无入队锚，
+  // FIFO 钟只能携带。启动从 todo_queue 表种子（投影可重建，表即恢复源）；拍内 touch（种钟/抬峰）/drop
+  // （派发成功即出队）；GC 收口在 projectTodoQueue（离队单删条）。回滚再入队=新钟（attempt 已可区分）。
   const queueCarry: QueueCarry = seedQueueCarry(ledger.listTodoQueue())
-  // 警戒单峰值优先级延拍落地（129-D，studio-dev-181）：物化拍新单不在拍首活集——直接
-  // 触钟会被投影 GC 当拍删条，故只记 pending、成员资格落地拍并入携带峰（落地件 queue.ts
-  // settlePendingQueuePriority；离队即失效+15 分钟兜底——仅警戒单入表，量小）
+  // 警戒单峰值优先级延拍落地（129-D，studio-dev-181）：物化拍新单不在拍首活集——直接触钟会被投影 GC
+  // 当拍删条，故只记 pending、落地拍并入携带峰（queue.ts settlePendingQueuePriority；离队即失效+15 分钟兜底）
   const pendingQueuePriority = new Map<TicketId, { priority: number; since: number }>()
   const queueAgeStepMs = config.queueAgeStepMs ?? DEFAULT_QUEUE_AGE_STEP_MS
   const pinnedTicketSet = (): ReadonlySet<TicketId> => new Set(config.pinnedTickets ?? [])
@@ -770,7 +772,7 @@ export function createEngine(deps: EngineDeps): Engine {
 
   /** 时钟（一切时刻经注入 clock——core 纪律在 daemon 侧的同形落点） */
   const now = (): number => clock()
-  const mergeHost: MergeRunHost = { platform, ledger, registry, assemble: (i) => assembler(i), config, people: () => people, budgetDeps, costGuard: () => costGuard, modelTiers: catalog !== undefined ? () => catalog.tiers() : undefined, inflight, mergeRun: deps.mergeRun, seq: () => seq, now, makeId, makeEvent, syncMirror, resolvePerson, flowOf } // 202-P2 合并跑宿主：热换绑定经 thunk 取活值；函数面声明提升安全
+  const mergeHost: MergeRunHost = { platform, ledger, registry, assemble: (i) => assembler(i), config, people: () => people, budgetDeps, costGuard: () => costGuard, modelTiers: catalog !== undefined ? () => catalog.tiers() : undefined, inflight, mergeRun: deps.mergeRun, mergeLease: mergeLeases, seq: () => seq, now, makeId, makeEvent, syncMirror, resolvePerson, flowOf } // 202-P2 合并跑宿主：热换绑定经 thunk 取活值；函数面声明提升安全（202-P4 增租约簿注入）
 
   // 事件四要素形状（evtLevel/evtDept/tokenBuckets）：抽件 sentinel/shape.ts
   //（20-§十五「先拆再增」）——evtDept 显式 deptFallback 参数版。
@@ -1868,25 +1870,20 @@ export function createEngine(deps: EngineDeps): Engine {
       }
       const lane = issue.lane ?? config.defaultLane
       const intent = cand.intent
-      // 看门狗喂数豁免（DEV-44）：在工（已派发态）单的本单消费键不注入 seenIntentKeys——
-      // dedup 防 replay 不防健康探针；镜像键被上一誓消费后（咬合前在工期），STALL_SILENT
-      // 会被 step1 挡成 DEDUP_NOOP，看门狗对第二誓起失明（mirror 派发后告警
-      // 断流=「只叫不咬」的深层机制，红证 ④ 复现）。豁免只影响在工单 noop 决策码面
-      // （DEDUP_NOOP→EVIDENCE_PENDING/STALL_SILENT）：重派安全由状态机守（已派发态无
-      // 前向 dispatch 后继）；回滚后的新单态——咬合收口已释放消费键（events-index
-      // studio-dev-141 面），rescan 兜底即刻可派，无需豁免。
+      // 看门狗喂数豁免（DEV-44）：在工（已派发态）单的本单消费键不注入 seenIntentKeys——dedup 防 replay
+      // 不防健康探针；镜像键被上一誓消费后（咬合前在工期）STALL_SILENT 被 step1 挡成 DEDUP_NOOP，看门狗
+      // 对第二誓失明（「只叫不咬」深层机制，红证 ④）。豁免只影响在工单 noop 决策码面（DEDUP_NOOP→
+      // EVIDENCE_PENDING/STALL_SILENT）；重派安全由状态机守（已派发态无前向后继）；回滚新单态咬合收口已释放消费键（141 面），rescan 即可派。
       const candFlow = flowOf(issue)
       const ownSeenKey = candFlow === undefined ? null : index.seenKeyOf(ticket)
       const inWork = candFlow !== undefined && issue.state === flowAnchors(candFlow).dispatched
-      // 人闸快照（129-§6.2-R3 第四闸——decide passGates 序冻结：断路 > 泳道 > 人 > 每拍 >
-      // 在途）：在工计数=内存 Inflight + 本拍已排队派发（两段式先决后执拍内即时生效）；
-      // 人不可解析（索引空/工号未知）=不注 gate 闸面跳过——人员配置错不是停摆理由，
-      // 派发面的 resolvePerson 同源失败才拒派（fail 点收口在 executeDispatch）。
+      // 人闸快照（129-§6.2-R3 第四闸——decide passGates 序冻结：断路>泳道>人>每拍>在途）：在工计数=
+      // 内存 Inflight+本拍已排队派发（两段式先决后执拍内即时生效）；人不可解析=不注 gate 闸面跳过——
+      // 人员配置错不是停摆理由，派发面 resolvePerson 同源失败才拒派（fail 点收口在 executeDispatch）。
       const personId = resolvePerson(issue)?.id
       const personGate = personGateSnapshot(personId, dispatchPersons, inflight, personLimits)
-      // 批示站立（studio-dev-171，docs/18-§2.5）：本拍归一动词优先，否则事件索引派生
-      //（APPROVE verb 置位/DISPATCH 清零）；approved 入参=D4 清偿点：autoApprove 恒批
-      //（demo 语义保持）∥批准站立=真实批示驱动（生产 autoApprove:false 正主通道）
+      // 批示站立（studio-dev-171，docs/18-§2.5）：本拍归一动词优先，否则事件索引派生（APPROVE 置位/
+      // DISPATCH 清零）；approved 入参=D4 清偿点：autoApprove 恒批（demo 语义保持）∥批准站立=真实批示驱动
       const verbNow = directiveVerbNow.get(ticket) ?? index.directiveStandingOf(ticket)
       const out = decide({
         issue,
@@ -2095,9 +2092,12 @@ export function createEngine(deps: EngineDeps): Engine {
     // —— 相位 5 合并（202-P2 双轨）：post-verified 验收位=真单刀（merge-run.ts：resume 唤起
     //    原会话自合并＋先门禁后 MERGE；触发不齐=降级宰相手工链/lease 顺延）；其余位=v0 模拟 ——
     let merged = 0
+    renewMergeLeases(mergeHost, now()) // 202-P4 在途合并跑租约续命（每拍——长跑不被 TTL 误夺；死主=到期让道）
+    const mergeWaiting: TicketId[] = [] // 合并队列栏：本拍 merge-lease-busy 顺延单（下拍重试）
     for (const action of mergeQ) {
       const r = await runMergeAction(mergeHost, action, index, tickEvents, budget, directiveVerbNow)
       actionResults.push(r.result)
+      if (r.leaseBusy === true) mergeWaiting.push(action.ticket)
       if (r.deferred) continue // 占位性顺延（lease 忙/批示不在场）：不计数不上报，下一拍重进
       if (r.counted) { merged += 1; mutations += 1 } else if (r.mutated) mutations += 1
       if (!r.result.ok) errors.push(`merge 失败 ${action.ticket}：${r.result.detail ?? ''}`)
@@ -2263,7 +2263,7 @@ export function createEngine(deps: EngineDeps): Engine {
           scheduleToStart,
         },
         harvest,
-        merge: { merged },
+        merge: { merged, queue: mergeQueueFace(mergeHost, mergeWaiting, now()) }, // 202-P4 合并队列栏（只读投影）
         recycle: { recycled },
         account: {
           eventsAppended: tickEvents.length + (hrSync?.eventsAppended ?? 0),

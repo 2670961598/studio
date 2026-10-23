@@ -1,5 +1,6 @@
 /**
- * merge-run e2e —— 相位 5 真单刀（202-P2，studio-dev-232，proposal §7 S4-S7；docs/17-§2 合并相位双轨注记）。
+ * merge-run e2e —— 相位 5 真单刀（202-P2，studio-dev-232，proposal §7 S4-S7；docs/17-§2 合并相位双轨注记；
+ * S7 并发串行面由 202-P4（studio-dev-234）改写为单栈双单——合并租约去模块共享改 per-engine 簿）。
  *
  * 断言面（判负线照提案冻结口径，逐字）：
  *   - S4 真单刀全链：待验收+dispatcher 批准→同拍**派发合并跑**（非同拍迁移——留待验收，
@@ -14,7 +15,10 @@
  *     状态留待验收；工时单 failed；断路器不计连击（无 CIRCUIT_BREAK）；不自动重试
  *     （无新批示零拍重派）；再批准（R6 腿）→v0 模拟迁移转正收口（note 如实——手工链
  *     收口/无真 git 合并，不冒充真单刀）。
- *   - S7 合并租约：同拍两单全触发→一派一顺延（deferred 不弃单）；后续拍次序收口两单。
+ *   - S7 合并租约（202-P4，studio-dev-234）：单栈双单同拍批准→一派一顺延
+ *     （第二单 actionResults=merge-lease-busy，ok=true 不失败）；合并队列栏只读投影
+ *     （waiting/running/lease）；A 收口释放→B 经镜像 rescan 兜底补派→两单先后已交付
+ *     （push 串行 1+1——判负线「两列并发推 dev」反面）。
  *
  * 载体铁律（C3）：daemon 仍是唯一状态推进者；v0 模拟轨回归面=P1 acceptance.e2e.test.ts
  * S2（无 mergeRun 注入栈——byte-identical 不改不删）。
@@ -59,6 +63,7 @@ function person(id: string, login: string, level: number, dept = DEPT): PersonRe
 
 const ROSTER: readonly PersonRef[] = [
   person('ENG-1', 'eng-1', 1),
+  person('ENG-2', 'eng-2', 1),
   person('ENG-0', 'eng-0', 3),
   person('PLN-9', 'pln-9', 1),
   person('producer', 'boss', 9),
@@ -212,16 +217,17 @@ async function comment(stack: MergeStack, ticket: string, author: string, body: 
   return last.id
 }
 
-/** 播种到待验收（与 P1 acceptance.e2e 同链：dispatch→GATE_PASS→QA_PASS→呈批→驻留） */
-async function seedToAcceptance(stack: MergeStack): Promise<string> {
+/** 播种到待验收（与 P1 acceptance.e2e 同链：dispatch→GATE_PASS→QA_PASS→呈批→驻留）；异人异道面（202-P4 S6 双单同栈） */
+async function seedToAcceptance(stack: MergeStack, opts?: { assignee?: string; lane?: string }): Promise<string> {
   const created = await stack.platform.issues.create({
     title: '合并跑单',
     type: 'devtask',
     dept: DEPT,
     level: 1,
-    assignee: 'ENG-1',
+    assignee: opts?.assignee ?? 'ENG-1',
     initialState: '新单',
   })
+  if (opts?.lane !== undefined) await stack.platform.issues.setField(created.id, 'lane', opts.lane) // fake create 不收 lane——字段面补设
   stack.clock.advance(1000)
   expect((await stack.engine.tick()).phases.dispatch.dispatched).toBe(1) // 誓 1：fake-mg-1（launch 带 executorSessionId）
   stack.clock.advance(1000)
@@ -428,55 +434,66 @@ describe('S6 闸门红收口（四要件缺→冲突兜底：GATE_FAIL 三锚+ES
   })
 })
 
-// ————————————————————————— S7：合并租约 —————————————————————————
+// ————————————————————————— S7：合并租约（202-P4 并发串行） —————————————————————————
 
-describe('S7 合并租约（同键互斥——跨引擎同键共享模块级租约簿；一派一顺延；先后收口）', () => {
-  it('两栈各一单同时批准→A 派发 B 顺延（不弃单不报错）；A 收口后 B 派发；两单先后已交付', async () => {
-    const stackA = buildStack('s7-lease-a')
-    // rescanEvery=3：B 顺延后批准评论活动已消费——补派经镜像 rescan 兜底重进候选
-    //（DEV-42① starvation-revival 机制复用，缺省 30 拍对测试太疏；split.e2e 同款打法）
-    const stackB = buildStack('s7-lease-b', { idPrefix: 'B-', rescanEvery: 3 }) // 单号空间错开（合并租约按 TicketId 判重入）
+describe('S7 合并租约（单栈双单同拍批准——一进一顺延；合并队列栏；rescan 补派；串行收口）', () => {
+  it('双单同拍过验收→A 派发 B 顺延（merge-lease-busy 不失败）→queue 栏投影→A 收口释放→B 补派→两单先后已交付（push 1+1 串行）', async () => {
+    // rescanEvery=5：B 顺延后批准活动已被游标消费——重进候选走镜像 rescan 兜底（seq 15，
+    // A 于 seq 12 收口关单不再重进；DEV-42① starvation-revival 机制复用，缺省 30 拍太疏）
+    const stack = buildStack('s7-lease', { rescanEvery: 5 })
     try {
-      const a = await seedToAcceptance(stackA)
-      const b = await seedToAcceptance(stackB) // 泳道各栈独立（互不涉泳道闸——只争合并租约）
-      await comment(stackA, a, 'pln-9', '批示:批准')
-      await comment(stackB, b, 'pln-9', '批示:批准')
-      stackA.clock.advance(1000)
-      stackB.clock.advance(1000)
-      const ra1 = await stackA.engine.tick()
-      const rb1 = await stackB.engine.tick()
-      expect(ra1.errors).toEqual([])
-      expect(rb1.errors).toEqual([])
-      expect(notes(ra1, 'DISPATCH').filter((n) => n.includes('merge-run'))).toHaveLength(1) // A 派
-      expect(notes(rb1, 'DISPATCH').filter((n) => n.includes('merge-run'))).toHaveLength(0) // B 顺延
-      const deferred = rb1.actionResults.filter((x) => x.ok && (x.detail ?? '').includes('merge-lease 忙'))
-      expect(deferred).toHaveLength(1) // 顺延不弃单（无错误无事件——静默让道）
-      expect((await stackB.platform.issues.get(b)).state).toBe('待验收')
-      // A 收口（收割相释放租约）→ B 经 rescan 重进候选补派（3 拍内必进）
-      stackA.clock.advance(1000)
-      stackB.clock.advance(1000)
-      const ra2 = await stackA.engine.tick()
-      expect(ra2.errors).toEqual([])
-      expect(notes(ra2, 'MERGE')).toHaveLength(1)
-      expect((await stackA.platform.issues.get(a)).state).toBe('已交付')
+      const a = await seedToAcceptance(stack, { assignee: 'ENG-1', lane: 'core' })
+      const b = await seedToAcceptance(stack, { assignee: 'ENG-2', lane: 'aux' }) // 异人异道：人闸/泳道互不涉——只争合并租约
+      expect(a).not.toBe(b)
+      await comment(stack, a, 'pln-9', '批示:批准')
+      await comment(stack, b, 'pln-9', '批示:批准')
+      stack.clock.advance(1000)
+      // —— 同拍双 merge 动作：A（先入队）占租约派发；B=merge-lease-busy 顺延（不弃单不报错） ——
+      const r1 = await stack.engine.tick()
+      expect(r1.errors).toEqual([])
+      expect(notes(r1, 'DISPATCH').filter((n) => n.includes('merge-run'))).toHaveLength(1) // 一进
+      expect(r1.actionResults.filter((x) => x.ok && (x.detail ?? '').includes('merge-lease-busy'))).toHaveLength(1) // 一顺延
+      expect((await stack.platform.issues.get(b)).state).toBe('待验收') // 等待者不失败（判负线反面）
+      expect(stack.merges).toHaveLength(1) // 只唤起 A 的原会话
+      expect(stack.merges[0]?.task.ticket).toBe(a)
+      // —— 合并队列栏（tick report 只读投影）：等待=[B] 在跑=[A] 租约持有=A ——
+      expect(r1.phases.merge.queue).toEqual({ waiting: [b], running: [a], lease: { key: `${snapshot.slug}:dev`, holder: a, expiresAt: expect.any(Number), expired: false } })
+      // —— A 收口（收割相释放租约）→ B 经 rescan 重进候选补派（4 拍内必进） ——
+      stack.clock.advance(1000)
+      const r2 = await stack.engine.tick()
+      expect(r2.errors).toEqual([])
+      expect(notes(r2, 'MERGE')).toHaveLength(1)
+      expect((await stack.platform.issues.get(a)).state).toBe('已交付')
+      let bTick = -1
       let bDispatched = false
       for (let i = 0; i < 4 && !bDispatched; i += 1) {
-        stackB.clock.advance(1000)
-        const rb = await stackB.engine.tick()
+        stack.clock.advance(1000)
+        const rb = await stack.engine.tick()
         expect(rb.errors).toEqual([])
         bDispatched = notes(rb, 'DISPATCH').some((n) => n.includes('merge-run'))
+        if (bDispatched) {
+          bTick = i
+          // B 派发拍队列栏：在跑=[B]（A 已收口释放——等待清空）
+          expect(rb.phases.merge.queue.running).toEqual([b])
+          expect(rb.phases.merge.queue.lease).toMatchObject({ holder: b, expired: false })
+        } else {
+          expect(rb.phases.merge.queue.waiting).toEqual([]) // 未重进候选=无新顺延（rescan 节流拍如实空投影）
+        }
       }
       expect(bDispatched).toBe(true) // B 补派必达（rescan 兜底——顺延不弃单的可观测兑现）
-      stackB.clock.advance(1000)
-      const rb3 = await stackB.engine.tick()
-      expect(rb3.errors).toEqual([])
-      expect(notes(rb3, 'MERGE')).toHaveLength(1)
-      expect((await stackB.platform.issues.get(b)).state).toBe('已交付')
-      expect(stackA.git.pushes).toHaveLength(1)
-      expect(stackB.git.pushes).toHaveLength(1)
+      expect(bTick).toBeLessThanOrEqual(3)
+      expect(stack.merges).toHaveLength(2) // A、B 各唤起一次（原会话各归各）
+      stack.clock.advance(1000)
+      const r3 = await stack.engine.tick()
+      expect(r3.errors).toEqual([])
+      expect(notes(r3, 'MERGE')).toHaveLength(1)
+      expect((await stack.platform.issues.get(b)).state).toBe('已交付')
+      // —— 串行铁证：dev 恰两次推送（A 先 B 后——同一 fake git 端口顺序记录），无第三列 ——
+      expect(stack.git.pushes).toHaveLength(2)
+      expect(stack.git.pushes.every((p) => p.endsWith('|dev'))).toBe(true)
+      expect(r3.phases.merge.queue).toEqual({ waiting: [], running: [], lease: { key: `${snapshot.slug}:dev`, holder: null, expired: false } }) // 收口后全空（账实相符）
     } finally {
-      stackA.ledger.close()
-      stackB.ledger.close()
+      stack.ledger.close()
     }
   })
 })

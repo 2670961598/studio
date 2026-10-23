@@ -6,7 +6,7 @@
  * v0 配置最小面（daemon.yaml，全扁平 key: value）：
  *   db: <台账库路径>            platform: localfile|fake      company: <slug>
  *   rootDir: <工位根>           tickMs: <拍间隔>              maxActionsPerTick / maxInflight
- *   stallAfterMs / laneTtlMs / breakerThreshold / autoApprove …（缺省见 DEFAULT_SERVE_CONFIG）
+ *   stallAfterMs / laneTtlMs / mergeLeaseTtlMs / breakerThreshold / autoApprove …（缺省见 DEFAULT_SERVE_CONFIG）
  *   mirrorRescanEveryTicks: <镜像对账重决策节流>（DEV-42①，缺省 30；0=关——每 N 拍补非闭环 mirror 单进决策候选）
  *   jobs: true|false（定时岗调度开关，v0.4）   jobPollMs: <调度轮询间隔>（缺省 15000）
  *   models: <models.yaml 路径>（可选价目表，17-§4：注入=估算态 A「estimateCost 校准+双帽」；
@@ -179,15 +179,15 @@ export interface ServeConfig extends HrServeConfig {
   harvestSliceMs: number
   /** 泳道租约 TTL ms */
   laneTtlMs: number
+  /** 合并租约 TTL ms（202-P4：TTL+每拍续租+死主回收；缺省同泳道 30min） */
+  mergeLeaseTtlMs: number
   /** 断路阈值 N */
   breakerThreshold: number
   /** 断路半开冷却窗 ms（DEV-46：熔断后停重派至窗过→放行一次半开试探；0=即试探） */
   breakerCooldownMs: number
-  /**
-   * 镜像对账重决策节流（DEV-42①，2026-10-20 哨查）：每 N 拍把非闭环（未 CLOSE）
-   * mirror 单补进决策候选——活动驱动候选只看「有新活动」的单，被三闸顺延且活动已被
-   * 游标消费的单会永久搁置（实测 9 单零事件滞留数小时）。0=关；缺省 30。
-   */
+  /** 镜像对账重决策节流（DEV-42①，2026-10-20 哨查）：每 N 拍把非闭环（未 CLOSE）mirror 单
+   * 补进决策候选——活动驱动候选只看「有新活动」，被三闸顺延且活动已被游标消费的单会
+   * 永久搁置（实测 9 单零事件滞留数小时）。0=关；缺省 30。 */
   mirrorRescanEveryTicks: number
   /** demo 自动批（真制作人批准信号经网关动作词归一） */
   autoApprove: boolean
@@ -210,8 +210,7 @@ export interface ServeConfig extends HrServeConfig {
   matrix: boolean
   /**
    * matrix homeserver 基址（105-刀A A-3；matrix: true 时必配）：如 http://127.0.0.1:8008。
-   * daemon.yaml 只配非敏感面——bot 密码**永不入 yaml**，经进程 env MATRIX_BOT_PASSWORD
-   * 供给（21A D5 批示：密码红名单，装配单元 apps/boot 读取）。
+   * daemon.yaml 只配非敏感面——bot 密码**永不入 yaml**，经 env MATRIX_BOT_PASSWORD 供给（21A D5：密码红名单；apps/boot 读取）。
    */
   matrixHomeserverUrl?: string
   /** matrix bot 账号 user_id（@slug-bot:server；matrix: true 时必配） */
@@ -247,21 +246,18 @@ export interface ServeConfig extends HrServeConfig {
   fileWatchPath?: string
   /**
    * cadence 档位展开器源开关（35-§3 首刀；缺省关）：true 时注册档位岗调度表生命周期源
-   * （src/engine/jobs-sources.ts——start 播种/周期刷新/stop 移除 payload 带 cadence_tier 的岗；
-   * 到点意图仍走既有 scheduler→schedule 意图链，零新轮子）。jobs: false 时开了也无
-   * scheduler 消费（意图无人到点产出——配置面诚实共存，不代开 jobs）。
-   */
+   * （src/engine/jobs-sources.ts——start 播种/周期刷新/stop 移除 payload 带 cadence_tier 的岗；到点
+   * 意图仍走既有 scheduler→schedule 链，零新轮子）。jobs: false 时开了也无 scheduler 消费（诚实共存）。 */
   cadence: boolean
   /**
    * SLA/升级计时器源开关（35-§3 首刀；缺省关）：true 时注册 tick 驱动扫描器——岗单据
    * first-ack 超时/升级链档产 kind='escalate' 意图 + ESCALATE 落账（src/engine/jobs-sources.ts；
-   * 只产意图+落账，notify 发送归 notify 端口后续刀）。扫描轮询复用 jobPollMs。
-   */
+   * 只产意图+落账，notify 发送归 notify 端口后续刀；轮询复用 jobPollMs）。 */
   sla: boolean
   /**
    * 成本警戒源开关（132-§6.4 单C·studio-dev-177；缺省关）：true 时注册 cost-threshold 源
-   * （tick 扫当日投影+预留，达档产 escalate+落账——cost-guard/source.ts）；配置真源=org-config
-   * cost_guard 段（快照装载，本开关只控注册面）；轮询复用 jobPollMs。
+   * （tick 扫当日投影+预留，达档产 escalate+落账——cost-guard/source.ts；配置真源=org-config
+   * cost_guard 段（快照装载，本开关只控注册面）；轮询复用 jobPollMs）。
    */
   costGuard: boolean
   /**
@@ -384,6 +380,7 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   stallKillAfterAlarms: ENGINE_CONFIG_DEFAULTS.stallKillAfterAlarms ?? 2,
   harvestSliceMs: ENGINE_CONFIG_DEFAULTS.harvestSliceMs,
   laneTtlMs: ENGINE_CONFIG_DEFAULTS.laneTtlMs,
+  mergeLeaseTtlMs: ENGINE_CONFIG_DEFAULTS.mergeLeaseTtlMs,
   breakerThreshold: ENGINE_CONFIG_DEFAULTS.breakerThreshold,
   breakerCooldownMs: ENGINE_CONFIG_DEFAULTS.breakerCooldownMs ?? 30 * 60_000,
   mirrorRescanEveryTicks: ENGINE_CONFIG_DEFAULTS.mirrorRescanEveryTicks ?? 30,
@@ -552,6 +549,9 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         break
       case 'laneTtlMs':
         cfg.laneTtlMs = num(value, key)
+        break
+      case 'mergeLeaseTtlMs':
+        cfg.mergeLeaseTtlMs = num(value, key)
         break
       case 'breakerThreshold':
         cfg.breakerThreshold = num(value, key)
@@ -1093,6 +1093,7 @@ export function buildServeRuntime(
     stallKillAfterAlarms: config.stallKillAfterAlarms,
     harvestSliceMs: config.harvestSliceMs,
     laneTtlMs: config.laneTtlMs,
+    mergeLeaseTtlMs: config.mergeLeaseTtlMs,
     breakerThreshold: config.breakerThreshold,
     breakerCooldownMs: config.breakerCooldownMs,
     mirrorRescanEveryTicks: config.mirrorRescanEveryTicks,

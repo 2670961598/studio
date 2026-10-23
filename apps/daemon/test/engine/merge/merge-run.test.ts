@@ -29,6 +29,7 @@ import { createFakeAdapter, createFakePlatform, FAKE_SUMMARY_JSON } from '../../
 import { buildEventIndex, MERGE_CHAIN_ANCHOR, MERGE_CONFLICT_ANCHOR, MERGE_MANUAL_ANCHOR, MERGE_RUN_ANCHOR } from '../../../src/engine/sentinel/events-index.ts'
 import { flowsFromWorkflows } from '../../../src/engine/typeflows.ts'
 import { runMergeAction, closeOutMergeHarvest, failMergeHarvest, type MergeRunHost, type MergeRunDeps } from '../../../src/engine/merge/merge-run.ts'
+import { createMergeLeaseRegistry } from '../../../src/engine/merge/merge-lease.ts'
 import { runMergeGate, type MergeGitPort } from '../../../src/engine/merge/merge-gate.ts'
 import { mergeDirectiveBlock, MERGE_BRIEF_FILENAME, MERGE_RECEIPT_FILENAME } from '../../../src/engine/merge/merge-brief.ts'
 import type { TickPhaseDispatchBudget } from '../../../src/engine/tick-report/types.ts'
@@ -105,7 +106,7 @@ interface UnitHost {
   dir: string
 }
 
-function buildHost(o: { adapter?: ExecutorAdapter; mergeRun?: MergeRunDeps }): UnitHost {
+function buildHost(o: { adapter?: ExecutorAdapter; mergeRun?: MergeRunDeps; leaseTtlMs?: number }): UnitHost {
   const dir = mkdtempSync(path.join(tmpdir(), 'merge-run-unit-'))
   const ledger = openLedger(path.join(dir, 'ledger.sqlite'))
   const platform = createFakePlatform({ now: () => '2026-10-24T00:00:00.000Z' })
@@ -133,6 +134,7 @@ function buildHost(o: { adapter?: ExecutorAdapter; mergeRun?: MergeRunDeps }): U
     modelTiers: undefined,
     inflight: new Map(),
     mergeRun: o.mergeRun,
+    mergeLease: createMergeLeaseRegistry(o.leaseTtlMs ?? 30 * 60_000), // 202-P4：缺省 TTL 同引擎；TTL 面归 merge-lease.test.ts
     seq: (): number => (seqN += 1),
     now: (): number => 1_000,
     makeId: (_ts: number): string => ulid((idN += 1)),
@@ -335,7 +337,7 @@ describe('S1e 派发-租约-收口全链（host 级）', () => {
     return { targetBranch: 'dev', gateCommand: ['bun', 'run', 'test'], git, gate: fakeGate(gateCode) }
   }
 
-  it('全链绿：resume 唤起原会话派发→租约互斥→closeOut 四要件→MERGE 真事件→释放后再派', async () => {
+  it('全链绿：resume 唤起原会话派发→租约互斥（merge-lease-busy 顺延）→closeOut 四要件→MERGE 真事件→释放后再派', async () => {
     const git = fakeGit({})
     const merges: Array<{ task: TaskBrief; executorSessionId: string }> = []
     const u = buildHost({ adapter: createMergeCapableAdapter({ onMerge: (task, executorSessionId) => merges.push({ task, executorSessionId }) }), mergeRun: mergeDeps(git) })
@@ -362,10 +364,13 @@ describe('S1e 派发-租约-收口全链（host 级）', () => {
     const brief = path.join(entry?.workspace ?? '', MERGE_BRIEF_FILENAME)
     const briefText = (await import('node:fs')).readFileSync(brief, 'utf8')
     expect(briefText).toContain('目标分支：dev')
-    // —— 他单同枝：租约忙顺延 ——
+    // —— 他单同枝：租约忙顺延（202-P4：等待者不失败，下拍重试信号 leaseBusy） ——
     const b = await seedTicket(u.platform, '待验收')
     const rb = await runMergeAction(u.host, { type: 'merge', ticket: b.id, toState: '已交付' }, buildEventIndex(u.events), [], emptyBudget(), standingMap(b.id))
     expect(rb.deferred).toBe(true)
+    expect(rb.leaseBusy).toBe(true)
+    expect(rb.result.detail).toContain('merge-lease-busy')
+    expect(rb.result.ok).toBe(true) // 顺延不失败（判负线反面）
     expect(u.events.filter((e) => e.event === 'DISPATCH').length).toBe(1)
     // —— 收口全绿：GATE_PASS→push→MERGE→已交付 ——
     if (entry === undefined) throw new Error('inflight 缺位')

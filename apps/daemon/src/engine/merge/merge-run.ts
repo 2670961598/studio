@@ -17,8 +17,8 @@
  *      （与 decide 同式同源——同拍批准同拍可合；autoApprove 不算，批示语义冻结）；
  *   3. 未标手工：index.mergeManualOf(t)===false（merge=manual 锚=自合并失败面/人工标记，
  *      机器合并终局让位——append-only）；
- *   4. 合并租约空闲：进程内串行锁 keyed company:targetBranch（同拍/在途合并跑互斥；
- *      TTL/死主回收归 P4——单进程 v0 无死主，泳道租约同款口径）；
+ *   4. 合并租约空闲：TTL+每拍续租+死主回收（202-P4，merge-lease.ts——泳道租约同模式
+ *      加固，per-engine 实例）；他单活约在位=顺延不弃单（merge-lease-busy 下拍重试）；
  *   5. 断点可解析：work_records 末位带会话工时单 executor_session_id 在场+summary
  *      sidecar 可读+executor 在册且 session_resume=true+工位 repo rev-parse HEAD 可解析
  *      （=reviewTip，提交核验基线）。缺=降级手工链（重启打断合并跑同此面——running
@@ -48,8 +48,8 @@
  * 共体，实现体=merge-fallback.ts【BC-S2 拆】——note 如实=宰相手工链收口不冒认真单刀）。worker 消亡面
  * （failMergeHarvest）四要件不可判≠冲突：不加冲突锚不加 ESCALATE（标记让位仍走收口）。
  *
- * 拟稿待批点（P4 缝）：租约 TTL/死主、重启接管、push 重试/对账、消亡面通知位别——
- * 本刀全部如实降级或如实入 note。
+ * 拟稿待批点（后续刀缝）：重启接管、push 重试/对账、消亡面通知位别、跨进程互斥——
+ * 本刀全部如实降级或如实入 note（租约 TTL/续租/死主已随 202-P4 收口）。
  */
 import { createHash } from 'node:crypto'
 import { mkdirSync, statSync, writeFileSync } from 'node:fs'
@@ -83,6 +83,7 @@ import { approvalSlotOf } from '../directive/wire.ts'
 import type { DirectiveVerb } from '../directive/index.ts'
 import type { EngineConfig, Inflight } from '../engine.ts'
 import { MERGE_BRIEF_FILENAME, MERGE_RECEIPT_FILENAME, mergeDirectiveBlock } from './merge-brief.ts'
+import { mergeLeaseKey, type MergeLeaseRegistry } from './merge-lease.ts'
 import { degradeToManualChain, noteSafe, simulatedMergeTransition } from './merge-fallback.ts'
 import type { MergeGitPort, MergeGateCommandPort } from './merge-gate.ts'
 import { runMergeGate } from './merge-gate.ts'
@@ -138,6 +139,8 @@ export interface MergeRunHost {
   modelTiers: (() => readonly unknown[]) | undefined
   inflight: Map<TicketId, Inflight>
   mergeRun: MergeRunDeps | undefined
+  /** 合并租约簿（202-P4：per-engine 实例——createEngine 内建；TTL/续租/死主回收见 merge-lease.ts） */
+  mergeLease: MergeLeaseRegistry
   seq: () => number
   now: () => number
   makeId: (ts: number) => string
@@ -153,31 +156,13 @@ export interface MergeRunHost {
   flowOf: (issue: { type?: string; level?: number }) => StateFlow | undefined
 }
 
-/** 相位 5 动作出口：deferred=占位性顺延（不计数不上报）；counted=合并完成（merged++）；mutated=有台账事件（mutations++） */
+/** 相位 5 动作出口：deferred=占位性顺延（不计数不上报）；counted=合并完成（merged++）；mutated=有台账事件（mutations++）；leaseBusy=租约忙顺延（202-P4 等待单信号——队列栏收集面） */
 export interface MergeActionOutcome {
   result: TickActionResult
   deferred: boolean
   counted: boolean
   mutated: boolean
-}
-
-// ————————————————————————— 合并租约（进程内串行锁） —————————————————————————
-
-const mergeLeases = new Map<string, TicketId>()
-
-/** 占用（幂等：同单重进=已在位 true；他单在位=false=顺延） */
-function acquireMergeLease(key: string, ticket: TicketId): boolean {
-  const holder = mergeLeases.get(key)
-  if (holder === undefined || holder === ticket) {
-    mergeLeases.set(key, ticket)
-    return true
-  }
-  return false
-}
-
-/** 释放（只在持有人匹配时删——失败面/收口面各调一次，双释放安全） */
-function releaseMergeLease(key: string, ticket: TicketId): void {
-  if (mergeLeases.get(key) === ticket) mergeLeases.delete(key)
+  leaseBusy?: boolean
 }
 
 // ————————————————————————— 断点解析（触发第 5 查） —————————————————————————
@@ -294,18 +279,18 @@ export async function runMergeAction(
         `→${action.toState}（手工链收口——宰相手工链+v0 模拟迁移转正）`,
       )
     }
-    const leaseKey = `${host.config.company}:${deps.targetBranch}`
-    if (!acquireMergeLease(leaseKey, ticket)) {
-      return { result: { ticket, actionType: action.type, ok: true, detail: 'merge-lease 忙（在途合并跑占位——顺延不弃单）' }, deferred: true, counted: false, mutated: false }
+    const leaseKey = mergeLeaseKey(host.config.company, deps.targetBranch)
+    if (!host.mergeLease.acquire(leaseKey, ticket, host.now())) {
+      return { result: { ticket, actionType: action.type, ok: true, detail: 'merge-lease-busy（在途合并跑占位——顺延不弃单，下拍重试）' }, deferred: true, counted: false, mutated: false, leaseBusy: true }
     }
     const resolved = await resolveMergeRunPlan(host, deps, ticket)
     if ('degrade' in resolved) {
-      releaseMergeLease(leaseKey, ticket)
+      host.mergeLease.release(leaseKey, ticket)
       return degradeToManualChain(host, fresh, index, tickEvents, resolved.degrade)
     }
     const launched = await dispatchMergeRun(host, deps, resolved.plan, fresh, index, tickEvents, budget, leaseKey)
     if (!launched.ok) {
-      releaseMergeLease(leaseKey, ticket)
+      host.mergeLease.release(leaseKey, ticket)
       return { result: launched.result, deferred: false, counted: false, mutated: false }
     }
     // 派发成功：DISPATCH 已落账（mutated）；合并完成计数在收割收口面（counted=false）
@@ -511,7 +496,7 @@ export async function closeOutMergeHarvest(
   if (!fourOk) {
     host.ledger.endWorkRecord(entry.workRecordId, { ended_at: endedAt, status: 'failed', ...(execSid !== undefined ? { executor_session_id: execSid } : {}) })
     host.inflight.delete(ticket)
-    releaseMergeLease(ctx.leaseKey, ticket)
+    host.mergeLease.release(ctx.leaseKey, ticket)
     // —— 冲突兜底（202-P3，§5.5）：四要件跑完可判不齐＝MERGE_CONFLICT 既有类 ——
     // GATE_FAIL（merge-run 锚清站立+merge=manual 锚终局让位【P2 已落】）+category 锚
     // 分类可观测；ESCALATE 通知宰相（低噪不广播）。不做 chain=manual 式 dedupe：冲突
@@ -558,7 +543,7 @@ export async function closeOutMergeHarvest(
     note: `→${toState}（v0.5 真单刀：sha=${gate.mergeSha ?? '?'};gate=exit0【${noteSafe(gate.note)}】;resume=${ctx.executorSessionId}@${entry.executor}（唤起原会话自合并，causation=${ctx.causationId}）;push=${push.ok ? `ok（${push.note}）` : `fail（${push.note}——迁移照走，P4 重试面）`}${usageNote}）`,
   })
   host.inflight.delete(ticket)
-  releaseMergeLease(ctx.leaseKey, ticket)
+  host.mergeLease.release(ctx.leaseKey, ticket)
   if (entry.instructionsPath !== undefined) removeInstructions(entry.instructionsPath)
   return 'completed'
 }
@@ -580,7 +565,7 @@ export async function failMergeHarvest(
   const execSid = entry.handle.executorSessionId ?? ctx?.executorSessionId
   host.ledger.endWorkRecord(entry.workRecordId, { ended_at: endedAt, status: 'failed', ...(execSid !== undefined ? { executor_session_id: execSid } : {}) })
   host.inflight.delete(ticket)
-  if (ctx !== undefined) releaseMergeLease(ctx.leaseKey, ticket)
+  if (ctx !== undefined) host.mergeLease.release(ctx.leaseKey, ticket)
   let budgetNote = ''
   try {
     const settled = settleDispatch(host.budgetDeps, { ticket, personId: entry.personId, actual: { usd: 0 }, now: endedAt })
