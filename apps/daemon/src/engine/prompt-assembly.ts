@@ -65,13 +65,16 @@ export interface AssembleDispatchInput {
    * 续跑上下文（129-E 单E，F1-15/17-§5 续跑版）：在场=任务书出续跑版（前情摘要注入
    * 上次 summary.json）；缺省=首版（既有行为零变更）。三元组=engine 侧断点解析产物
    * （resolveResumePlan——work_records 最后一条带 session 工时单），executor 不可续时
-   * engine 不注入（降级为新派，F1-15）。
+   * engine 不注入（降级为新派，F1-15）。note=续跑缘由（202-P1：策划验收打回理由
+   * 前情注入行；缺省无行）。
    */
   resume?: {
     sessionId: string
     summaryPath: string
     /** 上次 summary.json 内容（SummarySidecar 形状，contract schemas/report.ts） */
     summary: SummarySidecar
+    /** 续跑缘由（202-P1 打回理由前情注入；缺省无行） */
+    note?: string
   }
 }
 

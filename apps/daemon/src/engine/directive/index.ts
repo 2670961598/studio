@@ -17,9 +17,11 @@ export {
   type DirectiveQualify,
 } from './qualify.ts'
 export {
+  engineDirectiveDeps,
   reboundSuppressed,
   runDirectiveLayer,
   type DirectiveLayerDeps,
   type DirectiveLayerResult,
+  type EngineDirectiveClosures,
 } from './wire.ts'
 export { buildServeDirectiveDeps, parseWhitelistSpec, type ServeDirectiveOptions } from './serve-config.ts'

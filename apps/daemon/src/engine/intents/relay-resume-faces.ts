@@ -20,8 +20,8 @@ export interface ResumeDispatchFace {
   active: boolean
   /** 适配器选择：active=指名同家；降级=fallback（engine 传 registry.pick()） */
   adapter: ExecutorAdapter | undefined
-  /** 装配入参 resume 三元组（仅 active 在场——createDefaultAssembler 据此切续跑版，17-§5） */
-  assembleCtx?: { sessionId: string; summaryPath: string; summary: SummarySidecar }
+  /** 装配入参 resume 三元组+续跑缘由（仅 active 在场——createDefaultAssembler 据此切续跑版，17-§5；note=202-P1 打回理由前情注入） */
+  assembleCtx?: { sessionId: string; summaryPath: string; summary: SummarySidecar; note?: string }
   /** DISPATCH note 尾锚（active/降级两形恒非空——续跑派发不静默） */
   noteAnchor: string
   /** actionResults detail 尾段（两形恒非空） */
@@ -46,7 +46,12 @@ export function resumeDispatchFace(
     return {
       active: true,
       adapter: selection.adapter,
-      assembleCtx: { sessionId: plan.sessionId, summaryPath: plan.summaryPath, summary: plan.summary },
+      assembleCtx: {
+        sessionId: plan.sessionId,
+        summaryPath: plan.summaryPath,
+        summary: plan.summary,
+        ...(plan.note !== undefined ? { note: plan.note } : {}),
+      },
       noteAnchor: `;resume=${plan.sessionId}@${plan.executor}（续自第 ${plan.lastAttempt} 誓）`,
       detailSegment: `;resume=${plan.sessionId}@${plan.executor}（续自第 ${plan.lastAttempt} 誓，F1-15）`,
       causationId: plan.causationId,

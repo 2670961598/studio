@@ -138,6 +138,46 @@ describe('buildDirectiveAuthorizer（白名单=dept leader∪extraWhitelist∪pr
   })
 })
 
+// ————————————————————————— 单元面：202-P1 位别两扩（studio-dev-231） —————————————————————————
+
+describe('buildDirectiveAuthorizer 202-P1 扩位：dispatcher 白名单源+验收位别律（R3）', () => {
+  const roster: readonly DirectivePerson[] = ROSTER.map((p) => ({ id: p.id, login: p.login, level: p.level }))
+  const auth = buildDirectiveAuthorizer(DIRECTIVE_DEPS, () => roster, 'ENG-1')
+  const issue = { dept: DEPT, level: 1, assignee: 'ENG-1' }
+
+  it('dispatcher=白名单第四源：本单派单策划（PLN-9，原非白名单）批示放行（打回/搁置不吃派单律）', () => {
+    const dispatched = { ...issue, dispatcher: 'PLN-9' }
+    expect(auth.qualify('pln-9', dispatched, '打回')).toEqual({ ok: true, person: roster[3], exempt: false })
+    expect(auth.qualify('PLN-9', dispatched, '搁置').ok).toBe(true)
+    // dispatcher 源不外溢：他单（dispatcher 缺位）同 actor 仍拒——每单独立事实面
+    expect(auth.qualify('pln-9', issue, '打回')).toEqual({ ok: false, why: 'not-whitelisted', person: roster[3] })
+    // 白名单命中≠免律：批准无位别面仍照查派单律（1≤1 拒——保守面；R3 免律只在验收位，
+    // 引擎面断言见 acceptance.e2e.test.ts S2）
+    expect(auth.qualify('pln-9', dispatched, '批准')).toEqual({ ok: false, why: 'dispatch-law', person: roster[3] })
+  })
+
+  it('dispatcher 镜像值不在名册=不命中（daemon 代派缺省 fail-closed——工号比对）', () => {
+    const daemonDispatched = { ...issue, dispatcher: 'daemon' }
+    // 'daemon' 非人员 id：此源无人命中；白名单其余三源照旧
+    expect(auth.qualify('pln-9', daemonDispatched, '批准')).toEqual({ ok: false, why: 'not-whitelisted', person: roster[3] })
+  })
+
+  it('R3 位别律：验收位（post-verified）批准不查派单律——同级策划可验收自己的派单成果', () => {
+    // PLN-9（level 1）为本单 dispatcher 且 assignee=ENG-1（level 1）：呈批位 1≤1 违律
+    const acceptanceSlot = { ...issue, dispatcher: 'PLN-9', approvalSlot: 'post-verified' as const }
+    expect(auth.qualify('pln-9', acceptanceSlot, '批准')).toEqual({ ok: true, person: roster[3], exempt: false })
+    // 呈批位（pre-dispatch）同 actor 同单：律照查（1≤1 拒）
+    const preSlot = { ...issue, dispatcher: 'PLN-9', approvalSlot: 'pre-dispatch' as const }
+    expect(auth.qualify('pln-9', preSlot, '批准')).toEqual({ ok: false, why: 'dispatch-law', person: roster[3] })
+    // 位别缺省（L0/L1/L2 既有调用面）：律照查——保守面，行为字节不变
+    expect(auth.qualify('pln-9', { ...issue, dispatcher: 'PLN-9' }, '批准')).toEqual({ ok: false, why: 'dispatch-law', person: roster[3] })
+    // 被派单不可解析在验收位不拒（律整体不查——对象是已完工复验件非新派单）
+    expect(
+      auth.qualify('PRIME-0', { ...issue, dispatcher: 'PRIME-0', approvalSlot: 'post-verified' as const }, '批准').ok,
+    ).toBe(true)
+  })
+})
+
 // ————————————————————————— 单元面：事件索引（站立/消费键派生） —————————————————————————
 
 describe('buildEventIndex 批示派生（APPROVE verb 置位 / DISPATCH 清零 / ESCALATE 不站立）', () => {
