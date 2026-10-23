@@ -9,9 +9,11 @@
  *     report_ref；causation 链；预算结算；无断路事件。
  *   - S5 降级手工链：断点缺 executor_session_id→ESCALATE chain=manual 每单一次（dedupe）；
  *     状态留待验收；无合并跑派发；每拍重查（修复自恢复面归 P4 文档缝）。
- *   - S6 闸门红收口：四要件缺（门禁 exit≠0）→GATE_FAIL（merge-run+merge=manual 锚）；
- *     状态留待验收；工时单 failed；断路器不计连击（无 CIRCUIT_BREAK）；再批准不重派
- *     （merge=manual 终局让位——不重复 ESCALATE）。
+ *   - S6 闸门红收口（202-P3 冲突兜底面）：四要件缺（门禁 exit≠0）→GATE_FAIL
+ *     （merge-run+merge=manual+category=MERGE_CONFLICT 锚）+ESCALATE 通知宰相+清站立；
+ *     状态留待验收；工时单 failed；断路器不计连击（无 CIRCUIT_BREAK）；不自动重试
+ *     （无新批示零拍重派）；再批准（R6 腿）→v0 模拟迁移转正收口（note 如实——手工链
+ *     收口/无真 git 合并，不冒充真单刀）。
  *   - S7 合并租约：同拍两单全触发→一派一顺延（deferred 不弃单）；后续拍次序收口两单。
  *
  * 载体铁律（C3）：daemon 仍是唯一状态推进者；v0 模拟轨回归面=P1 acceptance.e2e.test.ts
@@ -366,8 +368,8 @@ describe('S5 降级手工链（断点缺 executor_session_id——重启打断�
 
 // ————————————————————————— S6：闸门红收口 —————————————————————————
 
-describe('S6 闸门红收口（四要件缺→GATE_FAIL+merge=manual；无断路；终局让位）', () => {
-  it('门禁 exit 1→GATE_FAIL（merge-run+merge=manual 锚）→留待验收→工时单 failed→再批准不重派', async () => {
+describe('S6 闸门红收口（四要件缺→冲突兜底：GATE_FAIL 三锚+ESCALATE+清站立；无断路；不自动重试）', () => {
+  it('门禁 exit 1→GATE_FAIL（merge-run+merge=manual+category=MERGE_CONFLICT）+ESCALATE→留待验收→工时单 failed→无新批示零重派→再批准（R6）→模拟迁移收口', async () => {
     const stack = buildStack('s6-gatered', { gateCode: 1 })
     try {
       const ticket = await seedToAcceptance(stack)
@@ -376,30 +378,50 @@ describe('S6 闸门红收口（四要件缺→GATE_FAIL+merge=manual；无断路
       const r1 = await stack.engine.tick() // 派发合并跑
       expect(notes(r1, 'DISPATCH')[0]).toContain('merge-run')
       stack.clock.advance(1000)
-      const r2 = await stack.engine.tick() // 收割：门禁红
+      const r2 = await stack.engine.tick() // 收割：门禁红=四要件不齐（冲突兜底面）
       expect(r2.errors).toEqual([])
       const gf = notes(r2, 'GATE_FAIL')
       expect(gf).toHaveLength(1)
       expect(gf[0]).toContain('merge-run')
       expect(gf[0]).toContain('merge=manual')
+      expect(gf[0]).toContain('category=MERGE_CONFLICT') // 202-P3 冲突分类锚
       expect(gf[0]).toContain('闸门exit0')
+      const esc2 = notes(r2, 'ESCALATE')
+      expect(esc2).toHaveLength(1) // 202-P3 ESCALATE 通知宰相（低噪不广播——事件流可观测）
+      expect(esc2[0]).toContain('MERGE_CONFLICT')
+      expect(esc2[0]).toContain('R6')
       expect((await stack.platform.issues.get(ticket)).state).toBe('待验收') // 无回滚无平台迁移
       const recs = stack.ledger.listWorkRecords({ issue: ticket })
       expect(recs[1]?.status).toBe('failed')
       expect(stack.ledger.queryEvents().some((e) => e.event === 'CIRCUIT_BREAK')).toBe(false) // 不计连击
       expect(stack.ledger.listBudgets({ kinds: ['settle'] }).filter((x) => x.scope_id === ticket).length).toBe(2) // 誓 1+合并誓（失败面也结算）
-      // 再批准：merge=manual 终局让位（不重派；chain=manual 锚首次上报——GATE_FAIL 面只带 merge=manual）
+      // 不自动重试（判负线：冲突单自动重试=判负）：无新批示→站立已清→WAIT_APPROVAL 零重派
+      stack.clock.advance(1000)
+      const r2b = await stack.engine.tick()
+      expect(r2b.errors).toEqual([])
+      expect(notes(r2b, 'DISPATCH').filter((n) => n.includes('merge-run'))).toHaveLength(0)
+      expect(notes(r2b, 'ESCALATE')).toHaveLength(0)
+      expect((await stack.platform.issues.get(ticket)).state).toBe('待验收')
+      // 再批准（dispatcher=R6 腿）：手工链收口——v0 模拟迁移转正（202-P3，note 如实不冒充真单刀）
       await comment(stack, ticket, 'pln-9', '批示:批准')
       stack.clock.advance(1000)
       const r3 = await stack.engine.tick()
       expect(r3.errors).toEqual([])
-      expect(notes(r3, 'DISPATCH').filter((n) => n.includes('merge-run'))).toHaveLength(0)
-      expect(notes(r3, 'ESCALATE')).toHaveLength(1)
-      expect(notes(r3, 'ESCALATE')[0]).toContain('chain=manual')
+      expect(notes(r3, 'DISPATCH').filter((n) => n.includes('merge-run'))).toHaveLength(0) // 合并跑总数恒 1
+      expect(notes(r3, 'ESCALATE')).toHaveLength(0)
+      const mg = notes(r3, 'MERGE')
+      expect(mg).toHaveLength(1)
+      expect(mg[0]).toContain('手工链收口')
+      expect(mg[0]).toContain('无真 git 合并')
+      expect(mg[0]).toContain('merge=manual')
+      expect(mg[0]).not.toContain('真单刀') // 判负线：迁移 note 冒充真合并=判负
+      expect(mg[0]).not.toMatch(/sha=/)
+      expect((await stack.platform.issues.get(ticket)).state).toBe('已交付')
       stack.clock.advance(1000)
-      const r4 = await stack.engine.tick() // 次拍不重复报（manualChainNoted dedupe）
+      const r4 = await stack.engine.tick() // 收口幂等：已交付→回收轨，无第二次 MERGE
+      expect(r4.errors).toEqual([])
+      expect(notes(r4, 'MERGE')).toHaveLength(0)
       expect(notes(r4, 'ESCALATE')).toHaveLength(0)
-      expect((await stack.platform.issues.get(ticket)).state).toBe('待验收')
     } finally {
       stack.ledger.close()
     }
