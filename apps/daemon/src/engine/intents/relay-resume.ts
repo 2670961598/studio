@@ -197,7 +197,9 @@ export function pickResumeAdapter(
     return { adapter: fallback, degradedReason: `executor ${plan.executor} 不在注册表（上次工时单的执行家已除名）` }
   }
   if (!registered.capabilities.session_resume) {
-    return { adapter: fallback, degradedReason: `executor ${plan.executor} 声明 session_resume=false（25-§3.1 能力声明——dsh v0 不支持原生续跑）` }
+    // 降级因只述事实（该家能力位为 false）——dsh 已随 studio-dev-230 P0 翻 true，此路
+    // 仅剩真正不支持的家；措辞不点名任何具体 executor，防再随能力面演进过期
+    return { adapter: fallback, degradedReason: `executor ${plan.executor} 声明 session_resume=false（25-§3.1 能力声明——该家不支持原生续跑，明报降级新派）` }
   }
   return { adapter: registered }
 }

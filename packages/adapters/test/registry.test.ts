@@ -6,7 +6,7 @@
  *   - resolve 注册名/未注册名（CONFIG_INVALID/executor/unknown 明报）
  *   - 同名重注册拒收（executor/dup-register）；第二个 default 拒收（executor/dup-default）
  *   - 能力路由矩阵（pick 单选 / pickAll 全集，共用过滤谓词）：
- *       要续跑 → 只剩 session_resume=true 家（claude/codex/kimi）
+ *       要续跑 → 四家全过（dsh 随 studio-dev-230 P0 翻 true，2026-10-23）
  *       要预算帽 → 只剩 budget_cap=true 家（claude）
  *       要原生成本账 → 只剩 cost_native=true 家（claude）
  *       要单轮取消 → 四家皆无（组合无解 → undefined/[]，如实不硬凑）
@@ -16,9 +16,10 @@
  *   - 零名单硬编码旁证：能力同形的第五家 fake 适配器被平等路由（注册即路由）
  *
  * 矩阵依据（四家 capabilities 冻结声明，见各自源文件）：
- *   dsh    budget_cap=F cancel_turn=F session_resume=F agents_md=user_level cost_native=F（default；
- *          user_level=bridge 插件通道——docs/25-§3.1 v1.5#1：daemon 落指令临时文件+env
- *          STUDIO_NEXT_INSTRUCTIONS，studio-next-bridge 消费；原生发现通道仍并存）
+ *   dsh    budget_cap=F cancel_turn=F session_resume=T agents_md=user_level cost_native=F（default；
+ *          session_resume 翻真=studio-dev-230 P0：--session-id 真机直证+cwd 逐字节调度纪律
+ *          docs/25-§3.4 注记；user_level=bridge 插件通道——docs/25-§3.1 v1.5#1：daemon 落
+ *          指令临时文件+env STUDIO_NEXT_INSTRUCTIONS，studio-next-bridge 消费；原生发现仍并存）
  *   claude budget_cap=T cancel_turn=F session_resume=T agents_md=native cost_native=T
  *   codex  budget_cap=F cancel_turn=F session_resume=T agents_md=native cost_native=F
  *   kimi   budget_cap=F cancel_turn=F session_resume=T agents_md=native cost_native=F
@@ -102,7 +103,7 @@ describe('注册表：注册 / 解析 / 拒收', () => {
       cost_native: true,
     })
     const dsh = entries.find((e) => e.name === 'dsh')
-    expect(dsh?.capabilities.session_resume).toBe(false) // v0 不支持续跑，照实声明
+    expect(dsh?.capabilities.session_resume).toBe(true) // studio-dev-230 P0 翻转（2026-10-23）：--session-id 续跑真机直证+cwd 调度纪律落档
     expect(dsh?.capabilities.agents_md).toBe('user_level') // bridge 插件通道（v1.5#1，daemon 据此路由落盘+env 注入）
   })
 
@@ -126,7 +127,7 @@ describe('注册表：注册 / 解析 / 拒收', () => {
     expect(err.subcause).toBe('executor/dup-register')
     // 拒收后注册表原样：仍四家、dsh 能力未被 fake 覆盖
     expect(registry.list().map((e) => e.name)).toStrictEqual(['dsh', 'claude', 'codex', 'kimi'])
-    expect(registry.resolve('dsh').capabilities.session_resume).toBe(false)
+    expect(registry.resolve('dsh').capabilities.session_resume).toBe(true) // studio-dev-230 P0 翻转后仍 dsh 本体，能力未被 fake 覆盖
   })
 
   it('第二个 default 拒收：CONFIG_INVALID/executor/dup-default', () => {
@@ -182,20 +183,21 @@ describe('能力路由矩阵（零 if executor 名单硬编码）', () => {
     expect(registry.pickAll().map((a) => a.name)).toStrictEqual(['dsh', 'claude', 'codex', 'kimi'])
   })
 
-  it('要续跑 → 只剩 session_resume=true 家（claude/codex/kimi）', () => {
+  it('要续跑 → 四家全过（dsh 随 studio-dev-230 P0 翻 true）', () => {
     const registry = registerBuiltins(createRegistry())
     expect(registry.pickAll({ sessionResume: true }).map((a) => a.name)).toStrictEqual([
+      'dsh',
       'claude',
       'codex',
       'kimi',
     ])
-    expect(registry.pick({ sessionResume: true })?.name).toBe('claude') // 无 default 存活 → 注册序首位
+    expect(registry.pick({ sessionResume: true })?.name).toBe('dsh') // default（dsh）过过滤 → 仍 default 优先
   })
 
-  it('要续跑=false → 只剩 dsh（布尔过滤=真值相等，不是仅真值过滤）', () => {
+  it('要续跑=false → 四家皆无存活（布尔过滤=真值相等，不是仅真值过滤）', () => {
     const registry = registerBuiltins(createRegistry())
-    expect(registry.pickAll({ sessionResume: false }).map((a) => a.name)).toStrictEqual(['dsh'])
-    expect(registry.pick({ sessionResume: false })?.name).toBe('dsh')
+    expect(registry.pickAll({ sessionResume: false }).map((a) => a.name)).toStrictEqual([]) // 翻转后无 false 家——真值相等过滤的证伪面：true 家一律不混入
+    expect(registry.pick({ sessionResume: false })).toBeUndefined() // 无解是结果不是配置错误（注册表头注口径）
   })
 
   it('要预算帽 → 只剩 budget_cap=true 家（claude）', () => {
@@ -290,6 +292,11 @@ describe('default 语义边界', () => {
     })
     expect(registry.defaultName()).toBe('claude')
     expect(registry.pick()?.name).toBe('claude')
-    expect(registry.pick({ sessionResume: false })?.name).toBe('dsh') // claude 不满足时回退
+    // default 也要过能力过滤（回退注册序首位）：用四家皆 true 的 sessionResume 之外仍分化的
+    // budget_cap 面——claude(true) 作 default，pick({budgetCap:true})=claude、pick({sessionResume:false})
+    // 无存活=undefined（studio-dev-230 P0 后四家皆可续，false 面不再有 dsh 兜底）
+    expect(registry.pick({ budgetCap: true })?.name).toBe('claude')
+    expect(registry.pick({ sessionResume: false })).toBeUndefined()
+    expect(registry.pickAll({ budgetCap: false }).map((a) => a.name)).toStrictEqual(['dsh', 'codex', 'kimi']) // 回退面=注册序首位 dsh
   })
 })
