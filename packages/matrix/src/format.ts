@@ -7,6 +7,11 @@
  *   [kind] **title**
  *   body
  *   - [label](url)      ← links 逐条一行，无则省略
+ *   —— from             ← 署名尾行，无则省略（105-刀B-4/E6：bot 代发消息带署名——
+ *                          docs/21-§三「bot 代发或带 [公司·部门·岗位·级别] 前缀」二选一，
+ *                          契约 Notification.from 存在而出口未消费是 E6 缺陷，本刀接上；
+ *                          from 值由发送侧组装（daemon 侧 relay 用 gateway composeSignature
+ *                          同源四段式/actor 名——不在此新造格式））
  */
 import type { Notification } from '@studio-next/contract'
 
@@ -25,5 +30,7 @@ export function formatNotification(n: Notification): string {
     const label = link.label.trim()
     lines.push(`- [${label !== '' ? label : url}](${url})`)
   }
+  const from = n.from?.trim() ?? ''
+  if (from !== '') lines.push(`—— ${from}`)
   return lines.join('\n')
 }

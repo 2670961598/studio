@@ -11,13 +11,14 @@
  *     → matrix: true → createMentionSource（rooms 白名单/roles 角色词映射/节奏/长轮询超时）
  *     → matrixChannels: true → createMatrixProvisionFace（130-P3 §6.7 八类地图供给面：
  *       matrixDeptMap JSON 装载 + matrixProducerMxid 缺省神号；ctx.snapshot 活取公司快照）
- *     → runServe(configPath, { matrixSource?, matrixRoomFace? })（源/面工厂注入）
+ *       + createMatrixBroadcastFace（105-刀B notify 广播面：#alert/部门频道/总览——
+ *       事件中继+escalate 警戒 IM 出口+惊动计量，studio-dev-219）
+ *     → runServe(configPath, { matrixSource?, matrixRoomFace?, notifyBroadcast? })（源/面工厂注入）
  *
  * 不做什么（105-刀A 边界＋130-P3 边界）：
- *   - 不做 notify 出口装配（createMatrixNotifier 归刀B notify 端口接线单）
- *   - 不做 E2EE/alias 解析/应用服务（matrix 包 README 未做事项同源）
+ *   - 不做 E2EE/应用服务（matrix 包 README 未做事项同源）
  *   - 不代 daemon 存 Matrix 凭据：login 结果（token）只留 client 实例内存，重启重登
- *   - 不供给频道内容（总览广播文本/告警文案归 notify/announce 后续刀——本刀只建房间结构）
+ *   - 不做路由/去重/计量（daemon 侧 engine/notify/* 职责——boot 只装配发送面）
  */
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -27,10 +28,18 @@ import {
   runServe,
   type MatrixRoomFace,
   type MatrixRoomFaceContext,
+  type NotifyBroadcastFace,
   type ServeConfig,
   type ServeResult,
 } from '@studio-next/daemon/serve'
-import { createMatrixProvisionFace, createMentionSource, MatrixClient, type ChannelMapInput, type FetchLike } from '@studio-next/matrix'
+import {
+  createMatrixBroadcastFace,
+  createMatrixProvisionFace,
+  createMentionSource,
+  MatrixClient,
+  type ChannelMapInput,
+  type FetchLike,
+} from '@studio-next/matrix'
 
 /** bot 密码 env 名（红名单：值永不入 daemon.yaml/日志/台账） */
 export const MATRIX_BOT_PASSWORD_ENV = 'MATRIX_BOT_PASSWORD'
@@ -48,7 +57,11 @@ export interface BootOptions {
   /** runServe 注入面（测试捕获 opts 契约；缺省真跑主循环） */
   serve?: (
     configPath: string,
-    opts?: { matrixSource?: () => InvokeSource; matrixRoomFace?: (ctx: MatrixRoomFaceContext) => MatrixRoomFace },
+    opts?: {
+      matrixSource?: () => InvokeSource
+      matrixRoomFace?: (ctx: MatrixRoomFaceContext) => MatrixRoomFace
+      notifyBroadcast?: NotifyBroadcastFace
+    },
   ) => Promise<ServeResult>
   /** 日志出口（缺省 console.log） */
   log?: (line: string) => void
@@ -105,7 +118,7 @@ interface AssembleOptions {
  * config 键组 + env 密码 → MatrixClient.login。fail-fast 面（CONFIG_INVALID 明报不猜）：
  * 开关开而缺密码 env / 缺 homeserver / 缺 bot 账号。开关名随调用面（matrix/matrixChannels）。
  */
-async function assembleMatrixLogin(
+export async function assembleMatrixLogin(
   config: ServeConfig,
   env: Record<string, string | undefined>,
   options?: { fetch?: FetchLike; log?: (line: string) => void },
@@ -246,20 +259,49 @@ export async function assembleMatrixProvisionFace(
 }
 
 /**
+ * notify 广播面装配（105-刀B-1，studio-dev-219）：共用登录 → createMatrixBroadcastFace。
+ * 与供给面同开关（matrixChannels）同键组（deptMap/slug 同源——广播的目标频道就是供给
+ * 面确保的那批 alias，130-P3 八类地图命名）；面持有进程内常量（client/botMxid/deptSlugs
+ * ——daemon.yaml 键不热重载，重启生效），alias→room_id 解析缓存在面内。
+ */
+export function assembleMatrixBroadcastFace(
+  config: ServeConfig,
+  _env: Record<string, string | undefined>,
+  options: AssembleOptions & { login: { client: MatrixClient; botMxid: string } },
+): NotifyBroadcastFace {
+  if (!config.matrixChannels) {
+    throw new Error('CONFIG_INVALID：assembleMatrixBroadcastFace 在 matrixChannels: false 下被调用（装配面与开关面不一致）')
+  }
+  const deptSlugs = loadDeptSlugs(config.matrixDeptMap)
+  options.log?.(
+    `[boot] matrix notify 广播面已装配：#<slug>-alert/#<slug>-overview/#<slug>-<dept> → ` +
+      `${Object.keys(deptSlugs).length} 部——105-刀B 事件中继+escalate 警戒 IM 出口（studio-dev-219）`,
+  )
+  return createMatrixBroadcastFace({
+    client: options.login.client,
+    slug: config.company,
+    deptSlugs,
+    botMxid: options.login.botMxid,
+    ...(options.log !== undefined ? { log: options.log } : {}),
+  })
+}
+
+/**
  * 组合根入口：读 daemon.yaml →（matrix: true 时）装配 matrix 源 →（matrixChannels:
- * true 时）装配频道供给面 → runServe。两开关独立（只开供给不开唤醒源=合法灰度形态：
- * 频道先建、mention 后开）；都关=透传 runServe（matrix 面整体关闭，boot 仍是合法入口）。
- * 配置解析在 daemon 收口（runServe 内部再读同一文件——单一解析器，boot 不重造）。
+ * true 时）装配频道供给面+notify 广播面 → runServe。两开关独立（只开供给不开唤醒源=
+ * 合法灰度形态：频道先建、mention 后开）；都关=透传 runServe（matrix 面整体关闭，boot
+ * 仍是合法入口）。配置解析在 daemon 收口（runServe 内部再读同一文件——单一解析器，
+ * boot 不重造）。
  */
 export async function bootServe(options: BootOptions): Promise<ServeResult> {
   const log = options.log ?? ((line: string): void => console.log(line))
   const config = parseDaemonConfig(readFileSync(path.resolve(options.configPath), 'utf8'))
   const serve = options.serve ?? runServe
   if (!config.matrix && !config.matrixChannels) {
-    log('[boot] matrix: false、matrixChannels: false——@唤醒源/频道供给面均未装配（组合根透传 runServe）')
+    log('[boot] matrix: false、matrixChannels: false——@唤醒源/频道供给面/notify 广播面均未装配（组合根透传 runServe）')
     return serve(options.configPath)
   }
-  // 同一 bot 账号双面共用一次登录（token 只留进程内存；两开关的必配键校验已由
+  // 同一 bot 账号多面共用一次登录（token 只留进程内存；两开关的必配键校验已由
   // parseDaemonConfig 交叉校验面收口——serve.ts coerceServeConfig）；两开关独立
   //（只开供给不开唤醒源=合法灰度形态：频道先建、mention 后开）。
   const faceOpts: AssembleOptions = { ...(options.fetch !== undefined ? { fetch: options.fetch } : {}), log }
@@ -267,6 +309,7 @@ export async function bootServe(options: BootOptions): Promise<ServeResult> {
   const shared = { ...faceOpts, login }
   let matrixSource: (() => InvokeSource) | undefined
   let matrixRoomFace: ((ctx: MatrixRoomFaceContext) => MatrixRoomFace) | undefined
+  let notifyBroadcast: NotifyBroadcastFace | undefined
   if (config.matrix) {
     const assembly = await assembleMatrixSource(config, options.env ?? process.env, shared)
     log(
@@ -277,9 +320,12 @@ export async function bootServe(options: BootOptions): Promise<ServeResult> {
   }
   if (config.matrixChannels) {
     matrixRoomFace = await assembleMatrixProvisionFace(config, options.env ?? process.env, shared)
+    // 105-刀B（219）：广播面与供给面同键组同 bot——目标频道即供给面确保的 alias 批
+    notifyBroadcast = assembleMatrixBroadcastFace(config, options.env ?? process.env, shared)
   }
   return serve(options.configPath, {
     ...(matrixSource !== undefined ? { matrixSource } : {}),
     ...(matrixRoomFace !== undefined ? { matrixRoomFace } : {}),
+    ...(notifyBroadcast !== undefined ? { notifyBroadcast } : {}),
   })
 }
