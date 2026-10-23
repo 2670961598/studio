@@ -37,7 +37,7 @@ export function renderDashboardShell(): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Studio Next 监控 :8787</title>
+<title>Studio Next 监控 :8791</title>
 <style>
   :root { color-scheme: dark; }
   html, body, #app { height: 100%; margin: 0; }
