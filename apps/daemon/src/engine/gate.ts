@@ -53,6 +53,23 @@ export const REPORT_FILENAME = 'REPORT.md'
 export const SUMMARY_FILENAME = 'summary.json'
 
 /**
+ * summary.json sidecar 工位发现（studio-dev-216 写读对齐）：
+ *   - 正位＝brief 同目录（与 REPORT.md 同级——docs/17-§6「REPORT 旁落」约定落点）；
+ *   - 容错兜底＝`deliverables/summary.json`（212 实证：任务书验收命令常含 deliverables/
+ *     路径，worker 会把 sidecar 落进同目录——值形状全对、落位偏一格即整链断：gate 看不见
+ *     → accountJobOutput 不随件归档 → P3 哨兵门读归档侧车=unreadable → 误报
+ *     SENTINEL_MISSING）。发现面收正位+兜底两位，哨兵核验语义零改动（找到什么读什么，
+ *     三元组不符照旧 mismatch——fail-closed 不放松）。
+ *   - 找不到=undefined（要件外观测面，不拦收割——v0 拟稿：sidecar 必须性待批示）。
+ */
+export function discoverSummaryPath(dir: string): string | undefined {
+  const canonical = path.join(dir, SUMMARY_FILENAME)
+  if (existsSync(canonical)) return canonical
+  const deliverables = path.join(dir, 'deliverables', SUMMARY_FILENAME)
+  return existsSync(deliverables) ? deliverables : undefined
+}
+
+/**
  * v0 占位闸门（诚实标注：不跑真验收命令）——
  * REPORT 落盘=同目录约定文件存在性检查；exit0=存在即模拟 0、缺失即 1。
  */
@@ -60,13 +77,13 @@ export function createDefaultGateRunner(): GateRunner {
   return {
     async run(input: GateInput): Promise<GateOutcome> {
       const reportPath = path.join(path.dirname(input.briefPath), REPORT_FILENAME)
-      const summaryPath = path.join(path.dirname(input.briefPath), SUMMARY_FILENAME)
+      const summaryPath = discoverSummaryPath(path.dirname(input.briefPath))
       const reportExists = existsSync(reportPath)
       return {
         exitCode: reportExists ? 0 : 1,
         reportExists,
         reportPath,
-        ...(existsSync(summaryPath) ? { summaryPath } : {}),
+        ...(summaryPath !== undefined ? { summaryPath } : {}),
         note: reportExists
           ? `v0 占位闸门：REPORT 存在即 exit0 模拟（真验收命令归 v0.5 真单刀）；size=${statSync(reportPath).size}`
           : 'v0 占位闸门：REPORT 未落盘（四要件第 3 条不满足）',
@@ -110,7 +127,7 @@ export function createAcceptanceGateRunner(
     async run(input: GateInput): Promise<GateOutcome> {
       const dir = path.dirname(input.briefPath)
       const reportPath = path.join(dir, REPORT_FILENAME)
-      const summaryPath = path.join(dir, SUMMARY_FILENAME)
+      const summaryPath = discoverSummaryPath(dir)
       const size = existsSync(reportPath) ? statSync(reportPath).size : 0
       const reportExists = size > 0 // 空 REPORT=未落盘（「非空输出」同精神，不粉饰）
       if (!reportExists) {
@@ -118,7 +135,7 @@ export function createAcceptanceGateRunner(
           exitCode: 1,
           reportExists: false,
           reportPath,
-          ...(existsSync(summaryPath) ? { summaryPath } : {}),
+          ...(summaryPath !== undefined ? { summaryPath } : {}),
           note: `真验收闸门：REPORT 未落盘或为空（${reportPath}）——四要件第 3 条不满足，验收命令不跑`,
         }
       }
@@ -138,7 +155,7 @@ export function createAcceptanceGateRunner(
         exitCode: verdict,
         reportExists: true,
         reportPath,
-        ...(existsSync(summaryPath) ? { summaryPath } : {}),
+        ...(summaryPath !== undefined ? { summaryPath } : {}),
         note: `真验收闸门：${parts.join('；')}`,
       }
     },

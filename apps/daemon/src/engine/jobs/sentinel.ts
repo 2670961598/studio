@@ -140,14 +140,21 @@ export function verifySidecarSentinelAtPath(sidecarPath: string | undefined, exp
  * 任务书 L4 哨兵注入段（executeDispatch 组装产物之后追加——与 wkey 指引行同位：
  * per-attempt 操作面，不进六层组装器）。含数据源断链首行声明义务句（127 §4.1/红队 7-3：
  * 义务面随任务书送达；正文机械核验归 B 面单后续——本单只注入不宣称已验）。
+ *
+ * studio-dev-216 写读对齐：注入文本必须与读面（gate.ts 工位发现 → accountJobOutput
+ * 随件归档 → P3 哨兵门读 `<归档名>.summary.json`）**逐字对齐到落点**——212 实证「工位
+ * summary.json」无路径限定时 worker 会按 deliverables/ 惯例落位（任务书验收命令常含
+ * deliverables/plan.md），gate 只认与 REPORT.md 同目录的正位 → 归档侧车缺 → 误报
+ * SENTINEL_MISSING（unreadable）。故注入段明示正位＝docs/17-§6「REPORT 旁落」。
  */
 export function sentinelBriefBlock(sent: SentinelTriple): string {
   return [
     '',
     '## 定时岗产出哨兵（必写收尾项——studio-dev-127 §4.2）',
     '',
-    '本单为定时岗工单。收尾时把下面的对象**原样并入工位 summary.json 的顶层 `sentinel` 字段**',
-    '（与 conclusion / changed_files 平级的框架字段；不改键名、不改值、不省略）：',
+    '本单为定时岗工单。收尾时把下面的对象**原样并入工位 `summary.json` 的顶层 `sentinel` 字段**',
+    '（文件落点＝**工位根目录、与 REPORT.md 同目录**——docs/17-§6「REPORT 旁落」；不是 deliverables/ 子目录，',
+    '也不另起文件名；与 conclusion / changed_files 平级的框架字段；不改键名、不改值、不省略）：',
     '',
     '```json',
     `{"sentinel":{"job":${JSON.stringify(sent.job)},"run_at":${sent.run_at},"nonce":${JSON.stringify(sent.nonce)}}}`,
