@@ -527,6 +527,16 @@ const MIGRATIONS: readonly Migration[] = [
     ].join('\n'),
   },
   costDailyMigration,
+  {
+    // v13：202-P2 合并跑机器（studio-dev-232，docs/17-§2 相位 5 真单刀）：work_records
+    //   += executor_session_id——executor 侧会话 id（dsh --session-id 续跑键，契约 v1.5
+    //   Handle.executorSessionId 落账位）。断点解析（resolveMergeRunPlan）经本列跨进程
+    //   唤起原会话；旧行 NULL=无从续（如实降级手工链，不猜）。撞号纪律：LATEST 单调+1
+    //   （v12 已被 132-D cost_daily 占用，本刀顺延取 13）。
+    version: 13,
+    name: '202-P2 合并跑：work_records.executor_session_id（studio-dev-232）',
+    sql: ['ALTER TABLE work_records ADD COLUMN executor_session_id TEXT;', ''].join('\n'),
+  },
 ]
 
 /** 内置迁移的最高版本（0 = 无迁移可用，仅占位防呆） */

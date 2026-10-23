@@ -29,20 +29,22 @@ afterAll(async () => {
 
 describe('v8 迁移面：work_records.model 列（132-§6.1 单A）', () => {
   it('版本号：LATEST_VERSION=8（单调 +1——v9 为 132 提案期五单合计投影序号，偏差已申报）', () => {
-    expect(LATEST_VERSION).toBe(12)
+    expect(LATEST_VERSION).toBe(13)
   })
 
   it('新库直达 v9：currentVersion=9；model 列存在（TEXT、可空、无默认）且居表尾（ALTER 追加）', () => {
     const db = new DatabaseSync(dbPath)
     try {
       const applied = migrate(db)
-      expect(applied).toBe(12)
-      expect(currentVersion(db)).toBe(12)
+      expect(applied).toBe(13)
+      expect(currentVersion(db)).toBe(13)
       const cols = db.prepare('PRAGMA table_info(work_records)').all() as Array<{ name: string; type: string; notnull: number; dflt_value: unknown }>
       const modelCol = cols.find((c) => c.name === 'model')
       expect(modelCol).toMatchObject({ type: 'TEXT', notnull: 0, dflt_value: null })
-      // ALTER 追加=尾列（存量行零改写；列序不参与任何读写语义）
-      expect(cols[cols.length - 1]?.name).toBe('model')
+      // ALTER 追加=列尾链（存量行零改写；列序不参与任何读写语义）——v8 model 之后
+      // v13 executor_session_id 续追尾（202-P2，studio-dev-232；逐版本尾链同型）
+      expect(cols[cols.length - 2]?.name).toBe('model')
+      expect(cols[cols.length - 1]?.name).toBe('executor_session_id')
     } finally {
       db.close()
     }

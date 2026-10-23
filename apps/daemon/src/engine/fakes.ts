@@ -53,6 +53,12 @@ export interface FakePlatformOptions {
   /** 活动流分页大小（缺省 100；测试注入小值可验翻页） */
   pageSize?: number
   /**
+   * 单号前缀（缺省 ''）：多平台实例同进程互争共享资源（如 202-P2 合并租约按
+   * TicketId 判重入）时，错开单号空间——否则两实例各自从 T-1 起号会撞
+   * 「同单重入」语义。生产平台单号天然全局唯一，fake 不加前缀即与现状零差异。
+   */
+  idPrefix?: string
+  /**
    * fields.schema() 的 state 枚举覆盖（DEV-49 A4 状态集巡逻核注入面）：缺省五态
    * （与 fake 流表口径一致=零漂移）；注入含流外语（如出厂 New）即造「平台状态集−
    * 声明集≠∅」漂移——巡逻核测试唯一入口。
@@ -111,7 +117,7 @@ export function createFakePlatform(opts?: FakePlatformOptions): FlowPlatform {
       },
       async create(input: IssueCreate): Promise<IssueRecord> {
         issueSeq += 1
-        const id = `T-${issueSeq}`
+        const id = `${opts?.idPrefix ?? ''}T-${issueSeq}`
         const rec: FakeIssue = {
           id,
           title: input.title,

@@ -74,14 +74,14 @@ function expectConfigInvalid(fn: () => void, subcause: string): void {
 }
 
 describe('v12 迁移面：cost_daily 定型账（132-§6.3 单D）', () => {
-  it('版本号：LATEST_VERSION=12（v11 顺延——后续单依合入序顺取 v13+）', () => {
-    expect(LATEST_VERSION).toBe(12)
+  it('版本号：LATEST_VERSION=13（v12 顺延——后续单依合入序顺取 v14+）', () => {
+    expect(LATEST_VERSION).toBe(13)
   })
 
   it('新库直达 v12：表+partial UNIQUE+日期索引+两枚 append-only 触发器齐', () => {
     const db = new DatabaseSync(':memory:')
     try {
-      expect(migrate(db)).toBe(12)
+      expect(migrate(db)).toBe(13)
       const idx = db
         .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_cost%' ORDER BY name")
         .all() as Array<{ name: unknown }>
