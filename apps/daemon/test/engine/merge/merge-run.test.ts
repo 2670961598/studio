@@ -4,13 +4,15 @@
  * 断言面（对契约与冻结口径负责，不对实现细节）：
  *   - S1 轨道分派：面关（mergeRun 缺省）/非 post-verified 位 → v0 模拟轨 byte-identical
  *     （note 原文/计数/迁移——P1 语义零变更的机械钉子）；standing 缺席=顺延不弃单；
- *     merge=manual 标记=终局让位（chain=manual ESCALATE 每单一次 dedupe）。
+ *     merge=manual 标记＋standing 批准=手工链收口（202-P3：v0 模拟迁移转正——note 如实
+ *     不冒充真单刀，不派发不降级）；标记＋standing 缺席=顺延（冲突清站立后的静置面）。
  *   - S2 闸门四脸：提交核验三红脸（分支不可解析/单亲非真合并/祖先缺位）+命令面独立
  *     （命令红=exit0 假）+全绿（mergeSha=目标 tip）。
  *   - S3 指令块：R5 目标分支/不强推/回执落点/门禁命令原文冻结。
  *   - S1e 租约：全链派发（resume 唤起原会话+attempt 续号+causation 链+DISPATCH 锚）→
  *     他单同枝顺延 → 收口释放后可再派；closeOut 全绿/缺件两脸（GATE_PASS→MERGE 事件
- *     face 与 GATE_FAIL+merge=manual 锚 face）；failMergeHarvest worker 消亡面。
+ *     face 与 GATE_FAIL+merge=manual+category=MERGE_CONFLICT 锚+ESCALATE 冲突兜底 face）；
+ *     failMergeHarvest worker 消亡面（无冲突锚）——标记单收口按 merge=manual 不按分类。
  *
  * 引擎级接线（相位 5 真调用/harvest 折算/decide 同拍批准）见 merge-run.e2e.test.ts。
  */
@@ -24,7 +26,7 @@ import type { CompanySlug, EventRecord, ExecutorAdapter, FlowPlatform, Handle, I
 import { openLedger, type Ledger } from '@studio-next/store'
 import { ENGINE_CONFIG_DEFAULTS } from '../../../src/engine/engine.ts'
 import { createFakeAdapter, createFakePlatform, FAKE_SUMMARY_JSON } from '../../../src/engine/fakes.ts'
-import { buildEventIndex, MERGE_CHAIN_ANCHOR, MERGE_MANUAL_ANCHOR, MERGE_RUN_ANCHOR } from '../../../src/engine/sentinel/events-index.ts'
+import { buildEventIndex, MERGE_CHAIN_ANCHOR, MERGE_CONFLICT_ANCHOR, MERGE_MANUAL_ANCHOR, MERGE_RUN_ANCHOR } from '../../../src/engine/sentinel/events-index.ts'
 import { flowsFromWorkflows } from '../../../src/engine/typeflows.ts'
 import { runMergeAction, closeOutMergeHarvest, failMergeHarvest, type MergeRunHost, type MergeRunDeps } from '../../../src/engine/merge/merge-run.ts'
 import { runMergeGate, type MergeGitPort } from '../../../src/engine/merge/merge-gate.ts'
@@ -285,26 +287,45 @@ describe('S1 触发面（轨道分派/顺延/终局让位）', () => {
     u.ledger.close()
   })
 
-  it('merge=manual 标记=终局让位（chain=manual ESCALATE 每单一次 dedupe）', async () => {
+  it('merge=manual＋standing 批准=手工链收口（v0 模拟迁移转正——note 如实，不派发不降级）', async () => {
     const deps: MergeRunDeps = { targetBranch: 'dev', gateCommand: ['bun', 'run', 'test'], git: fakeGit({}), gate: fakeGate(0) }
     const u = buildHost({ mergeRun: deps })
     const t = await seedTicket(u.platform, '待验收')
     const gateFail = {
       id: ulid(950), ts: 1, company: 'demo', issue: t.id, event: 'GATE_FAIL', actor: 'PLN-9', attempt: 2, level: 1, dept: DEPT,
-      tokens: { input: 0 }, note: `合并跑四要件缺 闸门exit0；…;${MERGE_RUN_ANCHOR};${MERGE_MANUAL_ANCHOR}——降级宰相手工链`,
+      tokens: { input: 0 }, note: `合并跑四要件缺 闸门exit0；…;${MERGE_RUN_ANCHOR};${MERGE_MANUAL_ANCHOR};${MERGE_CONFLICT_ANCHOR}——冲突兜底`,
     } as EventRecord
     u.ledger.appendEvent(gateFail)
     const r1 = await runMergeAction(u.host, { type: 'merge', ticket: t.id, toState: '已交付' }, buildEventIndex(u.ledger.queryEvents()), u.events, emptyBudget(), standingMap(t.id))
-    expect(r1.ok ?? r1.result.ok).toBe(true)
-    expect(r1.counted).toBe(false)
+    expect(r1.result.ok).toBe(true)
+    expect(r1.counted).toBe(true) // 收口计数（合并完成面）
     expect(r1.mutated).toBe(true)
-    expect(u.events.map((e) => e.event)).toEqual(['ESCALATE'])
-    expect(u.events[0]?.note).toContain(MERGE_CHAIN_ANCHOR)
-    expect(u.events[0]?.note).toContain('merge=manual')
+    expect(r1.result.detail).toBe('→已交付（手工链收口——宰相手工链+v0 模拟迁移转正）')
+    expect(u.events.map((e) => e.event)).toEqual(['MERGE']) // 不派发不降级（零 DISPATCH/零 ESCALATE）
+    expect(u.events[0]?.note).toContain('手工链收口')
+    expect(u.events[0]?.note).toContain('无真 git 合并') // 判负线反面：note 如实
+    expect(u.events[0]?.note).toContain(MERGE_MANUAL_ANCHOR)
+    expect(u.events[0]?.note).not.toContain('真单刀') // 判负线：冒充真合并=判负
+    expect(u.events[0]?.note).not.toMatch(/sha=/)
+    expect((await u.platform.issues.get(t.id)).state).toBe('已交付')
+    u.ledger.close()
+  })
+
+  it('merge=manual＋standing 缺席=顺延（冲突清站立后的静置面——不收口不派发）', async () => {
+    const deps: MergeRunDeps = { targetBranch: 'dev', gateCommand: ['bun', 'run', 'test'], git: fakeGit({}), gate: fakeGate(0) }
+    const u = buildHost({ mergeRun: deps })
+    const t = await seedTicket(u.platform, '待验收')
+    const gateFail = {
+      id: ulid(951), ts: 1, company: 'demo', issue: t.id, event: 'GATE_FAIL', actor: 'PLN-9', attempt: 2, level: 1, dept: DEPT,
+      tokens: { input: 0 }, note: `合并跑四要件缺 闸门exit0；…;${MERGE_RUN_ANCHOR};${MERGE_MANUAL_ANCHOR}——冲突兜底`,
+    } as EventRecord
+    u.ledger.appendEvent(gateFail)
+    const r = await runMergeAction(u.host, { type: 'merge', ticket: t.id, toState: '已交付' }, buildEventIndex(u.ledger.queryEvents()), [], emptyBudget(), new Map())
+    expect(r.deferred).toBe(true)
+    expect(r.mutated).toBe(false)
+    expect(r.counted).toBe(false)
+    expect(u.events).toHaveLength(0)
     expect((await u.platform.issues.get(t.id)).state).toBe('待验收')
-    const r2 = await runMergeAction(u.host, { type: 'merge', ticket: t.id, toState: '已交付' }, buildEventIndex(u.ledger.queryEvents()), [], emptyBudget(), standingMap(t.id))
-    expect(r2.mutated).toBe(false)
-    expect(u.events).toHaveLength(1)
     u.ledger.close()
   })
 })
@@ -412,13 +433,19 @@ describe('S1e 派发-租约-收口全链（host 级）', () => {
     const fail = u.events.find((e) => e.event === 'GATE_FAIL')
     expect(fail?.note).toContain(MERGE_RUN_ANCHOR)
     expect(fail?.note).toContain(MERGE_MANUAL_ANCHOR)
+    expect(fail?.note).toContain(MERGE_CONFLICT_ANCHOR) // 202-P3 冲突分类锚
     expect(fail?.note).toContain('闸门exit0')
+    const esc = u.events.find((e) => e.event === 'ESCALATE')
+    expect(esc?.note).toContain('MERGE_CONFLICT') // 202-P3 ESCALATE 通知宰相
+    expect(esc?.note).toContain('R6')
     expect((await u.platform.issues.get(t.id)).state).toBe('待验收')
     expect(u.ledger.listWorkRecords({ issue: t.id })[1]?.status).toBe('failed')
-    // merge=manual 标记生效：standing 在场也终局让位（每单一次 ESCALATE 已落——本面降级不重复报）
+    // merge=manual 标记生效：standing 在场即手工链收口（202-P3——不二跑合并，模拟迁移收口）
     const r2 = await runMergeAction(u.host, { type: 'merge', ticket: t.id, toState: '已交付' }, buildEventIndex(u.events), [], emptyBudget(), standingMap(t.id))
-    expect(r2.counted).toBe(false)
-    expect(u.events.filter((e) => e.event === 'DISPATCH').length).toBe(1)
+    expect(r2.counted).toBe(true)
+    expect(u.events.filter((e) => e.event === 'DISPATCH').length).toBe(1) // 合并跑总数恒 1（判负线：自动重试）
+    expect(u.events.filter((e) => e.event === 'MERGE').filter((e) => (e.note ?? '').includes('手工链收口'))).toHaveLength(1)
+    expect((await u.platform.issues.get(t.id)).state).toBe('已交付')
     u.ledger.close()
   })
 
@@ -435,12 +462,18 @@ describe('S1e 派发-租约-收口全链（host 级）', () => {
     const fail = u.events.find((e) => e.event === 'GATE_FAIL')
     expect(fail?.note).toContain('worker 会话消失')
     expect(fail?.note).toContain(MERGE_MANUAL_ANCHOR)
+    expect(u.events.find((e) => e.event === 'ESCALATE' && (e.note ?? '').includes('MERGE_CONFLICT'))).toBeUndefined() // 消亡面不加冲突面（不可判≠冲突）
     expect(u.ledger.listWorkRecords({ issue: t.id })[1]?.status).toBe('failed')
     // 租约已释放：新单可再占
     const b = await seedTicket(u.platform, '待验收')
     seedBreakpoint(u, b.id, 'ws-f', 'fake-mg-1-exec')
     const rb = await runMergeAction(u.host, { type: 'merge', ticket: b.id, toState: '已交付' }, buildEventIndex(u.events), [], emptyBudget(), standingMap(b.id))
     expect(rb.deferred).toBe(false)
+    // 消亡面标记同走收口（202-P3：收口按 merge=manual 标记不按分类）
+    const rt = await runMergeAction(u.host, { type: 'merge', ticket: t.id, toState: '已交付' }, buildEventIndex(u.events), [], emptyBudget(), standingMap(t.id))
+    expect(rt.counted).toBe(true)
+    expect(u.events.filter((e) => e.event === 'MERGE').filter((e) => (e.note ?? '').includes('手工链收口'))).toHaveLength(1)
+    expect((await u.platform.issues.get(t.id)).state).toBe('已交付')
     u.ledger.close()
   })
 })

@@ -28,6 +28,12 @@
  *   派生（P2 失败面落锚；P3 MERGE_CONFLICT 面同锚续喂）。触发五查之「未标 manual」。
  * - manualChainNotedOf：ESCALATE note 携 `chain=manual` 锚——降级宰相手工链明报
  *   去重（每单一次，不刷屏；锚词刻意不与 merge=manual 前缀碰撞）。
+ *
+ * studio-dev-233（202-P3 冲突兜底，docs/17-§2 相位 5 注记）：MERGE_CONFLICT_ANCHOR
+ * ＝合并跑四要件不齐（docs/17-§6）的分类观测锚——错误类词表既有（ErrorCategory/
+ * dispositions），台账事件名冻结零新增，故分类随 GATE_FAIL/ESCALATE note 走锚（P2 缝注
+ * 「P3 走 chain=manual 同锚」即此机制）。锚无派生面消费（站立清/终局让位仍由 merge-run/
+ * merge=manual 锚承担）——纯可观测标记，面板/测试 grep 面。
  */
 import type { EventRecord, TicketId } from '@studio-next/contract'
 import { DIRECTIVE_VERBS, type DirectiveVerb } from '../directive/index.ts'
@@ -53,6 +59,8 @@ export const STALL_KILL_CLOSE_ANCHOR = '工位收口 interrupted'
 export const MERGE_RUN_ANCHOR = 'merge-run'
 export const MERGE_MANUAL_ANCHOR = 'merge=manual'
 export const MERGE_CHAIN_ANCHOR = 'chain=manual'
+/** 合并跑四要件不齐的分类观测锚（202-P3）——错误类词表既有，事件名冻结零新增，分类随 note 走锚 */
+export const MERGE_CONFLICT_ANCHOR = 'category=MERGE_CONFLICT'
 
 /** events 派生索引（幂等依据；每拍重建，可重放） */
 export interface EventIndex {

@@ -39,8 +39,17 @@
  * （不因降级记档停摆——宰相修复阻断件后机器合并自恢复）；merge=manual 才是终局让位。
  * 手工链义务：宰相亲跑门禁→git merge --no-ff→代推——事件面由宰相批示流自留。
  *
- * 拟稿待批点（P3/P4 缝，见 deliverables/plan.md）：MERGE_CONFLICT 域名（P3 走 chain=manual
- * 同锚）；租约 TTL/死主、重启接管、push 重试/对账（P4）——本刀全部如实降级或如实入 note。
+ * 冲突兜底与手工链收口（202-P3，studio-dev-233，§5.5）：合并跑四要件不齐＝
+ * MERGE_CONFLICT 既有类（ErrorCategory 词表）——事件名冻结零新增，分类随 GATE_FAIL/
+ * ESCALATE note 走 category=MERGE_CONFLICT 锚（P2 缝注「同锚」即此）；**不自动重试**
+ * （merge=manual 终局让位挡重派——同会话重试=同结果空转，合并跑面位别 disposition
+ * 覆写 worker 循环面的 retry 行）。手工链完成后批示:批准（R6：宰相∪制作人∪派单策划）
+ * →standing 重建→decide 再出 mergeTo→**v0 模拟迁移转正收口**（simulatedMergeTransition
+ * 共体，实现体=merge-fallback.ts【BC-S2 拆】——note 如实=宰相手工链收口不冒认真单刀）。worker 消亡面
+ * （failMergeHarvest）四要件不可判≠冲突：不加冲突锚不加 ESCALATE（标记让位仍走收口）。
+ *
+ * 拟稿待批点（P4 缝）：租约 TTL/死主、重启接管、push 重试/对账、消亡面通知位别——
+ * 本刀全部如实降级或如实入 note。
  */
 import { createHash } from 'node:crypto'
 import { mkdirSync, statSync, writeFileSync } from 'node:fs'
@@ -69,11 +78,12 @@ import { blindArtifactPaths, createView, resolveReadTier, roleOfAssignee } from 
 import { instructionsTarget, removeInstructions, writeInstructions } from '../instructions-store.ts'
 import { WORKSPACE_UMASK } from '../jobs/harvest-recon.ts'
 import type { TickActionResult, TickPhaseDispatchBudget } from '../tick-report/types.ts'
-import { MERGE_CHAIN_ANCHOR, MERGE_MANUAL_ANCHOR, MERGE_RUN_ANCHOR, type EventIndex } from '../sentinel/events-index.ts'
+import { MERGE_CONFLICT_ANCHOR, MERGE_MANUAL_ANCHOR, MERGE_RUN_ANCHOR, type EventIndex } from '../sentinel/events-index.ts'
 import { approvalSlotOf } from '../directive/wire.ts'
 import type { DirectiveVerb } from '../directive/index.ts'
 import type { EngineConfig, Inflight } from '../engine.ts'
 import { MERGE_BRIEF_FILENAME, MERGE_RECEIPT_FILENAME, mergeDirectiveBlock } from './merge-brief.ts'
+import { degradeToManualChain, noteSafe, simulatedMergeTransition } from './merge-fallback.ts'
 import type { MergeGitPort, MergeGateCommandPort } from './merge-gate.ts'
 import { runMergeGate } from './merge-gate.ts'
 
@@ -243,15 +253,12 @@ async function resolveMergeRunPlan(
 
 // ————————————————————————— 相位 5 入口（双轨） —————————————————————————
 
-/** note 动态字段净化（分号/换行清洗——事件 note 键值面防注入，mention 同款纪律） */
-function noteSafe(text: string): string {
-  return text.replace(/[;\r\n]/g, '，')
-}
-
 /**
  * 相位 5 合并动作执行体（engine 唯一调用面）：
  * 面关（host.mergeRun 缺省）或非 post-verified 位 → v0 模拟轨 byte-identical；
- * post-verified → 触发五查 → 真单刀派发 / 降级手工链（ESCALATE chain=manual 每单一次）/
+ * post-verified → standing 批示在场+已标 merge=manual → **手工链收口**（202-P3：v0 模拟
+ * 迁移转正——宰相手工链完成后批示:批准【R6】重建站立，decide 再出 mergeTo 即此处收口）；
+ * 未标 manual → 触发五查 → 真单刀派发 / 降级手工链（ESCALATE chain=manual 每单一次）/
  * 顺延（lease 忙/批示不在场——不计数不上报，下一拍重进）。
  */
 export async function runMergeAction(
@@ -269,12 +276,7 @@ export async function runMergeAction(
     const flow = host.flowOf(fresh)
     // —— 轨道分派：面关/非验收位=v0 模拟（零行为变更——P1 语义与测试不动） ——
     if (deps === undefined || flow === undefined || approvalSlotOf(flow, fresh.state) !== 'post-verified') {
-      const transitioned = await host.platform.issues.transition(ticket, action.toState)
-      host.syncMirror(transitioned)
-      host.makeEvent('MERGE', transitioned, index.attemptOf(ticket), tickEvents, {
-        note: `→${action.toState}（v0 模拟合并：无真 git 合并，归 v0.5 真单刀）`,
-      })
-      return { result: { ticket, actionType: action.type, ok: true, detail: `→${action.toState}（模拟）` }, deferred: false, counted: true, mutated: true }
+      return simulatedMergeTransition(host, action, index, tickEvents, `→${action.toState}（v0 模拟合并：无真 git 合并，归 v0.5 真单刀）`, `→${action.toState}（模拟）`)
     }
     // —— 触发五查（占位性忙=顺延；结构性缺=降级；全齐=派发） ——
     const standing = directiveVerbNow.get(ticket) ?? index.directiveStandingOf(ticket)
@@ -282,7 +284,15 @@ export async function runMergeAction(
       return { result: { ticket, actionType: action.type, ok: true, detail: 'standing 批示已不在场（本拍顺延重查）' }, deferred: true, counted: false, mutated: false }
     }
     if (index.mergeManualOf(ticket)) {
-      return degradeToManualChain(host, fresh, index, tickEvents, '已标 merge=manual（自合并失败面/人工标记）——机器合并终局让位，归宰相手工链')
+      // —— 手工链收口（202-P3）：merge=manual 终局让位后的一次性收口面 —— 冲突兜底/
+      //    消亡面已落标记（append-only），宰相手工链完成+批示:批准【R6】重建站立→本拍
+      //    mergeTo 进此分支：v0 模拟迁移转正（同迁移语义零变更，note 如实——无真 git
+      //    合并，git 面由宰相手工链亲跑）。不再派发/降级：合并跑总数恒 1（不自动重试）。
+      return simulatedMergeTransition(
+        host, action, index, tickEvents,
+        `→${action.toState}（手工链收口：宰相手工链完成＋批示:批准【R6：宰相∪制作人∪派单策划】——v0 模拟迁移转正：无真 git 合并，git 面由宰相手工链亲跑；${MERGE_MANUAL_ANCHOR} 终局让位自合并，一次失败不二跑）`,
+        `→${action.toState}（手工链收口——宰相手工链+v0 模拟迁移转正）`,
+      )
     }
     const leaseKey = `${host.config.company}:${deps.targetBranch}`
     if (!acquireMergeLease(leaseKey, ticket)) {
@@ -303,29 +313,6 @@ export async function runMergeAction(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     return { result: { ticket, actionType: action.type, ok: false, detail: `合并跑异常：${msg}` }, deferred: false, counted: false, mutated: false }
-  }
-}
-
-/** 降级宰相手工链：ESCALATE chain=manual 锚（每单一次——events-index dedupe），位不动零迁移 */
-function degradeToManualChain(
-  host: MergeRunHost,
-  fresh: IssueRecord,
-  index: EventIndex,
-  tickEvents: EventRecord[],
-  reason: string,
-): MergeActionOutcome {
-  const ticket = fresh.id
-  const noted = index.manualChainNotedOf(ticket)
-  if (!noted) {
-    host.makeEvent('ESCALATE', fresh, index.attemptOf(ticket), tickEvents, {
-      note: `${MERGE_CHAIN_ANCHOR}：合并跑触发不齐（${noteSafe(reason)}）——降级宰相手工链（每拍重查：阻断件修复即自恢复；本锚每单一次）`,
-    })
-  }
-  return {
-    result: { ticket, actionType: 'merge', ok: true, detail: `降级宰相手工链（${reason}）` },
-    deferred: false,
-    counted: false,
-    mutated: !noted,
   }
 }
 
@@ -474,8 +461,10 @@ async function dispatchMergeRun(
  * 闸门 exit0（=门禁命令 exit0【R1 引擎亲跑】∧ 合并提交存在性核验——两面都绿才算绿）。
  * 全绿序：GATE_PASS→代推 dev（R2，失败入 note 不阻迁移）→MERGE 真事件（sha/门禁摘要/
  * 会话续跑证据/推送结果）→迁已交付→工时单 done+executor_session_id 收口→预算结算→
- * usage write-through→租约释放。缺件：GATE_FAIL（merge-run+merge=manual 锚）+工时单
- * failed+结算（不留悬空预留）+租约释放——**无回滚无断路无平台迁移**（留待验收位归宰相）。
+ * usage write-through→租约释放。缺件：GATE_FAIL（merge-run+merge=manual+category=
+ * MERGE_CONFLICT 锚——202-P3 冲突兜底：清站立+终局让位+分类可观测）+ESCALATE 通知宰相
+ * +工时单 failed+结算（不留悬空预留）+租约释放——**无回滚无断路无平台迁移，不自动重试**
+ * （留待验收位归宰相手工链；批示:批准【R6】后模拟迁移收口）。
  */
 export async function closeOutMergeHarvest(
   host: MergeRunHost,
@@ -523,8 +512,16 @@ export async function closeOutMergeHarvest(
     host.ledger.endWorkRecord(entry.workRecordId, { ended_at: endedAt, status: 'failed', ...(execSid !== undefined ? { executor_session_id: execSid } : {}) })
     host.inflight.delete(ticket)
     releaseMergeLease(ctx.leaseKey, ticket)
+    // —— 冲突兜底（202-P3，§5.5）：四要件跑完可判不齐＝MERGE_CONFLICT 既有类 ——
+    // GATE_FAIL（merge-run 锚清站立+merge=manual 锚终局让位【P2 已落】）+category 锚
+    // 分类可观测；ESCALATE 通知宰相（低噪不广播）。不做 chain=manual 式 dedupe：冲突
+    // 每单至多一次（manual 锚 append-only 挡重派→合并跑单次），且 chain=manual 锚留给
+    // 降级面——免吞「先降级后冲突」单的冲突通知。worker 消亡面不进此分支（不可判≠冲突）。
     host.makeEvent('GATE_FAIL', fresh, entry.attempt, tickEvents, {
-      note: `合并跑四要件缺 ${missing}；${noteSafe(gate.note)};${MERGE_RUN_ANCHOR};${MERGE_MANUAL_ANCHOR}——降级宰相手工链（待验收位不动：无回滚/无断路/无平台迁移；工时单 failed+预算已结算）${budgetNote}`,
+      note: `合并跑四要件缺 ${missing}；${noteSafe(gate.note)};${MERGE_RUN_ANCHOR};${MERGE_MANUAL_ANCHOR};${MERGE_CONFLICT_ANCHOR}——冲突兜底：一次自合并失败即宰相手工链（不自动重试：同会话重试=同结果空转；待验收位不动：无回滚/无断路/无平台迁移；工时单 failed+预算已结算）${budgetNote}`,
+    })
+    host.makeEvent('ESCALATE', fresh, entry.attempt, tickEvents, {
+      note: `MERGE_CONFLICT：合并跑四要件缺 ${missing}——一次自合并失败即宰相手工链兜底（${MERGE_MANUAL_ANCHOR} 终局让位自合并，不自动重试：同会话重试=同结果空转）；手工链完成后批示:批准（R6：宰相∪制作人∪派单策划）即模拟迁移收口;${MERGE_RUN_ANCHOR};${MERGE_CONFLICT_ANCHOR}`,
     })
     if (entry.instructionsPath !== undefined) removeInstructions(entry.instructionsPath)
     return 'failed'
