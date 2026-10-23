@@ -19,6 +19,15 @@
  * studio-dev-171（批示归一层，docs/18-§2.5）：directiveKeys（批示评论消费键，
  * append-only）+ directiveStandingOf（批示站立：APPROVE verb 置位 / DISPATCH 清零）
  * ——批准站立喂相位 2 approved 入参；打回/拆单/搁置站立抑制 5a 自动呈批。
+ *
+ * studio-dev-232（202-P2 合并跑机器，docs/17-§2 相位 5 真单刀）：
+ * - C7 修：DISPATCH note 携 merge-run 锚=合并跑派发——**不清批示站立**（合并跑
+ *   不消费批准：单在收割窗口恒留待验收，站立清了=合并跑后单卡 WAIT_APPROVAL）；
+ *   合并跑 GATE_FAIL（note 同锚）清站立（一次自合并失败即手工链，§5.5 语义）。
+ * - mergeManualOf：事件 note 携 `merge=manual` 锚（append-only）——手工合并标记
+ *   派生（P2 失败面落锚；P3 MERGE_CONFLICT 面同锚续喂）。触发五查之「未标 manual」。
+ * - manualChainNotedOf：ESCALATE note 携 `chain=manual` 锚——降级宰相手工链明报
+ *   去重（每单一次，不刷屏；锚词刻意不与 merge=manual 前缀碰撞）。
  */
 import type { EventRecord, TicketId } from '@studio-next/contract'
 import { DIRECTIVE_VERBS, type DirectiveVerb } from '../directive/index.ts'
@@ -30,6 +39,20 @@ import { DIRECTIVE_VERBS, type DirectiveVerb } from '../directive/index.ts'
  * 收口」）、GATE 面事件均不含此串——锚唯一定位 kill 面收口。
  */
 export const STALL_KILL_CLOSE_ANCHOR = '工位收口 interrupted'
+
+/**
+ * 合并跑锚三件（studio-dev-232，202-P2）：note 独有子串——派生（本文件）与
+ * note 构造（engine/merge/merge-run.ts）两侧共用，单一源防漂移（STALL 锚同法）。
+ * - MERGE_RUN_ANCHOR：合并跑派发/收割面事件（DISPATCH/GATE_PASS/GATE_FAIL）独有
+ *   ——C7 修与收割位别四接线的锚定位。
+ * - MERGE_MANUAL_ANCHOR：手工合并标记（append-only）——P2 合并跑失败面落锚、
+ *   P3 冲突兜底面续喂；触发五查「未标 manual」拒自合并。
+ * - MERGE_CHAIN_ANCHOR：降级宰相手工链明报（ESCALATE）去重锚——与 manual 锚
+ *   刻意不前缀碰撞（includes 判定互不误中）。
+ */
+export const MERGE_RUN_ANCHOR = 'merge-run'
+export const MERGE_MANUAL_ANCHOR = 'merge=manual'
+export const MERGE_CHAIN_ANCHOR = 'chain=manual'
 
 /** events 派生索引（幂等依据；每拍重建，可重放） */
 export interface EventIndex {
@@ -99,6 +122,16 @@ export interface EventIndex {
    * 消费面：模型档解析第 2 级（岗单随行 model_tier 落档——ledger.getJob 读面）。
    */
   jobAnchorOf(ticket: TicketId): string | undefined
+  /**
+   * 手工合并标记（studio-dev-232）：事件 note 携 `merge=manual` 锚即置位
+   * （append-only 不释放——终局标记：一次自合并失败即回手工链；P3 冲突面续喂）。
+   */
+  mergeManualOf(ticket: TicketId): boolean
+  /**
+   * 手工链明报已落（studio-dev-232）：ESCALATE note 携 `chain=manual` 锚——
+   * 降级明报去重（每单一次；宰相手工链走完后单不再回流此面）。
+   */
+  manualChainNotedOf(ticket: TicketId): boolean
 }
 
 /** note 分号对解析（PATROL intent= 键同法）：取 `k=` 值，无则 undefined */
@@ -122,7 +155,11 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
   const directiveKeys = new Set<string>()
   const directiveStanding = new Map<TicketId, DirectiveVerb>()
   const jobAnchors = new Map<TicketId, string>()
+  const manualMarked = new Set<TicketId>()
+  const manualChainNoted = new Set<TicketId>()
   for (const e of events) {
+    // 手工合并标记（studio-dev-232）：任意事件 note 携 merge=manual 锚即置位（append-only）
+    if ((e.note ?? '').includes(MERGE_MANUAL_ANCHOR)) manualMarked.add(e.issue)
     if (e.event === 'DISPATCH') {
       dispatchCount.set(e.issue, (dispatchCount.get(e.issue) ?? 0) + 1)
       const key = e.note?.split(';').find((s) => s.startsWith('intent='))?.slice('intent='.length) ?? null
@@ -130,10 +167,17 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
       // 新 attempt 开工：STALL 连击归零（attempt 作用域计数——DEV-44 咬合阈）
       stallStrikes.set(e.issue, 0)
       // 批示站立清零（studio-dev-171，docs/18-§2.5）：批准被派发消费——L2 第二道
-      // 待批（同状态名复现）不吃陈旧批准；打回/拆单站立经派发自然翻篇（重派=新誓）
-      directiveStanding.delete(e.issue)
+      // 待批（同状态名复现）不吃陈旧批准；打回/拆单站立经派发自然翻篇（重派=新誓）。
+      // C7 修（studio-dev-232）：merge-run 锚=合并跑派发——不消费批准（单恒留待验收，
+      // 站立保留供收割窗口判定与终审留痕），不清站立。
+      if ((e.note ?? '').includes(MERGE_RUN_ANCHOR) === false) directiveStanding.delete(e.issue)
     } else if (e.event === 'GATE_PASS' || e.event === 'GATE_FAIL') {
       lastOutcome.set(e.issue, Math.max(lastOutcome.get(e.issue) ?? 0, e.ts))
+      // 合并跑失败（GATE_FAIL+merge-run 锚，studio-dev-232）：清站立——一次自合并
+      // 失败即手工链（merge=manual 锚同拍落），防 standing 复触第二次合并跑。
+      if (e.event === 'GATE_FAIL' && (e.note ?? '').includes(MERGE_RUN_ANCHOR)) {
+        directiveStanding.delete(e.issue)
+      }
     } else if (e.event === 'CLOSE') {
       closed.add(e.issue)
     } else if (e.event === 'RESUME') {
@@ -168,6 +212,8 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
         }
       }
     } else if (e.event === 'ESCALATE') {
+      // 手工链明报锚（studio-dev-232）：降级宰相手工链的 ESCALATE 落过即去重
+      if ((e.note ?? '').includes(MERGE_CHAIN_ANCHOR)) manualChainNoted.add(e.issue)
       // 批示归一消费键（ESCALATE 面：资格拒/畸形/边未声明——拒也算消费不重放）
       if (e.note !== undefined && e.note.startsWith('DIRECTIVE')) {
         const id = noteField(e.note, 'directive')
@@ -232,5 +278,7 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
     directiveKeys,
     directiveStandingOf: (ticket: TicketId): DirectiveVerb | null => directiveStanding.get(ticket) ?? null,
     jobAnchorOf: (ticket: TicketId): string | undefined => jobAnchors.get(ticket),
+    mergeManualOf: (ticket: TicketId): boolean => manualMarked.has(ticket),
+    manualChainNotedOf: (ticket: TicketId): boolean => manualChainNoted.has(ticket),
   }
 }

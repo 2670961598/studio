@@ -2,24 +2,21 @@
  * records —— store 层记录形状与临时校验闸（v0.2 首刀三表 + 第二刀五表）
  *
  * 依据：docs/17-§3 行条目。
- *   - 首刀三表（work_records / sessions）：id/issue/工号/instance_id/executor/session_id/lane/branch/
- *     started/ended/cost/tokens/attempt/status/report_ref/summary_ref 与 session_id/issue/工号/
- *     archive_path/started/ended/turns。
+ *   - 首刀三表（work_records / sessions）：id/issue/工号/instance_id/executor/session_id/executor_session_id（202-P2 v12）/
+ *     lane/branch/started/ended/cost/tokens/attempt/status/report_ref/summary_ref 与 session_id/issue/
+ *     工号/archive_path/started/ended/turns。
  *   - 第二刀五表（people / personnel_events / departments / ticket_mirror / budgets）：
  *     列语义对齐 17-§3 表清单（people=公司目录镜像｜personnel_events=本库 append-only｜
  *     departments=公司目录镜像｜ticket_mirror=YouTrack 镜像｜budgets=本库）。
  *   - v3 jobs 调度表（17-§2 调度表列集 / 18-§三）：公司目录定时岗配置（D9）的持久化投影；
  *     cron 只做形状闸（非空 + ≤6 空白分隔段），表达式解析归 core 后续单——**不引 croner**。
  *   - v4 收口面 EndWorkRecord（work_records end 入参；daemon 切换前 closeWorkRecord 直发
- *     UPDATE 的正式化）：status 终态值域不锁；tokens 已扩入参（kernel.TokenCounts，与建列/
- *     insertWorkRecord 同源——切换单清偿，见接口行注）。
+ *     UPDATE 的正式化）：status 终态值域不锁；tokens 已扩入参（kernel.TokenCounts，与建列/insertWorkRecord 同源——切换单清偿，见接口行注）。
  *   - v5 进化管线 candidates 表（17-§3 / core evolution 首刀）：CandidateRow 逐列对齐 core
  *     CandidateRecord 可序列化形态（值域**复制**自 core 冻结枚举——store src 零 core 运行时
  *     依赖，漂移由一致性测试钉死，沿 STUDIO_TOOLS 先例）+ created_at 库侧列；形状差异取舍
  *     （asset_type 列名 / version TEXT / asset_path 补列）见 migrations v5 头注与接口行注。
- *   - v6 报表三表（17-§3 / docs/50 断链6 / 04-§三）：ledgers 单据派生镜像（LedgerEntryRecord
- *     ——表名与库句柄 Ledger 撞名，记录名避撞）/ reports 报表快照行（ReportRecord，type 值域
- *     daily/weekly/monthly 取 04-§三三档）/ probes_runs 探针跑分（ProbeRunRecord，append-only）。
+ *   - v6 报表三表（17-§3 / docs/50 断链6 / 04-§三）：ledgers 单据派生镜像（LedgerEntryRecord——表名与库句柄 Ledger 撞名，记录名避撞）/ reports 报表快照行（ReportRecord，type 值域 daily/weekly/monthly 取 04-§三三档）/ probes_runs 探针跑分（ProbeRunRecord，append-only）。
  *
  * **拟稿待批（docs 未细化处逐条标明，contract 落地后替换为契约校验）**：
  *   - 「工号」列名 person_id；「started/ended」→ started_at/ended_at（epoch ms，ended 可空=在途）；
@@ -41,6 +38,8 @@ export interface WorkRecord {
   instance_id?: string
   executor: string
   session_id?: string
+  /** executor 侧会话 id（dsh --session-id 续跑键，202-P2 migration v12 列；收割时从 Handle 落账） */
+  executor_session_id?: string
   lane?: string
   branch?: string
   started_at: number
@@ -51,11 +50,8 @@ export interface WorkRecord {
   status: string
   report_ref?: string
   summary_ref?: string
-  /**
-   * 模型归一形 `provider/model`（132-§6.1 单A·studio-dev-168，migration v8 加列）：
-   * 收割 ResultStats.model 的落账位（单B/C usage_daily/price_snapshots 桥接键）。
-   * 可空=无从可知（旧执行/部署未声明 profile 模型）——如实缺省。
-   */
+  /** 模型归一形 `provider/model`（132-§6.1 单A·studio-dev-168，migration v8 加列）：收割
+   *  ResultStats.model 落账位（单B/C 桥接键）；可空=无从可知（如实缺省）。 */
   model?: string
 }
 
@@ -216,6 +212,8 @@ export const WorkRecordSchema = z.strictObject({
   instance_id: z.string().min(1).optional(),
   executor: z.string().min(1),
   session_id: z.string().min(1).optional(),
+  /** executor 侧会话 id（202-P2 v12 列；resumeWithSession 续跑键——收割落账） */
+  executor_session_id: z.string().min(1).optional(),
   lane: z.string().min(1).optional(),
   branch: z.string().min(1).optional(),
   started_at: z.number().int().min(0),
@@ -343,7 +341,8 @@ export const JobRecordSchema = z.strictObject({
 
 /** store 层临时校验（拟稿待批，见文件头注；status 终态值域不锁——归收割域后续收口；
  *  tokens 闸同 WorkRecordSchema.tokens：kernel.TokenCounts 四桶+兼容键，非负整数，未知桶拒；
- *  model=收割 ResultStats.model 直落（132-§6.1 单A）——非空串可选，未给值 COALESCE 不动） */
+ *  model=收割 ResultStats.model 直落（132-§6.1 单A）——非空串可选，未给值 COALESCE 不动；
+ *  executor_session_id=Handle.executorSessionId 直落（202-P2 v12）——同 COALESCE 口径） */
 export const EndWorkRecordSchema = z.strictObject({
   ended_at: z.number().int().min(0),
   status: z.string().min(1),
@@ -352,6 +351,7 @@ export const EndWorkRecordSchema = z.strictObject({
   report_ref: z.string().min(1).optional(),
   summary_ref: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
+  executor_session_id: z.string().min(1).optional(),
 })
 
 // —— v5 进化管线 candidates 表（17-§3 / core evolution 首刀 / 02-F3；migration v5 同批） ——

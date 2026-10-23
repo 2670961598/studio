@@ -102,6 +102,7 @@ import { wireRelaySource, wireResumeSource, type RelayWorkSignal } from '../engi
 import { createFakeAdapter } from '../engine/fakes.ts'
 import { buildServeDirectiveDeps, parseWhitelistSpec } from '../engine/directive/index.ts'
 import { createDefaultGateRunner, createAcceptanceGateRunner } from '../engine/gate.ts'
+import { createDefaultMergeRunDeps } from '../engine/merge/default-deps.ts' // 202-P2 合并跑真机端口
 import { answerReloadNoCompanyDir, createHotReload, type HotReload, type HotReloadApplyReport } from '../control/hot-reload.ts'
 import { makeUlid } from '../engine/tools/id.ts'
 import { provisionDshBridgeOverlay } from '../engine/instructions-store.ts'
@@ -1183,18 +1184,16 @@ export function buildServeRuntime(
     registry,
     ...(judgeHook !== undefined ? { judge: judgeHook } : {}), // 160-B 两址精序（缺省不注入=规则缺省档）
     assembler: makeAssembler(),
-    // 闸门双形态（v0.5 真单刀）：真单模式=真验收闸门（逐条真执行冻结验收命令，
-    // workspace cwd、超时杀进程组）；demo=占位闸门（exit0 模拟）——行为与既有测试面一致
+    // 闸门双形态（v0.5 真单刀）：真单=逐条真执行冻结验收命令；demo=exit0 模拟占位
     gateRunner: realGate
       ? createAcceptanceGateRunner(acceptance)
       : createDefaultGateRunner(),
+    ...(realGate ? { mergeRun: createDefaultMergeRunDeps({ gateCommand: acceptance }) } : {}), // 202-P2 相位 5 合并跑（面关=v0 模拟轨）
     clock,
     config: engineConfig,
     people: snapshot.people, departments: snapshot.departments, // 130-P2（studio-dev-173）：部门索引随快照注入——父单立案 leader 解析
-    // cost_guard 段（132-§6.4 单C）：闸四 hard 线联动（R6）的引擎配置源；段不声明=不注入=面关
-    ...(snapshot.costGuard !== undefined ? { costGuard: snapshot.costGuard } : {}),
-    // 成本警戒 notify 出口（129-D 181）：v0 接 log 行（结构化交接件零重解析）；刀B 面注入
-    // =IM 即时广播叠加（costNotifyOutlet 上方装配块）
+    ...(snapshot.costGuard !== undefined ? { costGuard: snapshot.costGuard } : {}), // cost_guard 段（132-§6.4 单C）：段不声明=面关
+    // 成本警戒 notify 出口（129-D 181）：v0 接 log 行；刀B 面注入=IM 即时广播叠加
     notify: costNotifyOutlet,
     ...(catalog !== undefined ? { catalog } : {}),
     // 批示归一层（studio-dev-171，docs/18-§2.5）：恒注入（装配缝=engine/directive/

@@ -115,7 +115,8 @@
  *     docs/38-§2）：前命孤儿 running 工位收口 interrupted，重派走新 attempt+adopt】；活体
  *     WORKER_DEAD 检测（wall/budget/心跳/僵尸，17-§9）仍归后续刀（R-C 面）；dispose() 仅对
  *     内存 handle 优雅 kill；
- *   - 合并相位：v0 无真 git 合并（MERGE 事件 + 状态迁移的**模拟**，note 如实标注）；
+ *   - 合并相位（202-P2 双轨，studio-dev-232，docs/17-§2）：待验收位+mergeRun 注入+触发全齐=真单刀
+ *     （merge-run.ts；不齐=降级手工链/lease 顺延，重进经活动/rescan 兜底）；其余位或面关=v0 模拟；
  *   - 任务书只出首版（续跑版=上次 summary.json 前情注入，17-§5，归真单刀）；
  *   - 呈批迁移（submit_approval）：v0 直迁平台，不落事件（呈批事件名待批示；真路径=网关
  *     动作词 GW_*，v0 无网关不伪造 GW_ 事件）；
@@ -308,6 +309,7 @@ import { consumePricingPublish, runPricingStaleCheck, type PricingStaleTickRepor
 import { costCloseDeps, runCostCloseTick } from './cost-close/close.ts'
 import type { TickActionResult, TickDecisionEntry, TickPhaseDispatchBudget, TickPhaseHarvest, TickReport } from './tick-report/types.ts'
 import { personViewOf, type QueueJudgeCandidate, type QueueJudgeHook } from './judge/sites129.ts' // 160-B 两址接线体（studio-dev-182）
+import { closeOutMergeHarvest, failMergeHarvest, runMergeAction, type MergeRunDeps, type MergeRunHost } from './merge/merge-run.ts' // 202-P2 相位 5 合并跑机器（studio-dev-232）
 export type { TickDecisionEntry, TickReport } from './tick-report/types.ts'
 
 // ————————————————————————— 配置 —————————————————————————
@@ -584,6 +586,7 @@ export interface EngineDeps {
    * 钩异常进 tick errors 不炸拍（防御性 try/catch——收割面完整性优先于钩面）。
    */
   onWorkComplete?: (signal: RelayWorkSignal) => void
+  mergeRun?: MergeRunDeps // 202-P2 studio-dev-232：注入=相位 5 真单刀面开；缺省=v0 模拟轨零行为
 }
 
 // ————————————————————————— TickReport（17-§2「tick 返回结构化 actions」；各面类型驻 tick-report/types.ts） —————————————————————————
@@ -591,7 +594,7 @@ export interface EngineDeps {
 // ————————————————————————— 内部状态 —————————————————————————
 
 /** 在途工位（dispatch 落 work_record 'running' 后登记；harvest 收口后注销） */
-interface Inflight {
+export interface Inflight {
   ticket: TicketId
   workRecordId: string
   executor: string
@@ -625,6 +628,7 @@ interface Inflight {
   foldNonEmpty?: boolean
   /** 逐拍折算的 turn_end.error（终局错误原文，失败面 note 用） */
   foldTerminalError?: string
+  mergeRun?: import('./merge/merge-run.ts').MergeRunContext // 202-P2：在场=收割位别接线（closeOutMergeHarvest/failMergeHarvest 面）
 }
 
 /** 泳道租约簿（进程内 v0：holder=单号；TTL 到期视同无主——decide laneFree 同语义；
@@ -699,7 +703,7 @@ const TICK_SEQ_KEY = 'tick.seq'
 // ————————————————————————— mention 意图消费件（105-刀A A-2） —————————————————————————
 
 export function createEngine(deps: EngineDeps): Engine {
-  const { platform, ledger, registry, gateRunner, clock, config } = deps
+  const { platform, ledger, registry, gateRunner, clock, config, catalog } = deps
   const makeId = deps.makeId ?? makeUlid
 
   // 公司面可替换绑定（docs/38-§2 L1）：applyCompanyUpdate 整组换（拍边界）——
@@ -766,6 +770,7 @@ export function createEngine(deps: EngineDeps): Engine {
 
   /** 时钟（一切时刻经注入 clock——core 纪律在 daemon 侧的同形落点） */
   const now = (): number => clock()
+  const mergeHost: MergeRunHost = { platform, ledger, registry, assemble: (i) => assembler(i), config, people: () => people, budgetDeps, costGuard: () => costGuard, modelTiers: catalog !== undefined ? () => catalog.tiers() : undefined, inflight, mergeRun: deps.mergeRun, seq: () => seq, now, makeId, makeEvent, syncMirror, resolvePerson, flowOf } // 202-P2 合并跑宿主：热换绑定经 thunk 取活值；函数面声明提升安全
 
   // 事件四要素形状（evtLevel/evtDept/tokenBuckets）：抽件 sentinel/shape.ts
   //（20-§十五「先拆再增」）——evtDept 显式 deptFallback 参数版。
@@ -1220,6 +1225,8 @@ export function createEngine(deps: EngineDeps): Engine {
     tickEvents: EventRecord[],
     errors: string[],
   ): Promise<'completed' | 'failed'> {
+    // 合并跑位别分支（202-P2）：mergeRun 在场=合并收口（先门禁后 MERGE；平台迁移/断路/回滚位别接线）
+    if (entry.mergeRun !== undefined) return closeOutMergeHarvest(mergeHost, adapter, entry, tickEvents, errors)
     const ticket = entry.ticket
     const completed = entry.foldCompleted ?? false
     const nonEmptyOutput = entry.foldNonEmpty ?? false
@@ -1263,6 +1270,7 @@ export function createEngine(deps: EngineDeps): Engine {
         ...(stats.model !== undefined ? { model: stats.model } : {}),
         ...(gate.reportExists ? { report_ref: gate.reportPath } : {}),
         ...(gate.summaryPath !== undefined ? { summary_ref: gate.summaryPath } : {}),
+        ...(entry.handle.executorSessionId !== undefined ? { executor_session_id: entry.handle.executorSessionId } : {}), // 202-P2：dsh 侧会话 id 收口（v13 列，resume 断点凭据）
       })
       breaker = onSuccess(breaker, ticket).newState
       inflight.delete(ticket)
@@ -1354,6 +1362,7 @@ export function createEngine(deps: EngineDeps): Engine {
     detail: string,
     verdict: { completed: boolean; nonEmptyOutput: boolean; reportExists: boolean; exit0: boolean },
   ): Promise<'completed' | 'failed'> {
+    if (entry.mergeRun !== undefined) return failMergeHarvest(mergeHost, entry, detail, tickEvents) // 202-P2 位别分支：无回滚无断路
     const ticket = entry.ticket
     const fresh = await platform.issues.get(ticket)
     const flow = flowOf(fresh)
@@ -1365,7 +1374,7 @@ export function createEngine(deps: EngineDeps): Engine {
     const wkeyDiscarded = workerKeys !== undefined
     // 断路签名：四要件失败形态（同形态连击才熔断——breaker streak 语义）
     const signature = `harvest:${verdict.completed ? 'c' : '-'}${verdict.nonEmptyOutput ? 'o' : '-'}${verdict.reportExists ? 'r' : '-'}${verdict.exit0 ? 'g' : '-'}`
-    ledger.endWorkRecord(entry.workRecordId, { status: 'failed', ended_at: now() })
+    ledger.endWorkRecord(entry.workRecordId, { status: 'failed', ended_at: now(), ...(entry.handle.executorSessionId !== undefined ? { executor_session_id: entry.handle.executorSessionId } : {}) })
     inflight.delete(ticket)
     lanes.release(entry.lane, ticket)
     if (flow !== undefined) {
@@ -2083,23 +2092,15 @@ export function createEngine(deps: EngineDeps): Engine {
       if (recon !== undefined) harvest.recon = recon
     }
 
-    // —— 相位 5 合并：复验通过 → 已交付（v0 模拟合并——无真 git 操作，note 如实标注） ——
+    // —— 相位 5 合并（202-P2 双轨）：post-verified 验收位=真单刀（merge-run.ts：resume 唤起
+    //    原会话自合并＋先门禁后 MERGE；触发不齐=降级宰相手工链/lease 顺延）；其余位=v0 模拟 ——
     let merged = 0
     for (const action of mergeQ) {
-      try {
-        const transitioned = await platform.issues.transition(action.ticket, action.toState)
-        syncMirror(transitioned)
-        makeEvent('MERGE', transitioned, index.attemptOf(action.ticket), tickEvents, {
-          note: `→${action.toState}（v0 模拟合并：无真 git 合并，归 v0.5 真单刀）`,
-        })
-        merged += 1
-        mutations += 1
-        actionResults.push({ ticket: action.ticket, actionType: action.type, ok: true, detail: `→${action.toState}（模拟）` })
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        errors.push(`merge 失败 ${action.ticket}：${msg}`)
-        actionResults.push({ ticket: action.ticket, actionType: action.type, ok: false, detail: msg })
-      }
+      const r = await runMergeAction(mergeHost, action, index, tickEvents, budget, directiveVerbNow)
+      actionResults.push(r.result)
+      if (r.deferred) continue // 占位性顺延（lease 忙/批示不在场）：不计数不上报，下一拍重进
+      if (r.counted) { merged += 1; mutations += 1 } else if (r.mutated) mutations += 1
+      if (!r.result.ok) errors.push(`merge 失败 ${action.ticket}：${r.result.detail ?? ''}`)
     }
 
     // —— 相位 6 回收：已交付 → 关单落账 + 泳道释放 + wkey 吊销（已交付为终态，无平台迁移） ——
