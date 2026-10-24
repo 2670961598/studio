@@ -45,8 +45,9 @@ import {
   writeServeConfig,
 } from './crash-points.ts'
 
-/** 等待上限：单 serve 阶段 20s（waitFor 缺省）+ 用例级 90s 兜底 */
-const CASE_TIMEOUT_MS = 90_000
+/** 等待上限：单 serve 阶段 20s（waitFor 缺省）+ 用例级 180s 兜底（E-4 家族·studio-dev-246：
+ *  全量并行负载下真进程 spawn 用例预算上调——只动预算不动断言，先例=overview-reload 60s） */
+const CASE_TIMEOUT_MS = 180_000
 
 const caseDirs: string[] = []
 
