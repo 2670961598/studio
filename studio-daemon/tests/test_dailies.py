@@ -112,6 +112,29 @@ class Test首跑产物路径:
 
 
 class Test异常评论路径:
+    def test_断路单已处置不再误报(self, fake_yt, tmp_config):
+        """POLY-97 实录（2026-10-24 误报）：断路当日重批改派并 MERGE/CLOSE 交付——
+        次日窗口仍含旧 GATE_FAIL attempt=3，不得对已交付单再告「等待制作人批示」。"""
+        yt = YT("agent-8")
+        be = fake_yt
+        be.counters["GAMES"] = 50
+        stuck = yt.new("GAMES", "真断路", "d", state="已派发")
+        fixed = yt.new("GAMES", "已交付断路", "d", state="已交付")
+        _seed_events(("GAMES", fixed, "GATE_FAIL", 3), ("GAMES", fixed, "APPROVE", 0),
+                     ("GAMES", fixed, "DISPATCH", 0), ("GAMES", fixed, "GATE_PASS", 0),
+                     ("GAMES", fixed, "MERGE", 0), ("GAMES", fixed, "CLOSE", 0),
+                     ("GAMES", stuck, "GATE_FAIL", 3), ("GAMES", stuck, "DAILY_ALARM", 0))
+        assert D._breaker_issues(D._recent_events(24)) == [stuck]   # 只剩真断路
+        out = D.pm_daily()
+        assert f"ALARM {stuck}" in " ".join(out["actions"])
+        assert not any("日巡告警" in c["text"] for c in be.issues[fixed]["comments"])
+
+    def test_断路重批后再断路仍告警(self, tmp_config):
+        """重批（处置清位）后再次 attempt≥3 须重新置位——连续断路不丢报。"""
+        _seed_events(("GAMES", "G-9", "GATE_FAIL", 3), ("GAMES", "G-9", "APPROVE", 0),
+                     ("GAMES", "G-9", "DISPATCH", 0), ("GAMES", "G-9", "GATE_FAIL", 3))
+        assert D._breaker_issues(D._recent_events(24)) == ["G-9"]
+
     def test_断路与影子分歧_评论制作人且日幂等(self, fake_yt, tmp_config):
         """STUDIO-109 验收例③：断路/影子分歧单收到署名@制作人评论；同日重跑不刷屏。"""
         be = fake_yt

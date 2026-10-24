@@ -95,14 +95,27 @@ def _fmt_counts(m: dict) -> str:
 
 
 def _breaker_issues(evs: list[dict]) -> list[str]:
-    """近窗断路单（GATE_FAIL attempt≥3）去重，稳定序。"""
-    seen = []
+    """近窗断路单（attempt≥3）去重，稳定序——只报断路后无处置动作的单。
+
+    POLY-97 实录（2026-10-24 误报）：framework 泳道 3 闸败断路，当日重批改派
+    game 泳道并 MERGE/CLOSE 交付；次日 24h 窗口仍含旧 GATE_FAIL，日巡对已交付单
+    连日误报「等待制作人批示」。判据补处置侧：断路后窗口内出现 APPROVE/DISPATCH/
+    GATE_PASS/QA_PASS/QA_BACK/MERGE/CLOSE 任一后续事件即视为已处置，不再告警
+    （再断路重新置位，连续告警不丢；DAILY_ALARM 等观测事件不算处置）。"""
+    RECOVERED = {"APPROVE", "DISPATCH", "GATE_PASS", "QA_PASS", "QA_BACK", "MERGE", "CLOSE"}
+    seen: list[str] = []
+    broken: dict[str, bool] = {}
     for e in evs:
+        iid = e.get("issue")
+        if not iid:
+            continue
         if e.get("event") == "GATE_FAIL" and int(e.get("attempt", 0)) >= 3:
-            iid = e.get("issue") or "-"
-            if iid != "-" and iid not in seen:
+            broken[iid] = True
+            if iid not in seen:
                 seen.append(iid)
-    return seen
+        elif e.get("event") in RECOVERED and iid in broken:
+            broken[iid] = False
+    return [iid for iid in seen if broken[iid]]
 
 
 def _campaigns_dir() -> Path:
