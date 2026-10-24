@@ -194,8 +194,12 @@ def _patrol_one(yt, row) -> str:
     from .llm import ask, _sanitize_cmd
     from .yt import DeriveRefused
     from . import ytgw
-    # STUDIO-104：源预取进提示词——岛对源零网络动作、无网络等待（超时 600→240），
-    # 也不再放开 allow_web（省权限面；抓取工具本就被环境封禁）。
+    # STUDIO-104：源预取进提示词——岛对源零网络动作、无网络等待，也不再放开
+    # allow_web（省权限面；抓取工具本就被环境封禁）。
+    # 2026-10-24 修订（POLY-19/20 两日 13 次连败实录）：240s 只对"源预取型"巡逻
+    # 成立；开放型审计（测试盲区/双仓接缝对账）靠 Read/Grep 在仓内漫游核实，
+    # 240s 结构性不够（含 git log 快照进提示词后仍满超时）。放宽到 480s——
+    # 网络等待依旧为零，超时只吃真实工具核实时间。
     src_blocks, src_fails = _prefetch_sources(spec.get("sources", []))
     # STUDIO-77：巡逻岛 YouTrack 操作纳入 wkey 网关——本轮签发凭证钉进战役 state
     # （下轮签发即轮换，旧 key 自动作废），岛产物（进展评论/孵化子单）全走网关：
@@ -219,7 +223,7 @@ def _patrol_one(yt, row) -> str:
         "gate_cmd 纪律：只允许 test/grep/wc/cat/ls/diff/dotnet/python 与 git 只读子命令的 && 链"
         "（≤2段；禁管道、重定向、$()、反引号、分号），否则会被消毒器拒掉——"
         "基准阈值类断言写成 grep -c 计数或 dotnet test --filter 形式。",
-        timeout_sec=240,
+        timeout_sec=480,
         acct=(iid.split("-")[0], iid, "patrol"))   # STUDIO-107：巡逻岛成本记到战役母亲单
     if res is None:
         # 岛整体失败（600s 超时/非零退出）≠ 解析失败——POLY-19/20 教训：

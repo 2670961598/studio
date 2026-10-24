@@ -416,7 +416,8 @@ def test_巡逻岛prompt明令禁读凭证(fake_yt, tmp_config, monkeypatch):
 
 def test_源预取成功注入岛提示词(fake_yt, tmp_config, monkeypatch):
     """预取成功：源文本去 HTML 标签后直接进岛 prompt（岛对源零网络指令），
-    ask 不再放开 allow_web，超时降至 240s（无网络等待）。"""
+    ask 不再放开 allow_web；超时 2026-10-24 自 240 放宽至 480（POLY-19/20 实录：
+    网络等待已零，但开放型审计的仓内工具漫游核实超 240s）。"""
     from studio.yt import YT
     from studio import llm
     yt = YT("agent-8")
@@ -436,7 +437,7 @@ def test_源预取成功注入岛提示词(fake_yt, tmp_config, monkeypatch):
     assert "<body>" not in calls["p"]              # HTML 标签粗筛掉
     assert "https://example.com" in calls["p"]     # 源 URL 随块进 prompt
     assert "WebFetch" not in calls["p"]            # 岛 prompt 零抓取指令残留（验收断言）
-    assert calls["w"] is False and calls["t"] == 240   # 不放开网络权限；超时 600→240
+    assert calls["w"] is False and calls["t"] == 480   # 不放开网络权限；超时 240→480（2026-10-24 开放型审计修订）
 
 
 def test_源级失败跳过留痕(fake_yt, tmp_config, monkeypatch):
