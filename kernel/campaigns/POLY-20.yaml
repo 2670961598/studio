@@ -2,10 +2,11 @@ theme: 双线契约与接缝对账（core↔game 双仓）
 every_h: 72
 sources: []
 repo: /Volumes/BigDisk/UnityProject/MatchThree/Match3
-baseline_cmd: wc -l docs/api/seams.md docs/api/changelog.md
+baseline_cmd: wc -l docs/api/seams.md docs/api/changelog.md && git log --oneline -12 && git -C /Volumes/BigDisk/UnityProject/Match-GLM/Match3 log --oneline -8
 child_type: 需求
 child_track: L2 常规
-patrol_brief: 主视角 core 仓，跨仓核对用绝对路径 /Volumes/BigDisk/UnityProject/Match-GLM/Match3（只读）。核对：①seams.md
-  里⚑点名即冻结的缝近期是否被擅动（对照 changelog 与 git log）；②core 侧公共 API 变更是否有 changelog 加行（漏行=广播失守）；③game
-  仓 docs-game/ 与 AGENTS.md 声明的同步状态 vs 双仓实际提交漂移；④Tests/Game 与 Dlc 登记模板合规。确凿失守才开子单，gate
-  用 test -f + grep 断言。
+patrol_brief: 主视角 core 仓。近期变更事实直接读基准快照里的 git log 段（core 仓与 game 仓两段均已预取）——你无 Bash 权限，禁止尝试运行任何
+  git 命令；跨仓内容核对仅限 Read/Grep 用绝对路径 /Volumes/BigDisk/UnityProject/Match-GLM/Match3（只读）。核对：①seams.md
+  里⚑点名即冻结的缝近期是否被擅动（对照基准快照 changelog 行数与 git log 段）；②core 侧公共 API 变更是否有 changelog
+  加行（漏行=广播失守）；③game 仓 docs-game/ 与 AGENTS.md 声明的同步状态 vs 基准快照两段 git log 的提交漂移；④Tests/Game
+  与 Dlc 登记模板合规。确凿失守才开子单，gate 用 test -f + grep 断言。
