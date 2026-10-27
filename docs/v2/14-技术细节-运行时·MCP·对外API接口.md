@@ -31,7 +31,7 @@ interface CallContext {            // 一切写方法必带（缺任一即构造
   company: CompanyRef              // SEC-WD-01：多公司部署写必带；与平台绑定维不一致＝4xx/拒写
   caller: CallerRef                // 调用者身份（任职/位置/程序三分，v2/11 REC-MEM-02.who 同轴）
   authority: readonly GrantRef[]   // 权源主张（记录引用）；校验唯一经 PORT-AUTH，token/凭据不作权源
-  signature: Signature             // SEC-SIG-01 三值 {actorKind:'person'|'control'|'system', actorRef, onBehalfOf?}
+  signature: Signature             // SEC-SIG-01 三值（值集唯一主表 v2/09 ENU-118）{actorKind:'person'|'control'|'system', actorRef, onBehalfOf?}
   expected?: VersionRef            // 改状态调用必带预期版本（v2/11 §0.4-4；不匹配即拒并回当前版本）
 }
 interface ReadContext { readScope: ReadScope; caller: CallerRef }   // SEC-RD-01：本卷取「字段承载」二选一
@@ -245,7 +245,7 @@ emergencyStop(req: EmergencyStopRequest, ctx): PortResult<StopReceipt>  // REC-W
 | API-01..07 | GET /v1/company・org・people・projects・issues・finance・reports | 信息面（people 默认只出聚合；finance 三源缺一=unknown 段不补 0；reports 只出清单） | 现状骨架在 panel/external，迁 api=MIG-06 |
 | API-08 | GET /v1/requests/status | 回执查询（读投影快照；快照未命中=503 非 404——「查不到」≠「没有」） | 目标（未证） |
 | API-09 | GET /v1/agent-card | A2A 名片（公司定义生成，带版本与有效期；A2A 只做 exporter） | 骨架 |
-| API-10..13 | POST /v1/requests・explore・tasks・intel | 触发面：只产意图（REC-WORK-01）；202=已入队≠已受理；outcome 五值只在查询时出现 | 骨架 |
+| API-10..13 | POST /v1/requests・explore・tasks・intel | 触发面：只产意图（REC-WORK-01）；202=已入队≠已受理；outcome 五值只在查询时出现（**值集唯一主表 v2/09 ENU-122**——09 §六-5 回填；仅查询投影用，终值以 REC-WORK-02/12 为准） | 骨架 |
 | API-14 | GET /v1/events（SSE 订阅） | at-least-once＋event id 去重＋断线续传 | 目标（未证）；未实装=501 带原因，禁空流 |
 | API-15 | POST /v1/hooks/{source}（签名入站） | HMAC＋时间戳＋nonce＋重放窗＋载荷上限；产意图同触发面收口 | 目标（未证） |
 | API-16 | POST/GET /v1/subscriptions（出站订阅） | allowlist＋SSRF 拒＋退避＋死信（REC-EVT-03）＋重放窗 | 目标（未证） |
@@ -270,7 +270,7 @@ emergencyStop(req: EmergencyStopRequest, ctx): PortResult<StopReceipt>  // REC-W
 
 ## 六、PRM 生成器接口链（治 H3b-P1-1）
 
-**签名**（§1.5 已挂 PORT-EXEC.compileProjection，此处冻结输入输出）：输入 `ProjectionInput`＝{任职关系引用（生效版 REC-LIFE-01）、计划锁引用（REC-WORK-05）、能力声明集（REC-CAP-01＋版本）、部署收紧面（只收紧字段）}；输出 `PolicyProjection`＝{九段清单（段名主表 v2/12 §1.6：identity/authority/plan/tools/sandbox/approval/persona/evidence/validity）、digest、`unsupportedSegments[]` 逐段损失}。**验收口径＝生成八律 G1-G8**（v2/12 §1.6：单向编译／幂等／只收紧／段绑定／撤回可传／不猜不填／可复算／宿主子集显式降级）；实现=core 纯函数（零 IO、可复算），落点 v2/16 MIG-07；**生成器归 daemon 侧（框架），dsh-bridge 不生成**（现状 81-files/12 口径沿用）。建成前策略投影校验通道缺口登记 v2/17（SEC-SIG-04）。
+**签名**（§1.5 已挂 PORT-EXEC.compileProjection，此处冻结输入输出）：输入 `ProjectionInput`＝{任职关系引用（生效版 REC-LIFE-01）、计划锁引用（REC-WORK-05）、能力声明集（REC-CAP-01＋版本）、部署收紧面（只收紧字段）}；输出 `PolicyProjection`＝{九段清单（段名值集唯一主表 v2/09 ENU-108；段语义 v2/12 §1.6：identity/authority/plan/tools/sandbox/approval/persona/evidence/validity）、digest、`unsupportedSegments[]` 逐段损失}。**验收口径＝生成八律 PRM-G1..PRM-G8**（v2/12 §1.6、正式号 09 §一-61：单向编译／幂等／只收紧／段绑定／撤回可传／不猜不填／可复算／宿主子集显式降级）；实现=core 纯函数（零 IO、可复算），落点 v2/16 MIG-07；**生成器归 daemon 侧（框架），dsh-bridge 不生成**（现状 81-files/12 口径沿用）。建成前策略投影校验通道缺口登记 v2/17（SEC-SIG-04）。
 
 ## 七、工作空间端口（PORT-WS；治 C3-P1-3/H3b-P1-2）
 

@@ -98,7 +98,7 @@
 
 **证据通道（TOOL-07）**：〔事实〕eval/stdin 有已复现的调用差异——默认 `node -e` 可擦除类型，显式 `--input-type`（module/commonjs）则不经擦除路径（加 `--experimental-strip-types` 不恢复）；官方预期表述与上游 issue 状态未核（归 v2/17）。〔结论〕生产验证一律用 `.ts` 文件，不把 eval/stdin 当证据通道；README Quickstart 的裸 `bun <file.ts>` 属开发便利，验收时须以 `mise exec -- node` 等价重跑（登记 v2/17）。
 
-**无构建链开发态（TOOL-08）**：〔事实〕daemon 由 Node 24 原生 type-stripping 直接执行 `.ts`（`bun run daemon` 脚本体实为 `node apps/daemon/src/index.ts`——脚本壳已把运行时交回 Node）；不引 tsx/ts-node/bundler。测试执行器 vitest 的 bin 首行 shebang 为 `#!/usr/bin/env node`（`bun run test` 的 bin 派发语义未直接证明——E1b node 直跑测试为目标，登记 v2/17；治 L3H-08）。
+**无构建链开发态（TOOL-08）**：〔事实〕daemon 由 Node 24 原生 type-stripping 直接执行 `.ts`（`bun run daemon` 脚本体实为 `node apps/daemon/src/index.ts`——脚本壳已把运行时交回 Node）；不引 tsx/ts-node/bundler。测试执行器 vitest 的 bin 首行 shebang 为 `#!/usr/bin/env node`（`bun run test` 的 bin 派发语义未直接证明——EVCH-1b node 直跑测试为目标，登记 v2/17；治 L3H-08）。
 
 ### 1.6 源码/分发双轨约束（摘要；逐文件落位归 v2/16）
 
@@ -109,7 +109,7 @@
 3. **构建配置契约**：`tsconfig.build.json` `extends ../../tsconfig.base.json`（**不是**包级 tsconfig——须显式写 `include`/`exclude`，防把测试编进产物逼 vitest 成运行时依赖；治 L3H-05）＋显式 `noEmit:false`/`declaration:true`/`rewriteRelativeImportExtensions:true`。三个已证陷阱：`noEmit` 被继承＝退出 0 零产出；`noEmit`+`emitDeclarationOnly` 同真＝零产出退出 0；`.d.ts` 内说明符不重写（TS 5.9.3 源码＋探针）。
 4. **三种失败形态禁绝**：src/dist 双身份混用（双模块实例）、条件导出混两轨（`development` 指 src）、`paths` 混两轨。陈旧 dist＝直接失败：构建闸含源码指纹登记与比对（`dist/.build-stamp.json` 形态：sourceSha256/tsconfigSha256/node/tsc/builtAt，构建前重算比对，不等即失败）——**目标（未证）**，落 v2/16/17（治 L3H-04）；`--listFiles` 只作拓扑断言（产物不含本包外 workspace 源码），不作新鲜度证据。
 5. **dsh-bridge 路径消费**：现状 daemon 以 4 级相对路径推导插件源（`instructions-store.ts:72`，布局即接口，漂移）。目标二选一并写死「是否新增包边」：①数据面——dsh-bridge 把入口路径写进 `package.json#dsh`/补丁 YAML，daemon 只读文件不 import（保持冻结的零模块入边）；②提案加边 `["daemon","dsh-bridge"]`（同步 manifest/方向表/基线，走 §3.1 提案流）。私自改边表或退回路径推断都判负（治 L3H-03）。
-6. **发布面**：`files` 白名单四类（dist/数据文件/README/LICENSE），不用 `.npmignore` 黑名单；`exports` 每条目 `types` 先于 `import`、子路径完整枚举、无 `"./*"` 通配；**ESM-only**（不提供 `require` 入口，CJS 消费者须 `await import()`；CJS 负测归 v2/17——DEC-13-13）；不引 `npm-shrinkwrap.json`（存在即随包发布，会把消费者钉死）；发布候选保存 `npm pack --dry-run --json` 原始 JSON 逐项核对（体积上限与 npm 必带文件例外表由 v2/16 定数值）；发布前四项扫描（秘密/本机路径/map sources/锁文件不进包）——秘密面与 v2/15 对齐。复现三级：R1 可重装（**已有**：锁＋完整性）→ R2 可重建（目标）→ R3 可复算（目标）；未达 R3 不得声称「构建可复现」。
+6. **发布面**：`files` 白名单四类（dist/数据文件/README/LICENSE），不用 `.npmignore` 黑名单；`exports` 每条目 `types` 先于 `import`、子路径完整枚举、无 `"./*"` 通配；**ESM-only**（不提供 `require` 入口，CJS 消费者须 `await import()`；CJS 负测归 v2/17——DEC-13-13）；不引 `npm-shrinkwrap.json`（存在即随包发布，会把消费者钉死）；发布候选保存 `npm pack --dry-run --json` 原始 JSON 逐项核对（体积上限与 npm 必带文件例外表由 v2/16 定数值）；发布前四项扫描（秘密/本机路径/map sources/锁文件不进包）——秘密面与 v2/15 对齐。分发复现三级（值集 v2/09 ENU-133，ID 族＝09 §一-63）：REP-1 可重装（**已有**：锁＋完整性）→ REP-2 可重建（目标）→ REP-3 可复算（目标）；未达 REP-3 不得声称「构建可复现」。
 
 ---
 
@@ -241,7 +241,7 @@
 - **证据**：bun.lock:375；scheduler.ts:42。
 
 #### DEP-EXECA —— execa 10.1.1（adapters）/ 9.6.1（daemon 零使用）
-- **使用位置/使用包**：adapters 四文件（`dsh.ts`、`claude.ts`、`codex.ts`、`kimi.ts`，8 处 import 含 `type Subprocess`）；**daemon 声明 `^9.4.0` 但 src＋test 零 import**。
+- **使用位置/使用包**：adapters 四文件（`dsh.ts`、`claude.ts`、`codex.ts`、`kimi.ts`——执行器名值集 v2/09 ENU-88；8 处 import 含 `type Subprocess`）；**daemon 声明 `^9.4.0` 但 src＋test 零 import**。
 - **版本**：声明 `^10.0.0`（adapters）/`^9.4.0`（daemon）；实锁 10.1.1（bun.lock:389）与 9.6.1（bun.lock:499 别名条目 `@studio-next/daemon/execa`）。
 - **用途与不可替代性**：执行体 CLI 的启动、流式 stdout/stderr、信号与退出码——四原语需要「流＋取消＋退出码」稳定封装。
 - **兼容与边界**：10.x 需 `engines.node >= 22` 且不再依赖 `cross-spawn`；9.6.1 与 10.x 两代并存是**依赖面噪音**（锁体积/审计面/升级困惑），零使用故无行为风险。
@@ -316,7 +316,7 @@
 - **用途与不可替代性**：默认执行体（制作人 D5 定位：DSH 为主、其他也可但明示牺牲——84 裁决一）。
 - **兼容与边界**：docs/31/34 有真机注入证据（源码/`link:` 形态）；实体安装（registry tarball）不能依赖 TS 直载，dist 是与安装方式无关的保证（§1.6-1）；绑定细节与损失归 v2/12。
 - **安全与许可**：MIT（registry）；执行体是黑盒，凭据只经 env 透传不落配置/日志（现状）。
-- **替代与退出**：claude/codex/kimi 三家适配器已存在；换默认执行体另审。
+- **替代与退出**：claude/codex/kimi（执行器名值集 v2/09 ENU-88）三家适配器已存在；换默认执行体另审。
 - **规范影响**：进 v2/12 宿主绑定；不进公共规范。
 - **证据**：registry.npmjs.org/@deepseek-ai/dsh（元数据）；dsh.ts 常量；docs/31/34 真机报告。
 
@@ -442,10 +442,10 @@
 
 1. **不许用 LLM 打桩**：fake 一律确定性构造（fake YouTrack/fake CLI harness）；LLM 生成的桩输出不可复现，违反「测试只对契约与冻结验收口径负责」。
 2. **测试不钉实现细节**：只对契约与冻结验收口径负责——实现可换、契约不随便动、验收命令冻结后禁改。
-3. **测试绿≠能力证明**：fake 全绿、文档可读、多 agent 一致各自不能替代真机与跨实现验证（V 层唯一主表 v2/17）；E1（源码测试）与产物证据（dist/安装/宿主装载）不可互替（§1.6）。
+3. **测试绿≠能力证明**：fake 全绿、文档可读、多 agent 一致各自不能替代真机与跨实现验证（V 层唯一主表 v2/17）；EVCH-1（源码测试证据）与产物证据（dist/安装/宿主装载：EVCH-2/EVCH-3）不可互替（§1.6；证据通道层级族＝09 §一-62）。
 4. **零测试假绿**：`--passWithNoTests` 只防「零测试」假绿；退出码 0 须同时 guard 无违例、测试数 >0。
 5. **切 dist 的包先 build 再跑测试**：`exports` 指 dist 后 vitest 走 `exports` 解析，未构建即解析失败——顺序错误不是测试缺陷（当前切换集为空，§1.6-2）。
-6. **Node 侧第二条腿**：`bun run test` 的测试入口派发语义未直接证明（vitest bin shebang `#!/usr/bin/env node` 为据）——E1b「`mise exec -- node node_modules/vitest/vitest.mjs run` 同套件直跑」为目标（未证），与 E1 分别留证（治 L3H-08）。
+6. **Node 侧第二条腿**：`bun run test` 的测试入口派发语义未直接证明（vitest bin shebang `#!/usr/bin/env node` 为据）——EVCH-1b「`mise exec -- node node_modules/vitest/vitest.mjs run` 同套件直跑」为目标（未证），与 EVCH-1 分别留证（治 L3H-08）。
 
 ---
 
@@ -507,9 +507,9 @@
 | 4 | `node:sqlite` 长跑稳定性 | 48h 级运行＋崩溃注入（WAL/锁/恢复） |
 | 5 | YAML bomb 防线 | 别名/深度/规模上限负测 |
 | 6 | 正则 ReDoS 面 | 每条外部输入正则的长输入负测＋超时 |
-| 7 | E1b node 直跑测试 | `mise exec -- node node_modules/vitest/vitest.mjs run` 与 E1 同套件分别留证 |
+| 7 | EVCH-1b node 直跑测试 | `mise exec -- node node_modules/vitest/vitest.mjs run` 与 EVCH-1 同套件分别留证 |
 | 8 | CJS 消费者负测（ESM-only 断言） | `require('@studio-next/…')` 预期失败形态实测 |
-| 9 | dist 构建产物 spike（首链 E2/E3） | `tsconfig.build.json` 建后跑构建＋`--listFiles` 拓扑断言＋build-stamp 陈旧检测 |
+| 9 | dist 构建产物 spike（首链 EVCH-2/EVCH-3） | `tsconfig.build.json` 建后跑构建＋`--listFiles` 拓扑断言＋build-stamp 陈旧检测 |
 | 10 | daemon→dsh-bridge 路径消费二选一落地（§1.6-5） | 数据面读文件或提案加边，任一落单并验证 |
 | 11 | simple-git 上游 LICENSE；DSH registry 元数据 | 联网核对原文 |
 | 12 | Bun 1.4.3 `node:child_process` 兼容面数字 | 官方兼容表或自测 |
@@ -522,7 +522,7 @@
 
 | 来源 | 条目 | 处置（本卷位置） | 状态 |
 |---|---|---|---|
-| H3b-②（正面） | 79 依赖矩阵事实层零错误（锁版本行号/import 图/探针逐条属实） | §二照录并保持 DEP 名称式 ID；execa 双代归一为 21 条（与 v2/00 §四一致） | 已解（采信） |
+| H3b-②（正面） | 79 依赖矩阵事实层零错误（锁版本行号/import 图/探针逐条属实） | §二照录并保持 DEP 名称式 ID；execa 双代归一为 21 条（与 v2/00 §四 一致） | 已解（采信） |
 | H3b-P1-3 | DEP-HONO 缺「api 声明未用」标注 | §2.3 DEP-HONO 使用位置补标注＋§2.6-2 清理项 | 已解 |
 | H3b-P2-2 | AGENTS「覆盖全部包」与 test/ 缺口粗细差 | §1.4 三态口径写死；AGENTS 修订（§三补口径、§二 store 删 drizzle）登记为 V2 定稿后统一办理 | 本卷侧已解；AGENTS 侧登记 |
 | DSF L3H-01 | 「入 program＝已覆盖」掩盖零执行＋3 包红＋5 处 JSON attribute 反例 | §1.4 三态＋先修红再串门禁；5 处文件列名＋§八-1 | 已解（登记）；修复归 v2/16/17 |
