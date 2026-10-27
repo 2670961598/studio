@@ -34,7 +34,7 @@ import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import type { EventRecord } from '@studio-next/contract'
-import { budgetView, foldBudgets } from '@studio-next/core'
+import { budgetView, COST_CLOSE_KV_KEY, foldBudgets } from '@studio-next/core'
 import { openLedger, type Ledger } from '@studio-next/store'
 import {
   killSurvivors,
@@ -255,8 +255,8 @@ describe('崩溃注入五点回归集（F3-11：五点各 kill 一次，重启�
       // —— 恢复：同库同目录重启 → 同单重派（重挂欠账岗驱动）——
       seedDueJob(dir)
       const p2 = spawnServe(config)
-      await p2.waitFor(/recycled=1/, { what: '恢复链走完（CLOSE）' })
-      await p2.waitFor(/\[heartbeat\]/, { what: 'CLOSE 后空拍' })
+      const idxClose = await p2.waitFor(/recycled=1/, { what: '恢复链走完（CLOSE）' })
+      await p2.waitFor(/\[heartbeat\]/, { from: idxClose, what: 'CLOSE 后空拍' })
       p2.child.kill('SIGINT')
       const exit2 = await p2.exited()
       expect(exit2.code).toBe(0)
@@ -309,8 +309,8 @@ describe('崩溃注入五点回归集（F3-11：五点各 kill 一次，重启�
       const p2 = spawnServe(config)
       await p2.waitFor(/在途接管（R-B）：1 条/, { what: '启动例行接管（R-B）：前命孤儿 running 工位收口' })
       await p2.waitFor(/dispatched=1/, { what: '崩溃单重派（新 attempt）' })
-      await p2.waitFor(/recycled=1/, { what: '恢复链走完（CLOSE）' })
-      await p2.waitFor(/\[heartbeat\]/, { what: 'CLOSE 后空拍' })
+      const idxClose = await p2.waitFor(/recycled=1/, { what: '恢复链走完（CLOSE）' })
+      await p2.waitFor(/\[heartbeat\]/, { from: idxClose, what: 'CLOSE 后空拍' })
       p2.child.kill('SIGINT')
       const exit2 = await p2.exited()
       expect(exit2.code).toBe(0)
@@ -356,6 +356,11 @@ describe('崩溃注入五点回归集（F3-11：五点各 kill 一次，重启�
       expect(post1.queryEvents()).toHaveLength(0)
       expect(post1.kvGet('tick.seq')).toBe('1')
       expect(post1.kvGet('activity.cursor')).toBe('') // 空串=游标 null 持久形态
+      // 本用例只关心心跳缝：19:55 后的合法日终成本工序由专套覆盖；重启前置为今日已收讫，
+      // 隔离其 REPORT_COST_CLOSE 事件，原「每拍恰一条心跳、其他零事件」断言保持不变。
+      const now = new Date()
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+      post1.kvSet(COST_CLOSE_KV_KEY, today)
       post1.close()
 
       // —— 恢复：重启跑数拍后优雅停 ——
@@ -410,8 +415,8 @@ describe('崩溃注入五点回归集（F3-11：五点各 kill 一次，重启�
       // —— 恢复：重启（GATE_PASS 回执已释放意图键）→ 同单重派 attempt=2 走完整链 ——
       seedDueJob(dir)
       const p2 = spawnServe(config)
-      await p2.waitFor(/recycled=1/, { what: '恢复链走完（CLOSE）' })
-      await p2.waitFor(/\[heartbeat\]/, { what: 'CLOSE 后空拍' })
+      const idxClose = await p2.waitFor(/recycled=1/, { what: '恢复链走完（CLOSE）' })
+      await p2.waitFor(/\[heartbeat\]/, { from: idxClose, what: 'CLOSE 后空拍' })
       p2.child.kill('SIGINT')
       const exit2 = await p2.exited()
       expect(exit2.code).toBe(0) // 重启进程优雅停面完好（drain 崩溃不留停机损伤）
