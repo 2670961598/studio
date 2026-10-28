@@ -7,24 +7,31 @@
  *   §三 EXEC-01（fail-closed 三之一：校验失败不启动）；docs/plan/05 IMPL-07-09 验收口径
  *   「派发缺省圈定＋放宽显式授权留痕；派发校验失败不启动；NEG-RUN-04」。
  *
- * 本套五面（全部落在 `engine/work/dispatch-seatbelt.ts` 的派发域调用点）：
+ * 本套六面：
  *   1. 缺省 read-only：不传授权＝写域零放行、无留痕（「不传=不圈定」路径必须不存在）；
  *   2. 显式放宽留痕：workspace-write 须授权原文＋授权面＋本 attempt 写域，note 行单行可判；
  *   3. **NEG-RUN-04**：符号链接/绝对路径逃逸被拒（realpath 判据；拒派不剪根、不静默降级）；
  *   4. 失败不 spawn：拒派全形下 spawn 调用计数恒 0，留痕先于 spawn，留痕失败同样不启动；
- *   5. 注册面随动：07-08 两参签名（base?＋seatbelt?）由本件组合调用，省略＝read-only。
- *
- * 断言纪律：不 spawn 真子进程（本套零外部进程面）；只测派发域校验/留痕/闸序，适配器内部
- * 的 profile 渲染归 07-08 套件（packages/adapters/test/v2/seatbelt.test.ts），本套只借
- * `dispatchSeatbeltProfile` 证明「计划→profile 文本」的收口面。
+ *   5. 注册面随动：07-08 两参签名（base?＋seatbelt?）由本件组合调用，省略＝read-only；
+ *   6. 接线面（真引擎）：`engine.executeDispatch` 前置 gate（缺省 read-only／放宽 note 落
+ *      DISPATCH 台账／拒派 DISPATCH_FAIL 且 launch 零调用）＋`executor-face` 注册面源侧锚。
+ * 断言纪律：fake 只替代外部端口（真引擎＋真 SQLite 台账；onLaunch 回显＝spawn 观察面，
+ * docs/v2/17 §一 V3）；profile 渲染归 07-08 套件，本套只借 `dispatchSeatbeltProfile` 收口。
  */
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
-import { DEFAULT_SEATBELT_PLAN } from '@studio-next/adapters'
-import type { AdapterFactory, SeatbeltTier } from '@studio-next/adapters'
+import { DEFAULT_SEATBELT_PLAN, createRegistry } from '@studio-next/adapters'
+import type { AdapterFactory, SeatbeltGrant, SeatbeltTier } from '@studio-next/adapters'
+import { openLedger } from '@studio-next/store'
+import { createEngine, ENGINE_CONFIG_DEFAULTS } from '../../../src/engine/engine.ts'
+import type { TickReport } from '../../../src/engine/engine.ts'
+import { createFakeAdapter, createFakePlatform } from '../../../src/engine/fakes.ts'
+import { createDefaultGateRunner } from '../../../src/engine/gate.ts'
+import { createDefaultAssembler } from '../../../src/engine/prompt-assembly.ts'
+import { DEMO_SNAPSHOT } from '../../../src/assembly/demo/demo-snapshot.ts'
 import {
   DISPATCH_SEATBELT_TIERS,
   dispatchAdapterResolver,
@@ -73,9 +80,62 @@ function catchError(run: () => unknown): string {
   throw new Error('期望拒派（CONFIG_INVALID），实际放行——fail-open 路径仍在')
 }
 
-// ---------------------------------------------------------------------------
-// 一、缺省 read-only（派发缺省圈定；「不传＝不圈定」必须已亡）
-// ---------------------------------------------------------------------------
+// —— 接线夹具：真引擎栈（fake 平台/执行体＋真 SQLite 台账；onLaunch 计数=spawn 观察面） ——
+
+const T0 = Date.parse('2026-11-02T00:00:00.000Z')
+
+interface WireStack {
+  readonly platform: ReturnType<typeof createFakePlatform>
+  readonly ledger: ReturnType<typeof openLedger>
+  readonly engine: ReturnType<typeof createEngine>
+  readonly root: string
+  launches(): number
+  advance(ms: number): void
+}
+
+/** 建栈（grantOf 以建根回调：授权面须引用该用例自己的根，不得跨用例） */
+function wireStack(tag: string, grantOf?: (root: string) => SeatbeltGrant): WireStack {
+  const root = mkdtempSync(join(workdir, `engine-${tag}-`))
+  const ledger = openLedger(join(root, 'ledger.sqlite'))
+  let t = T0
+  let launches = 0
+  const platform = createFakePlatform({ now: () => new Date(t).toISOString() })
+  const registry = createRegistry()
+  // 名字取 'dsh'：放宽档的端子核查面按内置家族名判（fake 只替代端口；见模块 assertWideningEnforceable）
+  registry.register(createFakeAdapter({ name: 'dsh', onLaunch: () => (launches += 1) }), { default: true })
+  const engine = createEngine({
+    platform,
+    ledger,
+    registry,
+    assembler: createDefaultAssembler({ fwkVersion: 'v0.5-test', frameworkPrompts: '你是 demo worker：按任务书产出 REPORT 与 summary。', snapshot: DEMO_SNAPSHOT, acceptance: ['echo demo-ok'], docRefs: ['docs/17-§2（主循环七相位）'] }),
+    gateRunner: createDefaultGateRunner(),
+    clock: () => t,
+    config: { ...ENGINE_CONFIG_DEFAULTS, company: DEMO_SNAPSHOT.slug, rootDir: join(root, 'var'), defaultPersonId: 'AGENT-1', deptFallback: 'departments/工程部', defaultLane: 'core', mirrorRescanEveryTicks: 1, stallAfterMs: 60_000 },
+    people: DEMO_SNAPSHOT.people,
+    ...(grantOf !== undefined ? { dispatchSeatbelt: grantOf(root) } : {}),
+  })
+  const advance = (ms: number): void => {
+    t += ms
+  }
+  return { platform, ledger, engine, root, launches: () => launches, advance }
+}
+
+/** 推 n 拍（假时钟 +1000ms/拍） */
+async function runWireTicks(stack: WireStack, n = 2): Promise<TickReport[]> {
+  const reports: TickReport[] = []
+  for (let i = 0; i < n; i += 1) {
+    stack.advance(1000)
+    reports.push(await stack.engine.tick())
+  }
+  return reports
+}
+
+/** 全部派发动作结果（跨拍展平） */
+function dispatchResults(reports: readonly TickReport[]): TickReport['phases']['dispatch']['results'] {
+  return reports.flatMap((r) => r.phases.dispatch.results).filter((r) => r.actionType === 'dispatch')
+}
+
+// —— 一、缺省 read-only（派发缺省圈定；「不传＝不圈定」必须已亡） ——
 
 describe('缺省最严：派发不传授权＝read-only、写域零放行、无留痕', () => {
   it('不传 grant：tier=read-only、writeRoots 空、trail 缺席（不是「不圈定」）', () => {
@@ -117,9 +177,7 @@ describe('缺省最严：派发不传授权＝read-only、写域零放行、无�
   })
 })
 
-// ---------------------------------------------------------------------------
-// 二、显式放宽：须显式授权＋留痕（07-08 守门＋派发域留痕面）
-// ---------------------------------------------------------------------------
+// —— 二、显式放宽：须显式授权＋留痕（07-08 守门＋派发域留痕面） ——
 
 describe('显式放宽：workspace-write 须授权原文，本 attempt 写域逐条留痕', () => {
   it('tier＋绝对根＋authorization → 计划落根（realpath 归一）、trail 携授权面与写域', () => {
@@ -222,9 +280,7 @@ describe('显式放宽：workspace-write 须授权原文，本 attempt 写域逐
   })
 })
 
-// ---------------------------------------------------------------------------
-// 三、NEG-RUN-04：符号链接/绝对路径逃逸被拒（拒派，不剪根不降级）
-// ---------------------------------------------------------------------------
+// —— 三、NEG-RUN-04：符号链接/绝对路径逃逸被拒（拒派，不剪根不降级） ——
 
 describe('NEG-RUN-04 逃逸被拒：绝对路径与符号链接同判（realpath 为判据）', () => {
   it('绝对路径逃逸：追加产出位在授权面外 → dispatch/seatbelt-write-root-escape', () => {
@@ -329,9 +385,7 @@ describe('NEG-RUN-04 逃逸被拒：绝对路径与符号链接同判（realpath
   })
 })
 
-// ---------------------------------------------------------------------------
-// 四、失败不 spawn（SEC-FC-05「派发校验失败不启动」的观察面）
-// ---------------------------------------------------------------------------
+// —— 四、失败不 spawn（SEC-FC-05「派发校验失败不启动」的观察面） ——
 
 describe('派发校验失败不启动：拒派全形 spawn 恒 0；通过形恰一次', () => {
   it('非法档/未授权放宽/逃逸/未知执行体：逐形拒派且 spawn 零调用', async () => {
@@ -382,9 +436,7 @@ describe('派发校验失败不启动：拒派全形 spawn 恒 0；通过形恰�
   })
 })
 
-// ---------------------------------------------------------------------------
-// 五、注册面随动（07-08 两参签名：base?＋seatbelt?；省略＝read-only）
-// ---------------------------------------------------------------------------
+// —— 五、注册面随动（07-08 两参签名：base?＋seatbelt?；省略＝read-only） ——
 
 describe('注册面随动：07-08 两参签名由本件组合（省略＝read-only，装配期即守门）', () => {
   it('四家名/档位位/判断位同源解析；未知名 undefined（不猜家）', () => {
@@ -439,9 +491,89 @@ describe('注册面随动：07-08 两参签名由本件组合（省略＝read-on
   })
 })
 
-// ---------------------------------------------------------------------------
-// 六、头注锚（文档口径落代码，防后续把「计划收口」读成「写域已封死」）
-// ---------------------------------------------------------------------------
+// —— 六、接线面·真引擎：派发前置 gate（缺省 read-only／放宽留痕／拒派不 spawn） ——
+
+describe('接线面·真引擎：executeDispatch 前置 gate（SEC-FC-05 后半落主循环）', () => {
+  it('缺省不注入 grant：派发成功、launch 恰一次、DISPATCH note 携 seatbelt=read-only;roots=0', async () => {
+    const stack = wireStack('ro')
+    const created = await stack.platform.issues.create({ title: '派发面缺省档', type: 'task', level: 0 })
+    const results = dispatchResults(await runWireTicks(stack, 3))
+    expect(results[0]?.ok).toBe(true)
+    expect(stack.launches()).toBe(1)
+    const events = stack.ledger.queryEvents({ issue: created.id }).filter((e) => e.event === 'DISPATCH')
+    expect(events).toHaveLength(1)
+    expect(events[0]?.note).toContain(';seatbelt=read-only;roots=0;workspace=')
+  })
+
+  it('显式放宽：DISPATCH note 携授权原文＋本 attempt 写域（留痕随派发落账）', async () => {
+    const stack = wireStack('widen', (root) => ({
+      tier: 'workspace-write',
+      writeRoots: [join(root, 'var')],
+      authorization: 'IMPL-07-09 引擎接线放宽留痕',
+    }))
+    const created = await stack.platform.issues.create({ title: '派发面放宽档', type: 'task', level: 0 })
+    await runWireTicks(stack, 3)
+    expect(stack.launches()).toBe(1)
+    const note = stack.ledger.queryEvents({ issue: created.id }).find((e) => e.event === 'DISPATCH')?.note ?? ''
+    expect(note).toContain('seatbelt=workspace-write;auth=IMPL-07-09 引擎接线放宽留痕;roots=')
+    expect(note).toContain(`workspaces/${created.id}/att1`)
+  })
+
+  it('拒派面：工位不在授权面 → DISPATCH_FAIL，launch 零调用、无 DISPATCH 台账、平台不迁移', async () => {
+    const stack = wireStack('reject', (root) => ({
+      tier: 'workspace-write',
+      writeRoots: [join(root, 'elsewhere')],
+      authorization: 'IMPL-07-09 越界授权面',
+    }))
+    mkdirSync(join(stack.root, 'elsewhere'), { recursive: true })
+    const created = await stack.platform.issues.create({ title: '派发面拒派', type: 'task', level: 0 })
+    const before = (await stack.platform.issues.get(created.id)).state
+    const results = dispatchResults(await runWireTicks(stack, 2))
+    expect(results.length).toBeGreaterThan(0)
+    expect(results.every((r) => !r.ok)).toBe(true)
+    expect(results[0]?.detail ?? '').toContain('DISPATCH_FAIL')
+    expect(results[0]?.detail ?? '').toContain('dispatch/seatbelt-workspace-outside-scope')
+    expect(stack.launches()).toBe(0)
+    expect(stack.ledger.queryEvents({ issue: created.id }).filter((e) => e.event === 'DISPATCH')).toHaveLength(0)
+    expect((await stack.platform.issues.get(created.id)).state).toBe(before)
+  })
+
+  it('拒派面·NEG-RUN-04：工位被符号链接化 → 拒派（launch 零调用，detail 点名 workspace-symlink）', async () => {
+    const stack = wireStack('symlink')
+    const created = await stack.platform.issues.create({ title: '派发面符号链接工位', type: 'task', level: 0 })
+    const parent = join(stack.root, 'var', 'workspaces', created.id)
+    mkdirSync(parent, { recursive: true })
+    mkdirSync(join(stack.root, 'outside-att'), { recursive: true })
+    symlinkSync(join(stack.root, 'outside-att'), join(parent, 'att1'))
+    const results = dispatchResults(await runWireTicks(stack, 2))
+    expect(results[0]?.ok).toBe(false)
+    expect(results[0]?.detail ?? '').toContain('dispatch/seatbelt-workspace-symlink')
+    expect(stack.launches()).toBe(0)
+    expect(stack.ledger.queryEvents({ issue: created.id }).filter((e) => e.event === 'DISPATCH')).toHaveLength(0)
+  })
+})
+
+describe('接线面·装配：注册面走派发域唯一调用点（源侧锚，防回退「不传圈定」）', () => {
+  it('executor-face 用 dispatchAdapterResolver()，旧组合 judgeAwareResolver(tierAwareResolver()) 不存在', () => {
+    const faceSrc = readFileSync(
+      fileURLToPath(new URL('../../../src/assembly/serve/executor-face.ts', import.meta.url)),
+      'utf8',
+    )
+    expect(faceSrc).toContain('dispatchAdapterResolver()')
+    expect(faceSrc).not.toContain('judgeAwareResolver(tierAwareResolver())')
+  })
+
+  it('engine.ts：gate 在 detect 之前、DISPATCH note 携 seatbeltNote（顺序即语义）', () => {
+    const engineSrc = readFileSync(fileURLToPath(new URL('../../../src/engine/engine.ts', import.meta.url)), 'utf8')
+    const gate = engineSrc.indexOf('resolveWorkerDispatchSeatbelt({ ticket')
+    const detect = engineSrc.indexOf('const detect = await adapter.detect()')
+    expect(gate).toBeGreaterThan(0)
+    expect(detect).toBeGreaterThan(gate)
+    expect(engineSrc).toContain('${seatbeltNote(seatbelt)}')
+  })
+})
+
+// —— 七、头注锚（文档口径落代码，防后续把「计划收口」读成「写域已封死」） ——
 
 describe('头注锚（SEC-FC-05 后半／PRB-04 前置／不启动判据）', () => {
   it('dispatch-seatbelt.ts 头注登记：SEC-FC-05 后半、PRB-04 未执行按不支持、NEG-RUN-04、失败不启动', () => {
