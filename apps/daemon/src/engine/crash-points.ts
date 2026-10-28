@@ -7,8 +7,8 @@
  * `SN_CRASH_POINT=<点名>` 环境变量开启后，crashHook(point) 在命中点 process.kill(SIGKILL)
  * 自杀（硬杀——验证的是**非优雅死**后的恢复，不是优雅停机）。**未设环境变量=零行为**：
  * ①-⑤ 五处调用点进入生产代码（engine.ts）但默认 no-op，对生产路径无任何影响；
- * ⑥ records-commit **无生产调用点**（记录提交在 store hist.ts；daemon 侧不 import 记录提交），
- * 只作注册名由 V2 crash 子进程在记录事务 COMMIT 前调用——不新增生产行为面。
+ * ⑥ records-commit **无生产调用点**（记录提交归属 store；daemon 侧不 import 记录提交），
+ * 只作注册名由 V2 crash 子进程以 node:sqlite 直写 v14 列、在 COMMIT 前调用——不新增生产行为面。
  * 这是机制化的测试缝（env 门控），不是可配置的生产功能——daemon.yaml 不收此键。
  *
  * 【六点冻结表（本表即唯一权威；改动走批示）】
@@ -27,7 +27,7 @@
  * | ③ | harvest-verdict | 相位 4 收割 | harvestOne：四要件判定后、GATE_PASS 落账前 | execute（收割）完成、receipt 缺失 |
  * | ④ | heartbeat-write | 相位 7 落账/心跳 | tick：零动作拍 HEARTBEAT 事件写入前 | 落账/心跳相位缝（v0 无批量汇总面——如实降级断言，见测试头注） |
  * | ⑤ | shutdown-drain | 停机（生命周期） | dispose：drain kill 循环后、在途注销前 | SIGINT 停机 drain 中途 |
- * | ⑥ | records-commit | 记录面（DOM-05；非主循环七相位） | store hist 记录事务 INSERT 后、COMMIT 前调 crashHook('records-commit')（**无生产调用点**——记录提交在 store，daemon 侧不 import） | **记录事务已写未提交**（提交前/后缝隙）：重启即回滚，records 无半截行；events/cost_daily 零副作用；再提交同 recordId 幂等（不重复副作用） |
+ * | ⑥ | records-commit | 记录面（DOM-05；非主循环七相位） | records 表事务：INSERT 后、COMMIT 前调 crashHook('records-commit')（**无生产调用点**——记录提交归属 store，daemon 侧不 import；V2 crash 子进程以 node:sqlite 直写 v14 列） | **记录事务已写未提交**（提交前/后缝隙）：重启即回滚，records 无半截行；events/cost_daily 零副作用；同 recordId 重放只落一行（不重复副作用） |
  *
  * 恢复语义（F3-11「恢复先查 receipt」）＝重启后一切判定以台账事件（receipt）为据：
  *   - ①②（无 DISPATCH 回执）→ 单可重派 attempt 不漂（事件派生计数）、预算沿用未结预留（adopt 不双落）；
@@ -36,7 +36,8 @@
  *     注入测试语义转正为生产面；接管≠收割：四要件无据不判，预算沿用 adopt 不双落）；
  *   - ④⑤ → 重启后无害：心跳不重、拍序/游标续用、库完整（WAL 硬杀后 integrity ok）；
  *   - ⑥ → 记录面恢复：未 COMMIT 事务由 SQLite 回滚（无半截行、无「已提交」假绿）；
- *     再提交同一 recordId＝hist 幂等返回既有（不重复副作用）；已提交终态行跨崩溃存活（不丢终态）。
+ *     已提交终态行跨崩溃存活（不丢终态）；同一 recordId 重放只落一行（不重复副作用——
+ *     hist 写口的形状/幂等语义归 PORT-HIST 测试，本点只证提交缝隙的库语义）。
  *
  * 落点疑点（上报）：docs/17-§10 将五点记为「contract 包测试集」，但真进程 SIGKILL 硬杀+
  * 重启只能由 daemon 侧 spawn 测试承载（contract runner 跑不了进程生命周期）——①-⑤ 按实现单

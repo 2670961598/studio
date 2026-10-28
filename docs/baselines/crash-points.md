@@ -129,7 +129,7 @@ grep -rn "SN_CRASH_POINT" apps/daemon/src apps/daemon/test
 
 | # | 点名 | 相位（①-⑤ 17-§2；⑥ 记录面） | 注入位置（①-⑤ engine.ts；⑥ V2 crash 子进程） | 缝隙语义（F3-11 三段） |
 |---|---|---|---|---|
-| ⑥ | `records-commit` | 记录面（DOM-05；**非主循环七相位**） | store hist 记录事务 INSERT 后、COMMIT 前调 `crashHook('records-commit')`（**无生产调用点**——记录提交在 store，daemon 侧不 import） | **记录事务已写未提交**（提交前/后缝隙）：重启即回滚，records 无半截行；events/cost_daily 零副作用；再提交同 recordId 幂等（不重复副作用） |
+| ⑥ | `records-commit` | 记录面（DOM-05；**非主循环七相位**） | records 表事务：INSERT 后、COMMIT 前调 `crashHook('records-commit')`（**无生产调用点**——记录提交归属 store，daemon 侧不 import；V2 crash 子进程以 node:sqlite 直写 v14 列） | **记录事务已写未提交**（提交前/后缝隙）：重启即回滚，records 无半截行；events/cost_daily 零副作用；同 recordId 重放只落一行（不重复副作用） |
 
 - **提交前/后缝隙的落法**：⑥ 覆盖「INSERT 已写、COMMIT 未发」的提交前缝隙（硬杀→回滚→无半截行）；同一测试的 commit 腿覆盖提交后缝隙（重启正常 COMMIT→行在且只一行→不重复副作用）。未把提交后拆成独立点名（本代只登记 1 点，避免虚增点数）。
 - **⑥ 恢复语义**：以库内**已提交行**为唯一判据——未 COMMIT 的事务由 SQLite 回滚，事务内可见的 `records=2` 在重启后必须回到 `records=1`；同 `recordId` 重放不得产生第二行。
@@ -153,7 +153,7 @@ grep -rn "records-commit" apps/daemon/src
 
 | 文件 | 行数 | 职责 |
 |---|---|---|
-| `apps/daemon/test/v2/crash/records-crash.test.ts` | 263 | 5 用例：冻结表登记、崩溃前种子基线、误点名零行为负控、真 SIGKILL 崩溃、重启正常提交；断言三不变量 |
+| `apps/daemon/test/v2/crash/records-crash.test.ts` | 267 | 5 用例：冻结表登记、崩溃前种子基线、误点名零行为负控、真 SIGKILL 崩溃、重启正常提交；断言三不变量 |
 | `apps/daemon/test/v2/crash/fixtures/records-crash-child.ts` | 101 | 真子进程入口：openLedger→BEGIN→INSERT records→同步打印 `PRE_COMMIT`→COMMIT 前 `crashHook('records-commit')`；未命中点名恒 ROLLBACK＋exit 91（绝不提交） |
 | `apps/daemon/test/v2/crash/fixtures/records-crash-scenario.ts` | 165 | 确定性场景：种子 event/cost_daily/record 与缝隙 record 的 v14 列值＋原样 INSERT（测试夹具，不进生产面） |
 
@@ -198,7 +198,7 @@ Test Files  1 passed (1)
 | crash V2 | `mise exec -- bun run test:v2 -- apps/daemon/test/v2/crash` | 1 file / **5 tests** passed |
 | guard | `mise exec -- bun run guard:boundaries` | PASS：扫描 737 文件（范围面代码件 595），**0 违例** |
 
-文件行数（阈 600）：`crash-points.ts` 72｜crash 测试 263｜child 101｜scenario 165｜`cost-frozen.test.ts` 291｜`rebuild.test.ts` 170——全部 ≤600。
+文件行数（阈 600）：`crash-points.ts` 73｜crash 测试 267｜child 101｜scenario 165｜`cost-frozen.test.ts` 291｜`rebuild.test.ts` 170——全部 ≤600。
 
 ### 7.5 诚实边界（未解决缺口，不静默）
 
