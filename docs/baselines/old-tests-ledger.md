@@ -543,3 +543,20 @@ mise exec -- node scripts/verify/old-test-ledger.mjs
 | `packages/company/test/multifile.test.ts` | 红 | 1 | 断言 | people 清单变化 | 保留观察 | V2 后存废门 |
 
 **复跑命令**：`mise exec -- node_modules/.bin/vitest run packages/company apps/daemon/test/cli/industry-templates.e2e.test.ts --testTimeout=60000`；实测 5 文件 / 13 语义红＋1 既有 spawn 超时；其余旧套件复跑仍绿（dependencies/deps-cases/jobs-loading/groups/hooks/state-hygiene/workflows/cost-guard）。**不修、不删、不 skip**；V2 门不以此表判。
+
+---
+
+## 九、MIG-06 触及面复跑补充登记（2026-10-28）
+
+> 性质：**MIG-06 拆分/模板迁移触及面旧测试复跑登记**（plan/04 §1.8.5-4；红也登记、不阻塞 V2 门）。不属 §二 209 行冻结主表，不参与 209/13/20 计数。
+> 触发：MIG-06 的 serve/engine 拆分改变了导入路径与装配序；MIG-05 模板文本变更使旧夹具的精确字符串补丁失效。
+> 归属：拆分行为面由 V2 e2e/records 覆盖；旧夹具红为模板文本/版本硬编码漂移，不修、不删、不 skip。
+
+| 文件 | 复跑结果 | 红用例 | 失败类 | 原因 | 处置 | 责任波 |
+|---|---|---|---|---|---|---|
+| `apps/daemon/test/engine/e2e.test.ts` | 红 | 1 | 断言 | store schema 版本硬编码 13，现 v15 | 保留观察 | V2 后存废门 |
+| `apps/daemon/test/engine/split/split.e2e.test.ts` | 红 | 1（collection） | 环境/夹具 | 旧测试按 v1 模板精确文本补丁，MIG-05 模板已 v2 → level-count-mismatch | 保留观察 | V2 后存废门 |
+| `apps/daemon/test/engine/control/hot-reload.test.ts` | 红 | 11 | 断言 | 旧夹具 patch `2: 1 #`/mission 文本，v2 模板无该文本 → invalid 级联 | 保留观察 | V2 后存废门 |
+| `apps/daemon/test/cli/*` | 红 | 13 | timeout | 真 bin spawn 5s 超时族（本机负载；既有一族） | 保留观察 | V2 后存废门 |
+
+**复跑命令**：`mise exec -- node_modules/.bin/vitest run apps/daemon/test/engine apps/daemon/test/cli`；实测 engine 60 文件/58 过/2 红（1 断言+1 collection），cli 13 红全 timeout；assembly 6 文件/52 全绿；V2 e2e/records 全绿。**不修、不删、不 skip**；V2 门不以此表判。
