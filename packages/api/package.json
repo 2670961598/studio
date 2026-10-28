@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Studio Next 对外 API：:8788 只落单不派工，默认局域网（信息面 + 触发面 + Agent Card）",
+  "description": "Studio Next 对外 API：:8788 只落单不派工（信息面 + 触发面 + Agent Card）；装配由 daemon assembly/api 同进程注入（v2/14 §四）",
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts"
@@ -13,11 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@studio-next/company": "workspace:*",
     "@studio-next/contract": "workspace:*",
-    "@studio-next/store": "workspace:*",
-    "@modelcontextprotocol/server": "^2.0.0",
-    "hono": "^4.6.0",
-    "zod": "^4.0.0"
+    "hono": "^4.6.0"
   }
 }

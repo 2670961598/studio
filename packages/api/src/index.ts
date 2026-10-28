@@ -1,43 +1,80 @@
 /**
- * Studio Next · api —— 对外 API（占位）
+ * Studio Next · api —— 对外 API（:8788；API-01..16 端点面）
  *
- * 定位（docs/17-§8、§11，需求 C3）：独立进程 / 独立端口（:8788）/ 独立凭证，默认局域网暴露。
+ * 定位（docs/v2/14 §四、plan/05 IMPL-06-07/08）：独立凭证 / 独立端口 / **只落单不派工**；
+ * 读面同源 PORT-OBS 投影＋只读台账视图，写面唯一经 PORT-GATE（gated）。装配由 daemon
+ * assembly/api 同进程注入（06-06 已落，本包不造第二装配源、不自开监听）。
  *
- * 边界（硬约束）：
- *   - 外部只能**落单**，不能派工：任何外部请求都不得直接产生 worker 进程
- *   - 派单人锚 + 等级封顶：外部世界无等级，缺省派单人=主 PM，等级按项目渐进启用封顶
- *   - 字段级视图分级：public / partner / internal 三套 zod schema，白名单式序列化
- *     （静态检查不得出现"直接序列化 DB 行"）
- *   - 凭证三档：公开（只读公开视图）/ 伙伴（ak-id.secret，哈希+last4，可 scope/吊销/TTL）/
- *     签名（HMAC + 时间戳 + nonce）；越权一律 fail-closed
+ * 交付面：
+ *   - `createApiApp(options)`：Hono 应用工厂（进程内注入；测试用 app.request 驱动）；
+ *   - 只读族 API-01..09（company/org/people/projects/issues/finance/reports/
+ *     request-status/agent-card）；
+ *   - 触发族 API-10..13（requests/explore/tasks/intel）＋入站 hooks API-15 →
+ *     产 webhook 意图（202=已入队≠已受理）；
+ *   - 订阅/SSE API-14/16（SSE 未装配=501 带原因；出站订阅 allowlist＋SSRF 拒）。
  *
- * 端点族：
- *   信息面  /v1/company、/v1/org、/v1/people、/v1/projects/{pid}/progress、/v1/issues/{id}、
- *           /v1/finance/summary、/v1/reports、/v1/docs
- *   触发面  POST /v1/requests、/v1/explore、/v1/tasks、/v1/intel（幂等键 → 查重 → 产 webhook
- *           意图进 daemon ingest → 引擎消费门物化 → 绑锚 → 署名——129-A 双链收口：落单链
- *           统一走 webhook 意图（只落单不派工，与 watch-file 同语义一条链，22-§二 事件行；
- *           旁路直落单面=旧稿收口）；幂等键承载在 intent.dedupKey，同键重投恒只物化一次）
- *   订阅    /v1/subscriptions（at-least-once + 幂等 + HMAC + 退避 + 熔断 + 死信）、
- *           /v1/events/stream（SSE 断线续传，按 event id 去重）
- *   名片    /v1/agent-card（由 org-config 生成，带版本与有效期）
- *   入站    /v1/hooks/*（签名校验 + 重放窗口 + payload 上限——产 webhook 意图同触发面收口）
+ * 硬边界（机制而非自律）：
+ *   - 注入面类型无 platform/ledger/db/engine/scheduler/launch/dispatch 槽；运行期未知槽
+ *     ＝CONFIG_INVALID 拒启（含拼错槽名）；
+ *   - 包依赖只增 hono＋@studio-next/contract（无 store/panel——`api→panel` 边永禁）；
+ *   - 相对 import 全带 `.ts`（Node 原生 type-stripping 纪律）；只写可擦除语法。
  *
- * 安全：出站白名单 + 密钥扫描 + 防 SSRF（硬禁内网/回环）；外部调用全落 events 可回放。
- * MCP 侧：对外只做 exporter / server 面，内部 schema 才是唯一事实源。
- *
- * TODO(骨架阶段)：
- *   [ ] Hono 应用骨架 + 凭证中间件（三档） + 视图分级序列化
- *   [ ] 信息面端点（OpenAPI 自动生成）
- *   [ ] 触发面端点（幂等键 + 派单人锚）
- *   [ ] SSE 订阅与断线续传
- *   [ ] Agent Card 生成器（org-config → 名片，带版本/有效期）
- *   [ ] MCP server 暴露面（@modelcontextprotocol/server）
- *   [ ] 出站白名单与密钥扫描
+ * 未解决缺口（如实登记）：凭证目录/签名验签实现归装配侧（本包只收认证器结果）；SSE
+ * 常驻投递/心跳、订阅退避/死信实际投递、防 DNS rebinding 归 daemon 侧（目标未证）。
  */
-
-/** 包名常量（占位导出） */
-export const PACKAGE_NAME = "@studio-next/api";
-
-/** 骨架状态标记：实现落地后改为 "ready" 或直接删除 */
-export const PACKAGE_STATUS = "skeleton";
+export {
+  API_APP_FORBIDDEN_SLOTS,
+  API_APP_SLOTS,
+  createApiApp,
+  resolveApiDeps,
+} from './app.ts'
+export { API_ENDPOINT_COUNT, API_ENDPOINTS } from './catalog.ts'
+export {
+  DEFAULT_ISSUES_LIMIT,
+  MAX_ISSUES_LIMIT,
+  MAX_REQUEST_BODY_BYTES,
+  MAX_TEXT_FIELD_LENGTH,
+  READ_CALLER,
+} from './http.ts'
+export {
+  DEFAULT_HOOK_TOLERANCE_MS,
+  HOOK_DELIVERY_HEADER,
+  HOOK_NONCE_HEADER,
+  HOOK_SIGNATURE_HEADER,
+  HOOK_TIMESTAMP_HEADER,
+  MAX_HOOK_TOLERANCE_MS,
+} from './signature.ts'
+export { FINANCE_SOURCES } from './types.ts'
+export type {
+  ApiAgentCardView,
+  ApiApp,
+  ApiAppOptions,
+  ApiAuthInput,
+  ApiCompanyView,
+  ApiCredentialClass,
+  ApiEndpointSpec,
+  ApiEnv,
+  ApiEventFeed,
+  ApiEventFeedItem,
+  ApiEventFeedPage,
+  ApiFinanceSegment,
+  ApiFinanceSource,
+  ApiFinanceView,
+  ApiHookSource,
+  ApiIntakeAuthResult,
+  ApiIntakeAuthenticator,
+  ApiIssuePage,
+  ApiIssueQuery,
+  ApiIssueView,
+  ApiObservationReadFace,
+  ApiOrgDepartmentView,
+  ApiOrgView,
+  ApiPeopleGroup,
+  ApiPeopleView,
+  ApiProjectView,
+  ApiReadSources,
+  ApiReportEntry,
+  ApiRouteDeps,
+  ApiStateCount,
+  ApiSubscriptionPolicy,
+} from './types.ts'

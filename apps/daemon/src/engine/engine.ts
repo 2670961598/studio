@@ -107,16 +107,13 @@
  *   - gateRunner：默认实现=REPORT 存在性 + exit0 模拟（真验收命令执行归 v0.5 真单刀）；
  *   - 泳道租约：进程内 Map + TTL（**不持久**；续租/死主回收/跨进程互斥归后续刀——单进程 v0 无死主）；
  *   - 断路器状态：进程内（重启即清零；持久化拟走 events 派生，待批示）；
- *   - wkey：env 通道下无在途文件索引面（凭据离场=子进程终结，结构性撤离；daemon 不留
- *     token 副本）；重启后 CLOSE 相位照常吊销（revoke 按 ticket，不依赖索引）；吊销集在
- *     gateway 内存 authority（跨进程可见性疑点见 src/engine/worker-key.ts 头注）；dispose 不吊销
- *     在途 key（work_records 留 running——重启 R-B 例行接管收口，接管单重签一 attempt 一 key）；
- *   - 重启后在途接管【R-B 已收口——serve 启动例行接管（serve.ts takeOverRunningWorkRecords，
- *     docs/38-§2）：前命孤儿 running 工位收口 interrupted，重派走新 attempt+adopt】；活体
- *     WORKER_DEAD 检测（wall/budget/心跳/僵尸，17-§9）仍归后续刀（R-C 面）；dispose() 仅对
- *     内存 handle 优雅 kill；
- *   - 合并相位（202-P2 双轨，studio-dev-232，docs/17-§2）：待验收位+mergeRun 注入+触发全齐=真单刀
- *     （merge-run.ts；不齐=降级手工链/lease 顺延，重进经活动/rescan 兜底）；其余位或面关=v0 模拟；
+ *   - wkey：env 通道（结构性撤离——凭据随子进程终结，daemon 不留 token 副本）；重启后
+ *     CLOSE 相位照常吊销（revoke 按 ticket，不依赖索引）；dispose 不吊销在途 key
+ *     （work_records 留 running——R-B 例接收口，接管单重签一 attempt 一 key）；
+ *   - 重启后在途接管【R-B 已收口——serve 启动例行接管（docs/38-§2）：前命孤儿 running 工位
+ *     收口 interrupted，重派走新 attempt+adopt】；活体 WORKER_DEAD 检测（17-§9）仍归 R-C 面；
+ *   - 合并相位（202-P2，docs/17-§2）：mergeRun 注入×待验收位×触发全齐=真单刀（merge-run.ts；
+ *     不齐=手工链/lease 顺延，重进经活动/rescan 兜底）；其余位或面关=v0 模拟；
  *   - 任务书只出首版（续跑版=上次 summary.json 前情注入，17-§5，归真单刀）；
  *   - 呈批迁移（submit_approval）：v0 直迁平台，不落事件（呈批事件名待批示；真路径=网关
  *     动作词 GW_*，v0 无网关不伪造 GW_ 事件）；
@@ -125,63 +122,26 @@
  *   - 采集增量：activity 游标增量 + issues.list 全量对账（17-§12 分页/增量优化后续）。
  *
  * 拟稿待批点（本文件口径，汇报后走批示流）：
- *   - 游标持久化【已清偿——切 store v4 正式面】：daemon_kv 自建段（DDL+prepared 语句）已删，
- *     改用 ledger.kvGet/kvSet（v4 正式读写面，语句与原自建逐字一致——字节级兼容）；键名
- *     'activity.cursor'/'tick.seq'、值形态（空串=游标 null 持久形态）、幂等语义全保持，
- *     存量数据原地续用（接管关系见 migrations v4 头注）。
- *   - work_records 收口【已清偿——切 store v4 正式面】：closeWorkRecord 直发 UPDATE 已删，
- *     改用 ledger.endWorkRecord（ended_at/status/cost_usd/tokens/report_ref/summary_ref
- *     全列入参；未给值 COALESCE 不动，语句列位与原直发逐列同形）。收口路径结构性单次
- *     （closeWorkRecord 调用点均在 inflight 注销前、每 entry 恰一次），v4 面「已收口再收=
- *     CONFIG_INVALID」的防重闸在正常流不触发——是对原语句的收口语义收紧，非行为变更。
- *   - seenIntentKeys 语义：DISPATCH 落账即「意图已消费」；该单出现 GATE_PASS/GATE_FAIL
- *     后键释放（成功→证据就绪走收割链；失败→回首批位可再派）；**STALL 咬合（kill 面
- *     收口锚）同样释放**（studio-dev-141：键释放≠收割结论——interrupted 单在工生命
- *     已终结，重派是新誓唤起非 replay；fake 平台 transition 产活动故旧测试经 activity
- *     通道逃生未暴露）。100 重复活动→1 次派发即此语义（同誓内口径不变）。
+ *   - 游标持久化／work_records 收口【均已清偿——切 store v4 正式面】：daemon_kv 自建段与
+ *     closeWorkRecord 直发 UPDATE 已删，改用 ledger.kvGet/kvSet 与 ledger.endWorkRecord
+ *     （键名/值形态/语句列位与原自建/直发逐字同形；防重闸与接管关系见 migrations v4 头注）。
+ *   - seenIntentKeys 语义：DISPATCH 落账即「意图已消费」；GATE_PASS/GATE_FAIL 与 STALL
+ *     咬合（kill 面收口锚）均释放键——键释放≠收割结论（studio-dev-141；派生面见
+ *     sentinel/events-index.ts STALL_KILL_CLOSE_ANCHOR）。100 重复活动→1 次派发即此语义。
  *   - attempt 口径：= 该单 DISPATCH 事件计数 + 1（events 派生，可重放）。
  *   - events.level：IssueRecord.level 是流等级（0→L0 流），events.level 是 1..9 人员/公司口径——
  *     取 max(1, level)（0 级单按 1 记）。两口径混用为文档疑点，已上报不改文档。
  *   - ticket_mirror.created：IssueRecord 无 created 字段，以 updated 近似（镜像可重建，17-§3）。
  *   - HEARTBEAT 哨兵单号：events.issue 必填（contract），零动作拍挂 config.heartbeatIssue（'-'）。
  *
- * 意图消费口径（消费门=kind→handler 普适分发表，105-刀A A-2 开闸；schedule 面=v0.4 既有；
- * 129-A 扩两行=webhook｜data-change，studio-dev-166）：
- *   - 前置共闸（全 kind 一致，无 kind 特判——判负线①）：公司匹配 → 分发表命中 → 无 ticket
- *     意图缺 dedupKey=HOLD_INTENT_MALFORMED 明报拒收（25-§3.4 v1.3，判负线②）；
- *   - 分发表已开：schedule（岗单据物化）｜mention（@唤醒单物化，105-刀A）｜webhook（外部
- *     事件**只落单不派工**——终态锚点结构性不可派发，patrol 工件先例；人工分诊=平台复活；
- *     落单链收口+派工链登记位缓开=批示⑥，129-A）｜data-change（联动单物化→路由表定
- *     assignee→前向态进派发链，129-§6.1①；people-change 源与 org-config 路由表归拆单 C）；
- *     escalate 槽位归刀B notify 端口接线单，未注册即明报不支持（jobs-lifecycle 既有断言
- *     保持绿，S8）；
- *   - webhook 双链收口（129 P1-A/C9）：API 触发端点与 watch-file 同产 webhook 意图走
- *     ingest 统一链（同语义一条链）；dedupKey=事件指纹源侧设置（watch-file=mtime#行号，
- *     API=幂等键同源），引擎不猜公式只做可表示性闸；
- *   - data-change 幂等（129-§6.1 铁律2）：dedupKey=变更指纹 `person+classifier+prev→next`
- *     源侧设置，引擎消费面断言一致（防伪造换键重投——mention dedupKey=eventId 同款）；
- *     路由 fail-closed：路由未配/未命中/目标不在人事索引均明报拒收，无 defaultPersonId
- *     兜底（宁拒不错派）；
- *   - 岗单据物化形态：type='task'、level=0（走 L0 状态流——定时岗无人审批环：岗的设立即
- *     授权，每跑再挂制作人审批与 48h 无人值守矛盾）、assignee=job.role（RoleName 恰为工号则
- *     精确命中，否则回退 defaultPersonId——岗位名→工号映射待人事档案面）；
- *   - @唤醒单物化形态（105-§5.3 定稿=③ 混合语义，docs/21-§四/22-§二 同源文字）：@工号 →
- *     唤醒单直派该岗位；@宰相/@制作人 → 源侧 roles 映射成工号后同径派发（被唤醒者下游动作
- *     =对外 API :8788 落单，引擎不感知通道——两路同构）。type='task'、level=0、
- *     assignee=payload.target（必须命中人事索引——未知工号明报丢弃，防 typo 唤醒落
- *     defaultPersonId 的错人面）、title/description 携 roomId+eventId 溯源（S1）；
- *   - mention 幂等：dedupKey=Matrix eventId 源侧设置（21A-§5.10 勘误后口径，判负线③），
- *     引擎侧断言 dedupKey===payload.eventId（伪造绕幂等明报拒收）；物化层幂等=PATROL 留痕
- *     派生键集 append-only 不释放（同 eventId 重投/源重放恒只物化一次，22-§三.2）；
- *   - mention PATROL note 不含 job= 字段：jobs-sources 的 jobTickets 正则只认 job= 前缀——
- *     唤醒单对 SLA 扫描器结构性不可见（亲查 jobs-sources.ts）；note 动态字段经分号净化，
- *     防频道内容注入 job=/intent= 键（频道内容按不可信输入对待，21-§三）；
- *   - job.level/model_tier/budget_cap 落 jobs 表随行，不进 v0 派发链（模型档接线归后续刀）；
- *   - markRan 已提交而进程崩溃于 ingest 消费前：该次触发丢失（at-most-once）——已物化岗单据
- *     经活动流重启后仍被主循环接管；mention 同径（源重启按 eventId 重投可追补；E17 停机
- *     不丢意图两预案进 spike 比选不预设——105-§5.3-3）；
- *   - 分发表外 kind 仅 ticket（活动/镜像内部 kind，非源产面）明报不支持；relay/resume
- *     已开（129-E 单E，studio-dev-184——六源全通收口）。
+ * 意图消费口径（kind→handler 普适分发表，六源全通）：engine 只留 splice→drainIntents→
+ * candidates 相位缝——共闸（公司匹配→分发表命中→无 ticket 意图缺 dedupKey 明报拒收，
+ * 无 kind 特判）、各 kind 物化/幂等/路由/at-most-once 边界逐字归拆件：
+ *   - 分发表与消费装配（schedule/escalate/relay/resume 六源）：intents/drain.ts 头注；
+ *   - webhook（只落单不派工）/data-change（联动单路由 fail-closed）/mention（eventId 幂等、
+ *     @唤醒单溯源、PATROL note 不含 job= 的 SLA 盲区）：intents/taxonomy.ts 头注；
+ *   - 岗单据物化形态（type/level/assignee 回退链）与 markRan at-most-once 边界：同上两件
+ *     ＋scheduler.ts 头注；job.level/model_tier/budget_cap 随行落表面归 jobs-sources.ts。
  */
 import { createHash } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -197,7 +157,6 @@ import type {
   IssueRecord,
   ModelCatalog,
   PersonRef,
-  StreamEvent,
   TaskBrief,
   TicketId,
 } from '@studio-next/contract'
@@ -258,8 +217,19 @@ import { createSplitMaterializer, type SplitDirectiveInput } from './split/mater
 import { buildEventIndex, STALL_KILL_CLOSE_ANCHOR, type EventIndex } from './sentinel/events-index.ts'
 // 事件四要素形状＋人闸快照投影（自本件抽件——20-§十五「先拆再增」；BC-S2 清偿）
 import { evtDept, evtLevel, personGateSnapshot, tokenBuckets } from './sentinel/shape.ts'
-// 增量泵驻留竞速（DEV-9 P1 冻结修复件抽件——同上）
-import { parkRace, PARKED } from './harvest/park.ts'
+// 收割批次编排（IMPL-06-03 拆出；20-§十五「先拆再增」——区间幂等键/证据项登记/
+// 收割者≠交付者结构位/失败·部分·重复批次全在 harvest/batch.ts；本文件只留相位缝与
+// 判定体/失败面闭包，四要件判定与 GATE_PASS|FAIL 语义零漂移）
+import {
+  createHarvestBatchLedger,
+  harvestFailureDetail,
+  harvestFailureSignature,
+  harvestRequirementsOf,
+  runHarvestAttempt,
+  type HarvestAttemptHost,
+  type HarvestBatchLedger,
+  type HarvestRequirements,
+} from './harvest/batch.ts'
 // 批示归一层（studio-dev-171，docs/18-§2.5；特性域 directive/＝parse/qualify 纯核＋
 // wire 接线体＋serve 装配缝——20-§十五 contrib 模式子文件夹，BC-V3）
 import {
@@ -342,6 +312,11 @@ export interface EngineDeps {
   gateRunner: GateRunner
   clock: () => number
   config: EngineConfig
+  /**
+   * 引擎写路径署名（SEC-FC-06 / SEC-SIG-01；可选注入）：`system` 必须在**构造期**携
+   * `onBehalfOf`（缺省/空白/未知主体＝抛错拒起）；缺省不注入＝迁移期常量直用（零行为变更）。
+   */
+  signature?: EngineSignatureDraft
   /** 人员索引（公司目录快照注入；L1 配置热重载经 applyCompanyUpdate 整组替换——docs/38-§2） */
   people: readonly PersonRef[]
   departments?: readonly DeptNode[] // 部门索引（可选注入，130-P2 studio-dev-173：父单立案 leader 解析用；缺省=立案面关闭明报，子单物化照常）
@@ -436,6 +411,8 @@ export interface Engine {
   /** 在途 drain（v0：对内存 handle 优雅 kill；work_records 留 running——重启接管归后续刀） */
   dispose(): Promise<void>
   readonly config: EngineConfig
+  /** 收割批次簿观测面（IMPL-06-03 / REC-EVD-01）：只读视图；写口仅收割相位（batch.ts） */
+  readonly harvestBatches: HarvestBatchLedger
 }
 
 /** applyCompanyUpdate 入参：公司目录快照在引擎内的全部消费面（整组换，不半换） */
@@ -471,13 +448,63 @@ export interface CompanyRuntimeUpdate {
 const CURSOR_KEY = 'activity.cursor'
 const TICK_SEQ_KEY = 'tick.seq'
 
-// —— 增量泵收运行件（DEV-9 P1 冻结修复，docs/17-§2 拍有界；parkRace/PARKED 抽件
-//    engine/harvest/park.ts——20-§十五「先拆再增」） ——
+// ————————————————————————— 署名构造（SEC-FC-06 / SEC-SIG-01） —————————————————————————
+
+/**
+ * 署名草稿（三值：person/control/system）：`onBehalfOf`、`decisionRef` 在草稿面允许缺省
+ * ——**唯一目的**是让构造期校验有缝可拒（缺省即非法），而不是缺省放行。
+ */
+export type EngineSignatureDraft =
+  | { readonly actorKind: 'person'; readonly actorRef: string; readonly onBehalfOf?: string }
+  | { readonly actorKind: 'control'; readonly actorRef: string; readonly decisionRef?: string; readonly onBehalfOf?: string }
+  | { readonly actorKind: 'system'; readonly actorRef: string; readonly onBehalfOf?: string }
+
+/** 构造期校验后的写署名（与 contract `Signature` 同形：system 的 onBehalfOf 必填） */
+export type EngineSignature = EngineSignatureDraft &
+  (
+    | { readonly actorKind: 'person' }
+    | { readonly actorKind: 'control'; readonly decisionRef: string }
+    | { readonly actorKind: 'system'; readonly onBehalfOf: string }
+  )
+
+/**
+ * 署名构造层校验（SEC-FC-06；docs/v2/15 §二 SEC-SIG-01）：system 缺 `onBehalfOf`（空白＝缺）、
+ * control 缺 `decisionRef`、actorRef 空白、actorKind 未知 → **构造期抛错**（不降级、不补缺省）。
+ * `onBehalfOf` 指向可还原的工号/决定记录引用；actorRef 只是通道位（审计断言归 IMPL-07-10）。
+ */
+export function constructEngineSignature(draft: EngineSignatureDraft): EngineSignature {
+  const d = (draft ?? {}) as { actorKind?: unknown; actorRef?: unknown; onBehalfOf?: unknown; decisionRef?: unknown }
+  const text = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
+  const actorRef = text(d.actorRef)
+  if (actorRef === '') throw new Error('SIGNATURE_INVALID：actorRef 空白——署名回不到任何主体')
+  const onBehalfOf = text(d.onBehalfOf)
+  const withOnBehalf = onBehalfOf === '' ? {} : { onBehalfOf }
+  switch (d.actorKind) {
+    case 'person':
+      return { actorKind: 'person', actorRef, ...withOnBehalf }
+    case 'control': {
+      const decisionRef = text(d.decisionRef)
+      if (decisionRef === '') throw new Error('SIGNATURE_INVALID：control 署名缺 decisionRef（SEC-SIG-01）——控制面位置须可还原决定记录')
+      return { actorKind: 'control', actorRef, decisionRef, ...withOnBehalf }
+    }
+    case 'system': {
+      if (onBehalfOf === '') throw new Error(`SIGNATURE_INVALID：system 署名必须携 onBehalfOf（SEC-FC-06/SEC-SIG-01）——actor=${actorRef} 不可充当最终署名`)
+      return { actorKind: 'system', actorRef, onBehalfOf }
+    }
+    default:
+      throw new Error(`SIGNATURE_INVALID：未知署名主体 ${String(d.actorKind)}（只收 person|control|system）`)
+  }
+}
 
 // ————————————————————————— mention 意图消费件（105-刀A A-2） —————————————————————————
 
 export function createEngine(deps: EngineDeps): Engine {
   const { platform, ledger, registry, gateRunner, clock, config, catalog } = deps
+  // 署名构造期校验先行（SEC-FC-06）：非法署名在消费依赖/建立写路径前拒起——不降级、不补缺省。
+  // 未注入＝迁移期常量（ENGINE_CONFIG_DEFAULTS.actor='daemon' 直用；缺口登记见 v2/17，
+  // 审计断言归 IMPL-07-10）。全部写路径的 actor 只从 writeActor 取，不再散读 config.actor。
+  const writeSignature = deps.signature === undefined ? undefined : constructEngineSignature(deps.signature)
+  const writeActor = writeSignature?.actorRef ?? config.actor
   const makeId = deps.makeId ?? makeUlid
 
   // 公司面可替换绑定（docs/38-§2 L1）：applyCompanyUpdate 整组换（拍边界）——
@@ -507,6 +534,7 @@ export function createEngine(deps: EngineDeps): Engine {
   const lanes = createLaneRegistry(config.laneTtlMs)
   const mergeLeases = createMergeLeaseRegistry(config.mergeLeaseTtlMs) // 202-P4 合并租约簿（per-engine——merge-run.ts 经 mergeHost 注入）
   const inflight = new Map<TicketId, Inflight>()
+  const harvestBatches = createHarvestBatchLedger() // 收割批次簿（IMPL-06-03；观测/测试只读——写口仅收割相位）
   const intentQueue: InvokeIntent[] = []
   const splitQueue: SplitDirectiveInput[] = []
   let seq = 0
@@ -547,12 +575,7 @@ export function createEngine(deps: EngineDeps): Engine {
   // 事件四要素形状（evtLevel/evtDept/tokenBuckets）：抽件 sentinel/shape.ts
   //（20-§十五「先拆再增」）——evtDept 显式 deptFallback 参数版。
 
-  /** 记账+入拍汇报（appendEvent 是 events 唯一写口——store 契约闸前置） */
-  function append(evt: EventRecord, tickEvents: EventRecord[]): void {
-    const r = ledger.appendEvent(evt)
-    if (r.appended) tickEvents.push(evt)
-  }
-
+  /** 事件落账（appendEvent=唯一写口；appended=false 不入拍汇报）；actor=构造期校验后写署名（SEC-FC-06） */
   function makeEvent(
     name: EventRecord['event'],
     issue: IssueRecord,
@@ -576,7 +599,7 @@ export function createEngine(deps: EngineDeps): Engine {
       company: config.company,
       issue: issue.id,
       event: name,
-      actor: config.actor,
+      actor: writeActor,
       attempt,
       level: evtLevel(issue),
       dept: evtDept(issue, config.deptFallback),
@@ -588,13 +611,13 @@ export function createEngine(deps: EngineDeps): Engine {
       ...(extra?.note !== undefined ? { note: extra.note } : {}),
       ...(extra?.causation_id !== undefined ? { causation_id: extra.causation_id } : {}),
     }
-    append(rec, tickEvents)
+    if (ledger.appendEvent(rec).appended) tickEvents.push(rec)
     return rec
   }
 
   /**
-   * 状态迁移执行宿主（IMPL-06-02 拆件接线）：迁移→镜像→触发记录的顺序保证在
-   * `work/transition.ts`（applyWorkTransition）；本件只把 engine 三闭包绑到本拍事件流。
+   * 状态迁移执行宿主（IMPL-06-02）：迁移→镜像→触发记录顺序归 work/transition.ts，
+   * 本件只把 engine 三闭包绑到本拍事件流。
    */
   const transitionHostOf = (tickEvents: EventRecord[]): WorkTransitionHost => ({
     platform,
@@ -615,7 +638,7 @@ export function createEngine(deps: EngineDeps): Engine {
       type: issue.type ?? 'task',
       dept: evtDept(issue, config.deptFallback),
       level: evtLevel(issue),
-      dispatcher: config.actor,
+      dispatcher: writeActor,
       ...(issue.parent !== undefined ? { parent: issue.parent } : {}),
       ...(issue.lane !== undefined ? { lane: issue.lane } : {}),
       // 队列归属键（129-§6.2-R3：assignee 复用不新建）——todo_queue 投影 person 列的
@@ -633,10 +656,8 @@ export function createEngine(deps: EngineDeps): Engine {
     )
   }
 
+  /** 定流（DEV-43 解析序与 decide 步2 同函数：T:<type> 优先→L:<level> 回退，永不漂移） */
   function flowOf(issue: { type?: string; level?: number }) {
-    // DEV-43（docs/18-§2.1.1 解析序）：T:<type> 优先 → L:<level> 回退（与 decide 步2
-    // 同函数——两处定流永不漂移）。保留词 bug/task 判定器不收 T 键（W-9）——断路单
-    // 不定级回 NOOP_UNKNOWN_FLOW（待人定级后派）、岗单恒落 L0，现状语义保持。
     return resolveTicketFlow(config.flows ?? DEFAULT_FLOW_TABLE, issue.type, issue.level)
   }
 
@@ -914,91 +935,18 @@ export function createEngine(deps: EngineDeps): Engine {
   }
 
   /**
-   * 收割一单（增量泵收版，DEV-9 P1 冻结修复，docs/17-§2 拍有界）：流未收尾先泵一个
-   * 时间片（config.harvestSliceMs 墙钟）——事件就绪即折算、无事件即驻留返回 'streaming'
-   * （单据留在在途，下一拍续收；心跳/热重载/看门狗回拍边界）；流收尾拍走判定体
-   * finalizeHarvest（四要件面零改动，docs/17-§6）。判定序不变：流（要件 1/2）→ gateRunner
-   * （要件 3/4）→ 四要件齐=迁证据就绪+预算 settle 双行冲销（16-§三：actual=每成功交付成本）
-   * +GATE_PASS+work_records 收口+断路复位；不齐=回滚首批位+GATE_FAIL+断路连击（熔断瞬间
-   * ESCALATE+建 bug 单）——失败路径**不结算**：预留保留（断路器回首批位后重派沿用同一笔
-   * 额度，budget-gate 头注拟稿）。
+   * 收割尝试宿主（IMPL-06-03 拆件接线）：编排体（增量泵收/四要件判定/批次簿）在
+   * `harvest/batch.ts`；本文件只把引擎闭包与拍事件流绑上——判定体 finalizeHarvest、
+   * 失败面 failHarvest 仍是本文件（GATE_PASS|FAIL、迁移、预算、断路器语义零漂移）。
    */
-  async function harvestOne(entry: Inflight, tickEvents: EventRecord[], errors: string[]): Promise<'completed' | 'failed' | 'streaming'> {
-    let adapter: ExecutorAdapter
-    try {
-      adapter = registry.resolve(entry.executor)
-    } catch {
-      return failHarvest(entry, tickEvents, 'CONFIG_INVALID：executor 已不在注册表（收割不可继续）', {
-        completed: false,
-        nonEmptyOutput: false,
-        reportExists: false,
-        exit0: false,
-      })
-    }
-    if (entry.streamDone !== true) {
-      let pumped: 'parked' | 'done'
-      try {
-        pumped = await pumpHarvestStream(adapter, entry)
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        return failHarvest(entry, tickEvents, `WORKER_DEAD：流消费异常 ${msg}`, {
-          completed: entry.foldCompleted ?? false,
-          nonEmptyOutput: entry.foldNonEmpty ?? false,
-          reportExists: false,
-          exit0: false,
-        })
-      }
-      if (pumped === 'parked') return 'streaming'
-    }
-    return finalizeHarvest(adapter, entry, tickEvents, errors)
-  }
-
-  /**
-   * 增量泵流（DEV-9 修复核心）：本工位本拍至多 config.harvestSliceMs——已就绪事件连续
-   * 折算（microtask 先于计时器：完成流/fake 流仍同拍收干，既有测试行为不变）；时间片尽
-   * 或流暂无事件 → 驻留让出拍界（保留迭代器+挂起 next() 跨拍续收；一流一收纪律不变）。
-   * 挂起 next() 的拒绝被吞并记 streamError（防悬空 unhandled rejection）——下一拍泵首查
-   * 即抛，与同步抛同走 WORKER_DEAD 面，不静默。
-   */
-  async function pumpHarvestStream(adapter: ExecutorAdapter, entry: Inflight): Promise<'parked' | 'done'> {
-    if (entry.streamError !== undefined) throw new Error(entry.streamError)
-    if (entry.streamIter === undefined) {
-      entry.streamIter = adapter.stream(entry.handle)[Symbol.asyncIterator]()
-      entry.foldCompleted = false
-      entry.foldNonEmpty = false
-    }
-    const deadline = Date.now() + config.harvestSliceMs
-    for (;;) {
-      if (Date.now() >= deadline) return 'parked' // 时间片尽——拍有界硬保证（洪流面亦让出）
-      if (entry.streamNext === undefined) {
-        const next = entry.streamIter.next()
-        // 驻留期拒绝兜底：吞并记档（防悬空拒绝）；活跃泵内的拒绝经 parkRace 原样传播
-        next.catch((err) => {
-          if (entry.streamError === undefined) {
-            entry.streamError = err instanceof Error ? err.message : String(err)
-          }
-        })
-        entry.streamNext = next
-      }
-      const winner = await parkRace(entry.streamNext, deadline - Date.now())
-      if (winner === PARKED) return 'parked'
-      entry.streamNext = undefined
-      if (winner.done) {
-        entry.streamDone = true
-        return 'done'
-      }
-      foldHarvestEvent(entry, winner.value)
-    }
-  }
-
-  /** 流事件 → 四要件输入折算（要件 1：turn_end.completed；要件 2：非空 log） */
-  function foldHarvestEvent(entry: Inflight, ev: StreamEvent): void {
-    if (ev.type === 'log' && ev.text.trim() !== '') entry.foldNonEmpty = true
-    if (ev.type === 'turn_end') {
-      entry.foldCompleted = ev.completed
-      if (ev.error !== undefined) entry.foldTerminalError = ev.error
-    }
-  }
+  const harvestHostOf = (tickEvents: EventRecord[], errors: string[]): HarvestAttemptHost => ({
+    batches: harvestBatches,
+    sliceMs: config.harvestSliceMs,
+    now,
+    resolveAdapter: (executor) => registry.resolve(executor),
+    finalize: (adapter, entry) => finalizeHarvest(adapter, entry, tickEvents, errors),
+    fault: (entry, detail, requirements) => failHarvest(entry, tickEvents, detail, requirements),
+  })
 
   /** 判定体（原收割后半零改动迁移）：折算态（要件 1/2）→ gateRunner（要件 3/4）→ 收口 */
   async function finalizeHarvest(
@@ -1034,13 +982,23 @@ export function createEngine(deps: EngineDeps): Engine {
       })
     }
 
-    const verdict = { completed, nonEmptyOutput, reportExists: gate.reportExists, exit0: gate.exitCode === 0 }
-    const fourOk = verdict.completed && verdict.nonEmptyOutput && verdict.reportExists && verdict.exit0
+    // 四要件判定（唯一实现在 harvest/batch.ts；本件只消费——GATE_PASS|FAIL 语义零漂移）
+    const requirements = harvestRequirementsOf({
+      completed,
+      nonEmptyOutput,
+      reportExists: gate.reportExists,
+      exit0: gate.exitCode === 0,
+      terminalObserved: entry.foldCompleted !== undefined,
+      terminalError,
+    })
+    // 收割批次登记（IMPL-06-03 / REC-EVD-01 观察面）：区间幂等键/证据项草案/gaps/结构位——
+    // 零事件零迁移零预算动作（判定与收口仍在下文与 failHarvest）
+    harvestBatches.record({ ticket, attempt: entry.attempt, deliverer: entry.personId }, requirements, { reportPath: gate.reportPath })
     crashHook('harvest-verdict') // 崩溃注入③（F3-11）：收割四要件判定后、GATE_PASS 落账前——受控测试缝，默认零行为
     if (flow === undefined) {
-      return failHarvest(entry, tickEvents, 'CONFIG_INVALID：等级未登记状态流（收割去向不可定）', verdict)
+      return failHarvest(entry, tickEvents, 'CONFIG_INVALID：等级未登记状态流（收割去向不可定）', requirements)
     }
-    if (fourOk) {
+    if (requirements.fourOk) {
       const anchors = flowAnchors(flow)
       const transitioned = await platform.issues.transition(ticket, anchors.evidenceReady)
       const endedAt = now()
@@ -1127,14 +1085,8 @@ export function createEngine(deps: EngineDeps): Engine {
       if (entry.instructionsPath !== undefined) removeInstructions(entry.instructionsPath)
       return 'completed'
     }
-    const missing = [
-      ...(verdict.completed ? [] : ['终态 completed']),
-      ...(verdict.nonEmptyOutput ? [] : ['输出非空']),
-      ...(verdict.reportExists ? [] : ['REPORT 落盘']),
-      ...(verdict.exit0 ? [] : ['闸门 exit=0']),
-    ].join('、')
-    const detail = `GATE_FAIL：四要件缺【${missing}】${terminalError !== undefined ? `；turn_end.error=${terminalError}` : ''}${gate.note !== undefined ? `；gate=${gate.note}` : ''}`
-    return failHarvest(entry, tickEvents, detail, verdict)
+    const detail = harvestFailureDetail(requirements, { terminalError, gateNote: gate.note })
+    return failHarvest(entry, tickEvents, detail, requirements)
   }
 
   /** 收割失败面：回滚首批位 + GATE_FAIL 落账 + work_records 收口 failed + 断路连击（熔断开 bug 单） */
@@ -1142,7 +1094,7 @@ export function createEngine(deps: EngineDeps): Engine {
     entry: Inflight,
     tickEvents: EventRecord[],
     detail: string,
-    verdict: { completed: boolean; nonEmptyOutput: boolean; reportExists: boolean; exit0: boolean },
+    requirements: HarvestRequirements,
   ): Promise<'completed' | 'failed'> {
     if (entry.mergeRun !== undefined) return failMergeHarvest(mergeHost, entry, detail, tickEvents) // 202-P2 位别分支：无回滚无断路
     const ticket = entry.ticket
@@ -1155,7 +1107,7 @@ export function createEngine(deps: EngineDeps): Engine {
     // （冷却后半开试探要重签新 key——终局吊销唯一收口=CLOSE）
     const wkeyDiscarded = workerKeys !== undefined
     // 断路签名：四要件失败形态（同形态连击才熔断——breaker streak 语义）
-    const signature = `harvest:${verdict.completed ? 'c' : '-'}${verdict.nonEmptyOutput ? 'o' : '-'}${verdict.reportExists ? 'r' : '-'}${verdict.exit0 ? 'g' : '-'}`
+    const signature = harvestFailureSignature(requirements)
     ledger.endWorkRecord(entry.workRecordId, { status: 'failed', ended_at: now(), ...(entry.handle.executorSessionId !== undefined ? { executor_session_id: entry.handle.executorSessionId } : {}) })
     inflight.delete(ticket)
     lanes.release(entry.lane, ticket)
@@ -1175,7 +1127,7 @@ export function createEngine(deps: EngineDeps): Engine {
     //    决策视野；**不自动补收、不代写 REPORT**（补收治「写错位」不治「没写」，病根归因
     //    留给事件流——红队 R7 修订面）。attempt 作用域：每次失败收割各落一条（与 GATE_FAIL
     //    同拍性），重派续跑（att2+ 复用半成品）时决策面可见前科 ——
-    if (!verdict.reportExists) {
+    if (!requirements.reportExists) {
       const deliverables = deliverablesOf(entry.workspace)
       if (deliverables !== undefined) {
         makeEvent('HARVEST_INCOMPLETE', fresh, entry.attempt, tickEvents, {
@@ -1234,23 +1186,14 @@ export function createEngine(deps: EngineDeps): Engine {
   }
 
   /**
-   * STALL 响置体（DEV-44 咬合——2026-10-20 三例实证「只叫不咬」的收口）：stall_alarm 动作
-   * 执行面。同 attempt 内告警计数（index.stallStrikesOf+本拍）达 config.stallKillAfterAlarms
-   * 即咬合，分两面（规格见文件头注 DEV-44 段）：
-   *
-   * A · kill 面（inflight 有句柄——工人僵死树活）：await adapter.kill（stop 通道同款链：
-   * SIGTERM 进程组→killGraceMs→SIGKILL 整树；await 即 02-F1-08「kill 后等死」）→ 工位收口
-   * interrupted（R-B 接管同款在途语义：接管≠收割——我们杀的、不是它交的，四要件不可判，
-   * 不落 GATE_FAIL 不结算预算）→ 回滚首批位 → 重派 attempt+1 经 rescan 兜底（activity 意图
-   * 键未释放——22-§三.2 键经 GATE_PASS/GATE_FAIL 才释放，kill 面两皆无；与 R-B 接管后
-   * 重派同款路径，DEV-42①）。断路入账（dispositions：STALL countsTowardBreaker——防
-   * 「挂死-杀-重派」无限循环），签名 stall:watchdog-kill。
-   *
-   * B · 消亡面（inflight 无句柄——工人已死/重启后在途丢失，三例实况）：GATE_FAIL 收口
-   * （note 前缀 WORKER_DEAD：，与 failHarvest 流异常面同法）+ 遗留 running 工位收口 failed
-   * + activity 键释放 → 重派 attempt+1 活动驱动。断路入账，签名 stall:worker-dead。
-   *
-   * 未达阈/刀关/本拍刚派发=只叫：STALL 告警事件照落（note 携第 N 次/阈计数），零处置。
+   * STALL 响置体（DEV-44 咬合）：stall_alarm 执行面——同 attempt 内告警达
+   * config.stallKillAfterAlarms 即咬合。两面规格逐字见文件头注 DEV-44 段：
+   *   A·kill 面（有句柄）：await adapter.kill 整树杀（02-F1-08 kill 后等死）→ 工位收口
+   *     interrupted（接管≠收割，四要件不可判：不落 GATE_FAIL、不结算）→ 回滚首批位＋
+   *     断路入账（stall:watchdog-kill）；
+   *   B·消亡面（无句柄）：GATE_FAIL 收口（WORKER_DEAD）+ running 收口 failed＋断路入账
+   *     （stall:worker-dead）。
+   * 未达阈/刀关/本拍刚派发=只叫（STALL 告警照落，零处置）。
    */
   async function executeStallResponse(
     action: Extract<Action, { type: 'stall_alarm' }>,
@@ -1750,6 +1693,7 @@ export function createEngine(deps: EngineDeps): Engine {
 
     // —— 相位 4 收割：在途 handle 检查（本拍派发的下一拍才收）→ collect 动作 → STALL 响置（DEV-44） ——
     const harvest: TickPhaseHarvest = { checked: 0, completed: 0, failed: 0, pending: 0 }
+    const harvestHost = harvestHostOf(tickEvents, errors) // 收割域宿主（IMPL-06-03：编排体在 harvest/batch.ts）
     for (const entry of [...inflight.values()]) {
       if (entry.dispatchedAtSeq === seq) {
         harvest.pending += 1
@@ -1757,7 +1701,7 @@ export function createEngine(deps: EngineDeps): Engine {
       }
       harvest.checked += 1
       try {
-        const outcome = await harvestOne(entry, tickEvents, errors)
+        const outcome = await runHarvestAttempt(harvestHost, entry)
         if (outcome === 'streaming') {
           // 流驻留（增量泵收，DEV-9 修复）：本拍未收口——计 pending，下一拍续收
           harvest.pending += 1
@@ -2039,6 +1983,7 @@ export function createEngine(deps: EngineDeps): Engine {
     get config(): EngineConfig {
       return config
     },
+    harvestBatches,
   }
   return engine
 }

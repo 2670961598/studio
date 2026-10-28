@@ -157,7 +157,7 @@ export const maxLinesPerFile = 600;
  * 清偿义务：每里程碑对账点核对净变化——只许净减（§十五.三.4）。
  */
 export const lineBaseline = {
-  "apps/daemon/src/engine/engine.ts":     2337, // 184 叠加态 // studio-dev-196 档派发面(+33：EngineConfig 两键+档解析/选位/降级锚——宰相过审随件；前值 2304)
+  "apps/daemon/src/engine/engine.ts":     1989, // IMPL-06-02/03/04 拆分后净降（收割域/工作域/署名构造收口；原 2337→1990 由 06-02/03 达成，本单 06-04 再净降 1——wc -l 实测登记）
   "apps/boot/src/boot.test.ts": 645, // 217+219 双面测试叠加（新超限件随批示波次入基线）
   "packages/store/src/records.ts": 606,
   "packages/store/src/ledger.ts": 1684, // 179 132-D 定型面缝并入（叠加态实测 2026-10-23）
