@@ -48,6 +48,7 @@ import { flowsFromWorkflows } from '../../engine/typeflows.ts'
 import type { MatrixHrFace } from '../../engine/hrsync/hrsync.ts'
 import type { MatrixRoomFace, MatrixRoomFaceContext } from '../../engine/rooms/room-duty.ts'
 import { wireNotifyAssembly } from '../notify/notify.ts'
+import { wireServeOutboundGate } from '../outbound-gate/wire.ts'
 import type { NotifyBroadcastFace } from '../../engine/notify/broadcast.ts'
 import { assembleHrSync, hrApplySegment } from '../hrsync/assemble.ts'
 import { loadTaigaFieldMap, provisionDeclaredStates, wireGatedPlatform, wirePlatform } from '../platform/wire.ts'
@@ -180,8 +181,24 @@ export function buildServeRuntime(
     }
   },
 ): ServeRuntime {
-  const log = opts?.log ?? ((line: string): void => console.log(line))
+  const rawLog = opts?.log ?? ((line: string): void => console.log(line))
   const clock = opts?.clock ?? ((): number => Date.now())
+  // —— 出站闸（IMPL-07-11；docs/v2/15 §4.4/4.5）：五出口＋三不入统一件。日志/平台写/通知/
+  //    提示词/台账五处即刻过闸；证据导出与 API 响应登记显式 gap（outbound-gate/exits.ts）
+  const outbound = wireServeOutboundGate({
+    env: process.env,
+    ledger,
+    company: config.company,
+    dept: snapshot.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback,
+    issue: ENGINE_CONFIG_DEFAULTS.heartbeatIssue,
+    clock,
+    rawLog,
+    ...(opts?.hrKnownSecrets !== undefined ? { extraKnowns: opts.hrKnownSecrets } : {}),
+  })
+  const log = outbound.guardLog(rawLog)
+  // 三不入·库（docs/v2/15 §4.5）：台账写口一处收口——此后一切装配单元共用受闸 ledger
+  //（失败落账 sink 持原件，避免「闸的失败事件再进闸」自噬）
+  ledger = outbound.createStoreWriteGuard(ledger)
 
   // —— 公司面活持有者（docs/38-§2 L1 热重载的替换点）：装配器/cadence 源/热重载 apply 段
   //    统一读此对象——快照整组换（companyState.snapshot = next），闭包零重建
@@ -288,6 +305,7 @@ export function buildServeRuntime(
       snapshot: companyState.snapshot,
       acceptance,
       docRefs: ['docs/17-§2（主循环七相位）', 'docs/17-§6（收割四要件）'],
+      redactKnown: outbound.gate.promptRedactor, // 三不入·提示词（IMPL-07-11；IMPL-06-12 注入点）
     })
 
   // worker 级 wkey（17-§7）：按单签发→TaskBrief.credentials env 注入→关单吊销（src/engine/worker-key.ts）
@@ -321,7 +339,7 @@ export function buildServeRuntime(
   const wiredNotify =
     opts?.notifyBroadcast !== undefined
       ? wireNotifyAssembly({
-          face: opts.notifyBroadcast,
+          face: outbound.wrapNotifyFace(opts.notifyBroadcast),
           company: config.company,
           heartbeatIssue: engineConfig.heartbeatIssue,
           actor: engineConfig.actor,
@@ -337,13 +355,15 @@ export function buildServeRuntime(
   }
   // cost 警戒出口（181 EngineDeps.notify 注入件）：面注入=IM 即时广播叠加（129 批示项④）
   const costNotifyOutlet = wiredNotify?.costNoticeOutlet ?? createCostNotifyOutlet(log)
+  // 平台写出站闸（exits.ts platform-write）：gated 代理外再包出站扫描（写文本过闸后才出站）
+  const enginePlatform = outbound.wrapPlatform(wireGatedPlatform(rawPlatform, config, identity, clock, log))
   const engine = createEngine({
     // 写路径网关收口（17-§7）：raw platform 包一层 gated 代理——engine 写调用签名不变（透明）
-    platform: wireGatedPlatform(rawPlatform, config, identity, clock, log),
+    platform: enginePlatform,
     ...(workerKeys !== undefined ? { workerKeys } : {}),
     ...(hrDigester !== undefined ? { hrSync: hrDigester } : {}),
     ...(roomFace !== undefined ? { rooms: roomFace } : {}),
-    ledger,
+    ledger, // 已在装配序开头过三不入·库闸（appendEvent 写前扫描）
     registry,
     ...(judgeHook !== undefined ? { judge: judgeHook } : {}), // 160-B 两址精序（缺省不注入=规则缺省档）
     assembler: makeAssembler(),
