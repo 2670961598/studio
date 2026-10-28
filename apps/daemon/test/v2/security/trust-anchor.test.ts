@@ -10,7 +10,7 @@
  *   1. 坏 JSON / 形状不符 / 不可读 → 自动应用被拒（apply 零调用）＋ ESCALATE 具名接收者；
  *   2. 坏锚重复出现 → 自动面停用（不静默重试）＋ 坏锚在场构造即拒启（CONFIG_INVALID）；
  *   3. 无锚 ≠ 坏锚：未声明无锚→拒（不按坏锚计停用），显式声明→可应用且台账留痕；
- *   4. 合法锚 → 自动应用照常（正向对照，闸不误伤）。
+ *   4. 合法锚 → 变更经显式 re-approve 后手动 reload 照常应用（正向对照，闸不误伤）。
  */
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'

@@ -19,7 +19,14 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
 import type { ExecutorAdapter, ExecutorFamily, Handle, TaskBrief } from '@studio-next/contract'
-import { builtinResolver, registerBuiltins } from '../../src/agentconfig.ts'
+import {
+  builtinResolver,
+  judgeAwareResolver,
+  loadAgentConfig,
+  registerBuiltins,
+  tierAwareResolver,
+  wireRegistry,
+} from '../../src/agentconfig.ts'
 import { createRegistry } from '../../src/registry.ts'
 import {
   DEFAULT_SEATBELT_PLAN,
@@ -236,6 +243,29 @@ describe('内置工厂 seatbelt 参数：显式放宽才放宽', () => {
         dsh: { seatbelt: { tier: 'workspace-write', writeRoots: ['/w'] } },
       }),
     ).toThrow(/seatbelt\/widening-unauthorized/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 注册面组合（daemon 现有 `judgeAwareResolver(tierAwareResolver())` 组合零改动）
+// ---------------------------------------------------------------------------
+
+describe('注册面组合：agent.yaml 省略 seatbelt 声明 → 注册出的仍是 read-only', () => {
+  it('wireRegistry 走 daemon 同款 resolver 组合：dsh 工厂落 read-only profile（派工缺省圈定）', async () => {
+    const ws = freshWorkspace('wired')
+    const yaml = [
+      'executors:',
+      '  dsh:',
+      `    cmd: [${JSON.stringify(process.execPath)}, ${JSON.stringify(fakeCli)}]`,
+    ].join('\n')
+    const registry = wireRegistry(
+      createRegistry(),
+      loadAgentConfig(yaml),
+      judgeAwareResolver(tierAwareResolver()),
+    )
+    const profile = await launchProfile(registry.resolve('dsh'), ws)
+    expect(profile).toContain('(deny file-write*)')
+    expect(profile.match(/\(allow file-write\*/g) ?? []).toHaveLength(0)
   })
 })
 
