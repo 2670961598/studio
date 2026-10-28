@@ -11,38 +11,55 @@
 import { readFileSync } from 'node:fs'
 import { resolve as resolvePath } from 'node:path'
 import type { FieldProvisionMap, FlowPlatform } from '@studio-next/contract'
-import { createGateway, CONTROL_TICKET, type SignatureContext } from '@studio-next/gateway'
+import { createGateway, CONTROL_TICKET, type Gateway } from '@studio-next/gateway'
 import { createLocalPlatform } from '@studio-next/localplatform'
 import { createTaigaPlatform, type TaigaAuth, type TaigaEntity } from '@studio-next/taiga'
 import { createFakePlatform } from '../../engine/fakes.ts'
 import { createGatedPlatform } from '../../engine/tools/gated-platform.ts'
 // 类型环破口（IMPL-06-05）：ServeConfig 归位 assembly/serve/config.ts（本件只做平台接线，
 // 不经 serve.ts 门面取型——门面只保留公共导出/转发）
-import type { ServeConfig } from '../serve/config.ts'
+import { GATEWAY_SECRET_ENV, type DaemonIdentity, type ServeConfig } from '../serve/config.ts'
 
 /**
  * 网关写收口接线（17-§7：engine 直调 platform 是最后一条未收口写路径——本函数收口）。
- * 控制面实例（ticket=CONTROL_TICKET）+ daemon 侧身份署名；gateway: false 时裸 platform
- * 直返（对照/测试用——生产不得关）。身份=共享活对象（serve.ts daemonIdentity 产物——
- * L1 热重载 mutate 面）。130-P3 自 serve.ts 拆出（20-§十五「先拆再增」；逐字搬迁）。
+ *
+ * **SEC-FC-01 收口（v2/15 §一；plan/05 IMPL-07-06）**：裸 platform 分支已删除——本函数**只产
+ * gated 形态**，`gateway: false`/缺省分支不再存在（daemon.yaml 键亦已删除，出现即
+ * `CONFIG_INVALID/gateway-key-removed`）。注入裸 platform 不再是「可配置行为」，而是装配错误：
+ * 调用方拿到的对象必过 wkey 闸（鉴权→结构化→署名），被拒时底层 platform 不被调用。
+ *
+ * **签根供给（SEC-FC-02）**：`identity` 由 `daemonIdentity` 产出——env `STUDIO_GATEWAY_SECRET`
+ * 注入，或无公司目录 demo 的进程内临时签根（降级标记随启动日志落一行；值/材料永不打印）。
+ * 缺失/空/过短/弱形态由 `createGateway` 构造期 `CONFIG_INVALID` 拒启（本件不做降级）。
+ *
+ * 身份=共享活对象（serve.ts daemonIdentity 产物——L1 热重载 mutate 面）。130-P3 自 serve.ts
+ * 拆出（20-§十五「先拆再增」；逐字搬迁）。
  */
+export interface WireGatedPlatformDeps {
+  /**
+   * 网关实例注入（缺省按 identity 现造）：**测试/对照装配的显式注入面**（SEC-FC-01 通则 1）——
+   * 用于验证「闸拒绝时底层 platform 不被调用」（NEG-SEC-01/N-a 装配腿），生产装配不传。
+   */
+  gateway?: Gateway
+}
+
 export function wireGatedPlatform(
   raw: FlowPlatform,
   config: ServeConfig,
-  identity: { secret: Uint8Array; ctx: SignatureContext; author: string },
+  identity: DaemonIdentity,
   clock: () => number,
   log: (line: string) => void,
+  deps?: WireGatedPlatformDeps,
 ): FlowPlatform {
-  if (!config.gateway) {
-    log('[serve] 警告：gateway=false——平台写路径未过闸（仅测试/对照用；生产不得关，17-§7）')
-    return raw
-  }
   const { secret, ctx, author } = identity
-  const usingDevSecret = config.gatewaySecret === undefined
-  const gateway = createGateway({ secret, clock, ticket: CONTROL_TICKET, ctx, author })
+  const gateway = deps?.gateway ?? createGateway({ secret, clock, ticket: CONTROL_TICKET, ctx, author })
+  const secretLine =
+    identity.secretSource === 'env'
+      ? `签根来源=env ${GATEWAY_SECRET_ENV}（值不入日志/台账/错误消息）`
+      : `签根来源=demo-ephemeral【降级标记】无公司目录 demo 装配的进程内临时签根（重启即换、不跨进程验；` +
+        `生产必配 env ${GATEWAY_SECRET_ENV}）`
   log(
-    `[serve] 网关已接：平台写路径全收口（17-§7；控制面 control key，一调用一签发）` +
-      `${usingDevSecret ? '——【警告】用开发缺省密钥（生产必配 daemon.yaml gatewaySecret:）' : '（密钥来自 daemon.yaml）'}`,
+    `[serve] 网关已接：平台写路径全收口（17-§7；platform=${config.platform}；控制面 control key，一调用一签发）；${secretLine}`,
   )
   return createGatedPlatform(raw, gateway, { ctx, author })
 }
@@ -51,7 +68,7 @@ export function wireGatedPlatform(
  * Taiga 凭据供给（token 供给面）：daemon.yaml 只配形态（taigaAuth: password|token），
  * 值一律经进程 env——TAIGA_USERNAME+TAIGA_PASSWORD（密码态：JWT 自动登录，401 自动
  * 刷新/重登，http.ts）或 TAIGA_TOKEN+TAIGA_REFRESH（token 态：预换 token，有 refresh
- * 才可续）。凭据值永不入 daemon.yaml/日志/台账（红名单，与 gatewaySecret 纪律同源）；
+ * 才可续）。凭据值永不入 daemon.yaml/日志/台账（红名单，与网关签根同纪律：值只经 env/秘密源）；
  * 缺键=fail-closed CONFIG_INVALID，只报缺哪个键名、不打印值。文件形态（0600 token
  * 文件，docs/32 冒烟惯例）归部署面装载（systemd EnvironmentFile / docker secrets
  * → env），daemon 只认 env。

@@ -66,8 +66,34 @@
  *     域名白名单），或显式 `*:443` 端口档（宽 host），详见 deliverables RPC 评估。
  *   - `(subpath …)` 过滤按内核解析路径匹配，不做符号链接归一化（Chromium 沙箱文档
  *     同款已知限制）——写域的强归一化归 ③ 完全沙箱档。
+ *
+ * 档位对齐（v2/12 §3.3 写域模式 read-only/workspace-write；v2/15 §一 SEC-FC-05
+ * 「缺省最严」——IMPL-07-08）：
+ *   - **read-only＝缺省最严**：派工不声明档位即 read-only——写域零放行（连 dsh 运行面
+ *     scratch 也不白名单），workspace 只读。「不传/不声明 seatbelt」不再等于「不圈定」；
+ *     缺省翻转的唯一落点=resolveSeatbeltGrant（构造期守门，见下档位面）。
+ *   - **workspace-write＝显式放宽**：写域白名单=调用方逐条点名的**绝对路径**根，且必须带
+ *     授权留痕（authorization：谁/何单/何策略）——缺根、相对路径根或缺留痕一律构造期
+ *     CONFIG_INVALID：不静默补全、不静默丢弃、不静默放宽。
+ *   - **off 不是档位**：关掉即裸＝v2/00 §五-8 禁止形态；档位值域只有两档，'off' 一类
+ *     构造期拒收——本模块不提供「不圈定」的第三条路。
+ *   - 档位是**派工授权面**：resolveSeatbeltGrant 是档位语义唯一守门点（纯函数、可测、
+ *     可复算）；buildWorkerSeatbeltProfile 只是机械渲染器（dsh.ts 既有接线面直接传
+ *     writeRoots，调用方自担「显式」责任）——档位判断不塞进渲染器（渲染器不认识档位）。
+ *
+ * PRB-04 前置声明（v2/15 §一 SEC-FC-05「实际拦截能力未探＝按不支持处理」；v2/12 §3.3/§五）：
+ *   - **PRB-04 未执行**（写域 fail-closed：域外写被拒/域内成功/符号链接逃逸/DSH 自带
+ *     沙箱缺省实际拦截）。本档位当前只证明「profile 文本按档位收口」——**实际拦截能力
+ *     按不支持处理**：read-only 档不是「已封死」证据，不得以本模块宣称机制保证。
+ *   - 符号链接逃逸面尤然：`(subpath …)` 按内核解析路径匹配、不做符号链接归一化（见上
+ *     已知局限）——符号链接/绝对路径逃逸=PRB-04 负向项，未探即未证。
+ *   - PRB-04 执行后回写状态（v2/12 §五主表、v2/17）：本头注与档位面同步更新，不得提前按
+ *     「已拦截 / 已机制化」口径记账；实际拦截能力未证期间，派发侧的 fail-closed 只能靠
+ *     「缺省最严＋放宽显式授权」承压（IMPL-07-09 随动）。
  */
 import { randomUUID } from 'node:crypto'
+import { isAbsolute } from 'node:path'
+import { configInvalid } from '@studio-next/contract'
 
 /** sandbox-exec 系统路径（macOS 唯一分发位；路径写死防 PATH 劫持——env 白名单同精神） */
 export const SEATBELT_BIN = '/usr/bin/sandbox-exec'
@@ -86,6 +112,129 @@ export interface SeatbeltEndpoint {
  */
 export const DSH_HOST_RPC_DEFAULT: readonly SeatbeltEndpoint[] = [{ host: '127.0.0.1', port: 13800 }]
 
+// ---------------------------------------------------------------------------
+// 档位面（read-only/workspace-write；缺省 read-only 最严——v2/15 §一 SEC-FC-05）
+// ---------------------------------------------------------------------------
+
+/**
+ * 派工 seatbelt 档位值集（对齐 v2/12 §3.3「read-only/workspace-write」两档，不新增第三值）。
+ * 'off' 一类「关掉即裸」不是档位（v2/00 §五-8 禁止形态）——构造期拒收，见 resolveSeatbeltGrant。
+ */
+export const SEATBELT_TIERS = ['read-only', 'workspace-write'] as const
+
+/** 档位名（=SEATBELT_TIERS 成员；值集与 v2/12 §3.3 同名同义） */
+export type SeatbeltTier = (typeof SEATBELT_TIERS)[number]
+
+/** 缺省档位＝read-only（缺省最严；SEC-FC-05「派工缺省按 read-only 档圈定写域」的落点） */
+export const DEFAULT_SEATBELT_TIER: SeatbeltTier = 'read-only'
+
+/**
+ * 派工圈定授权（构造期事实，随派发给；**字段缺省一律取最严**）：
+ *   - tier 省略＝read-only；放宽只能显式写 'workspace-write'（不认 'off' 一类）
+ *   - writeRoots：workspace-write 档的写域白名单（**绝对路径**、逐条显式）；read-only 档
+ *     不得给（给了=构造期拒收：既不能静默丢根，也不能静默放宽）
+ *   - authorization：放宽授权的留痕（谁/何单/何策略）——workspace-write 必填；本包只做
+ *     构造期校验，落账/派发回执由派发域持有（IMPL-07-09；本包不新增记录类）
+ *   - 其余字段=既有 profile 参数透传（网域面与档位正交）；dshHomeRedirect 在 read-only 档
+ *     **不进写域**（read-only 不白名单 scratch——圈不住就不白名单）
+ */
+export interface SeatbeltGrant {
+  readonly tier?: SeatbeltTier
+  readonly writeRoots?: readonly string[]
+  readonly authorization?: string
+  readonly dshHomeRedirect?: string
+  readonly profileDir?: string
+  readonly rpcEndpoints?: readonly SeatbeltEndpoint[]
+  readonly outboundTcp?: readonly SeatbeltEndpoint[]
+}
+
+/**
+ * 解析后的圈定计划（resolveSeatbeltGrant 产物；不变量＝档位语义可机械断言）：
+ *   - read-only ⇒ writeRoots 恒空、authorization 恒 undefined（零写域，无放宽留痕）
+ *   - workspace-write ⇒ writeRoots 非空且逐条绝对路径、authorization 非空
+ */
+export interface SeatbeltPlan {
+  readonly tier: SeatbeltTier
+  readonly writeRoots: readonly string[]
+  readonly authorization: string | undefined
+  readonly dshHomeRedirect: string | undefined
+  readonly profileDir: string | undefined
+  readonly rpcEndpoints: readonly SeatbeltEndpoint[] | undefined
+  readonly outboundTcp: readonly SeatbeltEndpoint[] | undefined
+}
+
+/**
+ * 缺省计划＝read-only、零写域（冻结）：公共面「不传 seatbelt」绑定的唯一缺省值。
+ * 冻结是机制不是注释——任何调用点拿到它都改不了（防「取到缺省再顺手放宽」）。
+ */
+export const DEFAULT_SEATBELT_PLAN: SeatbeltPlan = Object.freeze({
+  tier: DEFAULT_SEATBELT_TIER,
+  writeRoots: Object.freeze<string[]>([]),
+  authorization: undefined,
+  dshHomeRedirect: undefined,
+  profileDir: undefined,
+  rpcEndpoints: undefined,
+  outboundTcp: undefined,
+})
+
+/**
+ * 档位解析（构造期唯一守门点）：grant（可省略）→ 圈定计划。
+ *   - 省略 grant / 省略 tier → **read-only 最严**（缺省翻转：绝不回落「不圈定」）
+ *   - 非法档位值（含 'off' 一类）→ CONFIG_INVALID/seatbelt/tier-invalid（构造期拒收）
+ *   - read-only + writeRoots → CONFIG_INVALID/seatbelt/read-only-write-roots（不静默丢根、
+ *     也不静默放宽）
+ *   - workspace-write：根须非空且逐条绝对路径；authorization 须非空（trim 后非空）——
+ *     缺一即构造期拒收（「放宽须显式授权并留痕」，v2/15 §一）
+ * 纯函数：同入参同计划（可测、可复算），不读环境、不落盘、不抛网络。
+ */
+export function resolveSeatbeltGrant(grant?: SeatbeltGrant): SeatbeltPlan {
+  if (grant === undefined) return DEFAULT_SEATBELT_PLAN
+  const tier: SeatbeltTier = grant.tier ?? DEFAULT_SEATBELT_TIER
+  if (!SEATBELT_TIERS.includes(tier)) {
+    configInvalid(
+      'seatbelt/tier-invalid',
+      `seatbelt 档位仅接受 ${SEATBELT_TIERS.join(' | ')}，得到 ${JSON.stringify(tier)}——'off' 一类「关掉即裸」不是档位（缺省=read-only 最严，v2/15 §一 SEC-FC-05）`,
+    )
+  }
+  const writeRoots = [...(grant.writeRoots ?? [])]
+  const passthrough = {
+    dshHomeRedirect: grant.dshHomeRedirect,
+    profileDir: grant.profileDir,
+    rpcEndpoints: grant.rpcEndpoints,
+    outboundTcp: grant.outboundTcp,
+  }
+  if (tier === 'read-only') {
+    if (writeRoots.length > 0) {
+      configInvalid(
+        'seatbelt/read-only-write-roots',
+        `read-only 档不得携带写域根（收到 ${String(writeRoots.length)} 条）——放宽须显式声明 tier:'workspace-write' 并附授权留痕；不静默丢根，也不静默放宽`,
+      )
+    }
+    return { tier, writeRoots: [], authorization: undefined, ...passthrough }
+  }
+  if (writeRoots.length === 0) {
+    configInvalid(
+      'seatbelt/widening-without-roots',
+      `workspace-write 档须显式给出写域根（writeRoots 非空）——没有白名单的「放宽」是裸写，不是档位`,
+    )
+  }
+  const badRoot = writeRoots.find((root) => root === '' || !isAbsolute(root))
+  if (badRoot !== undefined) {
+    configInvalid(
+      'seatbelt/write-root-invalid',
+      `写域根须为绝对路径（收到 ${JSON.stringify(badRoot)}）——相对路径根在内核面按 cwd 解析，等于隐式放宽`,
+    )
+  }
+  const authorization = grant.authorization?.trim()
+  if (authorization === undefined || authorization === '') {
+    configInvalid(
+      'seatbelt/widening-unauthorized',
+      'workspace-write 档须附 authorization 留痕（谁/何单/何策略）——无留痕的放宽=不可审计的放宽',
+    )
+  }
+  return { tier, writeRoots, authorization, ...passthrough }
+}
+
 /** profile 生成入参（随派发参数化：写域/网域/标签全部来自派发上下文） */
 export interface SeatbeltProfileParams {
   /**
@@ -93,6 +242,7 @@ export interface SeatbeltProfileParams {
    * 员工 tickets 单据子目录（TaskBrief.workspace）+ 指定产出位（同子目录内 deliverables/
    * REPORT.md 由子目录覆盖；跨目录产出位由派发方追加）+ dsh 运行面（DSH_HOME 重定向
    * 落子目录内；见 dsh.ts DshSeatbeltOptions.dshHomeRedirect）。
+   * 空数组=写域零放行（read-only 档；档位语义见 resolveSeatbeltGrant，本函数只渲染）。
    */
   writeRoots: readonly string[]
   /** 回环 RPC 白名单（缺省=DSH_HOST_RPC_DEFAULT；空数组=禁回环 RPC） */
@@ -112,7 +262,9 @@ export interface SeatbeltProfileParams {
  *   1. `(version 1)` 头 + `;;` 头注标签
  *   2. `(allow default)` 基线**先行**（mach/process 面 + 读面——attempt3 处置 (a)：
  *      读域宽放，读收口构造类=SIGABRT 崩溃类已删，见头注）
- *   3. `(deny file-write*)` + writeRoots 逐条 `(allow file-write* (subpath …))`
+ *   3. `(deny file-write*)` + writeRoots 逐条 `(allow file-write* (subpath …))`——
+ *      writeRoots 为空即 read-only 档（零白名单）；档位语义由 resolveSeatbeltGrant 守门，
+ *      本函数只做机械渲染（不认识档位）
  *   4. `(deny network*)` + localRpcEndpoints/outboundTcp 逐条
  *      `(allow network-outbound (remote tcp "localhost:port"/"*:port"))`（host 字面量
  *      约束与归一见头注局限+sbEndpoint）
@@ -124,7 +276,7 @@ export function buildWorkerSeatbeltProfile(params: SeatbeltProfileParams): strin
   lines.push('(version 1)')
   lines.push(';; —— 基线先行（最后匹配规则胜：未收口面放行——mach/process/读面宽放，attempt3 处置 (a)）——')
   lines.push('(allow default)')
-  lines.push(';; —— 写域收口（file-write* deny-by-default，白名单=员工单据子目录+指定产出位）——')
+  lines.push(';; —— 写域收口（file-write* deny-by-default，白名单=授权写域根；read-only 档=零条）——')
   lines.push('(deny file-write*)')
   for (const root of params.writeRoots) {
     if (root === '') continue

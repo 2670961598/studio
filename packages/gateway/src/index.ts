@@ -6,6 +6,7 @@
  *   - actions.ts  动作词结构化校验（@action 行首冻结格式）+ 中文自由批示判定（只标记）
  *   - signature.ts 署名注入 [公司·部门·岗位·级别]（SignedBody v1.2，author=工号）
  *   - gateway.ts  门面：gateWrite = verify → parseAction → signedBody 的写路径闸
+ *   - root-delegation.ts root_delegation 验签/指纹/期限/范围 preflight（SEC-ROOT-02/05 判定腿）
  *
  * 协议依据：docs/17-§7（写入全收口）、docs/24-§二（GATEWAY_ACTIONS=内部 MCP 工具集同一张表，
  * 状态推进永不在表内）、docs/25-§4.1（WkeyClaims/SignedBody 冻结形状）。
@@ -21,3 +22,4 @@ export * from './wkey.ts'
 export * from './actions.ts'
 export * from './signature.ts'
 export * from './gateway.ts'
+export * from './root-delegation.ts'

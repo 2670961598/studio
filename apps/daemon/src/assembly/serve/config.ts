@@ -6,25 +6,35 @@
  *   - docs/v2/16 §三 daemon 行（DISP-02：serve 拆 config/runtime/run，薄壳只留转发）；
  *   - docs/20-§十五.三（文件 600 行阈）／§十五.四（域平面不新增散件——拆件归本子域）。
  *
- * 内容＝原 assembly/serve.ts 配置段迁移（行为/错误码零漂移）：
- *   - ServeConfig 类型＋DEFAULT_SERVE_CONFIG＋DEV_GATEWAY_SECRET；
- *   - 零依赖扁平 YAML 子集解析 parseDaemonConfig（未知键/嵌套/空值 fail-closed）；
+ * 内容＝原 assembly/serve.ts 配置段迁移（行为/错误码零漂移）＋MIG-07 安全面收口：
+ *   - ServeConfig 类型＋DEFAULT_SERVE_CONFIG（**网关开关/开发密钥二键已删除**——SEC-FC-01/02）；
+ *   - 零依赖扁平 YAML 子集解析 parseDaemonConfig（未知键/嵌套/空值 fail-closed；`gateway`/
+ *     `gatewaySecret` 二键命中即 `CONFIG_INVALID/gateway-key-removed` 明报——不是「未知键」的
+ *     泛化，而是「该键已被规范删除」的显式拒绝）；
  *   - 平台/人事/matrix/频道交叉校验（CONFIG_INVALID 明报，校验顺序不变）；
- *   - 由配置派生的启动身份 daemonIdentity（gatewaySecret＋快照 → 网关署名上下文/工号）。
+ *   - 由配置派生的启动身份 daemonIdentity（**签根只从秘密源注入** → 署名上下文/工号）；
+ *   - SEC-WD-02 绑定一致性：org-config `company.platform` 与 daemon.yaml `platform` 不一致＝拒启。
  *
- * 边界：本文件零 IO、零进程面；只收配置校验件（serveconfig/coerce、hrsync/config、
- * channels/channels）与引擎缺省常量。runtime.ts / run.ts / executor-face.ts 从这里取同一份配置契约。
+ * 签根供给（plan/05 IMPL-07-06；v2/15 SEC-FC-02）：
+ *   - daemon.yaml **不再承载任何网关密钥值**（键删除，出现即拒）；值只从部署秘密源注入——
+ *     v0 env-ref 名 `STUDIO_GATEWAY_SECRET`（对应 `SEC-GW-SIGNING`，v2/16/catalog 落地前的
+ *     env 通道，IMPL-07-12 换 SecretProvider 时保持同一逻辑引用）。
+ *   - 仅「无公司目录 demo 装配」（`companyDir` 未给且 `platform: fake`）允许进程内临时随机签根，
+ *     并**显式打降级标记**（wireGatedPlatform 日志 + DaemonIdentity.secretSource）；其余形态缺值
+ *     ＝ `CONFIG_INVALID/gw-secret-missing` 拒启（不回落仓内常量——SEC-FC-02）。
+ *
+ * 边界：本文件零业务 IO；唯一进程面＝env 秘密读取（键名可枚举、值不落日志/台账/错误消息）与
+ * demo 随机源（可注入）。只收配置校验件（serveconfig/coerce、hrsync/config、channels/channels）
+ * 与引擎缺省常量。runtime.ts / run.ts / executor-face.ts 从这里取同一份配置契约。
  */
 import { ENGINE_CONFIG_DEFAULTS } from '../../engine/engine.ts'
 import { parseWhitelistSpec } from '../../engine/directive/index.ts'
 import { parseJudgeSites } from '../../engine/judge/sites129.ts'
 import { parseModelTierTickets } from '../../engine/tier/model-tier.ts'
 import { parsePersonInflightOverrides } from '../../engine/todoqueue/queue.ts'
-import { bool, num, str } from '../serveconfig/coerce.ts'
+import { bool, num, rejectRemovedGatewayKey, str } from '../serveconfig/coerce.ts'
 import { coerceHrServeKey, HR_SERVE_DEFAULTS, validateHrServeCross, type HrServeConfig } from '../hrsync/config.ts'
 import { crossValidateMatrixChannels } from '../channels/channels.ts'
-import type { CompanySnapshot } from '@studio-next/contract'
-import type { SignatureContext } from '@studio-next/gateway'
 
 /**
  * serve 配置（v0 最小面；引擎子配置并入扁平键）。hr* 人事同步器键子面在
@@ -205,17 +215,11 @@ export interface ServeConfig extends HrServeConfig {
    */
   modelTierTickets?: string
   /**
-   * 网关写收口开关（17-§7「一切平台写入经 wkey 网关」；src/engine/gated-platform.ts）：
-   * 缺省开——demo fake 平台也过真闸（同 secret 同验签链路）证明收口面；false=裸 platform
-   * （仅测试/对照用，生产不得关——头注警告）。
+   * 网关写路径收口位（**不是配置键**——SEC-FC-01：daemon.yaml `gateway:` 键已删除，出现即拒）。
+   * 恒为 `true`：装配层只有 gated 形态，无「关掉即裸 platform」分支（wire.ts 裸 platform 分支
+   * 已删）。保留此位只为把「恒定开」写成类型事实（runtime.ts 的旧分支成为静态死分支）。
    */
-  gateway: boolean
-  /**
-   * 网关 HMAC 密钥（daemon.yaml `gatewaySecret:`；>=32 字节，不足构造期抛 CONFIG_INVALID 拒启动）。
-   * 【警告】缺省=开发占位值（下方 DEV_GATEWAY_SECRET）——**生产必配强随机密钥**；
-   * 密钥只进 HMAC，永不入日志/错误消息/台账（gateway 纪律）。
-   */
-  gatewaySecret?: string
+  gateway: true
   /** LocalFile 平台根（platform: localfile 时生效；缺省 <rootDir>/platform） */
   platformDir?: string
   /** Taiga 实例根（platform: taiga 时必配；如 http://localhost:9000——/api/v1 由客户端拼接，尾斜杠自动剥） */
@@ -232,7 +236,8 @@ export interface ServeConfig extends HrServeConfig {
    * Taiga 认证态（platform: taiga 时必配）：password=env TAIGA_USERNAME+TAIGA_PASSWORD
    * （JWT 自动登录+401 自动刷新/重登）；token=env TAIGA_TOKEN(+TAIGA_REFRESH 可续期；无
    * refresh 且 token 失效须重启换新）。凭据值只进 env 永不入 daemon.yaml/日志/台账
-   * （红名单——与 gatewaySecret 纪律同源；文件形态 0600 token 归部署面装载进 env）。
+   * （红名单——与网关签根同纪律：值只经 env/秘密源，永不入 yaml/日志/台账；文件形态 0600 token
+   * 归部署面装载进 env）。
    */
   taigaAuth?: 'password' | 'token'
   /**
@@ -288,13 +293,6 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   reloadWatch: true,
   gateway: true,
 }
-
-/**
- * 开发缺省网关密钥（demo/测试占位——46 ASCII 字节，过 32B 门限）。
- * 【警告】生产必配 daemon.yaml `gatewaySecret:`（强随机 >=32B）：缺省值公开在仓库里，
- * 等于闸上无锁；secret 只进 HMAC 不落任何日志/台账（gateway 包纪律）。
- */
-export const DEV_GATEWAY_SECRET = 'studio-next-dev-gateway-secret-do-not-use-in-prod'
 
 function parseScalar(raw: string): string | number | boolean {
   const v = raw.trim()
@@ -449,8 +447,12 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         coerceHrServeKey(cfg, key, value, { str, num, bool })
         break
       case 'reloadWatch': cfg.reloadWatch = bool(value, key); break
-      case 'gateway': cfg.gateway = bool(value, key); break
-      case 'gatewaySecret': cfg.gatewaySecret = str(value, key); break
+      // —— SEC-FC-01/02（v2/15 §一）：网关开关键与密钥键**已从生产配置面删除** ——
+      //    不是「未知键」的泛化拒绝：明报「该键已删除 + 替代供给面」，防旧配置静默漂移。
+      case 'gateway':
+      case 'gatewaySecret':
+        rejectRemovedGatewayKey(key)
+        break
       case 'platformDir': cfg.platformDir = str(value, key); break
       case 'taigaUrl': cfg.taigaUrl = str(value, key); break
       case 'taigaProject': cfg.taigaProject = str(value, key); break
@@ -510,25 +512,14 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
   return cfg
 }
 
-/**
- * daemon 侧网关身份（控制面与 worker-key 签发共用的 secret/署名上下文/工号）。
- * 签名上下文取快照首部门+公司级（控制面无人员档案，拟稿待批）。
- * **L1 热重载活对象**（docs/38-§2）：gateway 逐调用读 ctx 字段——reload 时 mutate
- * company/dept/level 三字段即全 daemon 署名跟随新组织（hot-reload apply 段唯一写者）。
- */
-export function daemonIdentity(config: ServeConfig, snapshot: CompanySnapshot): {
-  secret: Uint8Array
-  ctx: SignatureContext
-  author: string
-} {
-  return {
-    secret: new TextEncoder().encode(config.gatewaySecret ?? DEV_GATEWAY_SECRET),
-    ctx: {
-      company: snapshot.name,
-      dept: snapshot.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback,
-      role: 'daemon',
-      level: Math.max(1, snapshot.level),
-    },
-    author: ENGINE_CONFIG_DEFAULTS.actor,
-  }
-}
+// —— 签根供给与 SEC-WD-02 绑定比对（MIG-07 搬迁：serveconfig/coerce.ts 收口，路径名不变）——
+export {
+  GATEWAY_SECRET_ENV,
+  assertPlatformBinding,
+  daemonIdentity,
+  resolveGatewaySecret,
+  type DaemonIdentity,
+  type GatewaySecretOrigin,
+  type GatewaySecretSource,
+  type ResolvedGatewaySecret,
+} from '../serveconfig/coerce.ts'

@@ -44,6 +44,9 @@ function compareByRef(a: TicketId, b: TicketId): number {
 /** 404 统一收口为 issue-not-found（与 issues 面同口径） */
 async function requireEntity(ctx: TaigaContext, id: TicketId): Promise<EntityRaw> {
   const ref = ctx.parseTicketId(id)
+  // 与 issues 面同口径（IMPL-07-02）：项目端点 404（绑定指错项目）先于收口抛出＝Err，
+  // 不得收口成「这张单不存在」。
+  await ctx.project()
   try {
     return await ctx.fetchEntityByRef(ref)
   } catch (err) {

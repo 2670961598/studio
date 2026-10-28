@@ -102,6 +102,10 @@ export async function listIssues(ctx: TaigaContext, q: IssueQuery): Promise<Issu
 /** 404 统一收口为 issue-not-found（读/写路径同口径，对齐 yt） */
 async function requireEntity(ctx: TaigaContext, id: TicketId): Promise<EntityRaw> {
   const ref = ctx.parseTicketId(id)
+  // 项目解析（GET /projects/by_slug）先于收口：项目端点 404＝**绑定指错项目**（不可确认），
+  // 不是「这张单不存在」——外部事件同是 404，语义不同，不得收口成 issue-not-found
+  // （IMPL-07-02；L3O-04「404 只表权威不存在」）。
+  await ctx.project()
   try {
     return await ctx.fetchEntityByRef(ref)
   } catch (err) {

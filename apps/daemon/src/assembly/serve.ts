@@ -26,8 +26,13 @@
  */
 export {
   DEFAULT_SERVE_CONFIG,
-  DEV_GATEWAY_SECRET,
+  GATEWAY_SECRET_ENV,
+  assertPlatformBinding,
+  daemonIdentity,
   parseDaemonConfig,
+  resolveGatewaySecret,
+  type DaemonIdentity,
+  type GatewaySecretSource,
   type ServeConfig,
 } from './serve/config.ts'
 export { buildServeRuntime, type ServeRuntime } from './serve/runtime.ts'

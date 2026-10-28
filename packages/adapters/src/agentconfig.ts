@@ -40,6 +40,22 @@
  *     不支持续跑）不一致；示例词汇 `agents_md: "dsh_home"` 不在 contract 冻结枚举内。
  *     本文件按 contract 词汇校验——按文档示例字面书写的 agent.yaml 会 CONFIG_INVALID，
  *     孰为准待批示（呈批前以 contract 为标尺，AGENTS.md §四「契约不随便动」）。
+ *
+ * seatbelt 必填化（IMPL-07-08；v2/15 §一 SEC-FC-05 前半；plan/02 §五-8 接口耦合）：
+ *   - `BUILTIN_FACTORIES` 的第三参 seatbelt（SeatbeltPlan）在类型上**必填**——家族工厂不再
+ *     有「不圈定」的缺省。公共解析面（builtinResolver / judgeAwareResolver /
+ *     tierAwareResolver / registerBuiltins）省略即绑定 read-only 最严档
+ *     （seatbelt.ts DEFAULT_SEATBELT_PLAN：写域零放行）；放宽只能显式
+ *     tier:'workspace-write'＋绝对路径根＋authorization 留痕——缺一构造期 CONFIG_INVALID。
+ *   - 运行时兜底同向：JS 调用方省略第三参=read-only，**不存在**「不传=全权」路径（档位
+ *     守门唯一=seatbelt.ts resolveSeatbeltGrant；非法档/未授权放宽一律拒收）。
+ *   - 接线面：dsh 家唯一有 seatbelt 端子（dsh.ts DshSeatbeltOptions，profile 随派发参数化）；
+ *     claude/codex/kimi 无端子——**显式放宽一律拒收**（不在无端子家族上盖「已放宽」章），
+ *     read-only 缺省的实际拦截缺失按 seatbelt.ts 头注 PRB-04 前置声明登记（未证，不冒充
+ *     已封死）；补齐归 G-PORT-WS 接线腿。
+ *   - **接口耦合**：本面签名变更的派发域调用方随动归 IMPL-07-09（串行 07-08→07-09）——
+ *     本单不改 daemon/派发面，daemon 现有 `judgeAwareResolver(tierAwareResolver())` 组合
+ *     仍零改动可编译，只是派工缺省圈定从「不圈定」翻成 read-only。
  */
 import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
@@ -48,7 +64,10 @@ import type { ExecutorAdapter, ExecutorCapabilities, ExecutorFamily } from '@stu
 import { ClaudeAdapter } from './claude.ts'
 import { CodexAdapter } from './codex.ts'
 import { DshAdapter } from './dsh.ts'
+import type { DshAdapterOptions, DshSeatbeltOptions } from './dsh.ts'
 import { KimiAdapter } from './kimi.ts'
+import { DEFAULT_SEATBELT_PLAN, resolveSeatbeltGrant } from './seatbelt.ts'
+import type { SeatbeltGrant, SeatbeltPlan } from './seatbelt.ts'
 import type { ExecutorRegistry } from './registry.ts'
 
 // ---------------------------------------------------------------------------
@@ -158,6 +177,11 @@ export function loadAgentConfig(text: string): AgentConfig {
  * agent.yaml patches 段透传（132-§6.1 单A·studio-dev-168——dsh 家消费
  * `agent-default-model` 声明注入 ResultStats.model，见 dshModelFromPatches；其余家忽略）。
  * 第二参可选：少参工厂字面量（既有测试/调用点）类型兼容零改动。
+ *
+ * seatbelt 不在此签名上：圈定计划由**解析器绑定**（builtinResolver 第二参 /
+ * judgeAwareResolver、tierAwareResolver 的 seatbelt 参数）——本类型的工厂一律已带计划
+ * （省略=read-only 最严，见文件头注「seatbelt 必填化」）；直接构造适配器绕过工厂
+ * （`new DshAdapter(cmd)` 无 opts）不属注册面，判例见 dsh.ts。
  */
 export type AdapterFactory = (
   cmd: readonly string[] | undefined,
@@ -171,6 +195,11 @@ export type AdapterResolver = (name: string) => AdapterFactory | undefined
  * 按 AgentConfig 把适配器工厂接进注册表（cmd 覆盖注入；注册序=书写序）。
  * 未知 executor 名 / 能力漂移 / 注册表拒收（重名、双 default）→ CONFIG_INVALID 明报。
  * 返回传入的 registry（链式便利）。
+ *
+ * seatbelt：由 resolver 在解析期绑定（内置面见 builtinResolver 第二参 / 两个感知解析器的
+ * seatbelt 参数）；本函数不再另开一个 seatbelt 入参——圈定决策只有一个入口，避免
+ * 「resolver 一套、wireRegistry 一套」的双写面。daemon 现有
+ * `judgeAwareResolver(tierAwareResolver())` 组合因此零改动，只是缺省圈定翻成 read-only。
  */
 export function wireRegistry(
   registry: ExecutorRegistry,
@@ -199,18 +228,24 @@ export function wireRegistry(
   return registry
 }
 
-/** registerBuiltins 的单项覆盖：cmd 改道（测试假 CLI/本机路径）+ default 旗标改写 */
+/**
+ * registerBuiltins 的单项覆盖：cmd 改道（测试假 CLI/本机路径）+ default 旗标改写
+ * ＋ **seatbelt 派工圈定授权**（省略=read-only 最严；放宽须显式 workspace-write＋绝对
+ * 路径根＋authorization 留痕——构造期校验见 seatbelt.ts resolveSeatbeltGrant）。
+ */
 export interface BuiltinOverride {
   cmd?: readonly string[] | undefined
   default?: boolean | undefined
+  seatbelt?: SeatbeltGrant | undefined
 }
 
-/** 四家内置覆盖表：只覆盖给出的家，其余走缺省（dsh 为 default） */
+/** 四家内置覆盖表：只覆盖给出的家，其余走缺省（dsh 为 default；seatbelt=read-only） */
 export type BuiltinOverrides = Partial<Record<ExecutorFamily, BuiltinOverride>>
 
 /**
  * 四家内置注册捷径：dsh（default）/ claude / codex / kimi 一行接入
- * （`registerBuiltins(createRegistry())`）。cmd/default 可按家覆盖。
+ * （`registerBuiltins(createRegistry())`）。cmd/default/seatbelt 可按家覆盖。
+ * 未给 seatbelt 的家绑 read-only 最严档（**不传=不圈定的旧全权缺省已删除**）。
  * 注册表已有同名 → CONFIG_INVALID（registry 拒收，不后写覆盖）。
  */
 export function registerBuiltins(
@@ -219,7 +254,9 @@ export function registerBuiltins(
 ): ExecutorRegistry {
   for (const name of BUILTIN_ORDER) {
     const o = overrides[name]
-    registry.register(BUILTIN_FACTORIES[name](o?.cmd), {
+    // 档位解析=构造期守门：非法档/未授权放宽在此抛（不等到 launch 才败）
+    const plan = resolveSeatbeltGrant(o?.seatbelt)
+    registry.register(BUILTIN_FACTORIES[name](o?.cmd, undefined, plan), {
       default: o?.default ?? name === 'dsh', // dsh 缺省 default（docs/17-§6 默认主力）
     })
   }
@@ -229,15 +266,38 @@ export function registerBuiltins(
 /** 内置注册序：dsh 首位（default）——与 docs/18-§1.2 文件列举序一致 */
 const BUILTIN_ORDER: readonly ExecutorFamily[] = ['dsh', 'claude', 'codex', 'kimi']
 
-/** 四家工厂表（cmd=undefined 时各自落缺省命令，17-§6） */
-const BUILTIN_FACTORIES: Readonly<Record<ExecutorFamily, AdapterFactory>> = {
-  dsh: (cmd, patches) => {
+/**
+ * 家族工厂（内部面）：第三参 seatbelt（圈定计划）**类型上必填**——SEC-FC-05 的接口耦合
+ * 点，家族工厂不再有「不圈定」缺省。类型必填保证每个调用点给出圈定决策；运行时仍兜底
+ * （JS 调用方省略第三参=read-only 最严，见各条目 `seatbelt ?? DEFAULT_SEATBELT_PLAN`）。
+ */
+type BuiltinFactory = (
+  cmd: readonly string[] | undefined,
+  patches: Readonly<Record<string, unknown>> | undefined,
+  seatbelt: SeatbeltPlan,
+) => ExecutorAdapter
+
+/** 四家工厂表（cmd=undefined 时各自落缺省命令，17-§6；seatbelt 计划=构造期已解析） */
+const BUILTIN_FACTORIES: Readonly<Record<ExecutorFamily, BuiltinFactory>> = {
+  dsh: (cmd, patches, seatbelt) => {
+    const plan = seatbelt ?? DEFAULT_SEATBELT_PLAN
     const model = dshModelFromPatches(patches)
-    return new DshAdapter(cmd, model !== undefined ? { model } : undefined)
+    return new DshAdapter(cmd, dshAdapterOptions(plan, model))
   },
-  claude: (cmd) => new ClaudeAdapter(cmd),
-  codex: (cmd) => new CodexAdapter(cmd),
-  kimi: (cmd) => new KimiAdapter(cmd),
+  // 三家无 seatbelt 端子（dsh.ts 才有 argv 包线）：显式放宽拒收，read-only 缺省照过——
+  // 实际圈定缺失按 seatbelt.ts 头注 PRB-04 前置登记（未证），不在无端子家族上盖已放宽章
+  claude: (cmd, _patches, seatbelt) => {
+    assertSeatbeltTerminal('claude', seatbelt ?? DEFAULT_SEATBELT_PLAN)
+    return new ClaudeAdapter(cmd)
+  },
+  codex: (cmd, _patches, seatbelt) => {
+    assertSeatbeltTerminal('codex', seatbelt ?? DEFAULT_SEATBELT_PLAN)
+    return new CodexAdapter(cmd)
+  },
+  kimi: (cmd, _patches, seatbelt) => {
+    assertSeatbeltTerminal('kimi', seatbelt ?? DEFAULT_SEATBELT_PLAN)
+    return new KimiAdapter(cmd)
+  },
 }
 
 /**
@@ -283,11 +343,34 @@ export function dshModelFromPatches(patches: Readonly<Record<string, unknown>> |
 /**
  * 内置解析器：四家名 → 工厂；未知名 undefined（wireRegistry 明报）。
  * daemon 装载 agent.yaml 时作为缺省 resolver 传入；注入自定义家可包一层。
+ *
+ * seatbelt（第二参，SEC-FC-05）：派工圈定授权——**省略=read-only 最严**（绑定
+ * DEFAULT_SEATBELT_PLAN，写域零放行；「不传=不圈定」的全权缺省已删除）；放宽须显式
+ * `{tier:'workspace-write', writeRoots:[绝对路径…], authorization:'…'}`，非法档/未授权
+ * 放宽在**解析期**即 CONFIG_INVALID（构造期守门，不等到 launch 才败）。
  */
-export function builtinResolver(name: string): AdapterFactory | undefined {
-  return Object.hasOwn(BUILTIN_FACTORIES, name)
-    ? (BUILTIN_FACTORIES[name as ExecutorFamily] as AdapterFactory)
-    : undefined
+export function builtinResolver(name: string, seatbelt?: SeatbeltGrant): AdapterFactory | undefined {
+  const family = builtinFamilyOf(name)
+  if (family === undefined) return undefined
+  if (seatbelt === undefined) return BUILTIN_DEFAULT_FACTORIES[family]
+  const plan = resolveSeatbeltGrant(seatbelt)
+  return (cmd, patches) => BUILTIN_FACTORIES[family](cmd, patches, plan)
+}
+
+/** 内置家族名判定（=BUILTIN_FACTORIES 键；未知名 undefined 不静默） */
+function builtinFamilyOf(name: string): ExecutorFamily | undefined {
+  return Object.hasOwn(BUILTIN_FACTORIES, name) ? (name as ExecutorFamily) : undefined
+}
+
+/**
+ * 缺省绑定（read-only 最严）：公共面省略 seatbelt 时返回的工厂——每家**单例**（同一
+ * 解析器两次调用返回同一函数对象，解析面可比较、零隐藏状态）。
+ */
+const BUILTIN_DEFAULT_FACTORIES: Readonly<Record<ExecutorFamily, AdapterFactory>> = {
+  dsh: (cmd, patches) => BUILTIN_FACTORIES.dsh(cmd, patches, DEFAULT_SEATBELT_PLAN),
+  claude: (cmd, patches) => BUILTIN_FACTORIES.claude(cmd, patches, DEFAULT_SEATBELT_PLAN),
+  codex: (cmd, patches) => BUILTIN_FACTORIES.codex(cmd, patches, DEFAULT_SEATBELT_PLAN),
+  kimi: (cmd, patches) => BUILTIN_FACTORIES.kimi(cmd, patches, DEFAULT_SEATBELT_PLAN),
 }
 
 // ---------------------------------------------------------------------------
@@ -328,16 +411,24 @@ function renameExecutor(adapter: ExecutorAdapter, name: string): ExecutorAdapter
  * 工厂并以 judge 名注册（判断调用复用家族适配器——cmd 即配置层绑定位：低档模型/
  * 无工具档由 agent.yaml 的 cmd 数组声明，17-§4「cmd=配置覆盖注入位」）。daemon 装载
  * agent.yaml 时包在 builtinResolver 外即可让 judge 位注册成功。
+ *
+ * seatbelt（第二参，SEC-FC-05）：judge 位工厂同样**必带**圈定计划——省略=read-only
+ * 最严；本解析器只对 judge 位行使该计划，四家名仍走 base（base 的圈定授权归 base 自己；
+ * 缺省 base=builtinResolver 时把 seatbelt 一并下传，两层面同源）。judge 的**实际调用**
+ * 走 judge/invoke.ts 的 dshJudgeAdapterFactory（workspace 只读档、写域=一次性 DSH_HOME），
+ * 不消费本层注册实例的 seatbelt 选项——本层只保证注册期不缺省全权。
  */
-export function judgeAwareResolver(base: AdapterResolver = builtinResolver): AdapterResolver {
+export function judgeAwareResolver(base?: AdapterResolver, seatbelt?: SeatbeltGrant): AdapterResolver {
+  const plan = resolveSeatbeltGrant(seatbelt)
+  const resolveBase: AdapterResolver = base ?? ((name: string) => builtinResolver(name, seatbelt))
   return (name: string): AdapterFactory | undefined => {
     const judgeFamily = judgeFamilyOf(name)
     if (judgeFamily !== undefined) {
-      const familyFactory = BUILTIN_FACTORIES[judgeFamily] as AdapterFactory
+      const familyFactory = BUILTIN_FACTORIES[judgeFamily]
       return (cmd: readonly string[] | undefined): ExecutorAdapter =>
-        renameExecutor(familyFactory(cmd), name)
+        renameExecutor(familyFactory(cmd, undefined, plan), name)
     }
-    return base(name)
+    return resolveBase(name)
   }
 }
 
@@ -392,22 +483,63 @@ export function tierExecutorName(family: string, tier: ModelTierSuffix): string 
  * 源），resolve 时必须连同 cmd 一起交给家族工厂；judge 位不透传（判断位镜像无意义）。
  * 档位**可标 default**（`dsh-mid: default` 即缺省主力位——档位是派工泳道，与 judge 位
  * 「不得标 default」相反；wireRegistry 无档位特设闸，配置自证）。
+ *
+ * seatbelt（第二参，SEC-FC-05）：档位位工厂同样**必带**圈定计划（省略=read-only 最严）；
+ * 与 judge 解析器同构——计划只作用于档位位，四家名走 base（缺省 base=builtinResolver
+ * 时下传 seatbelt，两层面同源）。
  */
-export function tierAwareResolver(base: AdapterResolver = builtinResolver): AdapterResolver {
+export function tierAwareResolver(base?: AdapterResolver, seatbelt?: SeatbeltGrant): AdapterResolver {
+  const plan = resolveSeatbeltGrant(seatbelt)
+  const resolveBase: AdapterResolver = base ?? ((name: string) => builtinResolver(name, seatbelt))
   return (name: string): AdapterFactory | undefined => {
     const tierFamily = tierOfExecutorName(name)
     if (tierFamily !== undefined) {
-      const familyFactory = BUILTIN_FACTORIES[tierFamily.family] as AdapterFactory
+      const familyFactory = BUILTIN_FACTORIES[tierFamily.family]
       return (cmd: readonly string[] | undefined, patches?: Readonly<Record<string, unknown>>): ExecutorAdapter =>
-        renameExecutor(familyFactory(cmd, patches), name)
+        renameExecutor(familyFactory(cmd, patches, plan), name)
     }
-    return base(name)
+    return resolveBase(name)
   }
 }
 
 // ---------------------------------------------------------------------------
 // 内部工具（纯函数）
 // ---------------------------------------------------------------------------
+
+/**
+ * dsh 家 seatbelt 选项（构造期固定；IMPL-07-08 SEC-FC-05 缺省翻转的落点）：
+ *   - plan.tier=read-only ⇒ `writeRootsOverride: []`（写域零放行——连 dshHomeRedirect 也
+ *     不白名单：read-only 档不白名单 scratch，dsh boot 要写=派发方显式放宽，不静默给）
+ *   - plan.tier=workspace-write ⇒ `writeRootsOverride: plan.writeRoots`（显式绝对路径根；
+ *     authorization 已由 resolveSeatbeltGrant 校验——留痕落账归派发域 IMPL-07-09）
+ * writeRootsOverride **恒给**：dsh 缺省会把 task.workspace/extraWriteRoots/dshHomeRedirect
+ * 隐式并入写域——缺省最严不允许隐式加根；切片式覆写把「写域根从哪来」收回到本计划一处。
+ */
+function dshAdapterOptions(plan: SeatbeltPlan, model: string | undefined): DshAdapterOptions {
+  const seatbelt: DshSeatbeltOptions = {
+    mode: 'auto',
+    writeRootsOverride: [...plan.writeRoots],
+    ...(plan.dshHomeRedirect !== undefined ? { dshHomeRedirect: plan.dshHomeRedirect } : {}),
+    ...(plan.profileDir !== undefined ? { profileDir: plan.profileDir } : {}),
+    ...(plan.rpcEndpoints !== undefined ? { rpcEndpoints: plan.rpcEndpoints } : {}),
+    ...(plan.outboundTcp !== undefined ? { outboundTcp: plan.outboundTcp } : {}),
+  }
+  return model !== undefined ? { seatbelt, model } : { seatbelt }
+}
+
+/**
+ * 无 seatbelt 端子的家族（claude/codex/kimi——argv 包线只在 dsh.ts 接）：**显式放宽一律
+ * 拒收**。没有端子就没有 profile 可落，声称「已放宽到 workspace-write」=假证据（比缺省
+ * 更坏）；read-only 缺省照过，但实际圈定缺失按 seatbelt.ts 头注 PRB-04 前置声明登记
+ * （未证，不冒充已封死）——端子补齐归 G-PORT-WS 接线腿。
+ */
+function assertSeatbeltTerminal(family: ExecutorFamily, plan: SeatbeltPlan): void {
+  if (plan.tier === 'read-only') return
+  configInvalid(
+    'agentconfig/seatbelt-unenforceable',
+    `executors.${family}: 该家适配器无 seatbelt 端子（唯一端子=dsh.ts 的 DshSeatbeltOptions）——显式放宽 workspace-write 无法执行，构造期拒收（不在无端子家族上盖「已放宽」章；端子补齐归 G-PORT-WS）`,
+  )
+}
 
 /**
  * 能力镜像逐字段比对（能力以适配器代码为准，头注口径）：配置提供的每个能力字段必须与

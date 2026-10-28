@@ -4,9 +4,16 @@
  * 组装三件：wkey 校验（鉴权）→ 动作词校验（结构化意图）→ 署名注入（身份落款）。
  *
  * 冻结口径（拟稿，改动先过批示）：
- *   - 两级错误对齐（17-§9 / errors.ts）：**构造期**配置非法（空 secret、坏署名上下文）抛
- *     CONFIG_INVALID/gw-*（configInvalid 通道）；**运行期**拒绝不抛——返回 {allowed:false,
- *     reason:'gw-verify-<子码>'|'gw-action-<子码>'|...}，子码与 wkey/actions 的拒绝码一一对应
+ *   - 两级错误对齐（17-§9 / errors.ts）：**构造期**配置非法（缺/空/过短/弱形态签根、坏署名上下文）
+ *     抛 CONFIG_INVALID/gw-*（configInvalid 通道）；**运行期**拒绝不抛——返回 {allowed:false,
+ *     reason:'gw-verify-<子码>'|'gw-action-<子码>'|'gw-root-<子码>'|...}，子码与 wkey/actions/
+ *     root-delegation 的拒绝码一一对应
+ *   - **SEC-FC-02 fail-closed**（v2/15 §一；plan/05 IMPL-07-06）：签根只从装配注入，**不回落任何
+ *     仓内常量**——缺失（非 Uint8Array）/空/不足 32 字节/弱形态（全零、单一可打印字节重复）＝
+ *     构造期 CONFIG_INVALID 拒启；错误消息只报形态不报值
+ *   - **SEC-ROOT-02 启动腿**（v2/15 §7.3；plan/05 IMPL-07-06）：给出 `root` 装配面即在构造期验
+ *     `root_delegation`，任一失败＝CONFIG_INVALID 拒启（最高宰相位不得落成可签发状态）；未装配
+ *     root 面时 `rootPreflight` 恒拒 `gw-root-no-delegation`（fail-closed，不开「缺省放行」口）
  *   - gateWrite(token, action, payload)：action=调用方申报的动作（scope 校验锚点）；
  *     payload=写入正文。payload 首行若是 `@action` 指令则解析出的动作必须与申报动作一致
  *     （不一致=gw-action-mismatch——申报与实文分叉即拒，不猜以哪边为准）
@@ -24,6 +31,8 @@ import { isFreeformChinese, parseAction } from './actions.ts'
 import type { ActionRejectReason } from './actions.ts'
 import { signedBody } from './signature.ts'
 import type { SignatureContext } from './signature.ts'
+import { createRootDelegationGate } from './root-delegation.ts'
+import type { RootActionRequest, RootDelegationOptions, RootPreflightResult } from './root-delegation.ts'
 import { configInvalid } from '@studio-next/contract'
 import type { GatewayAction, PersonId, SignedBody, TicketId, WkeyClaims } from '@studio-next/contract'
 
@@ -34,8 +43,14 @@ export type GateWriteResult =
   | { allowed: true; action: GatewayAction; args: Record<string, unknown>; signed: SignedBody }
   | { allowed: false; reason: GateRejectReason; needsLlmFallback?: true }
 
+/** 签根最小长度（HMAC-SHA256 门限；SEC-FC-02：不足即拒启，不做「短钥也能跑」的降级） */
+const MIN_GATEWAY_SECRET_BYTES = 32
+
 export interface GatewayOptions {
-  /** HMAC 密钥（透传 wkey 机构；非法即构造期抛 CONFIG_INVALID） */
+  /**
+   * HMAC 签根（透传 wkey 机构）。**无缺省、不回落仓内常量**（SEC-FC-02）：缺失/空/不足 32 字节/
+   * 弱形态即构造期 CONFIG_INVALID 拒启。值只进 HMAC，永不入日志/错误消息/台账。
+   */
   secret: Uint8Array
   /** epoch ms 时钟（求确定性可注入） */
   clock: () => number
@@ -45,6 +60,12 @@ export interface GatewayOptions {
   ctx: SignatureContext
   /** 署名工号（SignedBody.author） */
   author: PersonId
+  /**
+   * root 签发面装配输入（可选；SEC-ROOT-02 启动腿）：给出即在构造期验 `root_delegation`——
+   * 无委任/记录不可读/授予人非外部老板/证明未核验/指纹不符/已撤回/期限外/行使人或凭据类别
+   * 不合，任一失败＝CONFIG_INVALID 拒启（**不降级为告警继续**）。
+   */
+  root?: RootDelegationOptions
 }
 
 export interface Gateway {
@@ -56,19 +77,67 @@ export interface Gateway {
   issueControlKey(opts?: { ttl?: string }): ControlKey
   /** 关单即吊销（透传 wkey 机构；幂等） */
   revoke(ticket: TicketId): void
+  /**
+   * root 动作签发 preflight（SEC-ROOT-05 四硬拒绝；运行期不抛错，拒绝返 `gw-root-*` 纯码）。
+   * 未装配 root 面时恒拒 `gw-root-no-delegation`——「没配」不得解释成「不用验」。
+   */
+  rootPreflight(request: RootActionRequest): RootPreflightResult
   /** 底层机构（审计/测试用；生产不得绕过 gateWrite 直调 verify 写路径） */
   readonly authority: WkeyAuthority
 }
 
+/**
+ * 签根 fail-closed 校验（SEC-FC-02）：类型/空/长度/弱形态四门，任一不过即构造期抛。
+ * 弱形态判据＝全零，或「单一可打印 ASCII 字节重复」（占位密钥形态，如 'aaaa…'/'0000…'）；
+ * 二进制夹具（非可打印单字节填充）不在此列——那由长度门与调用面纪律管，不臆造熵估计。
+ */
+function assertGatewaySecret(secret: unknown): Uint8Array {
+  if (!(secret instanceof Uint8Array)) {
+    throw configInvalid(
+      'gw-secret-missing',
+      '网关签根未注入（GatewayOptions.secret 须为 Uint8Array；SEC-FC-02：无配置＝拒启，不回落仓内常量）',
+    )
+  }
+  if (secret.byteLength === 0) throw configInvalid('gw-secret-empty', '网关签根不得为空（SEC-FC-02）')
+  if (secret.byteLength < MIN_GATEWAY_SECRET_BYTES) {
+    throw configInvalid(
+      'gw-secret-too-short',
+      `网关签根至少 ${MIN_GATEWAY_SECRET_BYTES} 字节（HMAC-SHA256 门限；SEC-FC-02），收到 ${secret.byteLength}`,
+    )
+  }
+  const first = secret[0]
+  if (first === undefined) throw configInvalid('gw-secret-empty', '网关签根不得为空（SEC-FC-02）')
+  let uniform = true
+  for (const byte of secret) {
+    if (byte !== first) {
+      uniform = false
+      break
+    }
+  }
+  const printable = first >= 0x20 && first <= 0x7e
+  if (uniform && (first === 0x00 || printable)) {
+    throw configInvalid('gw-secret-weak', '网关签根形态过弱（全零或单一可打印字节重复＝占位密钥；SEC-FC-02 拒启）')
+  }
+  return secret
+}
+
 /** createGateway —— 组装写路径收口闸（纯逻辑零 IO） */
 export function createGateway(opts: GatewayOptions): Gateway {
-  const authority = createWkeyAuthority(opts.secret, opts.clock)
+  const secret = assertGatewaySecret(opts.secret)
+  const authority = createWkeyAuthority(secret, opts.clock)
   if (opts.ticket === '') throw configInvalid('gw-empty-ticket', '网关实例绑定的单号不得为空')
+  // root 面装配（SEC-ROOT-02 启动腿）：构造期即验，失败＝CONFIG_INVALID 抛错（对象不产出）
+  const rootGate =
+    opts.root === undefined
+      ? undefined
+      : createRootDelegationGate({ ...opts.root, clock: opts.root.clock ?? opts.clock })
   return {
     authority,
     issue: (claims) => authority.issue(claims),
     issueControlKey: (o) => issueControlKeyOn(authority, o),
     revoke: (ticket) => authority.revoke(ticket),
+    rootPreflight: (request) =>
+      rootGate === undefined ? { allowed: false, reason: 'gw-root-no-delegation' } : rootGate.preflight(request),
 
     gateWrite(token: string, action: GatewayAction, payload: string): GateWriteResult {
       // 0) 自由中文前置短路（不烧 nonce；只标记，LLM 回退归上层——17-§7）

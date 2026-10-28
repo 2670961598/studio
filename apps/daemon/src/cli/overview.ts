@@ -188,8 +188,9 @@ export async function cmdOverview(argv: string[]): Promise<number> {
  * external 子命令：:8788 对外 API 薄壳（语义全在 @studio-next/panel/external）。
  * 挂载语义与 overview 同款（逐目录 readDirectoryFiles → loadCompanyDirectory，校验不过
  * 拒绝挂载）；报表清单从目录文件集派生（reports/ 前缀——v0 只出清单不出正文）。
- * 触发面平台（拟稿）：fake 平台过真网关闸（createGatedPlatform——17-§7 写收口在 daemon
- * 侧装配，panel 包不碰 gateway）；DEV_GATEWAY_SECRET 开发密钥+警告，与 serve demo 同款，
- * 真平台接线与生产密钥归 daemon 装配后续刀。绑定面：缺省 127.0.0.1，--lan 显式绑 0.0.0.0
- * （D4 拟稿反转：D4「默认局域网」是部署意图，安全缺省只绑本机）。
+ * 触发面平台：写路径一律过真网关闸（createGatedPlatform——17-§7 写收口在 daemon 侧装配，
+ * panel 包不碰 gateway）；签根**无开发缺省**（SEC-FC-02：只从部署秘密源注入 env
+ * STUDIO_GATEWAY_SECRET，仓内不存密钥值——本注释原引的开发常量已随 IMPL-07-06 删除）。
+ * 绑定面：缺省 127.0.0.1，--lan 显式绑 0.0.0.0（D4 拟稿反转：D4「默认局域网」是部署意图，
+ * 安全缺省只绑本机）。
  */
