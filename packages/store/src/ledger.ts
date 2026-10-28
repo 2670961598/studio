@@ -110,6 +110,7 @@ import { createUsageFace } from './usage.ts'
 import type { UsageFace } from './usage.ts'
 import { createCostDailyFace } from './cost.ts'
 import type { CostDailyFace } from './cost.ts'
+import { excludedDomainRefs, type ExcludedDomainRef } from './backup.ts'
 import { assertRecord, optNum, optStr, str, type SqlRow } from './row-helpers.ts'
 import { currentVersion, migrate } from './migrations.ts'
 import {
@@ -184,10 +185,12 @@ export interface InsertCandidateResult {
   inserted: boolean
 }
 
-/** dumpEvents 结果：写出行数（与库内 events 计数一致） */
+/** dumpEvents 结果：写出行数（与库内 events 计数一致）；排除域=未入导出/重放路径的域（DOM-04） */
 export interface DumpResult {
   lines: number
+  excludedDomains: readonly ExcludedDomainRef[]
 }
+export { renderDumpReport } from './backup.ts'
 
 /** syncCompany 结果：本次镜像落库的 people / departments 行数（入参快照的行数，非库内总行数） */
 export interface CompanySyncResult {
@@ -422,8 +425,7 @@ const INSERT_EVENT_SQL = `INSERT INTO events (
 //     DDL 见 migrations v4：接管期间 daemon 自建语句与本面共存，同表同语义） ——
 
 const KV_GET_SQL = 'SELECT value FROM daemon_kv WHERE key = ?'
-const KV_SET_SQL =
-  'INSERT INTO daemon_kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+const KV_SET_SQL = 'INSERT INTO daemon_kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
 
 /** kv 键闸（拟稿）：非空字符串——空键=调用方 bug，拒收；value 不设闸（空串=daemon「游标 null」持久形态） */
 function assertKvKey(key: string): void {
@@ -508,7 +510,6 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-/** zod schema 的结构面（免 import zod 类型；safeParse 结果形状即可） */
 /** 打开（或创建）台账库：建库 → PRAGMA 对齐 → migrate()（幂等）→ 返回句柄 */
 export function openLedger(path: string): Ledger {
   const db = openSqlite(path)
@@ -591,7 +592,7 @@ export function openLedger(path: string): Ledger {
     const rows = db.prepare('SELECT * FROM events ORDER BY ts ASC, id ASC').all() as SqlRow[]
     // 同步写（daemon 单写入者，无并发写面）；行序 = ts,id 升序，行字节由 canonical 序列化保证确定
     writeFileSync(path, rows.map((row) => JSON.stringify(rowToEvent(row))).join('\n') + (rows.length > 0 ? '\n' : ''), 'utf8')
-    return { lines: rows.length }
+    return { lines: rows.length, excludedDomains: excludedDomainRefs() }
   }
 
   const insertWorkRecord = (record: unknown): string => {

@@ -3,32 +3,30 @@
  *
  * 依据：docs/17-§3 行条目。
  *   - 首刀三表（work_records / sessions）：id/issue/工号/instance_id/executor/session_id/executor_session_id（202-P2 v12）/
- *     lane/branch/started/ended/cost/tokens/attempt/status/report_ref/summary_ref 与 session_id/issue/
- *     工号/archive_path/started/ended/turns。
- *   - 第二刀五表（people / personnel_events / departments / ticket_mirror / budgets）：
- *     列语义对齐 17-§3 表清单（people=公司目录镜像｜personnel_events=本库 append-only｜
- *     departments=公司目录镜像｜ticket_mirror=YouTrack 镜像｜budgets=本库）。
- *   - v3 jobs 调度表（17-§2 调度表列集 / 18-§三）：公司目录定时岗配置（D9）的持久化投影；
- *     cron 只做形状闸（非空 + ≤6 空白分隔段），表达式解析归 core 后续单——**不引 croner**。
- *   - v4 收口面 EndWorkRecord（work_records end 入参；daemon 切换前 closeWorkRecord 直发
- *     UPDATE 的正式化）：status 终态值域不锁；tokens 已扩入参（kernel.TokenCounts，与建列/insertWorkRecord 同源——切换单清偿，见接口行注）。
- *   - v5 进化管线 candidates 表（17-§3 / core evolution 首刀）：CandidateRow 逐列对齐 core
- *     CandidateRecord 可序列化形态（值域**复制**自 core 冻结枚举——store src 零 core 运行时
- *     依赖，漂移由一致性测试钉死，沿 STUDIO_TOOLS 先例）+ created_at 库侧列；形状差异取舍
- *     （asset_type 列名 / version TEXT / asset_path 补列）见 migrations v5 头注与接口行注。
+ *     lane/branch/started/ended/cost/tokens/attempt/status/report_ref/summary_ref 与 session_id/issue/工号/archive_path/started/ended/turns。
+ *   - 第二刀五表（people / personnel_events / departments / ticket_mirror / budgets）：列语义对齐 17-§3 表清单
+ *     （people=公司目录镜像｜personnel_events=本库 append-only｜departments=公司目录镜像｜ticket_mirror=YouTrack 镜像｜budgets=本库）。
+ *   - v3 jobs 调度表（17-§2 调度表列集 / 18-§三）：公司目录定时岗配置（D9）的持久化投影；cron 只做形状闸（非空 + ≤6 空白分隔段），表达式解析归 core 后续单——**不引 croner**。
+ *   - v4 收口面 EndWorkRecord（work_records end 入参；daemon 切换前 closeWorkRecord 直发 UPDATE 的正式化）：status 终态值域不锁；tokens 已扩入参（kernel.TokenCounts，与建列/insertWorkRecord 同源——切换单清偿，见接口行注）。
+ *   - v5 进化管线 candidates 表（17-§3 / core evolution 首刀）：CandidateRow 逐列对齐 core CandidateRecord 可序列化形态
+ *     （值域**复制**自 core 冻结枚举——store src 零 core 运行时依赖，漂移由一致性测试钉死，沿 STUDIO_TOOLS 先例）+ created_at
+ *     库侧列；形状差异取舍（asset_type 列名 / version TEXT / asset_path 补列）见 migrations v5 头注与接口行注。
  *   - v6 报表三表（17-§3 / docs/50 断链6 / 04-§三）：ledgers 单据派生镜像（LedgerEntryRecord——表名与库句柄 Ledger 撞名，记录名避撞）/ reports 报表快照行（ReportRecord，type 值域 daily/weekly/monthly 取 04-§三三档）/ probes_runs 探针跑分（ProbeRunRecord，append-only）。
  *
  * **拟稿待批（docs 未细化处逐条标明，contract 落地后替换为契约校验）**：
- *   - 「工号」列名 person_id；「started/ended」→ started_at/ended_at（epoch ms，ended 可空=在途）；
- *     「cost」→ cost_usd（对齐 events 列名）；
- *   - tokens 形状取 kernel.TokenCounts（executor 归一化三字段口径——work_records 来自收割
- *     ResultStats，与 events 四桶不同源，F2-04 只冻结 events 侧）；
+ *   - 「工号」列名 person_id；「started/ended」→ started_at/ended_at（epoch ms，ended 可空=在途）；「cost」→ cost_usd（对齐 events 列名）；
+ *   - tokens 形状取 kernel.TokenCounts（executor 归一化三字段口径——work_records 来自收割 ResultStats，与 events 四桶不同源，F2-04 只冻结 events 侧）；
  *   - status 先为非空串（done/failed 具体枚举归收割域，contract 落地时收口）；
  *   - id / session_id 暂不锁 ULID（与 events 不同：17-§3 未标 id 形状，先非空）——五张新表同此口径。
- * 本文件是 store 层临时闸（拒明显坏行入账），contract schema 落地后替换为契约校验。
+ * 本文件对 v0 旧表仍是临时闸（拒明显坏行入账）；v2 记录族已接缝 contract 校验（文末，IMPL-04-06）：
+ * 形状唯一源=contract `ALL_RECORD_SCHEMAS`，store 不再复制 v2 字段表。
  */
 import { z } from 'zod'
 import type { TokenCounts } from '@studio-next/contract'
+import {
+  ALL_RECORD_SCHEMAS, COMMON_RECORD_TYPES, checkEffectiveSlotConsistency, issuesFromZod,
+  type AllRecordType, type EffectiveSlotCarrier, type RecordEnvelope, type RecordValidationIssue,
+} from '../../contract/src/records/index.ts'
 
 /** work_records 记录（done.json 索引化，17-§3「权威源」列） */
 export interface WorkRecord {
@@ -191,10 +189,9 @@ export interface EndWorkRecord {
 }
 
 /**
- * tokens 闸形状（132-§6.1 单A·studio-dev-168）：kernel.TokenCounts 四桶+兼容读别名——
- * input/output 必填非负整数；cache_read/cache_creation/cached 可选（cached=旧账键，读侧
- * `cache_read ?? cached` 认，写侧一律新键——daemon/适配器写路径不产该键，闸不拒旧形
- * 回写/回填的合法面）。与 events 四桶（F2-04 canonical 序）不同源，不锁键序。
+ * tokens 闸形状（132-§6.1 单A·studio-dev-168）：kernel.TokenCounts 四桶+兼容读别名——input/output 必填非负整数；
+ * cache_read/cache_creation/cached 可选（cached=旧账键，读侧 `cache_read ?? cached` 认，写侧一律新键——daemon/适配器
+ * 写路径不产该键，闸不拒旧形回写/回填的合法面）。与 events 四桶（F2-04 canonical 序）不同源，不锁键序。
  */
 const TokenCountsShape = z.strictObject({
   input: z.number().int().min(0),
@@ -204,7 +201,6 @@ const TokenCountsShape = z.strictObject({
   cached: z.number().int().min(0).optional(),
 })
 
-/** store 层临时校验（拟稿待批，见文件头注） */
 export const WorkRecordSchema = z.strictObject({
   id: z.string().min(1),
   issue: z.string().min(1),
@@ -228,7 +224,6 @@ export const WorkRecordSchema = z.strictObject({
   model: z.string().min(1).optional(),
 })
 
-/** store 层临时校验（拟稿待批，见文件头注） */
 export const SessionRecordSchema = z.strictObject({
   session_id: z.string().min(1),
   issue: z.string().min(1),
@@ -241,7 +236,6 @@ export const SessionRecordSchema = z.strictObject({
 
 // —— v0.2 第二刀五表临时闸（拟稿点见接口行注；strict：未知列拒收，加列走批示+SCHEMA_EVOLVE） ——
 
-/** store 层临时校验（拟稿待批，见文件头注） */
 export const PersonRecordSchema = z.strictObject({
   person_id: z.string().min(1),
   name: z.string().min(1),
@@ -257,7 +251,6 @@ export const PersonRecordSchema = z.strictObject({
   status: z.string().min(1).optional(),
 })
 
-/** store 层临时校验（拟稿待批，见文件头注） */
 export const PersonnelEventRecordSchema = z.strictObject({
   id: z.string().min(1),
   ts: z.number().int().min(0),
@@ -269,7 +262,6 @@ export const PersonnelEventRecordSchema = z.strictObject({
   approver: z.string().min(1),
 })
 
-/** store 层临时校验（拟稿待批，见文件头注） */
 export const DepartmentRecordSchema = z.strictObject({
   path: z.string().min(1),
   company: z.string().min(1),
@@ -279,7 +271,6 @@ export const DepartmentRecordSchema = z.strictObject({
   parent_path: z.string().min(1).optional(),
 })
 
-/** store 层临时校验（拟稿待批，见文件头注） */
 export const TicketMirrorRecordSchema = z.strictObject({
   issue: z.string().min(1),
   company: z.string().min(1),
@@ -295,8 +286,6 @@ export const TicketMirrorRecordSchema = z.strictObject({
   assignee: z.string().min(1).optional(),
 })
 
-
-/** store 层临时校验（拟稿待批，见文件头注） */
 export const BudgetRecordSchema = z.strictObject({
   id: z.string().min(1),
   scope_kind: z.enum(['issue', 'person', 'company']),
@@ -310,16 +299,14 @@ export const BudgetRecordSchema = z.strictObject({
 // —— v3 jobs 临时闸（拟稿点见接口行注；strict：未知列拒收，加列走批示+SCHEMA_EVOLVE） ——
 
 /**
- * cron 形状闸（**不引 croner**——解析归 core 后续单，store 只挡明显坏串）：
- * 非空且 trim 后至多 6 个空白分隔段（5 段标准 cron / croner 6 段含秒变体）。
- * 段内语法（步进、范围、列表、别名等）不在本闸职责内。
+ * cron 形状闸（**不引 croner**——解析归 core 后续单，store 只挡明显坏串）：非空且 trim 后至多 6 个空白分隔段
+ * （5 段标准 cron / croner 6 段含秒变体）。段内语法（步进、范围、列表、别名等）不在本闸职责内。
  */
 function cronShapeOk(expr: string): boolean {
   const trimmed = expr.trim()
   return trimmed !== '' && trimmed.split(/\s+/).length <= 6
 }
 
-/** store 层临时校验（拟稿待批，见文件头注；cron 仅形状闸，见 cronShapeOk） */
 export const JobRecordSchema = z.strictObject({
   job_id: z.string().min(1),
   company: z.string().min(1),
@@ -411,7 +398,6 @@ export interface CandidateRow {
   created_at: number
 }
 
-/** store 层临时校验（strict：未知列拒收；值域与 core 冻结一致——复制+一致性测试钉死，见上） */
 export const CandidateRowSchema = z.strictObject({
   id: z.string().min(1),
   asset_type: z.enum(CANDIDATE_ASSET_KINDS),
@@ -490,7 +476,6 @@ export interface ProbeRunRecord {
   ts: number
 }
 
-/** store 层临时校验（拟稿待批；strict：未知列拒收；body 序列化闸在写入面 ledger.ts） */
 export const LedgerEntrySchema = z.strictObject({
   issue: z.string().min(1),
   kind: z.enum(LEDGER_KIND_VALUES),
@@ -498,7 +483,6 @@ export const LedgerEntrySchema = z.strictObject({
   updated: z.number().int().min(0),
 })
 
-/** store 层临时校验（拟稿待批；strict：未知列拒收；date 锚日形状闸 YYYY-MM-DD） */
 export const ReportRecordSchema = z.strictObject({
   id: z.string().min(1),
   company: z.string().min(1),
@@ -509,7 +493,6 @@ export const ReportRecordSchema = z.strictObject({
   json_ref: z.string().min(1),
 })
 
-/** store 层临时校验（拟稿待批；strict：未知列拒收） */
 export const ProbeRunSchema = z.strictObject({
   id: z.string().min(1),
   executor: z.string().min(1),
@@ -538,7 +521,6 @@ export interface HrSyncPayload {
   status?: string
 }
 
-/** store 层临时校验（拟稿待批；strict：未知列拒收） */
 export const HrSyncPayloadSchema = z.strictObject({
   field: z.string().min(1),
   prev: z.string().min(1).nullable(),
@@ -583,7 +565,6 @@ export interface HrSyncTaskRecord {
   updated: number
 }
 
-/** store 层临时校验（拟稿待批；strict：未知列拒收；payload JSON 往返闸在写入面 ledger.ts） */
 export const HrSyncTaskSchema = z.strictObject({
   id: z.string().min(1),
   ts: z.number().int().min(0),
@@ -604,3 +585,15 @@ export const HrSyncTaskSchema = z.strictObject({
 //    （todo-queue-records.ts，records.ts 尺寸阈 600 清偿）；此处转发出口保持导入面不变 ——
 export type { TodoQueueRecord } from './todo-queue-records.ts'
 export { TodoQueueRecordSchema } from './todo-queue-records.ts'
+
+// —— v2 记录族（v14 `records` 表）契约校验接缝（IMPL-04-06；v2/11 §〇/§一）——
+// v0 各表临时闸只为旧表兜底（见文件头注）；v2 记录不另立字段表：信封/族 payload/生效槽一律走 contract 冻结形状（ALL_RECORD_SCHEMAS），写口 hist.ts 只做列映射——本处是 store 侧唯一形状出口。
+export {
+  ALL_RECORD_SCHEMAS, COMMON_RECORD_TYPES, checkEffectiveSlotConsistency, issuesFromZod,
+  type AllRecordType, type EffectiveSlotCarrier, type RecordEnvelope, type RecordValidationIssue,
+}
+
+/** v2 记录域（v2/11 §0.9 十三 AREA）：AUTH 族通用骨架八条（contract COMMON 登记）归 AUTH，余取类型第二段 */
+export function v2RecordArea(recordType: string): string {
+  return (COMMON_RECORD_TYPES as readonly string[]).includes(recordType) ? 'AUTH' : (recordType.split('-')[1] ?? '')
+}

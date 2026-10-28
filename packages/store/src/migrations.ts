@@ -1,21 +1,20 @@
 /**
  * migrations —— 薄 migration runner（schema_version 表 + 手写顺序 SQL）
  *
- * 选型依据：docs/16-§二（node:sqlite + migration）、docs/17-§3（schema_version 表：
- * version / applied_at / sha8 三列）。drizzle 探测结论见 driver.ts 头注——稳定线无
- * node:sqlite 驱动，故 migration 走「schema_version 表 + 手写顺序 SQL」薄法（任务预案允许）。
+ * 选型依据：docs/16-§二（node:sqlite + migration）、docs/17-§3（schema_version：version / applied_at /
+ * sha8 三列）。drizzle 探测结论见 driver.ts 头注→走「schema_version 表 + 手写顺序 SQL」薄法。
  *
- * 语义（幂等三保证）：
- *   1. 逐版本顺序应用：MIGRATIONS 按 version 升序排列，migrate() 只补未应用的版本；
- *   2. 每版本一个事务：该版本全部 SQL 同生共死（半途失败整体回滚，不留半截 schema）；
- *   3. sha8 防漂移：应用时记 sha256(SQL) 前 8 hex；重开库时已记录版本 sha8 与内置脚本
- *      不一致 → CONFIG_INVALID（schema_version 是内置脚本的投影，漂移即篡改/降级混用）。
+ * 语义（幂等三保证）：1. 逐版本顺序应用（MIGRATIONS 按 version 升序，migrate() 只补未应用版本）；
+ *   2. 每版本一个事务（该版本全部 SQL 同生共死，半途失败整体回滚，不留半截 schema）；
+ *   3. sha8 防漂移：应用时记 sha256(SQL) 前 8 hex；重开库时已记录 sha8 与内置脚本不一致
+ *      → CONFIG_INVALID（schema_version 是内置脚本的投影，漂移即篡改/降级混用）。
  */
 import { createHash } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { configInvalid } from '@studio-next/contract'
-// v12 条目体在 cost.ts（BC-S2 先拆再增：本文件已近尺寸阈 600——条目+读写面同文件自足）
+// 条目体外置（BC-S2 先拆再增：本文件顶尺寸阈 600）：v12 在 cost.ts、v14/v15 在 records-migrations.ts
 import { costDailyMigration } from './cost.ts'
+import { recordsMigrations } from './records-migrations.ts'
 
 /** 一条迁移：version 单调 +1 起；name 仅为人读；sql 为该版本的完整顺序 SQL */
 export interface Migration {
@@ -528,15 +527,15 @@ const MIGRATIONS: readonly Migration[] = [
   },
   costDailyMigration,
   {
-    // v13：202-P2 合并跑机器（studio-dev-232，docs/17-§2 相位 5 真单刀）：work_records
-    //   += executor_session_id——executor 侧会话 id（dsh --session-id 续跑键，契约 v1.5
-    //   Handle.executorSessionId 落账位）。断点解析（resolveMergeRunPlan）经本列跨进程
-    //   唤起原会话；旧行 NULL=无从续（如实降级手工链，不猜）。撞号纪律：LATEST 单调+1
-    //   （v12 已被 132-D cost_daily 占用，本刀顺延取 13）。
+    // v13：202-P2 合并跑机器（studio-dev-232，docs/17-§2 相位 5 真单刀）：work_records +=
+    //   executor_session_id——executor 侧会话 id（dsh --session-id 续跑键，契约 v1.5 Handle.
+    //   executorSessionId 落账位）。断点解析（resolveMergeRunPlan）经本列跨进程唤起原会话；旧行
+    //   NULL=无从续（如实降级手工链，不猜）。撞号纪律：LATEST 单调+1（v12 已被 132-D cost_daily 占）。
     version: 13,
     name: '202-P2 合并跑：work_records.executor_session_id（studio-dev-232）',
     sql: ['ALTER TABLE work_records ADD COLUMN executor_session_id TEXT;', ''].join('\n'),
   },
+  ...recordsMigrations,
 ]
 
 /** 内置迁移的最高版本（0 = 无迁移可用，仅占位防呆） */
