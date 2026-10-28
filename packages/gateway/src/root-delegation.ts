@@ -152,6 +152,8 @@ function asStringArray(value: unknown): readonly string[] | undefined {
 export function readRootDelegation(raw: unknown): RootDelegationView | undefined {
   const envelope = asObject(raw)
   if (envelope === undefined) return undefined
+  // 记录类型必须是 REC-AUTH-01：写错类的记录不得当根授予用（fail-closed，不按「字段像」认）
+  if (envelope['recordType'] !== AUTH_GRANT_RECORD_TYPE) return undefined
   const recordRef = asNonEmptyString(envelope['recordId'])
   const payload = asObject(envelope['payload'])
   if (recordRef === undefined || payload === undefined) return undefined

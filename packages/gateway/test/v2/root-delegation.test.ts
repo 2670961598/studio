@@ -133,6 +133,10 @@ describe('SEC-ROOT-02 正例：有效 root_delegation 才落成可签发状态',
     expect(readRootDelegation(rootGrant())?.includedScope).toEqual(['approve_internal_hard_action', 'appoint_g8'])
     expect(readRootDelegation({ recordId: 'x', payload: {} })).toBeUndefined()
     expect(readRootDelegation('not-a-record')).toBeUndefined()
+    // 记录类型不符（错类记录冒根授予）→ 不可读（fail-closed）
+    const misfiled = rootGrant()
+    misfiled['recordType'] = 'REC-AUTH-02'
+    expect(readRootDelegation(misfiled)).toBeUndefined()
   })
 })
 
