@@ -83,6 +83,15 @@ describe('NEG-EMP-03 出工中换能力：实质变更重认门拒绝续跑', ()
       requalificationRef: '   ',
     })
     expect(blankRef.allowed).toBe(false)
+
+    // ⑤ 比较基座不成立（只有一侧给能力摘要＝未知）→ fail-closed 视同实质变更，不得放行续跑
+    const unverifiable = judgeSegmentContinuation({
+      locked: { executor: 'fake-work' },
+      requested: { executor: 'fake-work', capabilityDigest: 'sha256:cap-b' },
+      substantive: false,
+    })
+    expect(unverifiable.substantive).toBe(true)
+    expect(unverifiable.allowed).toBe(false)
   })
 
   it('引擎面：能力位不支撑续跑→拒绝静默续跑（明报降级新派、新 attempt/新会话、causal 链不断）', async () => {

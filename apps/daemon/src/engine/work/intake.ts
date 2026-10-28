@@ -314,17 +314,19 @@ export interface SegmentContinuationVerdict {
  * 「同一人/同一单」不构成免重认理由；重认结论（REC-CAP-02 引用）缺位时**拒绝续跑**
  * （同一出工段 continue 不成立）。观察事实不构成判定：
  *   - executor 变更 / capabilityDigest 变更 / 调用方声明 substantive —— 任一成立即实质变更；
- *   - capabilityDigest 缺省只表示「无可比面」，**不得**当作未变更的反证（未知≠通过）；
+ *   - capabilityDigest 两侧都缺省＝无可比面（只按执行体与调用方声明判）；**只有一侧给出
+ *     ＝比较基座不成立（未知）**——按 fail-closed 视同实质变更（未知≠未变更，不得放行）；
  *   - 重认到场（非空引用）后允许续跑；合法出口之外的行为（拒绝后派新段/重判五门）由
  *     调用方决定——本件只给「能否续接本段」的封闭结论。
  */
 export function judgeSegmentContinuation(request: SegmentContinuationRequest): SegmentContinuationVerdict {
   const executorChanged = request.requested.executor !== request.locked.executor
-  const capabilityChanged =
-    request.requested.capabilityDigest !== undefined &&
-    request.locked.capabilityDigest !== undefined &&
-    request.requested.capabilityDigest !== request.locked.capabilityDigest
-  const substantive = request.substantive || executorChanged || capabilityChanged
+  const lockedDigest = request.locked.capabilityDigest
+  const requestedDigest = request.requested.capabilityDigest
+  const comparable = lockedDigest !== undefined && requestedDigest !== undefined
+  const capabilityUnverifiable = (lockedDigest === undefined) !== (requestedDigest === undefined)
+  const capabilityChanged = comparable && lockedDigest !== requestedDigest
+  const substantive = request.substantive || executorChanged || capabilityChanged || capabilityUnverifiable
   if (!substantive) {
     return { mode: 'continue', allowed: true, reason: 'same-execution-config', substantive }
   }
