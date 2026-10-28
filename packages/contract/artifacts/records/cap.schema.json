@@ -1,0 +1,1566 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Studio Next V2 冻结记录形状 · CAP（4 类）",
+  "description": "CAP 能力供给族（4 类）。离线生成自 packages/contract/src/records 的 zod 形状（DEC-13-11：zod 仅参考 authoring，本文件是冻结交换工件；禁运行时重生成）。按 $defs 的类目键取单类形状；oneOf 为本族联合入口（各类 recordType 为 const，恒一命中）。本文件不发 JSON Schema 的 id 关键字（DEC-OPEN-15：公共 namespace 登记者未设，未批不发；工件身份走 schemaRef {schemaId, schemaVersion}——v2/10 §4.1）。生成时间/来源提交/摘要见 index.json。",
+  "$defs": {
+    "REC-CAP-01": {
+      "type": "object",
+      "properties": {
+        "recordId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recordType": {
+          "type": "string",
+          "const": "REC-CAP-01"
+        },
+        "schemaRef": {
+          "type": "object",
+          "properties": {
+            "schemaId": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,63}(?:\\.[a-z][a-z0-9-]{0,63}){0,3}$"
+            },
+            "schemaVersion": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+            }
+          },
+          "required": [
+            "schemaId",
+            "schemaVersion"
+          ],
+          "additionalProperties": false
+        },
+        "specVersion": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+        },
+        "companyRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "producedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$"
+        },
+        "producer": {
+          "type": "object",
+          "properties": {
+            "decidedBy": {
+              "type": "string",
+              "minLength": 1
+            },
+            "writtenBy": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "decidedBy",
+            "writtenBy"
+          ],
+          "additionalProperties": false
+        },
+        "basisRefs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "refId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "refVersion": {
+                "type": "string",
+                "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+              }
+            },
+            "required": [
+              "refId",
+              "refVersion"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "claim": {
+              "type": "object",
+              "properties": {
+                "中立能力与类型": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "实现与来源": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "宿主与绑定": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "依赖与冲突": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "输入输出与已知限制": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "副作用请求": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "生命周期": {
+                  "type": "object",
+                  "properties": {
+                    "supported": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "unsupported": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "required": [
+                    "supported",
+                    "unsupported"
+                  ],
+                  "additionalProperties": false
+                },
+                "观测与成本": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "证据与已知不能": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "中立能力与类型",
+                "实现与来源",
+                "宿主与绑定",
+                "依赖与冲突",
+                "输入输出与已知限制",
+                "副作用请求",
+                "生命周期",
+                "观测与成本",
+                "证据与已知不能"
+              ],
+              "additionalProperties": false
+            },
+            "claimant": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "evidence_refs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "refType": {
+                    "type": "string",
+                    "pattern": "^REC-(?:CMD|DEC|RCP|COR|EVT|AUTH|LIFE|PERF|WORK|EVD|ACC|CHG|CAP|REV|EVAL|ASSET|OBS|MEM)-[A-Z0-9]+(?:-[A-Z0-9]+)*$"
+                  },
+                  "refId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "refVersion": {
+                    "type": "string",
+                    "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+                  }
+                },
+                "required": [
+                  "refType",
+                  "refId",
+                  "refVersion"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "claim",
+            "claimant",
+            "version",
+            "evidence_refs"
+          ],
+          "additionalProperties": false
+        },
+        "effectiveState": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "effective",
+            "expired"
+          ]
+        },
+        "effectiveTime": {
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$"
+            },
+            "until": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$"
+            }
+          },
+          "required": [
+            "from"
+          ],
+          "additionalProperties": false
+        },
+        "proofBoundary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revises": {
+          "type": "object",
+          "properties": {
+            "refId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "refVersion": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+            }
+          },
+          "required": [
+            "refId",
+            "refVersion"
+          ],
+          "additionalProperties": false
+        },
+        "idempotencyKey": {
+          "type": "object",
+          "properties": {
+            "companyRef": {
+              "type": "string",
+              "minLength": 1
+            },
+            "recordType": {
+              "type": "string",
+              "pattern": "^REC-(?:CMD|DEC|RCP|COR|EVT|AUTH|LIFE|PERF|WORK|EVD|ACC|CHG|CAP|REV|EVAL|ASSET|OBS|MEM)-[A-Z0-9]+(?:-[A-Z0-9]+)*$"
+            },
+            "subjectId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "operationClass": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,63}$"
+            },
+            "requesterSequence": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "companyRef",
+            "recordType",
+            "subjectId",
+            "operationClass",
+            "requesterSequence"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "recordId",
+        "recordType",
+        "schemaRef",
+        "specVersion",
+        "companyRef",
+        "producedAt",
+        "producer",
+        "basisRefs",
+        "payload",
+        "effectiveState"
+      ],
+      "additionalProperties": false
+    },
+    "REC-CAP-02": {
+      "type": "object",
+      "properties": {
+        "recordId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recordType": {
+          "type": "string",
+          "const": "REC-CAP-02"
+        },
+        "schemaRef": {
+          "type": "object",
+          "properties": {
+            "schemaId": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,63}(?:\\.[a-z][a-z0-9-]{0,63}){0,3}$"
+            },
+            "schemaVersion": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+            }
+          },
+          "required": [
+            "schemaId",
+            "schemaVersion"
+          ],
+          "additionalProperties": false
+        },
+        "specVersion": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+        },
+        "companyRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "producedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$"
+        },
+        "producer": {
+          "type": "object",
+          "properties": {
+            "decidedBy": {
+              "type": "string",
+              "minLength": 1
+            },
+            "writtenBy": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "decidedBy",
+            "writtenBy"
+          ],
+          "additionalProperties": false
+        },
+        "basisRefs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "refId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "refVersion": {
+                "type": "string",
+                "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+              }
+            },
+            "required": [
+              "refId",
+              "refVersion"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "subject": {
+              "type": "object",
+              "properties": {
+                "refType": {
+                  "type": "string",
+                  "pattern": "^REC-(?:CMD|DEC|RCP|COR|EVT|AUTH|LIFE|PERF|WORK|EVD|ACC|CHG|CAP|REV|EVAL|ASSET|OBS|MEM)-[A-Z0-9]+(?:-[A-Z0-9]+)*$"
+                },
+                "refId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "refVersion": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+                }
+              },
+              "required": [
+                "refType",
+                "refId",
+                "refVersion"
+              ],
+              "additionalProperties": false
+            },
+            "scope": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conclusion": {
+              "type": "string",
+              "enum": [
+                "recognized",
+                "conditional_recognition",
+                "not_recognized"
+              ]
+            },
+            "conditions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "term": {
+              "type": "object",
+              "properties": {
+                "expires_at": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$"
+                },
+                "renewal_rule": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "expires_at",
+                "renewal_rule"
+              ],
+              "additionalProperties": false
+            },
+            "evidence_refs": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "refType": {
+                    "type": "string",
+                    "pattern": "^REC-(?:CMD|DEC|RCP|COR|EVT|AUTH|LIFE|PERF|WORK|EVD|ACC|CHG|CAP|REV|EVAL|ASSET|OBS|MEM)-[A-Z0-9]+(?:-[A-Z0-9]+)*$"
+                  },
+                  "refId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "refVersion": {
+                    "type": "string",
+                    "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+                  }
+                },
+                "required": [
+                  "refType",
+                  "refId",
+                  "refVersion"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "decided_by": {
+              "type": "string",
+              "minLength": 1
+            },
+            "independence": {
+              "type": "object",
+              "properties": {
+                "verified_by": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "control_basis_ref": {
+                  "type": "object",
+                  "properties": {
+                    "refType": {
+                      "type": "string",
+                      "pattern": "^REC-(?:CMD|DEC|RCP|COR|EVT|AUTH|LIFE|PERF|WORK|EVD|ACC|CHG|CAP|REV|EVAL|ASSET|OBS|MEM)-[A-Z0-9]+(?:-[A-Z0-9]+)*$"
+                    },
+                    "refId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "refVersion": {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+                    }
+                  },
+                  "required": [
+                    "refType",
+                    "refId",
+                    "refVersion"
+                  ],
+                  "additionalProperties": false
+                },
+                "structurally_unavailable": {
+                  "type": "boolean"
+                },
+                "limitation_note": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "shortened_review": {
+                  "type": "boolean"
+                },
+                "narrowed_scope": {
+                  "type": "boolean"
+                },
+                "self_declared": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "verified_by",
+                "control_basis_ref",
+                "structurally_unavailable"
+              ],
+              "additionalProperties": false
+            },
+            "review_and_invalidation": {
+              "type": "object",
+              "properties": {
+                "review_point": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$"
+                },
+                "invalidation_rule": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "dispute_entry": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "review_point",
+                "invalidation_rule",
+                "dispute_entry"
+              ],
+              "additionalProperties": false
+            },
+            "requalification_basis": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "subject",
+            "scope",
+            "conclusion",
+            "conditions",
+            "term",
+            "evidence_refs",
+            "decided_by",
+            "independence",
+            "review_and_invalidation"
+          ],
+          "additionalProperties": false
+        },
+        "effectiveState": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "effective",
+            "expired"
+          ]
+        },
+        "effectiveTime": {
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$"
+            },
+            "until": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$"
+            }
+          },
+          "required": [
+            "from"
+          ],
+          "additionalProperties": false
+        },
+        "proofBoundary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revises": {
+          "type": "object",
+          "properties": {
+            "refId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "refVersion": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+            }
+          },
+          "required": [
+            "refId",
+            "refVersion"
+          ],
+          "additionalProperties": false
+        },
+        "idempotencyKey": {
+          "type": "object",
+          "properties": {
+            "companyRef": {
+              "type": "string",
+              "minLength": 1
+            },
+            "recordType": {
+              "type": "string",
+              "pattern": "^REC-(?:CMD|DEC|RCP|COR|EVT|AUTH|LIFE|PERF|WORK|EVD|ACC|CHG|CAP|REV|EVAL|ASSET|OBS|MEM)-[A-Z0-9]+(?:-[A-Z0-9]+)*$"
+            },
+            "subjectId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "operationClass": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,63}$"
+            },
+            "requesterSequence": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "companyRef",
+            "recordType",
+            "subjectId",
+            "operationClass",
+            "requesterSequence"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "recordId",
+        "recordType",
+        "schemaRef",
+        "specVersion",
+        "companyRef",
+        "producedAt",
+        "producer",
+        "basisRefs",
+        "payload",
+        "effectiveState"
+      ],
+      "additionalProperties": false
+    },
+    "REC-CAP-RECEIPT": {
+      "type": "object",
+      "properties": {
+        "recordId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recordType": {
+          "type": "string",
+          "const": "REC-CAP-RECEIPT"
+        },
+        "schemaRef": {
+          "type": "object",
+          "properties": {
+            "schemaId": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,63}(?:\\.[a-z][a-z0-9-]{0,63}){0,3}$"
+            },
+            "schemaVersion": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+            }
+          },
+          "required": [
+            "schemaId",
+            "schemaVersion"
+          ],
+          "additionalProperties": false
+        },
+        "specVersion": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+        },
+        "companyRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "producedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$"
+        },
+        "producer": {
+          "type": "object",
+          "properties": {
+            "decidedBy": {
+              "type": "string",
+              "minLength": 1
+            },
+            "writtenBy": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "decidedBy",
+            "writtenBy"
+          ],
+          "additionalProperties": false
+        },
+        "basisRefs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "refId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "refVersion": {
+                "type": "string",
+                "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+              }
+            },
+            "required": [
+              "refId",
+              "refVersion"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "receipt_kind": {
+              "type": "string",
+              "enum": [
+                "placement",
+                "installation",
+                "mounting",
+                "loading",
+                "probing",
+                "runtime_exposure",
+                "retirement",
+                "post_chain_cleanup"
+              ]
+            },
+            "capability_ref": {
+              "type": "object",
+              "properties": {
+                "refType": {
+                  "type": "string",
+                  "pattern": "^REC-(?:CMD|DEC|RCP|COR|EVT|AUTH|LIFE|PERF|WORK|EVD|ACC|CHG|CAP|REV|EVAL|ASSET|OBS|MEM)-[A-Z0-9]+(?:-[A-Z0-9]+)*$"
+                },
+                "refId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "refVersion": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+                }
+              },
+              "required": [
+                "refType",
+                "refId",
+                "refVersion"
+              ],
+              "additionalProperties": false
+            },
+            "capability_digest": {
+              "type": "string",
+              "minLength": 1
+            },
+            "probe_method": {
+              "type": "object",
+              "properties": {
+                "method": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "checklist_ref": {
+                  "type": "object",
+                  "properties": {
+                    "refId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "refVersion": {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+                    }
+                  },
+                  "required": [
+                    "refId",
+                    "refVersion"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "method",
+                "checklist_ref"
+              ],
+              "additionalProperties": false
+            },
+            "environment": {
+              "type": "object",
+              "properties": {
+                "host_form": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "environment": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "version": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "host_form",
+                "environment",
+                "version"
+              ],
+              "additionalProperties": false
+            },
+            "result": {
+              "type": "object",
+              "properties": {
+                "proved": {
+                  "type": "boolean"
+                },
+                "evidence_refs": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "refId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "refVersion": {
+                        "type": "string",
+                        "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+                      }
+                    },
+                    "required": [
+                      "refId",
+                      "refVersion"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "negative_findings": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "required": [
+                "proved",
+                "evidence_refs",
+                "negative_findings"
+              ],
+              "additionalProperties": false
+            },
+            "collector_identity": {
+              "type": "object",
+              "properties": {
+                "collector": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "channel": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "independent": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "collector",
+                "channel",
+                "independent"
+              ],
+              "additionalProperties": false
+            },
+            "observed_at": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$"
+            }
+          },
+          "required": [
+            "receipt_kind",
+            "capability_ref",
+            "capability_digest",
+            "probe_method",
+            "environment",
+            "result",
+            "collector_identity",
+            "observed_at"
+          ],
+          "additionalProperties": false
+        },
+        "effectiveState": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "effective",
+            "expired"
+          ]
+        },
+        "effectiveTime": {
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$"
+            },
+            "until": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$"
+            }
+          },
+          "required": [
+            "from"
+          ],
+          "additionalProperties": false
+        },
+        "proofBoundary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revises": {
+          "type": "object",
+          "properties": {
+            "refId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "refVersion": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+            }
+          },
+          "required": [
+            "refId",
+            "refVersion"
+          ],
+          "additionalProperties": false
+        },
+        "idempotencyKey": {
+          "type": "object",
+          "properties": {
+            "companyRef": {
+              "type": "string",
+              "minLength": 1
+            },
+            "recordType": {
+              "type": "string",
+              "pattern": "^REC-(?:CMD|DEC|RCP|COR|EVT|AUTH|LIFE|PERF|WORK|EVD|ACC|CHG|CAP|REV|EVAL|ASSET|OBS|MEM)-[A-Z0-9]+(?:-[A-Z0-9]+)*$"
+            },
+            "subjectId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "operationClass": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,63}$"
+            },
+            "requesterSequence": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "companyRef",
+            "recordType",
+            "subjectId",
+            "operationClass",
+            "requesterSequence"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "recordId",
+        "recordType",
+        "schemaRef",
+        "specVersion",
+        "companyRef",
+        "producedAt",
+        "producer",
+        "basisRefs",
+        "payload",
+        "effectiveState"
+      ],
+      "additionalProperties": false
+    },
+    "REC-CAP-ACTIVATE": {
+      "type": "object",
+      "properties": {
+        "recordId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recordType": {
+          "type": "string",
+          "const": "REC-CAP-ACTIVATE"
+        },
+        "schemaRef": {
+          "type": "object",
+          "properties": {
+            "schemaId": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,63}(?:\\.[a-z][a-z0-9-]{0,63}){0,3}$"
+            },
+            "schemaVersion": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+            }
+          },
+          "required": [
+            "schemaId",
+            "schemaVersion"
+          ],
+          "additionalProperties": false
+        },
+        "specVersion": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+        },
+        "companyRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "producedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$"
+        },
+        "producer": {
+          "type": "object",
+          "properties": {
+            "decidedBy": {
+              "type": "string",
+              "minLength": 1
+            },
+            "writtenBy": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "decidedBy",
+            "writtenBy"
+          ],
+          "additionalProperties": false
+        },
+        "basisRefs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "refId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "refVersion": {
+                "type": "string",
+                "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+              }
+            },
+            "required": [
+              "refId",
+              "refVersion"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "chain_ref": {
+              "type": "object",
+              "properties": {
+                "refType": {
+                  "type": "string",
+                  "pattern": "^REC-(?:CMD|DEC|RCP|COR|EVT|AUTH|LIFE|PERF|WORK|EVD|ACC|CHG|CAP|REV|EVAL|ASSET|OBS|MEM)-[A-Z0-9]+(?:-[A-Z0-9]+)*$"
+                },
+                "refId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "refVersion": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+                }
+              },
+              "required": [
+                "refType",
+                "refId",
+                "refVersion"
+              ],
+              "additionalProperties": false
+            },
+            "capability_set": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "capability_ref": {
+                    "type": "object",
+                    "properties": {
+                      "refType": {
+                        "type": "string",
+                        "pattern": "^REC-(?:CMD|DEC|RCP|COR|EVT|AUTH|LIFE|PERF|WORK|EVD|ACC|CHG|CAP|REV|EVAL|ASSET|OBS|MEM)-[A-Z0-9]+(?:-[A-Z0-9]+)*$"
+                      },
+                      "refId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "refVersion": {
+                        "type": "string",
+                        "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+                      }
+                    },
+                    "required": [
+                      "refType",
+                      "refId",
+                      "refVersion"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "version": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "capability_ref",
+                  "version"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "permission_diff": {
+              "type": "object",
+              "properties": {
+                "added": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "removed": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "basis_ref": {
+                  "type": "object",
+                  "properties": {
+                    "refId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "refVersion": {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+                    }
+                  },
+                  "required": [
+                    "refId",
+                    "refVersion"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "added",
+                "removed",
+                "basis_ref"
+              ],
+              "additionalProperties": false
+            },
+            "secret_class_diff": {
+              "type": "object",
+              "properties": {
+                "added": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "removed": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "basis_ref": {
+                  "type": "object",
+                  "properties": {
+                    "refId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "refVersion": {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+                    }
+                  },
+                  "required": [
+                    "refId",
+                    "refVersion"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "added",
+                "removed",
+                "basis_ref"
+              ],
+              "additionalProperties": false
+            },
+            "supply_confirmation_ref": {
+              "type": "object",
+              "properties": {
+                "refType": {
+                  "type": "string",
+                  "pattern": "^REC-(?:CMD|DEC|RCP|COR|EVT|AUTH|LIFE|PERF|WORK|EVD|ACC|CHG|CAP|REV|EVAL|ASSET|OBS|MEM)-[A-Z0-9]+(?:-[A-Z0-9]+)*$"
+                },
+                "refId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "refVersion": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+                }
+              },
+              "required": [
+                "refType",
+                "refId",
+                "refVersion"
+              ],
+              "additionalProperties": false
+            },
+            "in_flight_pinning": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "refType": {
+                    "type": "string",
+                    "pattern": "^REC-(?:CMD|DEC|RCP|COR|EVT|AUTH|LIFE|PERF|WORK|EVD|ACC|CHG|CAP|REV|EVAL|ASSET|OBS|MEM)-[A-Z0-9]+(?:-[A-Z0-9]+)*$"
+                  },
+                  "refId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "refVersion": {
+                    "type": "string",
+                    "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+                  }
+                },
+                "required": [
+                  "refType",
+                  "refId",
+                  "refVersion"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "approval_basis": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "rollback_path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "dissent_position": {
+              "type": "string",
+              "minLength": 1
+            },
+            "decision_face": {
+              "type": "object",
+              "properties": {
+                "decided_by": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "authority_ref": {
+                  "type": "object",
+                  "properties": {
+                    "refType": {
+                      "type": "string",
+                      "pattern": "^REC-(?:CMD|DEC|RCP|COR|EVT|AUTH|LIFE|PERF|WORK|EVD|ACC|CHG|CAP|REV|EVAL|ASSET|OBS|MEM)-[A-Z0-9]+(?:-[A-Z0-9]+)*$"
+                    },
+                    "refId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "refVersion": {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+                    }
+                  },
+                  "required": [
+                    "refType",
+                    "refId",
+                    "refVersion"
+                  ],
+                  "additionalProperties": false
+                },
+                "rationale": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "basis_refs": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "refType": {
+                        "type": "string",
+                        "pattern": "^REC-(?:CMD|DEC|RCP|COR|EVT|AUTH|LIFE|PERF|WORK|EVD|ACC|CHG|CAP|REV|EVAL|ASSET|OBS|MEM)-[A-Z0-9]+(?:-[A-Z0-9]+)*$"
+                      },
+                      "refId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "refVersion": {
+                        "type": "string",
+                        "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+                      }
+                    },
+                    "required": [
+                      "refType",
+                      "refId",
+                      "refVersion"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "scope_judged": {
+                  "type": "object",
+                  "properties": {
+                    "judged": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "not_judged": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "required": [
+                    "judged",
+                    "not_judged"
+                  ],
+                  "additionalProperties": false
+                },
+                "dissent_position": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "effective_state": {
+                  "type": "string",
+                  "enum": [
+                    "pending",
+                    "effective",
+                    "expired"
+                  ]
+                },
+                "effective_time": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$"
+                }
+              },
+              "required": [
+                "decided_by",
+                "authority_ref",
+                "rationale",
+                "basis_refs",
+                "scope_judged",
+                "dissent_position",
+                "effective_state"
+              ],
+              "additionalProperties": false
+            },
+            "proof_boundary": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "chain_ref",
+            "capability_set",
+            "permission_diff",
+            "secret_class_diff",
+            "supply_confirmation_ref",
+            "in_flight_pinning",
+            "approval_basis",
+            "rollback_path",
+            "dissent_position",
+            "decision_face",
+            "proof_boundary"
+          ],
+          "additionalProperties": false
+        },
+        "effectiveState": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "effective",
+            "expired"
+          ]
+        },
+        "effectiveTime": {
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$"
+            },
+            "until": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$"
+            }
+          },
+          "required": [
+            "from"
+          ],
+          "additionalProperties": false
+        },
+        "proofBoundary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revises": {
+          "type": "object",
+          "properties": {
+            "refId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "refVersion": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+            }
+          },
+          "required": [
+            "refId",
+            "refVersion"
+          ],
+          "additionalProperties": false
+        },
+        "idempotencyKey": {
+          "type": "object",
+          "properties": {
+            "companyRef": {
+              "type": "string",
+              "minLength": 1
+            },
+            "recordType": {
+              "type": "string",
+              "pattern": "^REC-(?:CMD|DEC|RCP|COR|EVT|AUTH|LIFE|PERF|WORK|EVD|ACC|CHG|CAP|REV|EVAL|ASSET|OBS|MEM)-[A-Z0-9]+(?:-[A-Z0-9]+)*$"
+            },
+            "subjectId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "operationClass": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,63}$"
+            },
+            "requesterSequence": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "companyRef",
+            "recordType",
+            "subjectId",
+            "operationClass",
+            "requesterSequence"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "recordId",
+        "recordType",
+        "schemaRef",
+        "specVersion",
+        "companyRef",
+        "producedAt",
+        "producer",
+        "basisRefs",
+        "payload",
+        "effectiveState"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/REC-CAP-01"
+    },
+    {
+      "$ref": "#/$defs/REC-CAP-02"
+    },
+    {
+      "$ref": "#/$defs/REC-CAP-RECEIPT"
+    },
+    {
+      "$ref": "#/$defs/REC-CAP-ACTIVATE"
+    }
+  ]
+}

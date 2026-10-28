@@ -20,6 +20,7 @@
     "test": "bun run guard:boundaries && vitest run --passWithNoTests",
     "typecheck:v2": "tsc --noEmit -p tsconfig.v2.json",
     "test:v2": "vitest run --config vitest.v2.config.ts",
+    "contract:check": "node packages/contract/src/artifacts/cli.ts",
     "verify:v2": "bun run guard:boundaries && bun run typecheck && bun run typecheck:v2 && bun run test:v2 && node scripts/verify/v2-suite-manifest.mjs && node scripts/verify/old-test-ledger.mjs",
     "daemon": "node apps/daemon/src/index.ts"
   },

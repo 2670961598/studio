@@ -183,3 +183,76 @@ const report = await runCases(manifest, { dir: loadCompanyDirectory }, { domains
 - **登记面自检**：本域登记 3 族 28 类（AUTH 16＋LIFE 11＋PERF 1），余 46 类（WORK/EVD/ACC/CHG/CAP/REV/EVAL/
   ASSET/OBS/MEM）归 IMPL-03-02；**74 类总数不变**（未新增记录类）。
 - **反证纪律**：每族至少一正一负（正例证明形状不自相矛盾、负例证明放行路径不存在）；不跑真机、不打桩 LLM。
+
+### enc／rule／sch／rec／port 域清单登记（MIG-03 / IMPL-03-06，2026-10-28；**追加不重写**）
+
+> 域清单增补：新增 `enc`／`rule`／`sch`／`rec`／`port` 五域（首批 43 条，`cases.json` 53→96；plan/05
+> IMPL-03-06「契约 case 扩充·enc/rule/sch/rec/port 域首批」）。上方「域清单（v0）」表为 v0 冻结行
+> （改表=改契约，20-§二），故按上文「rec 域登记」先例以本节追加，不覆盖既有行、不改既有 case。
+> 依据：plan/04 §1.2（V1 契约先行法：id 形／docs 形／NEG 前缀映射／VEC-01..08 直接入 enc 域）＋§三
+> （NEG-119 分配：SCH10＋RULE10＋ENC2 的契约 case 域）；v2/10 §一/§四/§六/§七/§八/§九；v2/11 各族节；
+> v2/14 §二（F5 端口-文件映射）；v2/17 §四（NEG-ENC/SCH/RULE/REC 的 V1 腿）。
+
+| 域 | subject 归属 | 断言侧重 |
+|---|---|---|
+| `enc` | core 的 jcs 面（`canonicalizeJsonText`／`semanticDigestOfText`；执行落 `packages/core/test/v2/enc-digest.test.ts`——**契约包不 import core**） | VEC-01..08 规范文本＋SHA-256（**照录** v2/10 §七 表，不自造）；VEC-09/10→NEG-ENC-01/02 拒收（E-ENC-003 域外数值／E-ENC-002 I-JSON 前置） |
+| `rule` | core 的两阶段门面（`typecheckRuleProfile`→`evaluateRule`／`checkProfileUpgrade`；执行落 `packages/core/test/v2/rule-engine*.test.ts`） | 最小合法档＋单点非法构造：E-RULE-001/003/004/005/006/008/010 码级；`refused`／`unknown` 不压布尔；档升级缺变更链判负 |
+| `sch` | contract 的记录／标量 schema 面（`ALL_RECORD_SCHEMAS`＋`records/envelope.ts` 标量族；**V1 结构腿**，company 纯配置真面归 MIG-05/06） | NEG-SCH-01..10 的形状腿：标量域／数值域／非规范投影／未知类型／未知扩展／版本形／词表外码值（只断 category，见下 err 通道） |
+| `rec` | contract 的 `ALL_RECORD_SCHEMAS`（按记录自带 `recordType` 分派） | NEG-REC-01..09＋11 一族一条形状拒绝（字段必填／枚举投影／superRefine 承载的跨记录不变量） |
+| `port` | contract 的 13 端口模块常量＋映射（v2/14 §二 F5 单点表；含 gate/obs/ops） | 13 端口名集合／`PORT_VERSION`＝`v0`／端口-文件映射 13/13（新增第 14 端口即红） |
+
+#### input 形与 subject 路由（v1 inline）
+
+| 域 | input | 路由 |
+|---|---|---|
+| `enc` | `{jsonText: string}` | 文本→规范文本→语义摘要；VEC 负向走 `parseIJson` 拒收 |
+| `rule` | `{profile, rule, inputs?, limits?}`（两阶段）或 `{upgrade: {previous, next, evidence}}`（档升级判定） | typecheck 失败→err；通过→evaluate（返回恰七字段）；`upgrade`→`checkProfileUpgrade`（判负→err） |
+| `sch` | `{op:'scalar', family:'token'|'dotid'|'semver'|'timestamp'|'recordTypeId', value}` 或 `{op:'record', record}` | 标量域→标量 schema；记录→`ALL_RECORD_SCHEMAS[recordType]` |
+| `rec` | `{record: AnyRecordEnvelope}` | `ALL_RECORD_SCHEMAS[record.recordType]` 形状闸；未登记类型／形状不符即拒 |
+| `port` | `{op:'names'|'version'|'fileMap'}` | 端口模块常量／`PORT_VERSION`／模块-文件映射 |
+
+#### err 通道与码级纪律（本批冻结口径）
+
+- **category**：契约 subject 的拒绝统一 `CONFIG_INVALID`（17-§9 两级分类；实现侧 subcause 不同不跨实现断言）。
+- **enc／rule 给码**：`subcause`＝v2/10 §八 诊断码（E-ENC-002/003、E-RULE-001..010），即「码级断言」；
+  码与相位映射见 v2/10 §八（一码一相位，不跨用）。rule 档的 `semanticDigest`＝
+  `semanticDigest({profileId, version})`（与 core `test/v2/rule-fixtures.ts` 同法复算），不得手写十六进制。
+- **sch 只断 category**：形状腿 subject 不合成 §八 码值——标题里的 `E-SCH-00x` 是**语义归属**（v2/10 §九
+  强制失败出口的码位），code 级断言归 MIG-04/05 的记录／资产面实现单。§八 的 `refResolve` 相位与 v2/09
+  ENU-97 七值存在登记张力（core `spec.ts` 已登记），故 SCH 码不跨相位断言。
+- **rec 只断 category**：族内**语义判定**腿仍在 `test/v2/records/*.test.ts`（`validateXxx`＋族上下文），
+  cases.json 的 rec 条只覆盖 `ALL_RECORD_SCHEMAS` 可判的形状面。
+- **rule 的 out 例外面**（v2/10 §6.6，必须保留，不得改写成 err／布尔）：NEG-RULE-02/03 的
+  `inputBinding` 拒绝记 `outcome=refused`＋E-RULE-005/006；NEG-RULE-07 超限记 `refused`＋E-RULE-008；
+  NEG-RULE-08 `if` 条件 unknown 不求值分支、结果 `unknown`。
+
+#### 本批 case 与 NEG 覆盖（43 条：enc10／rule10／sch10／rec10／port3）
+
+- **enc**：`C-enc-001..008`＝VEC-01..08（正向，`expected.out={canonical, sha256}`）；`C-enc-009/010`＝
+  NEG-ENC-01（`{"v":1e+30}`→E-ENC-003）／NEG-ENC-02（`{"a":1,"a":2}`→E-ENC-002）。
+- **rule**：`C-rule-001..010`＝NEG-RULE-01..10 各一条（最小合法档＋单点构造）；err 6 条、out 4 条（refused×3＋unknown×1）。
+- **sch**：`C-sch-001..010`＝NEG-SCH-01..10 的形状腿：dotid 大写段、非整数计数、timestamp 无偏移、
+  `schemaVersion` 非 semver、未登记 AREA、缺 `index_ref`、空 `provenance.digest`、未知键 `entrypoint`／
+  `mount_stamp`、词表外 `effectiveState`。
+- **rec**：`C-rec-001..010`＝NEG-REC-01（AUTH `proof_mode`）／02（LIFE-08 缺 `review_terms`）／
+  03（PERF 五维合并）／04（WORK 空 `raw_content`）／05（EVD 空 `does_not_prove`）／06（ACC 缺申辩说明）／
+  07（CHG 空 `criteria_version`）／08（CAP 九维缺项）／09（REV 空 `dissent_position`）／11（ASSET 空传播语义）。
+- **port**：`C-port-001`（13 名）／`C-port-002`（`v0`）／`C-port-003`（文件映射 13/13）。
+- **NEG 前缀映射**：本批 32 条（ENC2＋RULE10＋SCH10＋REC10），`title` 首段为 `NEG-<族>-<序号>｜`，
+  机械统计见 `test/v2/cases/case-manifest.test.ts`。**REC 族 10 号无该 NEG 行**（v2/17 §4.3 表无 10 号，编号不连续是登记事实）；
+  NEG-REC-12（OBS，无 V1 腿）/13（MEM）与 NEG-SCH 的 company 语义半面归后续批次。
+
+#### 修订与缺口（如实登记，不代决）
+
+- **对既有「rec 域登记」的修订**：该节「本域用例**不以 cases.json 条目承载**」自本批起**仅指各族语义判定腿**；
+  本批新增 10 条 rec 形状 case 落 `cases.json`（subject＝`ALL_RECORD_SCHEMAS`），族内语义腿仍在
+  `test/v2/records/*.test.ts`，两腿不互相顶替。原登记不删除、不回改。
+- **缺口 1（sch §四 真面）**：YAML 投影子集（E-ENC-004）／资产导入卫生／签名粒度／通道边界／信任态剥离
+  依赖 company 装载器与资产部（MIG-05/06），本批只落 schema 形状腿；NEG-SCH-03/06/07/08/09 的语义半面待补。
+- **缺口 2（YAML bomb 上限负测）**：需 company 装载器面（YAML 别名/深度/规模上限），未入本批
+  （plan/04 §二 MIG-03 行原列该条；本批领土不含 company，如实挂账）。
+- **缺口 3（rule 正向 case）**：本批 rule 10 条全为 NEG 码级（03-07 验收口径「E-RULE 码逐条负例」）；
+  合法档两阶段全绿的正例证据在 core `rule-engine.test.ts`，cases.json 正向首批随下一批 case 扩充补。
+- **执行归属**：`enc`／`rule` 在 cases.json **无执行 subject**（契约不依赖 core，依赖方向=实现包→契约包）；
+  `test/v2/cases/case-manifest.test.ts` 对二域只做结构／期望形态断言（VEC 表与码表为 v2/10 §七/§八 照录副本），
+  执行归 core 的 V2 测试；`rec`／`sch`／`port` 三域由该测试的本地 subject 跑可执行子集（含正例对照与改坏必红反证）。

@@ -10,7 +10,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "contract:check": "node src/artifacts/cli.ts"
   },
   "dependencies": {
     "zod": "^4.0.0"

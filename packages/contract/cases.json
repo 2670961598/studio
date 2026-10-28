@@ -1691,6 +1691,3013 @@
           "subcause": "rpt/invalid:summary"
         }
       }
+    },
+    {
+      "id": "C-enc-001",
+      "docs": "v2/10-§七",
+      "title": "VEC-01｜键字典序递归排序＋无空白：规范文本与 SHA-256 逐字复算（v2/10 §七）",
+      "input": {
+        "jsonText": "{\"b\":1,\"a\":2}"
+      },
+      "expected": {
+        "out": {
+          "canonical": "{\"a\":2,\"b\":1}",
+          "sha256": "d3626ac30a87e6f7a6428233b3c68299976865fa5508e4267c5415c76af7a772"
+        }
+      },
+      "domain": "enc"
+    },
+    {
+      "id": "C-enc-002",
+      "docs": "v2/10-§七",
+      "title": "VEC-02｜空串键最先＋非 ASCII 按 UTF-8 原样输出（不转 \\u）",
+      "input": {
+        "jsonText": "{\"é\":1,\"\":2}"
+      },
+      "expected": {
+        "out": {
+          "canonical": "{\"\":2,\"é\":1}",
+          "sha256": "2e001283ca5ee7b0573774ceb51e9153191dfb1750072e92f5bc9b243616ced0"
+        }
+      },
+      "domain": "enc"
+    },
+    {
+      "id": "C-enc-003",
+      "docs": "v2/10-§七",
+      "title": "VEC-03｜decimal 字符串承载：标度是词法组成，不归一",
+      "input": {
+        "jsonText": "{\"decimal\":\"1.20\"}"
+      },
+      "expected": {
+        "out": {
+          "canonical": "{\"decimal\":\"1.20\"}",
+          "sha256": "842666826fb49301a90d4f16027c847a964a351255b451078c0368c16c4e27de"
+        }
+      },
+      "domain": "enc"
+    },
+    {
+      "id": "C-enc-004",
+      "docs": "v2/10-§七",
+      "title": "VEC-04｜与 VEC-03 数值等价而摘要不同＝刻意行为（§2.5）",
+      "input": {
+        "jsonText": "{\"decimal\":\"1.2\"}"
+      },
+      "expected": {
+        "out": {
+          "canonical": "{\"decimal\":\"1.2\"}",
+          "sha256": "64142ec148cb5956ef7759a096ee2adc15ad9816f3feba6b447d848fd99dc4ec"
+        }
+      },
+      "domain": "enc"
+    },
+    {
+      "id": "C-enc-005",
+      "docs": "v2/10-§七",
+      "title": "VEC-05｜嵌套递归排序＋数组保序不去重（字节摘要≠语义摘要）",
+      "input": {
+        "jsonText": "{\"nested\":{\"z\":0,\"a\":[true,null,\"x\"]}}"
+      },
+      "expected": {
+        "out": {
+          "canonical": "{\"nested\":{\"a\":[true,null,\"x\"],\"z\":0}}",
+          "sha256": "1960243bf260a4ab0f405341814cdb64aa4ed147e5904994d87b98200713c29a"
+        }
+      },
+      "domain": "enc"
+    },
+    {
+      "id": "C-enc-006",
+      "docs": "v2/10-§七",
+      "title": "VEC-06｜UTF-16 码元排序而非码位序：U+1F600 在 U+FB33 前（唯一区分两套口径的向量）",
+      "input": {
+        "jsonText": "{\"\\u20ac\":\"Euro Sign\",\"\\r\":\"Carriage Return\",\"\\ufb33\":\"Hebrew Letter Dalet With Dagesh\",\"1\":\"One\",\"\\ud83d\\ude00\":\"Emoji: Grinning Face\",\"\\u0080\":\"Control\",\"\\u00f6\":\"Latin Small Letter O With Diaeresis\"}"
+      },
+      "expected": {
+        "out": {
+          "canonical": "{\"\\r\":\"Carriage Return\",\"1\":\"One\",\"\":\"Control\",\"ö\":\"Latin Small Letter O With Diaeresis\",\"€\":\"Euro Sign\",\"😀\":\"Emoji: Grinning Face\",\"דּ\":\"Hebrew Letter Dalet With Dagesh\"}",
+          "sha256": "5e321556d22018a9656991a9e94f77ec175fa193e52a2429d312f8419ec8b08c"
+        }
+      },
+      "domain": "enc"
+    },
+    {
+      "id": "C-enc-007",
+      "docs": "v2/10-§七",
+      "title": "VEC-07｜五个短转义必须用＋其余控制字符小写 \\u00xx；输入大写不改变输出",
+      "input": {
+        "jsonText": "{\"s\":\"a\\\"b\\\\c\\u0000\\u0008\\u0009\\u000A\\u000C\\u000D\\u001F\"}"
+      },
+      "expected": {
+        "out": {
+          "canonical": "{\"s\":\"a\\\"b\\\\c\\u0000\\b\\t\\n\\f\\r\\u001f\"}",
+          "sha256": "742ba263609b3e762a15ebdf623a4d1dc3f8009d5ac2bee6cd9812c53865c973"
+        }
+      },
+      "domain": "enc"
+    },
+    {
+      "id": "C-enc-008",
+      "docs": "v2/10-§七",
+      "title": "VEC-08｜数值域边界：安全整数上下界与零的最短十进制（无 .0／无指数／无正号）",
+      "input": {
+        "jsonText": "{\"zero\":0,\"max\":9007199254740991,\"min\":-9007199254740991}"
+      },
+      "expected": {
+        "out": {
+          "canonical": "{\"max\":9007199254740991,\"min\":-9007199254740991,\"zero\":0}",
+          "sha256": "b7b2401ddca2165824e98c61890c0aaec470258d3119dd265d02be9438bf47e6"
+        }
+      },
+      "domain": "enc"
+    },
+    {
+      "id": "C-enc-009",
+      "docs": "v2/10-§七/§八",
+      "title": "NEG-ENC-01｜VEC-09 域外数值字面量（1e+30）→ E-ENC-003（不得转双精度后继续）",
+      "input": {
+        "jsonText": "{\"v\":1e+30}"
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID",
+          "subcause": "E-ENC-003"
+        }
+      },
+      "domain": "enc"
+    },
+    {
+      "id": "C-enc-010",
+      "docs": "v2/10-§七/§八",
+      "title": "NEG-ENC-02｜VEC-10 重复成员名（{\"a\":1,\"a\":2}）→ E-ENC-002（不得「后者覆盖前者」后继续）",
+      "input": {
+        "jsonText": "{\"a\":1,\"a\":2}"
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID",
+          "subcause": "E-ENC-002"
+        }
+      },
+      "domain": "enc"
+    },
+    {
+      "id": "C-rule-001",
+      "docs": "v2/10-§六/§八",
+      "title": "NEG-RULE-01｜未知节点 call（host.now）→ E-RULE-001 拒收，不得降级为文本",
+      "input": {
+        "profile": {
+          "profileId": "sn.test.rule.core",
+          "version": "1.0.0",
+          "status": "vectors-published",
+          "semanticDigest": {
+            "algorithm": "sha-256",
+            "value": "936eabc97df285eea832c189d4190fe99a70932d5528505c93cb36c004534a06",
+            "kind": "semantic",
+            "canonicalizationId": "studio-next.jcs",
+            "canonicalizationVersion": 1
+          },
+          "operators": [
+            "ge"
+          ],
+          "limits": {
+            "ceiling": {
+              "maxNodes": 200,
+              "maxDepth": 40,
+              "maxListItems": 100,
+              "maxTextCodepoints": 4096,
+              "maxSignificantDigits": 34,
+              "maxScale": 9,
+              "maxEvalSteps": 10000
+            },
+            "fixed": {
+              "maxPatternInputCodepoints": 4096,
+              "maxPatternSteps": 500000,
+              "maxQuantifierNesting": 4
+            }
+          },
+          "patternModel": {
+            "matchingModel": "linear-nfa",
+            "anchoring": "full-match",
+            "caseSensitive": true,
+            "maxQuantifierBound": 1000
+          },
+          "determinism": {
+            "unicodeVersion": "Unicode 15.1.0",
+            "linebreakDef": "LF",
+            "strComparison": "codepoint",
+            "decimalContext": {
+              "precision": 34,
+              "rounding": "half-even"
+            }
+          },
+          "caseSetRefs": [
+            {
+              "setId": "sn.test.rule.cases",
+              "version": "1.0.0",
+              "digest": {
+                "algorithm": "sha-256",
+                "value": "8f7a2e4eed09cb41a231f66ad180845ac6ab59c213bbc6fadba9a7e0c556b7b8",
+                "kind": "semantic",
+                "canonicalizationId": "studio-next.jcs",
+                "canonicalizationVersion": 1
+              }
+            }
+          ]
+        },
+        "rule": {
+          "ruleProfileRef": {
+            "profileId": "sn.test.rule.core",
+            "version": "1.0.0",
+            "digest": {
+              "algorithm": "sha-256",
+              "value": "936eabc97df285eea832c189d4190fe99a70932d5528505c93cb36c004534a06",
+              "kind": "semantic",
+              "canonicalizationId": "studio-next.jcs",
+              "canonicalizationVersion": 1
+            }
+          },
+          "inputDecl": {
+            "roots": [
+              "task"
+            ],
+            "fields": [
+              {
+                "path": "/task/level",
+                "type": "integer",
+                "required": true,
+                "nullable": false,
+                "absenceTolerant": false
+              },
+              {
+                "path": "/task/kind",
+                "type": "text",
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": true
+              },
+              {
+                "path": "/task/tags",
+                "type": {
+                  "kind": "List",
+                  "element": {
+                    "kind": "Str"
+                  }
+                },
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": false
+              },
+              {
+                "path": "/task/priority",
+                "type": "integer",
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": false,
+                "default": 3
+              }
+            ]
+          },
+          "expression": {
+            "node": "call",
+            "fn": "host.now"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID",
+          "subcause": "E-RULE-001"
+        }
+      },
+      "domain": "rule"
+    },
+    {
+      "id": "C-rule-002",
+      "docs": "v2/10-§六/§八",
+      "title": "NEG-RULE-02｜必需输入 /task/level 缺失 → refused＋E-RULE-005（inputBinding 相位）",
+      "input": {
+        "profile": {
+          "profileId": "sn.test.rule.core",
+          "version": "1.0.0",
+          "status": "vectors-published",
+          "semanticDigest": {
+            "algorithm": "sha-256",
+            "value": "936eabc97df285eea832c189d4190fe99a70932d5528505c93cb36c004534a06",
+            "kind": "semantic",
+            "canonicalizationId": "studio-next.jcs",
+            "canonicalizationVersion": 1
+          },
+          "operators": [
+            "ge"
+          ],
+          "limits": {
+            "ceiling": {
+              "maxNodes": 200,
+              "maxDepth": 40,
+              "maxListItems": 100,
+              "maxTextCodepoints": 4096,
+              "maxSignificantDigits": 34,
+              "maxScale": 9,
+              "maxEvalSteps": 10000
+            },
+            "fixed": {
+              "maxPatternInputCodepoints": 4096,
+              "maxPatternSteps": 500000,
+              "maxQuantifierNesting": 4
+            }
+          },
+          "patternModel": {
+            "matchingModel": "linear-nfa",
+            "anchoring": "full-match",
+            "caseSensitive": true,
+            "maxQuantifierBound": 1000
+          },
+          "determinism": {
+            "unicodeVersion": "Unicode 15.1.0",
+            "linebreakDef": "LF",
+            "strComparison": "codepoint",
+            "decimalContext": {
+              "precision": 34,
+              "rounding": "half-even"
+            }
+          },
+          "caseSetRefs": [
+            {
+              "setId": "sn.test.rule.cases",
+              "version": "1.0.0",
+              "digest": {
+                "algorithm": "sha-256",
+                "value": "8f7a2e4eed09cb41a231f66ad180845ac6ab59c213bbc6fadba9a7e0c556b7b8",
+                "kind": "semantic",
+                "canonicalizationId": "studio-next.jcs",
+                "canonicalizationVersion": 1
+              }
+            }
+          ]
+        },
+        "rule": {
+          "ruleProfileRef": {
+            "profileId": "sn.test.rule.core",
+            "version": "1.0.0",
+            "digest": {
+              "algorithm": "sha-256",
+              "value": "936eabc97df285eea832c189d4190fe99a70932d5528505c93cb36c004534a06",
+              "kind": "semantic",
+              "canonicalizationId": "studio-next.jcs",
+              "canonicalizationVersion": 1
+            }
+          },
+          "inputDecl": {
+            "roots": [
+              "task"
+            ],
+            "fields": [
+              {
+                "path": "/task/level",
+                "type": "integer",
+                "required": true,
+                "nullable": false,
+                "absenceTolerant": false
+              },
+              {
+                "path": "/task/kind",
+                "type": "text",
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": true
+              },
+              {
+                "path": "/task/tags",
+                "type": {
+                  "kind": "List",
+                  "element": {
+                    "kind": "Str"
+                  }
+                },
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": false
+              },
+              {
+                "path": "/task/priority",
+                "type": "integer",
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": false,
+                "default": 3
+              }
+            ]
+          },
+          "expression": {
+            "node": "binary",
+            "op": "ge",
+            "left": {
+              "node": "input",
+              "path": "/task/level"
+            },
+            "right": {
+              "node": "literal",
+              "type": {
+                "kind": "Int"
+              },
+              "value": 3
+            }
+          }
+        },
+        "inputs": {
+          "task": {
+            "priority": 3
+          }
+        }
+      },
+      "expected": {
+        "out": {
+          "outcome": "refused",
+          "diagnostics": [
+            {
+              "code": "E-RULE-005",
+              "phase": "inputBinding"
+            }
+          ]
+        }
+      },
+      "domain": "rule"
+    },
+    {
+      "id": "C-rule-003",
+      "docs": "v2/10-§六/§八",
+      "title": "NEG-RULE-03｜未声明容忍的可选字段实际缺失被引用 → refused＋E-RULE-006（不静默按 unknown 放行）",
+      "input": {
+        "profile": {
+          "profileId": "sn.test.rule.core",
+          "version": "1.0.0",
+          "status": "vectors-published",
+          "semanticDigest": {
+            "algorithm": "sha-256",
+            "value": "936eabc97df285eea832c189d4190fe99a70932d5528505c93cb36c004534a06",
+            "kind": "semantic",
+            "canonicalizationId": "studio-next.jcs",
+            "canonicalizationVersion": 1
+          },
+          "operators": [
+            "eq"
+          ],
+          "limits": {
+            "ceiling": {
+              "maxNodes": 200,
+              "maxDepth": 40,
+              "maxListItems": 100,
+              "maxTextCodepoints": 4096,
+              "maxSignificantDigits": 34,
+              "maxScale": 9,
+              "maxEvalSteps": 10000
+            },
+            "fixed": {
+              "maxPatternInputCodepoints": 4096,
+              "maxPatternSteps": 500000,
+              "maxQuantifierNesting": 4
+            }
+          },
+          "patternModel": {
+            "matchingModel": "linear-nfa",
+            "anchoring": "full-match",
+            "caseSensitive": true,
+            "maxQuantifierBound": 1000
+          },
+          "determinism": {
+            "unicodeVersion": "Unicode 15.1.0",
+            "linebreakDef": "LF",
+            "strComparison": "codepoint",
+            "decimalContext": {
+              "precision": 34,
+              "rounding": "half-even"
+            }
+          },
+          "caseSetRefs": [
+            {
+              "setId": "sn.test.rule.cases",
+              "version": "1.0.0",
+              "digest": {
+                "algorithm": "sha-256",
+                "value": "8f7a2e4eed09cb41a231f66ad180845ac6ab59c213bbc6fadba9a7e0c556b7b8",
+                "kind": "semantic",
+                "canonicalizationId": "studio-next.jcs",
+                "canonicalizationVersion": 1
+              }
+            }
+          ]
+        },
+        "rule": {
+          "ruleProfileRef": {
+            "profileId": "sn.test.rule.core",
+            "version": "1.0.0",
+            "digest": {
+              "algorithm": "sha-256",
+              "value": "936eabc97df285eea832c189d4190fe99a70932d5528505c93cb36c004534a06",
+              "kind": "semantic",
+              "canonicalizationId": "studio-next.jcs",
+              "canonicalizationVersion": 1
+            }
+          },
+          "inputDecl": {
+            "roots": [
+              "task"
+            ],
+            "fields": [
+              {
+                "path": "/task/note",
+                "type": "text",
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": false
+              }
+            ]
+          },
+          "expression": {
+            "node": "binary",
+            "op": "eq",
+            "left": {
+              "node": "input",
+              "path": "/task/note"
+            },
+            "right": {
+              "node": "literal",
+              "type": {
+                "kind": "Str"
+              },
+              "value": "x"
+            }
+          }
+        },
+        "inputs": {
+          "task": {}
+        }
+      },
+      "expected": {
+        "out": {
+          "outcome": "refused",
+          "diagnostics": [
+            {
+              "code": "E-RULE-006",
+              "phase": "inputBinding"
+            }
+          ]
+        }
+      },
+      "domain": "rule"
+    },
+    {
+      "id": "C-rule-004",
+      "docs": "v2/10-§六/§八",
+      "title": "NEG-RULE-04｜短路分支中的类型错误仍被静态拒绝 → E-RULE-003（全子树检查）",
+      "input": {
+        "profile": {
+          "profileId": "sn.test.rule.core",
+          "version": "1.0.0",
+          "status": "vectors-published",
+          "semanticDigest": {
+            "algorithm": "sha-256",
+            "value": "936eabc97df285eea832c189d4190fe99a70932d5528505c93cb36c004534a06",
+            "kind": "semantic",
+            "canonicalizationId": "studio-next.jcs",
+            "canonicalizationVersion": 1
+          },
+          "operators": [
+            "and",
+            "eq"
+          ],
+          "limits": {
+            "ceiling": {
+              "maxNodes": 200,
+              "maxDepth": 40,
+              "maxListItems": 100,
+              "maxTextCodepoints": 4096,
+              "maxSignificantDigits": 34,
+              "maxScale": 9,
+              "maxEvalSteps": 10000
+            },
+            "fixed": {
+              "maxPatternInputCodepoints": 4096,
+              "maxPatternSteps": 500000,
+              "maxQuantifierNesting": 4
+            }
+          },
+          "patternModel": {
+            "matchingModel": "linear-nfa",
+            "anchoring": "full-match",
+            "caseSensitive": true,
+            "maxQuantifierBound": 1000
+          },
+          "determinism": {
+            "unicodeVersion": "Unicode 15.1.0",
+            "linebreakDef": "LF",
+            "strComparison": "codepoint",
+            "decimalContext": {
+              "precision": 34,
+              "rounding": "half-even"
+            }
+          },
+          "caseSetRefs": [
+            {
+              "setId": "sn.test.rule.cases",
+              "version": "1.0.0",
+              "digest": {
+                "algorithm": "sha-256",
+                "value": "8f7a2e4eed09cb41a231f66ad180845ac6ab59c213bbc6fadba9a7e0c556b7b8",
+                "kind": "semantic",
+                "canonicalizationId": "studio-next.jcs",
+                "canonicalizationVersion": 1
+              }
+            }
+          ]
+        },
+        "rule": {
+          "ruleProfileRef": {
+            "profileId": "sn.test.rule.core",
+            "version": "1.0.0",
+            "digest": {
+              "algorithm": "sha-256",
+              "value": "936eabc97df285eea832c189d4190fe99a70932d5528505c93cb36c004534a06",
+              "kind": "semantic",
+              "canonicalizationId": "studio-next.jcs",
+              "canonicalizationVersion": 1
+            }
+          },
+          "inputDecl": {
+            "roots": [
+              "task"
+            ],
+            "fields": [
+              {
+                "path": "/task/level",
+                "type": "integer",
+                "required": true,
+                "nullable": false,
+                "absenceTolerant": false
+              },
+              {
+                "path": "/task/kind",
+                "type": "text",
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": true
+              },
+              {
+                "path": "/task/tags",
+                "type": {
+                  "kind": "List",
+                  "element": {
+                    "kind": "Str"
+                  }
+                },
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": false
+              },
+              {
+                "path": "/task/priority",
+                "type": "integer",
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": false,
+                "default": 3
+              }
+            ]
+          },
+          "expression": {
+            "node": "binary",
+            "op": "and",
+            "left": {
+              "node": "literal",
+              "type": {
+                "kind": "Bool"
+              },
+              "value": false
+            },
+            "right": {
+              "node": "binary",
+              "op": "eq",
+              "left": {
+                "node": "literal",
+                "type": {
+                  "kind": "Int"
+                },
+                "value": 1
+              },
+              "right": {
+                "node": "literal",
+                "type": {
+                  "kind": "Str"
+                },
+                "value": "x"
+              }
+            }
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID",
+          "subcause": "E-RULE-003"
+        }
+      },
+      "domain": "rule"
+    },
+    {
+      "id": "C-rule-005",
+      "docs": "v2/10-§六/§八",
+      "title": "NEG-RULE-05｜defaultOf 用于未声明缺省的字段 → E-RULE-004（typecheck 拒绝位）",
+      "input": {
+        "profile": {
+          "profileId": "sn.test.rule.core",
+          "version": "1.0.0",
+          "status": "vectors-published",
+          "semanticDigest": {
+            "algorithm": "sha-256",
+            "value": "936eabc97df285eea832c189d4190fe99a70932d5528505c93cb36c004534a06",
+            "kind": "semantic",
+            "canonicalizationId": "studio-next.jcs",
+            "canonicalizationVersion": 1
+          },
+          "operators": [
+            "eq"
+          ],
+          "limits": {
+            "ceiling": {
+              "maxNodes": 200,
+              "maxDepth": 40,
+              "maxListItems": 100,
+              "maxTextCodepoints": 4096,
+              "maxSignificantDigits": 34,
+              "maxScale": 9,
+              "maxEvalSteps": 10000
+            },
+            "fixed": {
+              "maxPatternInputCodepoints": 4096,
+              "maxPatternSteps": 500000,
+              "maxQuantifierNesting": 4
+            }
+          },
+          "patternModel": {
+            "matchingModel": "linear-nfa",
+            "anchoring": "full-match",
+            "caseSensitive": true,
+            "maxQuantifierBound": 1000
+          },
+          "determinism": {
+            "unicodeVersion": "Unicode 15.1.0",
+            "linebreakDef": "LF",
+            "strComparison": "codepoint",
+            "decimalContext": {
+              "precision": 34,
+              "rounding": "half-even"
+            }
+          },
+          "caseSetRefs": [
+            {
+              "setId": "sn.test.rule.cases",
+              "version": "1.0.0",
+              "digest": {
+                "algorithm": "sha-256",
+                "value": "8f7a2e4eed09cb41a231f66ad180845ac6ab59c213bbc6fadba9a7e0c556b7b8",
+                "kind": "semantic",
+                "canonicalizationId": "studio-next.jcs",
+                "canonicalizationVersion": 1
+              }
+            }
+          ]
+        },
+        "rule": {
+          "ruleProfileRef": {
+            "profileId": "sn.test.rule.core",
+            "version": "1.0.0",
+            "digest": {
+              "algorithm": "sha-256",
+              "value": "936eabc97df285eea832c189d4190fe99a70932d5528505c93cb36c004534a06",
+              "kind": "semantic",
+              "canonicalizationId": "studio-next.jcs",
+              "canonicalizationVersion": 1
+            }
+          },
+          "inputDecl": {
+            "roots": [
+              "task"
+            ],
+            "fields": [
+              {
+                "path": "/task/level",
+                "type": "integer",
+                "required": true,
+                "nullable": false,
+                "absenceTolerant": false
+              },
+              {
+                "path": "/task/kind",
+                "type": "text",
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": true
+              },
+              {
+                "path": "/task/tags",
+                "type": {
+                  "kind": "List",
+                  "element": {
+                    "kind": "Str"
+                  }
+                },
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": false
+              },
+              {
+                "path": "/task/priority",
+                "type": "integer",
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": false,
+                "default": 3
+              }
+            ]
+          },
+          "expression": {
+            "node": "binary",
+            "op": "eq",
+            "left": {
+              "node": "defaultOf",
+              "path": "/task/level"
+            },
+            "right": {
+              "node": "literal",
+              "type": {
+                "kind": "Int"
+              },
+              "value": 1
+            }
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID",
+          "subcause": "E-RULE-004"
+        }
+      },
+      "domain": "rule"
+    },
+    {
+      "id": "C-rule-006",
+      "docs": "v2/10-§六/§八",
+      "title": "NEG-RULE-06｜档声明 ambientReads=[\"clock\"]（读宿主时间）→ 档不合法 E-RULE-001",
+      "input": {
+        "profile": {
+          "profileId": "sn.test.rule.core",
+          "version": "1.0.0",
+          "status": "vectors-published",
+          "semanticDigest": {
+            "algorithm": "sha-256",
+            "value": "936eabc97df285eea832c189d4190fe99a70932d5528505c93cb36c004534a06",
+            "kind": "semantic",
+            "canonicalizationId": "studio-next.jcs",
+            "canonicalizationVersion": 1
+          },
+          "operators": [
+            "ge"
+          ],
+          "limits": {
+            "ceiling": {
+              "maxNodes": 200,
+              "maxDepth": 40,
+              "maxListItems": 100,
+              "maxTextCodepoints": 4096,
+              "maxSignificantDigits": 34,
+              "maxScale": 9,
+              "maxEvalSteps": 10000
+            },
+            "fixed": {
+              "maxPatternInputCodepoints": 4096,
+              "maxPatternSteps": 500000,
+              "maxQuantifierNesting": 4
+            }
+          },
+          "patternModel": {
+            "matchingModel": "linear-nfa",
+            "anchoring": "full-match",
+            "caseSensitive": true,
+            "maxQuantifierBound": 1000
+          },
+          "determinism": {
+            "unicodeVersion": "Unicode 15.1.0",
+            "linebreakDef": "LF",
+            "strComparison": "codepoint",
+            "decimalContext": {
+              "precision": 34,
+              "rounding": "half-even"
+            }
+          },
+          "caseSetRefs": [
+            {
+              "setId": "sn.test.rule.cases",
+              "version": "1.0.0",
+              "digest": {
+                "algorithm": "sha-256",
+                "value": "8f7a2e4eed09cb41a231f66ad180845ac6ab59c213bbc6fadba9a7e0c556b7b8",
+                "kind": "semantic",
+                "canonicalizationId": "studio-next.jcs",
+                "canonicalizationVersion": 1
+              }
+            }
+          ],
+          "ambientReads": [
+            "clock"
+          ]
+        },
+        "rule": {
+          "ruleProfileRef": {
+            "profileId": "sn.test.rule.core",
+            "version": "1.0.0",
+            "digest": {
+              "algorithm": "sha-256",
+              "value": "936eabc97df285eea832c189d4190fe99a70932d5528505c93cb36c004534a06",
+              "kind": "semantic",
+              "canonicalizationId": "studio-next.jcs",
+              "canonicalizationVersion": 1
+            }
+          },
+          "inputDecl": {
+            "roots": [
+              "task"
+            ],
+            "fields": [
+              {
+                "path": "/task/level",
+                "type": "integer",
+                "required": true,
+                "nullable": false,
+                "absenceTolerant": false
+              },
+              {
+                "path": "/task/kind",
+                "type": "text",
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": true
+              },
+              {
+                "path": "/task/tags",
+                "type": {
+                  "kind": "List",
+                  "element": {
+                    "kind": "Str"
+                  }
+                },
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": false
+              },
+              {
+                "path": "/task/priority",
+                "type": "integer",
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": false,
+                "default": 3
+              }
+            ]
+          },
+          "expression": {
+            "node": "binary",
+            "op": "ge",
+            "left": {
+              "node": "input",
+              "path": "/task/level"
+            },
+            "right": {
+              "node": "literal",
+              "type": {
+                "kind": "Int"
+              },
+              "value": 3
+            }
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID",
+          "subcause": "E-RULE-001"
+        }
+      },
+      "domain": "rule"
+    },
+    {
+      "id": "C-rule-007",
+      "docs": "v2/10-§六/§八",
+      "title": "NEG-RULE-07｜求值步数越限（调用侧 maxEvalSteps=1）→ refused＋E-RULE-008（不得记 false）",
+      "input": {
+        "profile": {
+          "profileId": "sn.test.rule.core",
+          "version": "1.0.0",
+          "status": "vectors-published",
+          "semanticDigest": {
+            "algorithm": "sha-256",
+            "value": "936eabc97df285eea832c189d4190fe99a70932d5528505c93cb36c004534a06",
+            "kind": "semantic",
+            "canonicalizationId": "studio-next.jcs",
+            "canonicalizationVersion": 1
+          },
+          "operators": [
+            "ge"
+          ],
+          "limits": {
+            "ceiling": {
+              "maxNodes": 200,
+              "maxDepth": 40,
+              "maxListItems": 100,
+              "maxTextCodepoints": 4096,
+              "maxSignificantDigits": 34,
+              "maxScale": 9,
+              "maxEvalSteps": 10000
+            },
+            "fixed": {
+              "maxPatternInputCodepoints": 4096,
+              "maxPatternSteps": 500000,
+              "maxQuantifierNesting": 4
+            }
+          },
+          "patternModel": {
+            "matchingModel": "linear-nfa",
+            "anchoring": "full-match",
+            "caseSensitive": true,
+            "maxQuantifierBound": 1000
+          },
+          "determinism": {
+            "unicodeVersion": "Unicode 15.1.0",
+            "linebreakDef": "LF",
+            "strComparison": "codepoint",
+            "decimalContext": {
+              "precision": 34,
+              "rounding": "half-even"
+            }
+          },
+          "caseSetRefs": [
+            {
+              "setId": "sn.test.rule.cases",
+              "version": "1.0.0",
+              "digest": {
+                "algorithm": "sha-256",
+                "value": "8f7a2e4eed09cb41a231f66ad180845ac6ab59c213bbc6fadba9a7e0c556b7b8",
+                "kind": "semantic",
+                "canonicalizationId": "studio-next.jcs",
+                "canonicalizationVersion": 1
+              }
+            }
+          ]
+        },
+        "rule": {
+          "ruleProfileRef": {
+            "profileId": "sn.test.rule.core",
+            "version": "1.0.0",
+            "digest": {
+              "algorithm": "sha-256",
+              "value": "936eabc97df285eea832c189d4190fe99a70932d5528505c93cb36c004534a06",
+              "kind": "semantic",
+              "canonicalizationId": "studio-next.jcs",
+              "canonicalizationVersion": 1
+            }
+          },
+          "inputDecl": {
+            "roots": [
+              "task"
+            ],
+            "fields": [
+              {
+                "path": "/task/level",
+                "type": "integer",
+                "required": true,
+                "nullable": false,
+                "absenceTolerant": false
+              },
+              {
+                "path": "/task/kind",
+                "type": "text",
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": true
+              },
+              {
+                "path": "/task/tags",
+                "type": {
+                  "kind": "List",
+                  "element": {
+                    "kind": "Str"
+                  }
+                },
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": false
+              },
+              {
+                "path": "/task/priority",
+                "type": "integer",
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": false,
+                "default": 3
+              }
+            ]
+          },
+          "expression": {
+            "node": "binary",
+            "op": "ge",
+            "left": {
+              "node": "input",
+              "path": "/task/level"
+            },
+            "right": {
+              "node": "literal",
+              "type": {
+                "kind": "Int"
+              },
+              "value": 3
+            }
+          }
+        },
+        "inputs": {
+          "task": {
+            "level": 5,
+            "kind": "review",
+            "tags": [
+              "a",
+              "b"
+            ],
+            "priority": 3
+          }
+        },
+        "limits": {
+          "maxEvalSteps": 1
+        }
+      },
+      "expected": {
+        "out": {
+          "outcome": "refused",
+          "diagnostics": [
+            {
+              "code": "E-RULE-008",
+              "phase": "limit"
+            }
+          ]
+        }
+      },
+      "domain": "rule"
+    },
+    {
+      "id": "C-rule-008",
+      "docs": "v2/10-§六/§八",
+      "title": "NEG-RULE-08｜if 条件 unknown 不求值任何分支 → outcome=unknown（分支内除零不得变 refused）",
+      "input": {
+        "profile": {
+          "profileId": "sn.test.rule.core",
+          "version": "1.0.0",
+          "status": "vectors-published",
+          "semanticDigest": {
+            "algorithm": "sha-256",
+            "value": "936eabc97df285eea832c189d4190fe99a70932d5528505c93cb36c004534a06",
+            "kind": "semantic",
+            "canonicalizationId": "studio-next.jcs",
+            "canonicalizationVersion": 1
+          },
+          "operators": [
+            "eq",
+            "gt",
+            "div"
+          ],
+          "limits": {
+            "ceiling": {
+              "maxNodes": 200,
+              "maxDepth": 40,
+              "maxListItems": 100,
+              "maxTextCodepoints": 4096,
+              "maxSignificantDigits": 34,
+              "maxScale": 9,
+              "maxEvalSteps": 10000
+            },
+            "fixed": {
+              "maxPatternInputCodepoints": 4096,
+              "maxPatternSteps": 500000,
+              "maxQuantifierNesting": 4
+            }
+          },
+          "patternModel": {
+            "matchingModel": "linear-nfa",
+            "anchoring": "full-match",
+            "caseSensitive": true,
+            "maxQuantifierBound": 1000
+          },
+          "determinism": {
+            "unicodeVersion": "Unicode 15.1.0",
+            "linebreakDef": "LF",
+            "strComparison": "codepoint",
+            "decimalContext": {
+              "precision": 34,
+              "rounding": "half-even"
+            }
+          },
+          "caseSetRefs": [
+            {
+              "setId": "sn.test.rule.cases",
+              "version": "1.0.0",
+              "digest": {
+                "algorithm": "sha-256",
+                "value": "8f7a2e4eed09cb41a231f66ad180845ac6ab59c213bbc6fadba9a7e0c556b7b8",
+                "kind": "semantic",
+                "canonicalizationId": "studio-next.jcs",
+                "canonicalizationVersion": 1
+              }
+            }
+          ]
+        },
+        "rule": {
+          "ruleProfileRef": {
+            "profileId": "sn.test.rule.core",
+            "version": "1.0.0",
+            "digest": {
+              "algorithm": "sha-256",
+              "value": "936eabc97df285eea832c189d4190fe99a70932d5528505c93cb36c004534a06",
+              "kind": "semantic",
+              "canonicalizationId": "studio-next.jcs",
+              "canonicalizationVersion": 1
+            }
+          },
+          "inputDecl": {
+            "roots": [
+              "task"
+            ],
+            "fields": [
+              {
+                "path": "/task/level",
+                "type": "integer",
+                "required": true,
+                "nullable": false,
+                "absenceTolerant": false
+              },
+              {
+                "path": "/task/kind",
+                "type": "text",
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": true
+              },
+              {
+                "path": "/task/tags",
+                "type": {
+                  "kind": "List",
+                  "element": {
+                    "kind": "Str"
+                  }
+                },
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": false
+              },
+              {
+                "path": "/task/priority",
+                "type": "integer",
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": false,
+                "default": 3
+              }
+            ]
+          },
+          "expression": {
+            "node": "conditional",
+            "test": {
+              "node": "binary",
+              "op": "eq",
+              "left": {
+                "node": "input",
+                "path": "/task/kind"
+              },
+              "right": {
+                "node": "literal",
+                "type": {
+                  "kind": "Str"
+                },
+                "value": "review"
+              }
+            },
+            "whenTrue": {
+              "node": "binary",
+              "op": "gt",
+              "left": {
+                "node": "binary",
+                "op": "div",
+                "left": {
+                  "node": "literal",
+                  "type": {
+                    "kind": "Int"
+                  },
+                  "value": 1
+                },
+                "right": {
+                  "node": "literal",
+                  "type": {
+                    "kind": "Int"
+                  },
+                  "value": 0
+                }
+              },
+              "right": {
+                "node": "literal",
+                "type": {
+                  "kind": "Int"
+                },
+                "value": 0
+              }
+            },
+            "whenFalse": {
+              "node": "literal",
+              "type": {
+                "kind": "Bool"
+              },
+              "value": true
+            }
+          }
+        },
+        "inputs": {
+          "task": {
+            "level": 1,
+            "priority": 3
+          }
+        }
+      },
+      "expected": {
+        "out": {
+          "outcome": "unknown"
+        }
+      },
+      "domain": "rule"
+    },
+    {
+      "id": "C-rule-009",
+      "docs": "v2/10-§六/§八",
+      "title": "NEG-RULE-09｜档引用版本与档不一致（ref 1.1.0 vs 档 1.0.0）→ E-RULE-010",
+      "input": {
+        "profile": {
+          "profileId": "sn.test.rule.core",
+          "version": "1.0.0",
+          "status": "vectors-published",
+          "semanticDigest": {
+            "algorithm": "sha-256",
+            "value": "936eabc97df285eea832c189d4190fe99a70932d5528505c93cb36c004534a06",
+            "kind": "semantic",
+            "canonicalizationId": "studio-next.jcs",
+            "canonicalizationVersion": 1
+          },
+          "operators": [
+            "ge"
+          ],
+          "limits": {
+            "ceiling": {
+              "maxNodes": 200,
+              "maxDepth": 40,
+              "maxListItems": 100,
+              "maxTextCodepoints": 4096,
+              "maxSignificantDigits": 34,
+              "maxScale": 9,
+              "maxEvalSteps": 10000
+            },
+            "fixed": {
+              "maxPatternInputCodepoints": 4096,
+              "maxPatternSteps": 500000,
+              "maxQuantifierNesting": 4
+            }
+          },
+          "patternModel": {
+            "matchingModel": "linear-nfa",
+            "anchoring": "full-match",
+            "caseSensitive": true,
+            "maxQuantifierBound": 1000
+          },
+          "determinism": {
+            "unicodeVersion": "Unicode 15.1.0",
+            "linebreakDef": "LF",
+            "strComparison": "codepoint",
+            "decimalContext": {
+              "precision": 34,
+              "rounding": "half-even"
+            }
+          },
+          "caseSetRefs": [
+            {
+              "setId": "sn.test.rule.cases",
+              "version": "1.0.0",
+              "digest": {
+                "algorithm": "sha-256",
+                "value": "8f7a2e4eed09cb41a231f66ad180845ac6ab59c213bbc6fadba9a7e0c556b7b8",
+                "kind": "semantic",
+                "canonicalizationId": "studio-next.jcs",
+                "canonicalizationVersion": 1
+              }
+            }
+          ]
+        },
+        "rule": {
+          "ruleProfileRef": {
+            "profileId": "sn.test.rule.core",
+            "version": "1.1.0",
+            "digest": {
+              "algorithm": "sha-256",
+              "value": "936eabc97df285eea832c189d4190fe99a70932d5528505c93cb36c004534a06",
+              "kind": "semantic",
+              "canonicalizationId": "studio-next.jcs",
+              "canonicalizationVersion": 1
+            }
+          },
+          "inputDecl": {
+            "roots": [
+              "task"
+            ],
+            "fields": [
+              {
+                "path": "/task/level",
+                "type": "integer",
+                "required": true,
+                "nullable": false,
+                "absenceTolerant": false
+              },
+              {
+                "path": "/task/kind",
+                "type": "text",
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": true
+              },
+              {
+                "path": "/task/tags",
+                "type": {
+                  "kind": "List",
+                  "element": {
+                    "kind": "Str"
+                  }
+                },
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": false
+              },
+              {
+                "path": "/task/priority",
+                "type": "integer",
+                "required": false,
+                "nullable": false,
+                "absenceTolerant": false,
+                "default": 3
+              }
+            ]
+          },
+          "expression": {
+            "node": "binary",
+            "op": "ge",
+            "left": {
+              "node": "input",
+              "path": "/task/level"
+            },
+            "right": {
+              "node": "literal",
+              "type": {
+                "kind": "Int"
+              },
+              "value": 3
+            }
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID",
+          "subcause": "E-RULE-010"
+        }
+      },
+      "domain": "rule"
+    },
+    {
+      "id": "C-rule-010",
+      "docs": "v2/10-§六/§八",
+      "title": "NEG-RULE-10｜档升级缺变更记录/独立验证/新激活 → 三条 E-RULE-010（判负）",
+      "input": {
+        "upgrade": {
+          "previous": {
+            "profileId": "sn.test.rule.core",
+            "version": "1.0.0",
+            "status": "vectors-published",
+            "semanticDigest": {
+              "algorithm": "sha-256",
+              "value": "936eabc97df285eea832c189d4190fe99a70932d5528505c93cb36c004534a06",
+              "kind": "semantic",
+              "canonicalizationId": "studio-next.jcs",
+              "canonicalizationVersion": 1
+            },
+            "operators": [
+              "ge"
+            ],
+            "limits": {
+              "ceiling": {
+                "maxNodes": 200,
+                "maxDepth": 40,
+                "maxListItems": 100,
+                "maxTextCodepoints": 4096,
+                "maxSignificantDigits": 34,
+                "maxScale": 9,
+                "maxEvalSteps": 10000
+              },
+              "fixed": {
+                "maxPatternInputCodepoints": 4096,
+                "maxPatternSteps": 500000,
+                "maxQuantifierNesting": 4
+              }
+            },
+            "patternModel": {
+              "matchingModel": "linear-nfa",
+              "anchoring": "full-match",
+              "caseSensitive": true,
+              "maxQuantifierBound": 1000
+            },
+            "determinism": {
+              "unicodeVersion": "Unicode 15.1.0",
+              "linebreakDef": "LF",
+              "strComparison": "codepoint",
+              "decimalContext": {
+                "precision": 34,
+                "rounding": "half-even"
+              }
+            },
+            "caseSetRefs": [
+              {
+                "setId": "sn.test.rule.cases",
+                "version": "1.0.0",
+                "digest": {
+                  "algorithm": "sha-256",
+                  "value": "8f7a2e4eed09cb41a231f66ad180845ac6ab59c213bbc6fadba9a7e0c556b7b8",
+                  "kind": "semantic",
+                  "canonicalizationId": "studio-next.jcs",
+                  "canonicalizationVersion": 1
+                }
+              }
+            ]
+          },
+          "next": {
+            "profileId": "sn.test.rule.core",
+            "version": "1.1.0",
+            "status": "vectors-published",
+            "semanticDigest": {
+              "algorithm": "sha-256",
+              "value": "936eabc97df285eea832c189d4190fe99a70932d5528505c93cb36c004534a06",
+              "kind": "semantic",
+              "canonicalizationId": "studio-next.jcs",
+              "canonicalizationVersion": 1
+            },
+            "operators": [
+              "ge"
+            ],
+            "limits": {
+              "ceiling": {
+                "maxNodes": 200,
+                "maxDepth": 40,
+                "maxListItems": 100,
+                "maxTextCodepoints": 4096,
+                "maxSignificantDigits": 34,
+                "maxScale": 9,
+                "maxEvalSteps": 10000
+              },
+              "fixed": {
+                "maxPatternInputCodepoints": 4096,
+                "maxPatternSteps": 500000,
+                "maxQuantifierNesting": 4
+              }
+            },
+            "patternModel": {
+              "matchingModel": "linear-nfa",
+              "anchoring": "full-match",
+              "caseSensitive": true,
+              "maxQuantifierBound": 1000
+            },
+            "determinism": {
+              "unicodeVersion": "Unicode 15.1.0",
+              "linebreakDef": "LF",
+              "strComparison": "codepoint",
+              "decimalContext": {
+                "precision": 34,
+                "rounding": "half-even"
+              }
+            },
+            "caseSetRefs": [
+              {
+                "setId": "sn.test.rule.cases",
+                "version": "1.0.0",
+                "digest": {
+                  "algorithm": "sha-256",
+                  "value": "8f7a2e4eed09cb41a231f66ad180845ac6ab59c213bbc6fadba9a7e0c556b7b8",
+                  "kind": "semantic",
+                  "canonicalizationId": "studio-next.jcs",
+                  "canonicalizationVersion": 1
+                }
+              }
+            ]
+          },
+          "evidence": {}
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID",
+          "subcause": "E-RULE-010"
+        }
+      },
+      "domain": "rule"
+    },
+    {
+      "id": "C-sch-001",
+      "domain": "sch",
+      "docs": "v2/10-§一/§八",
+      "title": "NEG-SCH-01｜字面自反：dotid 大写段（Studio-Next.Records）→ 拒（§1.1 标量族语法）",
+      "input": {
+        "op": "scalar",
+        "family": "dotid",
+        "value": "Studio-Next.Records"
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-sch-002",
+      "domain": "sch",
+      "docs": "v2/10-§一/§八",
+      "title": "NEG-SCH-02｜数值域：计数字段非整数（unit_count_after=1.5）→ 拒（int 域，禁转双精度继续）",
+      "input": {
+        "op": "record",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-LIFE-08",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "event_kind": "unit_vacancy",
+            "structure_evidence": [
+              "在编结构核对：3 个单元行，其中 unit-2 的 headRef 空缺"
+            ],
+            "decided_by": "g9.internal-boss",
+            "unit_ref": {
+              "unitId": "unit-2",
+              "unit_count_before": 3,
+              "unit_count_after": 1.5
+            },
+            "review_terms": {
+              "deadline": "2026-10-28T00:00:00Z",
+              "fallback": "超期补设或降级二选一"
+            },
+            "vacancy_rule": {
+              "acting_management": "最高宰相直管 unit-2",
+              "no_new_g8_during_vacancy": true,
+              "emergency_exception": {
+                "triggered": false
+              }
+            },
+            "dissent_position": "无异议"
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-sch-003",
+      "domain": "sch",
+      "docs": "v2/10-§一/§八",
+      "title": "NEG-SCH-03｜非规范投影：timestamp 无偏移（本地时间）→ 拒（§1.1：必须带偏移）",
+      "input": {
+        "op": "scalar",
+        "family": "timestamp",
+        "value": "2026-10-28T00:00:00"
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-sch-004",
+      "domain": "sch",
+      "docs": "v2/10-§四/§八",
+      "title": "NEG-SCH-04｜未知主版本规范：schemaRef.schemaVersion=\"2\"（非 semver）→ E-SCH-004",
+      "input": {
+        "op": "record",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-ASSET-01",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "2"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "asset_kind": "skill",
+            "exclusivity": {
+              "marker": "exclusive",
+              "target_executor": "dsh",
+              "unexpressed_items": [
+                "未表达：Windows 支持"
+              ]
+            },
+            "provenance": {
+              "publisher": "studio-next",
+              "version": "1.0.0",
+              "digest": "sha256:asset-1",
+              "license": "MIT"
+            },
+            "compatibility": [
+              "dsh >= 1.0.0"
+            ],
+            "propagation": {
+              "semantics": "定义只读传播；执行位不随包",
+              "notes": []
+            },
+            "index_ref": {
+              "refId": "ASSET-01",
+              "refVersion": "1.0.0"
+            }
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-sch-005",
+      "domain": "sch",
+      "docs": "v2/10-§四/§八",
+      "title": "NEG-SCH-05｜未知对象类型：REC-FOO-01（未登记 AREA）→ E-SCH-001",
+      "input": {
+        "op": "scalar",
+        "family": "recordTypeId",
+        "value": "REC-FOO-01"
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-sch-006",
+      "domain": "sch",
+      "docs": "v2/10-§四/§八",
+      "title": "NEG-SCH-06｜必备资产引用缺失（index_ref 缺）→ 拒（缺失不得被静默忽略／冒充已装）",
+      "input": {
+        "op": "record",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-ASSET-01",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "asset_kind": "skill",
+            "exclusivity": {
+              "marker": "exclusive",
+              "target_executor": "dsh",
+              "unexpressed_items": [
+                "未表达：Windows 支持"
+              ]
+            },
+            "provenance": {
+              "publisher": "studio-next",
+              "version": "1.0.0",
+              "digest": "sha256:asset-1",
+              "license": "MIT"
+            },
+            "compatibility": [
+              "dsh >= 1.0.0"
+            ],
+            "propagation": {
+              "semantics": "定义只读传播；执行位不随包",
+              "notes": []
+            }
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-sch-007",
+      "domain": "sch",
+      "docs": "v2/10-§四/§八",
+      "title": "NEG-SCH-07｜逐 part 摘要必填：provenance.digest=\"\" → 拒（聚合体总签名不得替 part 背书）",
+      "input": {
+        "op": "record",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-ASSET-01",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "asset_kind": "skill",
+            "exclusivity": {
+              "marker": "exclusive",
+              "target_executor": "dsh",
+              "unexpressed_items": [
+                "未表达：Windows 支持"
+              ]
+            },
+            "provenance": {
+              "publisher": "studio-next",
+              "version": "1.0.0",
+              "digest": "",
+              "license": "MIT"
+            },
+            "compatibility": [
+              "dsh >= 1.0.0"
+            ],
+            "propagation": {
+              "semantics": "定义只读传播；执行位不随包",
+              "notes": []
+            },
+            "index_ref": {
+              "refId": "ASSET-01",
+              "refVersion": "1.0.0"
+            }
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-sch-008",
+      "domain": "sch",
+      "docs": "v2/10-§四/§八",
+      "title": "NEG-SCH-08｜包内可执行入口入记录（未知键 entrypoint）→ E-SCH-002（未知扩展拒收）",
+      "input": {
+        "op": "record",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-ASSET-01",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "asset_kind": "skill",
+            "exclusivity": {
+              "marker": "exclusive",
+              "target_executor": "dsh",
+              "unexpressed_items": [
+                "未表达：Windows 支持"
+              ]
+            },
+            "provenance": {
+              "publisher": "studio-next",
+              "version": "1.0.0",
+              "digest": "sha256:asset-1",
+              "license": "MIT"
+            },
+            "compatibility": [
+              "dsh >= 1.0.0"
+            ],
+            "propagation": {
+              "semantics": "定义只读传播；执行位不随包",
+              "notes": []
+            },
+            "index_ref": {
+              "refId": "ASSET-01",
+              "refVersion": "1.0.0"
+            }
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          },
+          "entrypoint": "plugins/runtime.mjs"
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-sch-009",
+      "domain": "sch",
+      "docs": "v2/10-§四/§八",
+      "title": "NEG-SCH-09｜挂载戳记随公开定义传播（未知键 mount_stamp）→ E-SCH-002（传播前剥离）",
+      "input": {
+        "op": "record",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-ASSET-01",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "asset_kind": "skill",
+            "exclusivity": {
+              "marker": "exclusive",
+              "target_executor": "dsh",
+              "unexpressed_items": [
+                "未表达：Windows 支持"
+              ]
+            },
+            "provenance": {
+              "publisher": "studio-next",
+              "version": "1.0.0",
+              "digest": "sha256:asset-1",
+              "license": "MIT"
+            },
+            "compatibility": [
+              "dsh >= 1.0.0"
+            ],
+            "propagation": {
+              "semantics": "定义只读传播；执行位不随包",
+              "notes": []
+            },
+            "index_ref": {
+              "refId": "ASSET-01",
+              "refVersion": "1.0.0"
+            }
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          },
+          "mount_stamp": {
+            "mountedAt": "2026-10-28T00:00:00Z",
+            "trusted": true
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-sch-010",
+      "domain": "sch",
+      "docs": "v2/10-§四/§八",
+      "title": "NEG-SCH-10｜词表外码值（effectiveState=\"active\"）→ E-SCH-005（未列码值不得使用）",
+      "input": {
+        "op": "record",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-ASSET-01",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "asset_kind": "skill",
+            "exclusivity": {
+              "marker": "exclusive",
+              "target_executor": "dsh",
+              "unexpressed_items": [
+                "未表达：Windows 支持"
+              ]
+            },
+            "provenance": {
+              "publisher": "studio-next",
+              "version": "1.0.0",
+              "digest": "sha256:asset-1",
+              "license": "MIT"
+            },
+            "compatibility": [
+              "dsh >= 1.0.0"
+            ],
+            "propagation": {
+              "semantics": "定义只读传播；执行位不随包",
+              "notes": []
+            },
+            "index_ref": {
+              "refId": "ASSET-01",
+              "refVersion": "1.0.0"
+            }
+          },
+          "effectiveState": "active",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-rec-001",
+      "domain": "rec",
+      "docs": "v2/11-§2.2",
+      "title": "NEG-REC-01｜AUTH-01 根授予 proof_mode=record_only → 拒（根授予恒 ritual_and_key，ENU-138）",
+      "input": {
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-AUTH-01",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "grantor": {
+              "refId": "external-owner",
+              "refVersion": "1.0.0"
+            },
+            "grantee": {
+              "refId": "g9.internal-boss",
+              "refVersion": "1.0.0"
+            },
+            "parent_grant": {
+              "refType": "REC-LIFE-07",
+              "refId": "founding-record-1",
+              "refVersion": "1.0.0"
+            },
+            "grant_class": "root_delegation",
+            "scope": {
+              "purpose": "以内部老板身份签发内部硬动作",
+              "object": "经营权限",
+              "included": [
+                "approve_internal_hard_action",
+                "appoint_g8"
+              ],
+              "forbidden": [
+                "外部审计",
+                "清算"
+              ]
+            },
+            "conditions": [],
+            "term": {
+              "from": "2026-01-01T00:00:00Z",
+              "to": "2027-01-01T00:00:00Z"
+            },
+            "delegable": true,
+            "withdrawal_terms": "外部老板随时撤回/轮换；后代停用为完成条件",
+            "conflict_check_ref": {
+              "refType": "REC-LIFE-05",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "key_fingerprint": "sha256:operating-root-key-fp",
+            "external_signature": {
+              "refId": "signature-artifact-1",
+              "refVersion": "1.0.0"
+            },
+            "proof_mode": "record_only",
+            "external_veto_configured": false
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-rec-002",
+      "domain": "rec",
+      "docs": "v2/11-§3.2",
+      "title": "NEG-REC-02｜LIFE-08 单元缺位缺复审期限（review_terms 缺）→ 拒（空编不得静默——§3.2）",
+      "input": {
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-LIFE-08",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "event_kind": "unit_vacancy",
+            "structure_evidence": [
+              "在编结构核对：3 个单元行，其中 unit-2 的 headRef 空缺"
+            ],
+            "decided_by": "g9.internal-boss",
+            "unit_ref": {
+              "unitId": "unit-2",
+              "unit_count_before": 3,
+              "unit_count_after": 3
+            },
+            "vacancy_rule": {
+              "acting_management": "最高宰相直管 unit-2",
+              "no_new_g8_during_vacancy": true,
+              "emergency_exception": {
+                "triggered": false
+              }
+            },
+            "dissent_position": "无异议"
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-rec-003",
+      "domain": "rec",
+      "docs": "v2/11-§四",
+      "title": "NEG-REC-03｜PERF-01 五维合并为单一分数（dimensions 单键「总分」）→ 拒（不得互相抵消）",
+      "input": {
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-PERF-01",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "subject": {
+              "refType": "REC-LIFE-01",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "layer": "任职者绩效",
+            "dimensions": {
+              "总分": "85"
+            },
+            "window_and_distribution": {
+              "window_from": "2026-09-01T00:00:00Z",
+              "window_to": "2026-10-01T00:00:00Z",
+              "task_distribution": "交付 4 件、维持 1 件"
+            },
+            "uncertainty": {
+              "note": "证据充分",
+              "evidence_weak": false,
+              "conclusion": "可归因"
+            },
+            "evaluator_and_independence": {
+              "evaluator_ref": {
+                "refType": "REC-LIFE-01",
+                "refId": "evaluator-1",
+                "refVersion": "1.0.0"
+              },
+              "audit_class": "superior_audit",
+              "independence_claimed": false
+            },
+            "appeal_entry": {
+              "entry_ref": {
+                "refType": "REC-ACC-01",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              },
+              "deadline": "2026-10-28T00:00:00Z"
+            },
+            "input_refs": [
+              {
+                "refType": "REC-WORK-09",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              },
+              {
+                "refType": "REC-WORK-08",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              },
+              {
+                "refType": "REC-EVD-04",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              }
+            ]
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-rec-004",
+      "domain": "rec",
+      "docs": "v2/11-§5.1",
+      "title": "NEG-REC-04｜WORK-01 原始内容空（raw_content=\"\"）→ 拒（动作充数／不改写原始内容）",
+      "input": {
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-WORK-01",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "raw_content": "",
+            "source": "platform:intake-1",
+            "identity_mapping": "外部账号 external-1 → holder-h1",
+            "authenticity_state": "verified",
+            "received_at": "2026-10-28T00:00:00Z",
+            "intake_owner": "unit-head-1",
+            "intake_deadline": "2026-10-28T00:00:00Z",
+            "known_constraints": [
+              "不得触外部审计面"
+            ],
+            "requested_state": "awaiting_review"
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-rec-005",
+      "domain": "rec",
+      "docs": "v2/11-§六",
+      "title": "NEG-REC-05｜EVD-02 证明边界空（does_not_prove=\"\"）→ 拒（材料不得冒验收）",
+      "input": {
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-EVD-02",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "element": "EVD-ELM-01",
+            "content_ref": {
+              "refId": "raw-1",
+              "refVersion": "1.0.0"
+            },
+            "formed_at": "2026-10-28T00:00:00Z",
+            "observed_at": "2026-10-28T00:00:00Z",
+            "source_chain": [
+              "collector-1 → store"
+            ],
+            "source_anchor": "independent_collection",
+            "element_state": "present",
+            "knowledge_scope": "仅本次工作",
+            "integrity_state": "digest-verified",
+            "proves": "权源与本次行动引用",
+            "does_not_prove": ""
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-rec-006",
+      "domain": "rec",
+      "docs": "v2/11-§七",
+      "title": "NEG-REC-06｜ACC-01 申辩材料缺说明（inquiry_materials.explanations 缺）→ 拒（申辩窗口不成立）",
+      "input": {
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-ACC-01",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "subject_ref": {
+              "refType": "REC-LIFE-01",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "matter_refs": [
+              {
+                "refType": "REC-WORK-17",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              },
+              {
+                "refType": "REC-EVD-04",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              }
+            ],
+            "inquiry_materials": {
+              "allegations": [
+                "验收结论与证据不符"
+              ],
+              "adverse_information": [
+                "未按口径暂停"
+              ],
+              "silence_treated_as_report_exception": false
+            },
+            "defense_window": {
+              "deadline": "2026-10-28T00:00:00Z",
+              "overdue_disposition": "逾期按窗口条款处置并留痕"
+            },
+            "arbiter": {
+              "verified_by": "audit-1",
+              "control_basis_ref": {
+                "refType": "REC-LIFE-05",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              }
+            },
+            "conclusion": "attribution_undetermined",
+            "consequence_routing": {
+              "performance_input_ref": {
+                "refType": "REC-PERF-01",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              }
+            },
+            "dissent_position": "无异议；救济入口见申诉链",
+            "proof_boundary": "证明问责过程与结论；不证明民事/外部责任"
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-rec-007",
+      "domain": "rec",
+      "docs": "v2/11-§八",
+      "title": "NEG-REC-07｜CHG-01 判据版本空（criteria_version=\"\"）→ 拒（R-8 判据资产版本必填）",
+      "input": {
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-CHG-01",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "chain_id": "chain-1",
+            "segment": "candidate",
+            "subject": {
+              "refId": "rule-1",
+              "refVersion": "1.0.0"
+            },
+            "subject_kind": "rule",
+            "decided_by": "unit-head-1",
+            "authority_ref": {
+              "refType": "REC-AUTH-01",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "basis_refs": [
+              {
+                "refType": "REC-WORK-17",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              }
+            ],
+            "impact_assessment": {
+              "tasks": [],
+              "information": [],
+              "permissions": [],
+              "commitments": [],
+              "evidence": [],
+              "qualifications": [],
+              "in_flight_side_effects": []
+            },
+            "criteria_version": "",
+            "no_override": true,
+            "rollback_path": {
+              "stop_conditions": [
+                "撤回率升高"
+              ],
+              "monitoring": [
+                "MON-14 变更与进化"
+              ],
+              "rollback_steps": [
+                "回退旧版本并清理"
+              ]
+            },
+            "dissent_position": "无异议",
+            "effective_state": "effective",
+            "effective_time": "2026-10-28T00:00:00Z"
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-rec-008",
+      "domain": "rec",
+      "docs": "v2/11-§九",
+      "title": "NEG-REC-08｜CAP-01 九维声明缺「证据与已知不能」→ 拒（声明超证据）",
+      "input": {
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-CAP-01",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "claim": {
+              "中立能力与类型": "工具型能力声明",
+              "实现与来源": "studio-next 内置，MIT",
+              "宿主与绑定": "dsh 宿主，本地绑定",
+              "依赖与冲突": "无冲突",
+              "输入输出与已知限制": "输入 JSON，输出结论；不支持流式",
+              "副作用请求": [
+                "request_read",
+                "request_write"
+              ],
+              "生命周期": {
+                "supported": [
+                  "start",
+                  "stop",
+                  "retire"
+                ],
+                "unsupported": [
+                  "snapshot"
+                ]
+              },
+              "观测与成本": "可给真实事件，无成本盲区"
+            },
+            "claimant": "capability-dept",
+            "version": "1.0.0",
+            "evidence_refs": [
+              {
+                "refType": "REC-CAP-RECEIPT",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              }
+            ]
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-rec-009",
+      "domain": "rec",
+      "docs": "v2/11-§十",
+      "title": "NEG-REC-09｜REV-01 异议位置空（dissent_position=\"\"）→ 拒（复盘结论须可被异议与重开）",
+      "input": {
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-REV-01",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "scope": {
+              "matters": [
+                {
+                  "refType": "REC-WORK-12",
+                  "refId": "rec-1",
+                  "refVersion": "1.0.0"
+                }
+              ],
+              "window": {
+                "from": "2026-01-01T00:00:00Z",
+                "to": "2027-01-01T00:00:00Z"
+              }
+            },
+            "inputs": {
+              "acceptance_refs": [
+                {
+                  "refType": "REC-WORK-09",
+                  "refId": "rec-1",
+                  "refVersion": "1.0.0"
+                }
+              ],
+              "cost_account_ref": {
+                "refType": "REC-EVD-04",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              },
+              "counterparty_feedback": [
+                "相对方对时点有异议"
+              ],
+              "affected_party_feedback": [],
+              "contrary_examples": [
+                "同一口径在另一单上失效"
+              ],
+              "unfulfilled_commitments": [
+                {
+                  "refType": "REC-WORK-15",
+                  "refId": "rec-1",
+                  "refVersion": "1.0.0"
+                }
+              ]
+            },
+            "findings": [
+              {
+                "finding": "口径变更未同步验收位置",
+                "basis_refs": [
+                  {
+                    "refType": "REC-WORK-17",
+                    "refId": "rec-1",
+                    "refVersion": "1.0.0"
+                  }
+                ]
+              }
+            ],
+            "outputs": {
+              "personal_experience_refs": [
+                {
+                  "refType": "REC-MEM-01",
+                  "refId": "rec-1",
+                  "refVersion": "1.0.0"
+                }
+              ],
+              "method_rule_candidates": [
+                {
+                  "refType": "REC-CHG-01",
+                  "refId": "rec-1",
+                  "refVersion": "1.0.0"
+                }
+              ],
+              "structural_issues": [
+                {
+                  "refType": "REC-EVAL-01",
+                  "refId": "rec-1",
+                  "refVersion": "1.0.0"
+                }
+              ]
+            },
+            "independence": {
+              "decided_by": "audit-1",
+              "independence_note": "复盘位置不由被交付方单独作出"
+            },
+            "dissent_position": "",
+            "decision_face": {
+              "decided_by": "g9.internal-boss",
+              "authority_ref": {
+                "refType": "REC-AUTH-01",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              },
+              "rationale": "依 v2/11 §3.1 逐条核验五条件",
+              "basis_refs": [
+                {
+                  "refType": "REC-LIFE-05",
+                  "refId": "rec-1",
+                  "refVersion": "1.0.0"
+                }
+              ],
+              "scope_judged": {
+                "judged": [
+                  "权源",
+                  "资格",
+                  "禁配"
+                ],
+                "not_judged": [
+                  "绩效归因"
+                ]
+              },
+              "dissent_position": "无异议",
+              "effective_state": "effective",
+              "effective_time": "2026-10-28T00:00:00Z"
+            }
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-rec-010",
+      "domain": "rec",
+      "docs": "v2/11-§十一",
+      "title": "NEG-REC-11｜ASSET-01 传播语义空（propagation.semantics=\"\"）→ 拒（传播损失未声明）",
+      "input": {
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-ASSET-01",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "asset_kind": "skill",
+            "exclusivity": {
+              "marker": "exclusive",
+              "target_executor": "dsh",
+              "unexpressed_items": [
+                "未表达：Windows 支持"
+              ]
+            },
+            "provenance": {
+              "publisher": "studio-next",
+              "version": "1.0.0",
+              "digest": "sha256:asset-1",
+              "license": "MIT"
+            },
+            "compatibility": [
+              "dsh >= 1.0.0"
+            ],
+            "propagation": {
+              "semantics": "",
+              "notes": []
+            },
+            "index_ref": {
+              "refId": "ASSET-01",
+              "refVersion": "1.0.0"
+            }
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-port-001",
+      "docs": "v2/14-§二",
+      "title": "13 端口名集合：PORT-DEF/REG/AUTH/HR/WORK/EXEC/WS/EVD/HIST/TRUST/GATE/OBS/OPS（新增第 14 端口即红）",
+      "input": {
+        "op": "names"
+      },
+      "expected": {
+        "out": {
+          "count": 13,
+          "names": [
+            "PORT-DEF",
+            "PORT-REG",
+            "PORT-AUTH",
+            "PORT-HR",
+            "PORT-WORK",
+            "PORT-EXEC",
+            "PORT-WS",
+            "PORT-EVD",
+            "PORT-HIST",
+            "PORT-TRUST",
+            "PORT-GATE",
+            "PORT-OBS",
+            "PORT-OPS"
+          ]
+        }
+      },
+      "domain": "port"
+    },
+    {
+      "id": "C-port-002",
+      "docs": "v2/14-§二",
+      "title": "PORT_VERSION 仍为 v0（experimental 声明未升级；升级走提案流）",
+      "input": {
+        "op": "version"
+      },
+      "expected": {
+        "out": {
+          "version": "v0"
+        }
+      },
+      "domain": "port"
+    },
+    {
+      "id": "C-port-003",
+      "docs": "v2/14-§二",
+      "title": "端口-文件映射 13/13：每件恰导出对应 PORT-ID（F5 单点表机械比对）",
+      "input": {
+        "op": "fileMap"
+      },
+      "expected": {
+        "out": {
+          "map": {
+            "PORT-DEF": "def.ts",
+            "PORT-REG": "reg.ts",
+            "PORT-AUTH": "auth.ts",
+            "PORT-HR": "hr.ts",
+            "PORT-WORK": "work.ts",
+            "PORT-EXEC": "exec.ts",
+            "PORT-WS": "ws.ts",
+            "PORT-EVD": "evd.ts",
+            "PORT-HIST": "hist.ts",
+            "PORT-TRUST": "trust.ts",
+            "PORT-GATE": "gate.ts",
+            "PORT-OBS": "obs.ts",
+            "PORT-OPS": "ops.ts"
+          }
+        }
+      },
+      "domain": "port"
     }
   ]
 }

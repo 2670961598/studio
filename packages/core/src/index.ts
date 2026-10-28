@@ -102,8 +102,25 @@ export * from './costclose.ts'
 // 财务分析面四规则（costclose 拆分面——BC-S2 600 行阈）
 export * from './cost-insights.ts'
 
+// ── v2 内核尾段（MIG-03 / IMPL-03-07；docs/v2/10 §二/§六/§七/§八）──────────────
+// 公共规范原子：诊断形状与 17 码封闭表（相位单点）、标量/标识、semver、版本轴、
+// 求值封闭类型集九型、档规格与限额/结构块形状——spec.ts
+export * from './spec.ts'
+// RFC 8785 JCS 范围下的 canonical 序列化＋SHA-256（VEC-01..08 可复算）——jcs.ts
+export * from './jcs.ts'
+// 规则两阶段求值：typecheckRuleProfile → evaluateRule（E-RULE/W-RULE 封闭；方向表；
+// 档升级变更链）——rule-engine.ts（子域件 rule/ 不构成第二导出面）
+export * from './rule-engine.ts'
+// 授权链纯判定（父范围包含、root_delegation、on_behalf_of、撤回后代）——authority.ts
+export * from './authority.ts'
+// 开工五门纯判定与三值结论（ENU-12；缺门=不可开工）——work-readiness.ts
+export * from './work-readiness.ts'
+
 /** 包名常量 */
 export const PACKAGE_NAME = '@studio-next/core'
 
-/** 包状态标记：状态机/决策/断路/处置/golden/模型档/预算链已落地（partial）；主循环待后续刀 */
+/**
+ * 包状态标记：状态机/决策/断路/处置/golden/模型档/预算链已落地；V2 内核尾段
+ * （canonical/摘要、规则两阶段、授权链、开工五门）已落地（partial）；主循环待后续刀
+ */
 export const PACKAGE_STATUS = 'partial'

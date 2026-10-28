@@ -1,0 +1,317 @@
+{
+  "artifactKind": "frozen-json-schema",
+  "artifactVersion": "1.0.0",
+  "specVersion": "2.0.0",
+  "domain": "v2/11 运行记录 13 AREA / 74 类（冻结记录形状）",
+  "generatedAt": "2026-10-28T09:28:33.000Z",
+  "sourceCommit": "0c90aee0bd74ad496af51775a37c96c0b3ff1b7c",
+  "sourceFiles": [
+    "packages/contract/src/records/index.ts",
+    "packages/contract/src/records/envelope.ts",
+    "packages/contract/src/records/common.ts",
+    "packages/contract/src/records/auth.ts",
+    "packages/contract/src/records/life.ts",
+    "packages/contract/src/records/perf.ts",
+    "packages/contract/src/records/work.ts",
+    "packages/contract/src/records/work-intent.ts",
+    "packages/contract/src/records/work-state.ts",
+    "packages/contract/src/records/work-exec.ts",
+    "packages/contract/src/records/work-close.ts",
+    "packages/contract/src/records/evd.ts",
+    "packages/contract/src/records/acc.ts",
+    "packages/contract/src/records/chg.ts",
+    "packages/contract/src/records/cap.ts",
+    "packages/contract/src/records/rev.ts",
+    "packages/contract/src/records/eval.ts",
+    "packages/contract/src/records/asset.ts",
+    "packages/contract/src/records/obs.ts",
+    "packages/contract/src/records/mem.ts"
+  ],
+  "generator": {
+    "tool": "zod",
+    "zodVersion": "4.6.7",
+    "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+    "target": "draft-2020-12",
+    "io": "input",
+    "unrepresentable": "any",
+    "command": "node packages/contract/src/artifacts/cli.ts --write",
+    "checkCommand": "bun run contract:check"
+  },
+  "schemaIdPolicy": {
+    "emitted": false,
+    "count": 0,
+    "basis": "DEC-OPEN-15：公共 namespace 登记者未设，未批不发 JSON Schema 的 id 关键字；工件身份走 schemaRef {schemaId, schemaVersion}（v2/10 §4.1）",
+    "resolution": "命名/发布/公开标签属制作人待决（v2/10 §十一 待决表第 3 项）——本工件不自封公共身份"
+  },
+  "schemaCount": 74,
+  "areaCount": 13,
+  "recordTypes": [
+    "REC-CMD-01",
+    "REC-CMD-02",
+    "REC-DEC-01",
+    "REC-RCP-01",
+    "REC-COR-01",
+    "REC-EVT-01",
+    "REC-EVT-02",
+    "REC-EVT-03",
+    "REC-AUTH-01",
+    "REC-AUTH-02",
+    "REC-AUTH-03",
+    "REC-AUTH-04",
+    "REC-AUTH-05",
+    "REC-AUTH-06",
+    "REC-AUTH-07",
+    "REC-AUTH-08",
+    "REC-LIFE-01",
+    "REC-LIFE-02",
+    "REC-LIFE-03",
+    "REC-LIFE-04",
+    "REC-LIFE-05",
+    "REC-LIFE-06",
+    "REC-LIFE-07",
+    "REC-LIFE-08",
+    "REC-LIFE-09",
+    "REC-LIFE-10",
+    "REC-LIFE-11",
+    "REC-PERF-01",
+    "REC-WORK-01",
+    "REC-WORK-02",
+    "REC-WORK-03",
+    "REC-WORK-04",
+    "REC-WORK-05",
+    "REC-WORK-06",
+    "REC-WORK-07",
+    "REC-WORK-08",
+    "REC-WORK-09",
+    "REC-WORK-10",
+    "REC-WORK-11",
+    "REC-WORK-12",
+    "REC-WORK-13",
+    "REC-WORK-14",
+    "REC-WORK-15",
+    "REC-WORK-16",
+    "REC-WORK-17",
+    "REC-WORK-18",
+    "REC-WORK-ACCEPT-MAINT",
+    "REC-WORK-HANDOVER",
+    "REC-WORK-COMMIT-CHANGE",
+    "REC-EVD-01",
+    "REC-EVD-02",
+    "REC-EVD-03",
+    "REC-EVD-04",
+    "REC-EVD-05",
+    "REC-EVD-RVK",
+    "REC-ACC-01",
+    "REC-ACC-02",
+    "REC-CHG-01",
+    "REC-CAP-01",
+    "REC-CAP-02",
+    "REC-CAP-RECEIPT",
+    "REC-CAP-ACTIVATE",
+    "REC-REV-01",
+    "REC-EVAL-01",
+    "REC-ASSET-01",
+    "REC-ASSET-02",
+    "REC-OBS-01",
+    "REC-OBS-02",
+    "REC-OBS-03",
+    "REC-OBS-04",
+    "REC-MEM-01",
+    "REC-MEM-02",
+    "REC-MEM-03",
+    "REC-MEM-04"
+  ],
+  "files": [
+    {
+      "file": "records/auth.schema.json",
+      "area": "AUTH",
+      "schemaCount": 16,
+      "recordTypes": [
+        "REC-CMD-01",
+        "REC-CMD-02",
+        "REC-DEC-01",
+        "REC-RCP-01",
+        "REC-COR-01",
+        "REC-EVT-01",
+        "REC-EVT-02",
+        "REC-EVT-03",
+        "REC-AUTH-01",
+        "REC-AUTH-02",
+        "REC-AUTH-03",
+        "REC-AUTH-04",
+        "REC-AUTH-05",
+        "REC-AUTH-06",
+        "REC-AUTH-07",
+        "REC-AUTH-08"
+      ],
+      "bytes": 147351,
+      "sha256": "7c5cf6ed0982f98607d04432157a1ce4d1d8ac414cdef54ef3c230e2e0c6c4d4"
+    },
+    {
+      "file": "records/life.schema.json",
+      "area": "LIFE",
+      "schemaCount": 11,
+      "recordTypes": [
+        "REC-LIFE-01",
+        "REC-LIFE-02",
+        "REC-LIFE-03",
+        "REC-LIFE-04",
+        "REC-LIFE-05",
+        "REC-LIFE-06",
+        "REC-LIFE-07",
+        "REC-LIFE-08",
+        "REC-LIFE-09",
+        "REC-LIFE-10",
+        "REC-LIFE-11"
+      ],
+      "bytes": 152466,
+      "sha256": "5baae1a1c98c60e76ceb3f23e02c4f2d4b7d10f931fffff8d08d031585b8aceb"
+    },
+    {
+      "file": "records/perf.schema.json",
+      "area": "PERF",
+      "schemaCount": 1,
+      "recordTypes": [
+        "REC-PERF-01"
+      ],
+      "bytes": 13712,
+      "sha256": "4a1c0af0ffa410910db3e6839a81bd35d7601306fa6e089694a334552a6bff71"
+    },
+    {
+      "file": "records/work.schema.json",
+      "area": "WORK",
+      "schemaCount": 21,
+      "recordTypes": [
+        "REC-WORK-01",
+        "REC-WORK-02",
+        "REC-WORK-03",
+        "REC-WORK-04",
+        "REC-WORK-05",
+        "REC-WORK-06",
+        "REC-WORK-07",
+        "REC-WORK-08",
+        "REC-WORK-09",
+        "REC-WORK-10",
+        "REC-WORK-11",
+        "REC-WORK-12",
+        "REC-WORK-13",
+        "REC-WORK-14",
+        "REC-WORK-15",
+        "REC-WORK-16",
+        "REC-WORK-17",
+        "REC-WORK-18",
+        "REC-WORK-ACCEPT-MAINT",
+        "REC-WORK-HANDOVER",
+        "REC-WORK-COMMIT-CHANGE"
+      ],
+      "bytes": 275388,
+      "sha256": "d5814be35e6098dec16aa25004fb513195f100bb06847fa04fe710eaf0172bc5"
+    },
+    {
+      "file": "records/evd.schema.json",
+      "area": "EVD",
+      "schemaCount": 6,
+      "recordTypes": [
+        "REC-EVD-01",
+        "REC-EVD-02",
+        "REC-EVD-03",
+        "REC-EVD-04",
+        "REC-EVD-05",
+        "REC-EVD-RVK"
+      ],
+      "bytes": 67425,
+      "sha256": "a5abd2279066721850c0d5eb58d4d5b44fa2b1cf243af10d7371e8dafc62fcd2"
+    },
+    {
+      "file": "records/acc.schema.json",
+      "area": "ACC",
+      "schemaCount": 2,
+      "recordTypes": [
+        "REC-ACC-01",
+        "REC-ACC-02"
+      ],
+      "bytes": 29147,
+      "sha256": "47b7f984bde3daa320eed18108baa9e7b59f73bb4bc6d9b56c361f1bc1a92d58"
+    },
+    {
+      "file": "records/chg.schema.json",
+      "area": "CHG",
+      "schemaCount": 1,
+      "recordTypes": [
+        "REC-CHG-01"
+      ],
+      "bytes": 17599,
+      "sha256": "f318b5e09034e508f92b3f81c99f2cc82d1f18510e97753da824566e94291e79"
+    },
+    {
+      "file": "records/cap.schema.json",
+      "area": "CAP",
+      "schemaCount": 4,
+      "recordTypes": [
+        "REC-CAP-01",
+        "REC-CAP-02",
+        "REC-CAP-RECEIPT",
+        "REC-CAP-ACTIVATE"
+      ],
+      "bytes": 48599,
+      "sha256": "ca4ecd4db337481995a38d9b9b4e4a8841171fd968be4d122211bd3c76b40a8e"
+    },
+    {
+      "file": "records/rev.schema.json",
+      "area": "REV",
+      "schemaCount": 1,
+      "recordTypes": [
+        "REC-REV-01"
+      ],
+      "bytes": 22361,
+      "sha256": "c0e2704794787d34ca42e0db6ab0341a909b95b65a1f52fda30d6c41173e8e1d"
+    },
+    {
+      "file": "records/eval.schema.json",
+      "area": "EVAL",
+      "schemaCount": 1,
+      "recordTypes": [
+        "REC-EVAL-01"
+      ],
+      "bytes": 17378,
+      "sha256": "f675fc755fcd6fad13a147d95f6abaca585bd6b1d287ed903ae35025045d5367"
+    },
+    {
+      "file": "records/asset.schema.json",
+      "area": "ASSET",
+      "schemaCount": 2,
+      "recordTypes": [
+        "REC-ASSET-01",
+        "REC-ASSET-02"
+      ],
+      "bytes": 17440,
+      "sha256": "730a1225dedc2d2d94443d248cc94d4ef5f7aae5fc1256bbbc38e6a8c8535135"
+    },
+    {
+      "file": "records/obs.schema.json",
+      "area": "OBS",
+      "schemaCount": 4,
+      "recordTypes": [
+        "REC-OBS-01",
+        "REC-OBS-02",
+        "REC-OBS-03",
+        "REC-OBS-04"
+      ],
+      "bytes": 39198,
+      "sha256": "43be62be0c4e9bc7f16bc3c99839d91f3289c45de47c3cce621b03ccb0855f45"
+    },
+    {
+      "file": "records/mem.schema.json",
+      "area": "MEM",
+      "schemaCount": 4,
+      "recordTypes": [
+        "REC-MEM-01",
+        "REC-MEM-02",
+        "REC-MEM-03",
+        "REC-MEM-04"
+      ],
+      "bytes": 49927,
+      "sha256": "65b1054423b5b7d357944c2eebd9e8abb9b8e744ad6741085bc68b01d71b8cc5"
+    }
+  ]
+}
