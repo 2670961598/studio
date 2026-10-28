@@ -14,7 +14,7 @@
  * 进程内簿（跨进程互斥归后续刀，泳道租约 v0 同口径）：进程重启即清空，无持久面。
  */
 import type { TicketId } from '@studio-next/contract'
-import type { Inflight } from '../engine.ts'
+import type { Inflight } from '../tick/types.ts'
 
 /** 租约键（P2 定型：公司+目标分支——runMergeAction 与队列栏投影同源） */
 export function mergeLeaseKey(company: string, targetBranch: string): string {

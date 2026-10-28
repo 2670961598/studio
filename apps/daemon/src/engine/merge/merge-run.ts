@@ -81,11 +81,10 @@ import type { TickActionResult, TickPhaseDispatchBudget } from '../tick-report/t
 import { MERGE_CONFLICT_ANCHOR, MERGE_MANUAL_ANCHOR, MERGE_RUN_ANCHOR, type EventIndex } from '../sentinel/events-index.ts'
 import { approvalSlotOf } from '../directive/wire.ts'
 import type { DirectiveVerb } from '../directive/index.ts'
-import type { EngineConfig, Inflight } from '../engine.ts'
+import type { EngineConfig, Inflight, MergeRunDeps } from '../tick/types.ts'
 import { MERGE_BRIEF_FILENAME, MERGE_RECEIPT_FILENAME, mergeDirectiveBlock } from './merge-brief.ts'
 import { mergeLeaseKey, type MergeLeaseRegistry } from './merge-lease.ts'
 import { degradeToManualChain, noteSafe, simulatedMergeTransition } from './merge-fallback.ts'
-import type { MergeGitPort, MergeGateCommandPort } from './merge-gate.ts'
 import { runMergeGate } from './merge-gate.ts'
 
 /** 引擎侧 merge 动作形状（core decide 产物；此声明只为类型收窄，运行时透传） */
@@ -97,33 +96,9 @@ export interface MergeAction {
 
 // ————————————————————————— 注入面 —————————————————————————
 
-/** 合并跑依赖（serve 装配注入；缺省=面关零行为——v0 模拟轨不变） */
-export interface MergeRunDeps {
-  /** 目标分支（R5：恒 dev 家分支；缺省 'dev' 由 serve 给） */
-  targetBranch: string
-  /** 冻结门禁命令（R1：引擎亲跑；缺省 ['bun','run','test'] 由 serve 给） */
-  gateCommand: readonly string[]
-  /** 工位内 repo 相对路径（默认 'repo'——工位约定布局） */
-  repoRelPath?: string
-  /** git 四原语+代推端口（真实现=default-deps.ts spawn 版；测试=fake） */
-  git: MergeGitPort
-  /** 门禁命令端口（repo 内执行；超时=code≠0+note 如实） */
-  gate: MergeGateCommandPort
-}
-
-/** 在途合并跑上下文（Inflight.mergeRun 在场=合并跑收割位别接线生效） */
-export interface MergeRunContext {
-  deps: MergeRunDeps
-  leaseKey: string
-  targetBranch: string
-  /** 派发时工位 repo HEAD（提交核验基线：须成目标分支祖先） */
-  reviewTip: string
-  receiptPath: string
-  /** 因果链锚：所续工时单 id（DISPATCH causation_id 同源） */
-  causationId: string
-  /** dsh 侧会话 id（契约 v1.5——resumeWithSession 唤起证据，MERGE note 留痕） */
-  executorSessionId: string
-}
+// MergeRunDeps／MergeRunContext 已归位 ../tick/types.ts（DISP-02 类型环解耦，IMPL-06-01）——
+// 本文件对旧消费面（default-deps.ts／旧测试）保持再出口，导入路径不变。
+export type { MergeRunContext, MergeRunDeps } from '../tick/types.ts'
 
 /** 引擎侧宿主（createEngine 单点装配——合并跑所需引擎内件全经此注入，不二次 import；热换绑定（assembler/people/costGuard）经 thunk 取活值） */
 export interface MergeRunHost {

@@ -26,7 +26,9 @@ import {
 } from '../../engine/hrsync/hrsync.ts'
 import { createTaigaHrFace } from '../../engine/hrsync/taiga-face.ts'
 import { loadTaigaFieldMap, resolveTaigaAuth } from '../platform/wire.ts'
-import type { ServeConfig } from '../serve.ts'
+// 类型环破口（IMPL-06-05）：ServeConfig 归位 assembly/serve/config.ts——配置面类型不再
+// 经 serve.ts 门面中转（hrsync 装配体只依赖配置契约与执行体，不反向依赖门面）
+import type { ServeConfig } from '../serve/config.ts'
 import { collectHrSecrets, parseHrRooms } from './config.ts'
 
 /** 装配入参（serve.ts buildServeRuntime 现场件；raw platform=未经网关代理的原件） */

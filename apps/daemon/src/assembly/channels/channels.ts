@@ -6,7 +6,9 @@
  * import（25-§一.2），Matrix 网络面由 apps/boot 组合根注入。
  */
 
-import type { ServeConfig } from '../serve.ts'
+// 类型环破口（IMPL-06-05）：ServeConfig 归位 assembly/serve/config.ts——本件不再经
+// serve.ts 门面取型（channels→serve→config→channels 的形状环在类型面闭合；值边不变）
+import type { ServeConfig } from '../serve/config.ts'
 import type { MatrixRoomFace, MatrixRoomFaceContext, RoomFaceSnapshotInput } from '../../engine/rooms/room-duty.ts'
 
 /**

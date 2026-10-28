@@ -205,7 +205,6 @@ import {
   breakerStrikes,
   breakerTrippedAt,
   DEFAULT_FLOW_TABLE,
-  decide,
   emptyBreakerState,
   flowAnchors,
   onWorkerError,
@@ -213,12 +212,11 @@ import {
   resolveTicketFlow,
   type Action,
   type BreakerState,
-  type ConcurrencyLimits,
   type FlowTable,
 } from '@studio-next/core'
 import type { ExecutorRegistry } from '@studio-next/adapters'
 import type { Ledger } from '@studio-next/store'
-import { modelTierDispatchFace, resolveModelTier, type TierId } from './tier/model-tier.ts'
+import { modelTierDispatchFace, resolveModelTier } from './tier/model-tier.ts'
 import { gateDispatch, settleDispatch, type BudgetGateDeps } from './budget-gate.ts'
 import { createLaneRegistry } from './lanes/registry.ts'
 import { foldHarvestCost, writeThroughHarvestUsage } from './cost-guard/harvest.ts'
@@ -267,7 +265,6 @@ import { parkRace, PARKED } from './harvest/park.ts'
 import {
   buildDirectiveAuthorizer,
   engineDirectiveDeps,
-  reboundSuppressed,
   runDirectiveLayer,
   type DirectiveAuthorizer,
   type DirectiveGateDeps,
@@ -281,7 +278,6 @@ import { makeUlid } from './tools/id.ts'
 import { instructionsTarget, removeInstructions, writeInstructions } from './instructions-store.ts'
 import { aiwsWorkspaceOf, type PromptAssembler } from './prompt-assembly.ts'
 import { blindArtifactPaths, createView, resolveReadTier, roleOfAssignee } from './read-tiers.ts'
-import type { ReadTier } from './read-tiers.ts'
 import { heartbeatSentinelRecord, runDev49Sentinels } from './sentinel/sentinels.ts'
 import { mintWorkerKey, workerKeyCredentials, workerKeyGuidance, revokeWorkerKey, WORKER_WKEY_ENV_KEY } from './worker-key.ts'
 import type { WorkerKeyDeps } from './worker-key.ts'
@@ -304,225 +300,34 @@ import {
   type QueueMemberSource,
   DEFAULT_QUEUE_AGE_STEP_MS,
 } from './todoqueue/queue.ts'
-import { ageBoostTier, type QueueRanker } from '@studio-next/core'
+import { ageBoostTier } from '@studio-next/core'
 import { consumePricingPublish, runPricingStaleCheck, type PricingStaleTickReport } from './pricing/pricing.ts'
 import { costCloseDeps, runCostCloseTick } from './cost-close/close.ts'
 import type { TickActionResult, TickDecisionEntry, TickPhaseDispatchBudget, TickPhaseHarvest, TickReport } from './tick-report/types.ts'
 import { personViewOf, type QueueJudgeCandidate, type QueueJudgeHook } from './judge/sites129.ts' // 160-B 两址接线体（studio-dev-182）
-import { closeOutMergeHarvest, failMergeHarvest, runMergeAction, type MergeRunDeps, type MergeRunHost } from './merge/merge-run.ts' // 202-P2 相位 5 合并跑机器（studio-dev-232）
+import { closeOutMergeHarvest, failMergeHarvest, runMergeAction, type MergeRunHost } from './merge/merge-run.ts' // 202-P2 相位 5 合并跑机器（studio-dev-232）
 import { createMergeLeaseRegistry, mergeQueueFace, renewMergeLeases } from './merge/merge-lease.ts' // 202-P4 合并租约簿（TTL+续租+死主回收）＋合并队列栏投影（studio-dev-234）
+// 工作与判定域编排件（DISP-02 / IMPL-06-02 拆出；20-§十五「先拆再增」——engine 只留
+// 相位缝与拍作用域闭包，判定本体仍在 core：意图受理=work/intent，开工门=work/intake，
+// 状态迁移=work/transition）
+import { acceptRevivals, collectWorkIntents, type WorkIntentCandidate } from './work/intent.ts'
+import { decideWorkCandidate, type WorkCandidateHost } from './work/intake.ts'
+import {
+  applyWorkTransition,
+  runApprovalTransitions,
+  runCollectTransitions,
+  runRecycleTransitions,
+  type WorkPhaseHost,
+  type WorkRecycleHost,
+  type WorkTransitionHost,
+} from './work/transition.ts'
 export type { TickDecisionEntry, TickReport } from './tick-report/types.ts'
 
-// ————————————————————————— 配置 —————————————————————————
-
-/** 引擎配置（并发三闸阈值即 ConcurrencyLimits，docs/17-§2） */
-export interface EngineConfig {
-  /** 公司 slug（events.company / intents.company / ticket_mirror.company） */
-  company: string
-  /**
-   * daemon 工位根（rootDir 属 daemon 自管面——tmp/instructions、platform、控制面等落此；
-   * 派发 workspace 缺省旧布局 `<rootDir>/workspaces/<单号>/att<N>`——aiwsRoot 未注入时
-   * 的引擎直连测试回退路径，正式链路 serve 恒注入 aiwsRoot）
-   */
-  rootDir: string
-  /**
-   * .AIWS 员工工作区树根（DEV-28，docs/43-§五 派发权限圈①cwd——serve 推导注入：
-   * 显式配置 > dirname(companyDir)/.AIWS > <rootDir>/.AIWS）：给定 → 派发 workspace
-   * = `<aiwsRoot>/<部门路径>/<工号>/tickets/<单号>/att<N>`（收割四要件与 deliverables
-   * 收账经 dirname(briefPath) 全随迁）；缺省 → 上述旧布局。
-   */
-  aiwsRoot?: string
-  /**
-   * 公司目录根（DEV-50 岗产物落位收账锚）：收割 GATE_PASS 后按 jobs[].output 声明
-   * 落点把工位 REPORT 收账进公司目录 reports/ 位（docs/04-§三 / 17-§6 后置收账步）。
-   * 缺省不注入=面关闭（既有链路零行为变化）。
-   */
-  companyDir?: string
-  /** events.actor（17-§3「工号+账号」编码归 store 层定——v0 'daemon' 拟稿） */
-  actor: string
-  /** 派工默认工号（issue.assignee 缺省时的人员索引回退位） */
-  defaultPersonId: string
-  /**
-   * data-change 路由表登记位（129-§6.1①：变更类型 → 联动单 assignee；拆单 C 接线
-   * org-config hooks.data_change.routes——入/调/退→HF-1 对账〔docs/52-§13 C1-08 口径〕，
-   * 升/降→PLN 线）。引擎消费语义：命中路由且目标在人事索引→物化联动单；未配/未命中/
-   * 目标未知→明报拒收（fail-closed 无 defaultPersonId 兜底——mention 同款防错人纪律）。
-   */
-  dataChangeRoutes?: Readonly<Record<string, string>>
-  /**
-   * cost-threshold 缺省指派目标登记位（129-§6.3 P0-B「payload.target 缺省路由表」：
-   * escalate 警戒处置单 assignee——接线 org-config hooks.cost_threshold.target 规范位
-   * ＋daemon.yaml costThresholdTarget 逃生位合并）。解析序 payload.target＞本位＞明报
-   * 拒收；目标须在人事索引（fail-closed 无 defaultPersonId 兜底——同上防错人纪律）。
-   */
-  costThresholdTarget?: string
-  /**
-   * cost-threshold 警戒处置单泳道落位（129-D 181）：显式配置优先；未配回退指派目标
-   * 部门 lanes[0]（错位会跨部占道——lane 租约独占）；再无=不设（派发回退 defaultLane）。
-   * 规范位 org-config hooks.cost_threshold.lane＋逃生位 daemon.yaml costThresholdLane。
-   */
-  costThresholdLane?: string
-  /** events.dept / ticket_mirror.dept 兜底 */
-  deptFallback: string
-  /** issue.lane 缺省泳道 */
-  defaultLane: string
-  /** InvokeIntent.source（v0 活动流轮询源名） */
-  intentSource: string
-  /** 并发三闸之两闸（第三闸=泳道租约） */
-  limits: ConcurrencyLimits
-  /** 泳道租约 TTL（ms；续租/死主回收归后续刀） */
-  laneTtlMs: number
-  /** 合并租约 TTL（ms；202-P4——每拍续租+死主回收，跨进程归后续刀） */
-  mergeLeaseTtlMs: number
-  /** 在工静默告警阈值（ms；只盯已派发态，decide 4 号判定） */
-  stallAfterMs: number
-  /**
-   * STALL 响置咬合阈（DEV-44，2026-10-20 三例实证 studio-dev-20/25/71：看门狗只叫不咬）：
-   * 同 attempt 内 STALL 告警达 N 次（计数=最近一次 DISPATCH 起的事件派生，可重放）→
-   * 响置闭环（executeStallResponse）：有在途句柄=整树杀（stop 通道同款 kill 链，02-F1-08
-   * 「kill 后等死再重派」——await adapter.kill 即等死）→ 工位收口 interrupted（R-B 在途
-   * 语义）→ 回首批位重派 attempt+1（activity 键未释放，重派靠 rescan 兜底，DEV-42①）；
-   * 无在途句柄（工人消亡面）=GATE_FAIL（WORKER_DEAD 分类）收口+断路连击。两面均入断路器
-   * （dispositions：STALL countsTowardBreaker——防「挂死-杀-重派」无限循环）。
-   * 0=关（只叫不咬——负对照/缺陷存档用）；缺省 2（拟稿待批）。
-   */
-  stallKillAfterAlarms?: number
-  /**
-   * 收割相位增量泵流的每工位每拍时间片（ms；DEV-9 P1 冻结修复，docs/17-§2 拍有界）：
-   * 事件就绪即折算（microtask 先于计时器——完成流仍同拍收口，fake 全家桶行为不变）；
-   * 无事件即驻留让出拍界（心跳/热重载/看门狗回拍边界）。墙钟（非注入时钟）——
-   * 泵流节奏是运行时活性面，不进台账账面。
-   */
-  harvestSliceMs: number
-  /** 断路阈值 N（17-§6 默认 3） */
-  breakerThreshold: number
-  /**
-   * 断路半开冷却窗 ms（DEV-46，2026-10-20 studio-dev-78 实证后的修法）：熔断后停重派
-   * 至冷却窗过 → 放行一次半开试探派发（DISPATCH note 携 half-open-probe 锚）——成功
-   * =GATE_PASS 断路复位，失败=回全开续冷却（trippedAt 刷新）。0=熔断即试探（负对照/
-   * 测试隔离用）；缺省 30min（拟稿待批——外部服务限速类自愈等待面）。
-   */
-  breakerCooldownMs?: number
-  /** demo 模式自动批（真制作人批准信号经网关动作词归一，v0 布尔拟稿） */
-  autoApprove: boolean
-  /** 零动作拍 HEARTBEAT 的哨兵单号（contract events.issue 必填——拟稿待批） */
-  heartbeatIssue: string
-  /** 每拍 activity 翻页上限 */
-  maxActivityPages: number
-  /** dispose() 优雅杀宽限（ms） */
-  killGraceMs: number
-  /**
-   * 镜像对账重决策节流（DEV-42 ①）：每 N 拍把非闭环 mirror 单补进决策候选——活动
-   * 驱动候选只看「有新活动」，被三闸顺延且活动已被游标消费的单会永久搁置（实测
-   * studio-dev-45..53 滞留数小时）。list 全量每拍已取=补进零额外平台 IO；N=节流闸
-   * （防 noop 决策日志无界放大）。0=关；缺省 30。
-   */
-  mirrorRescanEveryTicks?: number
-  /**
-   * 状态集巡逻核节流（DEV-49 A4，docs/52-§十）：每 N 拍核对「平台状态集−有效流表
-   * 声明集=∅」（C1-08 口径），不成立对心跳哨兵单 ESCALATE（事件派生键去重）。
-   * 节流=schema() 读放大；0=关；缺省 30（最坏 30 秒回归发现延迟）。
-   */
-  statusSetPatrolEveryTicks?: number
-  /** C2 声明态面（studio-dev-126，wire.ts 单源计算）；缺省=面关 */
-  provisionDeclaredStates?: readonly string[]
-  /**
-   * 州表卫生白名单（127-C，studio-dev-127 §4.7：org-config yt.known_foreign_states →
-   * CompanySnapshot.knownForeignStates，serve 装配+热重载注入）：已知外来态——DEV-49
-   * 单级哨不升 ESCALATE 降 FOREIGN_KNOWN 观察级（每单每态一条），巡逻核公式
-   * 「平台状态集−(声明集∪白名单)=∅」并集吸收；未声明新漂移仍 ESCALATE（负对照
-   * 保护）。缺省=无白名单=哨兵现状全灵敏度（面关零行为变化）。
-   */
-  knownForeignStates?: readonly string[]
-  /**
-   * 收割尾对账步节流（P3，studio-dev-100 提案 §4.3-1，全批）：每 N 拍对收割成功单跑
-   * 「jobs[].output 声明落点×公司目录实际文件」对账——缺归档=REPORT_MISSING+哈希
-   * 幂等补收（异哈希转人工不覆盖）。companyDir 未注入=面未开；0=关；缺省 30。
-   */
-  harvestReconEveryTicks?: number
-  /**
-   * 票级预算帽缺省（USD；docs/16-§三 reserve 票帽面）：TaskBrief.budgetCap（单票面）
-   * 优先，缺省回退本帽；两者皆无=不设限。超帽=refusal 行落账且不派（20-§六.8）。
-   */
-  budgetTicketCapUsd?: number
-  /**
-   * 岗级预算帽缺省（USD；04-§四岗级预算）：仅价目表态（catalog 注入）生效——
-   * 估算两态见 src/engine/budget-gate.ts 头注（态 B 估算=适配器自报，岗级比较基准无依据）。
-   */
-  budgetPersonCapUsd?: number
-  /** 状态流表覆盖（公司目录 flows；缺省 DEFAULT_FLOW_TABLE，docs/18-§2.1） */
-  flows?: FlowTable
-  /**
-   * 读面分级（17-§7）：role→tier 覆盖表（有效表={...DEFAULT_ROLE_READ_TIERS, ...本表}；
-   * 缺省映射 main_worker=Full/verifier=Blind/其余 Focused 拟稿可配——见 src/engine/read-tiers.ts 头注）。
-   */
-  readTierByRole?: Readonly<Record<string, ReadTier>>
-  /**
-   * Blind 档冻结验收命令来源（与装配器 acceptance **同源**注入——serve 持同一常量，
-   * 不双源）。遇 Blind 派发而未配/为空 → createView CONFIG_INVALID fail-closed（无验收
-   * 不派工，纪律 3），派发失败明报，不静默降档。
-   */
-  readBlindAcceptance?: readonly string[]
-  /**
-   * 队列 ageBoost 步长 ms（129-§6.2-R4 排序键：wait/step 取档、两档封顶）：
-   * 缺省 60min（core DEFAULT_QUEUE_AGE_STEP_MS 单一源）。档=tier→score 加成：
-   * 排队 1 步=+1、2 步及以上=+2 封顶（饥饿防线——低优老单最终压过高优新单，
-   * 但永不全额压制 3 级紧急单）。
-   */
-  queueAgeStepMs?: number
-  /**
-   * 人闸每人并发覆盖表（129-§6.2-R3 第四闸）：工号→在工帽。缺省帽=limits.
-   * maxInflightPerPerson（缺省 1）；**只有批量执行岗**可配 >1（daemon.yaml
-   * `personInflightOverrides: P-1=2;P-2=3` 扁平分号对——matrixRoles 先例）。
-   */
-  personInflightOverrides?: Readonly<Record<string, number>>
-  /**
-   * 模型档路由面（studio-dev-196，制作人 2026-10-22 三档定调）：modelTierByRole=
-   * models.yaml roles 直录（岗位→档；**注入即开面**——缺省不注入=面关，派发行为
-   * 与本单之前逐字节一致）；modelTierTickets=daemon.yaml modelTierTickets 显式
-   * 单级覆盖（`TICKET=high;…` 分号对，org-config 规范位/单据字段=登记债务）。
-   * 解析序与派发面语义见 src/engine/model-tier.ts 头注（单>岗>角色三级）。
-   */
-  modelTierByRole?: Readonly<Record<string, TierId>>
-  modelTierTickets?: Readonly<Record<string, TierId>>
-  /**
-   * 制作人置顶单集（129-§6.2-R4：pinned=+∞ 恒首）。daemon.yaml `pinnedTickets:`
-   * 逗号清单（平面字段写通道归刀B，登记在案）；现算不入携带态——改配置即刻生效。
-   */
-  pinnedTickets?: readonly string[]
-  /**
-   * 队列排序器注入位（129-§6.2-R1 升级位）：缺省不注入=core rankQueue 规则缺省档
-   * （冻结公式）；160-B 小模型档接线时注入（接口面已冻结，本单不实现）。
-   */
-  queueRanker?: QueueRanker
-}
-
-/** 缺省引擎配置（demo/测试可直接改写；serve 侧由 daemon.yaml 覆盖） */
-export const ENGINE_CONFIG_DEFAULTS: EngineConfig = {
-  company: 'demo',
-  rootDir: './var',
-  actor: 'daemon',
-  defaultPersonId: '',
-  deptFallback: 'departments/工程部',
-  defaultLane: 'core',
-  intentSource: 'activity',
-  limits: { maxActionsPerTick: 4, maxInflight: 2 },
-  laneTtlMs: 30 * 60_000,
-  mergeLeaseTtlMs: 30 * 60_000, // 202-P4 合并租约缺省=泳道同款（daemon.yaml 可覆盖）
-  stallAfterMs: 60 * 60_000,
-  stallKillAfterAlarms: 2,
-  harvestSliceMs: 50,
-  breakerThreshold: 3,
-  breakerCooldownMs: 30 * 60_000,
-  autoApprove: false,
-  heartbeatIssue: '-',
-  maxActivityPages: 10,
-  killGraceMs: 5_000,
-  mirrorRescanEveryTicks: 30,
-  statusSetPatrolEveryTicks: 30,
-  harvestReconEveryTicks: 30,
-  queueAgeStepMs: DEFAULT_QUEUE_AGE_STEP_MS,
-}
+// 类型面归位（DISP-02 第一步：engine/tick/types.ts 解类型环；IMPL-06-01）——
+// EngineConfig／Inflight／ENGINE_CONFIG_DEFAULTS 的定义迁出本文件，本文件仍是消费面
+// 唯一再出口（导出名与旧导入路径零变更：serve/cli/旧测试无需改行）；本文件零配置定义。
+import { type EngineConfig, type Inflight, type MergeRunDeps } from './tick/types.ts'
+export { ENGINE_CONFIG_DEFAULTS, type EngineConfig, type Inflight } from './tick/types.ts'
 
 // ————————————————————————— 依赖注入 —————————————————————————
 
@@ -597,43 +402,8 @@ export interface EngineDeps {
 
 // ————————————————————————— 内部状态 —————————————————————————
 
-/** 在途工位（dispatch 落 work_record 'running' 后登记；harvest 收口后注销） */
-export interface Inflight {
-  ticket: TicketId
-  workRecordId: string
-  executor: string
-  handle: Handle
-  workspace: string
-  briefPath: string
-  attempt: number
-  lane: string
-  /** 派工对象工号（收割 settle 的人档行 scope；reserve 链的 person 桥同源） */
-  personId: string
-  /** 派发拍序：本拍派发的下一拍才可收割（同拍单至多一动作的收割侧落点） */
-  dispatchedAtSeq: number
-  /**
-   * bridge 通道（agents_md≠native）的每任务指令临时文件（docs/25-§3.1 v1.5#1）：
-   * 保留至收割完成（worker 全程可读、抗 compact 重注入）→ GATE_PASS/GATE_FAIL 删；
-   * native 通道无此文件（AGENTS.md 恒在 workspace，收割后保留——工位证据）。
-   */
-  instructionsPath?: string
-  // —— 增量泵收状态（DEV-9 P1 冻结修复，docs/17-§2 拍有界；一次性流跨拍续收） ——
-  /** 驻留的一次性流迭代器（首收拍创建；一流一收纪律不变——dsh 单发流不二开） */
-  streamIter?: AsyncIterator<StreamEvent>
-  /** 驻留中的 next()（附 catch 防悬空拒绝：异常记 streamError，下一拍收口 WORKER_DEAD） */
-  streamNext?: Promise<IteratorResult<StreamEvent>> | undefined
-  /** 驻留期已吞的流异常（与同步抛同面收口） */
-  streamError?: string
-  /** 流已收尾（done）——本拍可走判定体 */
-  streamDone?: boolean
-  /** 逐拍折算的四要件输入（要件 1：终态 completed） */
-  foldCompleted?: boolean
-  /** 逐拍折算的四要件输入（要件 2：输出非空） */
-  foldNonEmpty?: boolean
-  /** 逐拍折算的 turn_end.error（终局错误原文，失败面 note 用） */
-  foldTerminalError?: string
-  mergeRun?: import('./merge/merge-run.ts').MergeRunContext // 202-P2：在场=收割位别接线（closeOutMergeHarvest/failMergeHarvest 面）
-}
+// Inflight（在途工位）已归位 ./tick/types.ts（DISP-02 类型环解耦，IMPL-06-01）——
+// 与 EngineConfig 同面（配置＋在途状态）；本文件仍再出口（旧导入路径/导出名不变）。
 
 /** 泳道租约簿（进程内 v0：holder=单号；TTL 到期视同无主——decide laneFree 同语义；
  * 体拆至 lanes.ts——20-§十五.三 先拆再增，studio-dev-177 单C 让位 cost-guard 缝） */
@@ -821,6 +591,16 @@ export function createEngine(deps: EngineDeps): Engine {
     append(rec, tickEvents)
     return rec
   }
+
+  /**
+   * 状态迁移执行宿主（IMPL-06-02 拆件接线）：迁移→镜像→触发记录的顺序保证在
+   * `work/transition.ts`（applyWorkTransition）；本件只把 engine 三闭包绑到本拍事件流。
+   */
+  const transitionHostOf = (tickEvents: EventRecord[]): WorkTransitionHost => ({
+    platform,
+    syncMirror,
+    emit: (name, issue, attempt, extra) => makeEvent(name, issue, attempt, tickEvents, extra),
+  })
 
   /** ticket_mirror upsert（IssueRecord→镜像列；created 以 updated 近似——拟稿见头注） */
   function syncMirror(issue: IssueRecord): void {
@@ -1379,18 +1159,17 @@ export function createEngine(deps: EngineDeps): Engine {
     ledger.endWorkRecord(entry.workRecordId, { status: 'failed', ended_at: now(), ...(entry.handle.executorSessionId !== undefined ? { executor_session_id: entry.handle.executorSessionId } : {}) })
     inflight.delete(ticket)
     lanes.release(entry.lane, ticket)
-    if (flow !== undefined) {
-      // 回首批位（DEFAULT_ROLLBACK_EDGES：已派发→新单；断路器停重派语义，breaker.ts 头注）
-      const rolled = await platform.issues.transition(ticket, flowAnchors(flow).fresh)
-      syncMirror(rolled)
-      makeEvent('GATE_FAIL', rolled, entry.attempt, tickEvents, {
-        note: `${detail};rollback=${flowAnchors(flow).fresh}${wkeyDiscarded ? ';wkey=env-离场（凭据随子进程终结；重派重签新 credentials）' : ''}`,
-      })
-    } else {
-      makeEvent('GATE_FAIL', fresh, entry.attempt, tickEvents, {
-        note: `${detail};rollback=跳过（等级未登记流）${wkeyDiscarded ? ';wkey=env-离场（凭据随子进程终结；重派重签新 credentials）' : ''}`,
-      })
+    // 回首批位（DEFAULT_ROLLBACK_EDGES：已派发→新单；断路器停重派语义，breaker.ts 头注）——
+    // 迁移与触发记录单一出口＝work/transition.ts（等级未登记流=无迁移面：只落 GATE_FAIL 留痕）
+    const rollbackAnchor = flow !== undefined ? flowAnchors(flow).fresh : undefined
+    const wkeyNote = wkeyDiscarded ? ';wkey=env-离场（凭据随子进程终结；重派重签新 credentials）' : ''
+    const gateFailEvent = {
+      name: 'GATE_FAIL' as const,
+      extra: { note: `${detail};rollback=${rollbackAnchor ?? '跳过（等级未登记流）'}${wkeyNote}` },
     }
+    await (rollbackAnchor !== undefined
+      ? applyWorkTransition(transitionHostOf(tickEvents), { ticket, attempt: entry.attempt, toState: rollbackAnchor, event: gateFailEvent })
+      : applyWorkTransition(transitionHostOf(tickEvents), { ticket, attempt: entry.attempt, carrier: fresh, event: gateFailEvent }))
     // —— P3-③ 悬空面可见（studio-dev-100 §4.3-1，94 号工况/E10）：缺 REPORT 而工位已有
     //    交付物 → HARVEST_INCOMPLETE 事件——半成品证据（deliverables 清单）进重派/回收
     //    决策视野；**不自动补收、不代写 REPORT**（补收治「写错位」不治「没写」，病根归因
@@ -1516,17 +1295,16 @@ export function createEngine(deps: EngineDeps): Engine {
       ledger.endWorkRecord(entry.workRecordId, { status: 'interrupted', ended_at: now() })
       inflight.delete(ticket)
       lanes.release(entry.lane, ticket)
-      let rolled: IssueRecord | undefined
-      if (freshAnchor !== undefined) {
-        rolled = await platform.issues.transition(ticket, freshAnchor)
-        syncMirror(rolled)
-      }
-      makeEvent('STALL', rolled ?? fresh, workAttempt, tickEvents, {
-        note:
-          `${silent}（第 ${nth}/${threshold} 次达阈——咬合）：${killNote}；${STALL_KILL_CLOSE_ANCHOR}（R-B 在途语义：接管≠收割，四要件不可判）；` +
-          `rollback=${rolled !== undefined ? freshAnchor : '跳过（等级未登记流）'}；重派=attempt+1 经 rescan 兜底（咬合收口即释放消费键——studio-dev-141 修订：原「activity 键未释放」口径致回退态单 rescan 兜底被 DEDUP_NOOP 压制 3.5h 实证；键释放≠收割结论，GATE_FAIL/预算面不动；预算沿用 adopt 不结算）` +
-          `${workerKeys !== undefined ? '；wkey=env-离场（凭据随被杀子进程终结；重派重签新 key——不吊销 ticket）' : ''}`,
-      })
+      // 回首批位（迁移与触发记录单一出口＝work/transition.ts）；等级未登记流=无迁移面
+      const rollbackNote = freshAnchor ?? '跳过（等级未登记流）'
+      const stallNote =
+        `${silent}（第 ${nth}/${threshold} 次达阈——咬合）：${killNote}；${STALL_KILL_CLOSE_ANCHOR}（R-B 在途语义：接管≠收割，四要件不可判）；` +
+        `rollback=${rollbackNote}；重派=attempt+1 经 rescan 兜底（咬合收口即释放消费键——studio-dev-141 修订：原「activity 键未释放」口径致回退态单 rescan 兜底被 DEDUP_NOOP 压制 3.5h 实证；键释放≠收割结论，GATE_FAIL/预算面不动；预算沿用 adopt 不结算）` +
+        `${workerKeys !== undefined ? '；wkey=env-离场（凭据随被杀子进程终结；重派重签新 key——不吊销 ticket）' : ''}`
+      const transitionHost = transitionHostOf(tickEvents)
+      await (freshAnchor !== undefined
+        ? applyWorkTransition(transitionHost, { ticket, attempt: workAttempt, toState: freshAnchor, event: { name: 'STALL', extra: { note: stallNote } } })
+        : applyWorkTransition(transitionHost, { ticket, attempt: workAttempt, carrier: fresh, event: { name: 'STALL', extra: { note: stallNote } } }))
       // 断路入账（dispositions：STALL countsTowardBreaker=true）
       await strikeBreakerAndMaybeTrip(
         ticket,
@@ -1542,16 +1320,14 @@ export function createEngine(deps: EngineDeps): Engine {
     }
     // B 面：消亡（无可杀——三例实况：句柄不知，判定面 WORKER_DEAD 成立）
     const detail = `WORKER_DEAD：${silent}（第 ${nth}/${threshold} 次达阈——咬合）且无在途句柄（工人消亡面：2026-10-20 三例 studio-dev-20/25/71 同型）`
-    let rolled: IssueRecord | undefined
-    if (freshAnchor !== undefined) {
-      rolled = await platform.issues.transition(ticket, freshAnchor)
-      syncMirror(rolled)
-    }
-    makeEvent('STALL', rolled ?? fresh, workAttempt, tickEvents, {
-      note: `${silent}（第 ${nth}/${threshold} 次达阈——咬合）：无在途句柄（工人消亡面）→ GATE_FAIL 收口；rollback=${rolled !== undefined ? freshAnchor : '跳过（等级未登记流）'}；重派=attempt+1（activity 键已释放——活动驱动+rescan 双兜底）`,
-    })
-    makeEvent('GATE_FAIL', rolled ?? fresh, workAttempt, tickEvents, {
-      note: `${detail};rollback=${rolled !== undefined ? freshAnchor : '跳过（等级未登记流）'}${workerKeys !== undefined ? ';wkey=env-离场（无活进程；重派重签新 credentials）' : ''}`,
+    const deadRollback = freshAnchor ?? '跳过（等级未登记流）'
+    const deadNote = `${silent}（第 ${nth}/${threshold} 次达阈——咬合）：无在途句柄（工人消亡面）→ GATE_FAIL 收口；rollback=${deadRollback}；重派=attempt+1（activity 键已释放——活动驱动+rescan 双兜底）`
+    const deadHost = transitionHostOf(tickEvents)
+    const deadStall = await (freshAnchor !== undefined
+      ? applyWorkTransition(deadHost, { ticket, attempt: workAttempt, toState: freshAnchor, event: { name: 'STALL', extra: { note: deadNote } } })
+      : applyWorkTransition(deadHost, { ticket, attempt: workAttempt, carrier: fresh, event: { name: 'STALL', extra: { note: deadNote } } }))
+    makeEvent('GATE_FAIL', deadStall.issue, workAttempt, tickEvents, {
+      note: `${detail};rollback=${deadRollback}${workerKeys !== undefined ? ';wkey=env-离场（无活进程；重派重签新 credentials）' : ''}`,
     })
     // 遗留 running 工位收口（进程内正常链路不产生 running 无 inflight——此面来自 dispose 后
     // 继续推拍等；R-B 启动接管已收口过的查无即跳过。判定面收口=failed，与 failHarvest 同款）
@@ -1690,7 +1466,7 @@ export function createEngine(deps: EngineDeps): Engine {
     // 消费门（105-刀A A-2）：前置共闸对全 kind 一致（公司匹配 → 分发表命中 → 无 ticket
     // 意图缺 dedupKey=HOLD_INTENT_MALFORMED 明报拒收，25-§3.4 v1.3），无 kind 特判
     // （判负线①）；分发表已开 schedule｜mention（escalate 槽位归刀B notify 端口接线单）。
-    const candidates: Array<{ ticket: TicketId; intent: InvokeIntent }> = []
+    const candidates: WorkIntentCandidate[] = []
     const drained = intentQueue.splice(0)
     const drainSeen = new Set<string>()
 
@@ -1732,7 +1508,7 @@ export function createEngine(deps: EngineDeps): Engine {
     const consumeSplit = createSplitMaterializer({ platform, ledger, syncMirror, makeEvent, tickEvents, config, people, departments: deps.departments, errors, patrolKeys: index.patrolKeys, splitSeen, onMutation: (): void => { mutations += 1 } })
     for (const directive of splitQueue.splice(0)) await consumeSplit(directive)
 
-    // —— 相位 2 前置②：复活对账（DEV-42②，2026-10-20 哨查 studio-dev-51/57 复活无效）——
+    // —— 相位 2 前置②：复活对账（DEV-42②，体=work/intent.ts acceptRevivals）——
     // closed-set 是 CLOSE 事件派生的闭集；平台侧复活（态改回流程态+评论，docs/49 复活令
     // 口径「复活均评论即可」）若无引擎侧一等语义，单据被闭集永拦——改态+评论也不进决策。
     // 复活判定=closed 单的平台态离开其流终态（交付锚点）：评论不动终态不算复活（负断言
@@ -1740,64 +1516,33 @@ export function createEngine(deps: EngineDeps): Engine {
     // （17-§3 冻结词表内的复活锚点；REOPEN 不在词表，加名走 SCHEMA_EVOLVE 批示流）
     // → 下一拍 indexEvents 派生即出闭集（事件流序 last-write-wins，可重放）；本拍以
     // 局部闭集即时放行进决策（RESUME 也计 mutations——有账面动作的拍不落心跳）。
-    const closedSet = new Set<TicketId>(index.closed)
-    let reopened = 0
-    for (const ticket of [...index.closed].sort()) {
-      const issue = issueById.get(ticket)
-      if (issue === undefined) continue // 平台已不可见（删除面归平台侧）——无从判定复活
-      const flow = flowOf(issue)
-      if (flow === undefined) continue // 等级未登记流：终态锚点不可知，不复活（plan 登记边界）
-      const delivered = flowAnchors(flow).delivered
-      if (issue.state === delivered) continue // 仍在终态=未复活（仅评论不触发）
-      makeEvent('RESUME', issue, index.attemptOf(ticket), tickEvents, {
-        note: `复活：closed 单离开终态 ${delivered} → ${issue.state}（平台侧复活；closed-set 释放，重进决策）`,
-      })
-      closedSet.delete(ticket)
-      reopened += 1
-      mutations += 1
-    }
+    const revival = acceptRevivals({
+      closed: index.closed,
+      issueOf: (ticket) => issueById.get(ticket),
+      flowOf,
+      attemptOf: (ticket) => index.attemptOf(ticket),
+      emit: (issue, attempt, note) => makeEvent('RESUME', issue, attempt, tickEvents, { note }),
+    })
+    const closedSet = revival.closed
+    const reopened = revival.reopened
+    mutations += reopened
 
-    // 候选去重集（同拍一单至多一动作，17-§2；129-E 上移到活动候选段之前）：relay/resume
-    // 推回候选的是**既有单**，恰可与本拍活动集相交——双候选=双 dispatch 状态腐坏；活动候选
-    // 只补位不覆盖意图面候选（intentKey 归因更精确）。
-    const candidateSeen = new Set<TicketId>(candidates.map((c) => c.ticket))
-    for (const ticket of [...affected].sort()) {
-      if (closedSet.has(ticket)) continue // 已 CLOSE 单不再进决策（复活经 RESUME 释放——见上）
-      if (candidateSeen.has(ticket)) continue // 本拍已是候选（意图消费段推入）——不重复
-      candidates.push({
-        ticket,
-        intent: {
-          kind: 'ticket',
-          company: config.company,
-          ticket,
-          source: config.intentSource,
-          priority: 1,
-        },
-      })
-      candidateSeen.add(ticket)
-    }
-
-    // —— 相位 2 前置③：镜像对账重决策（DEV-42①，2026-10-20 哨查 studio-dev-45..53 零事件滞留）——
-    // 活动驱动候选只看「有新活动」的单：被三闸顺延（HOLD_TICK_LIMIT/HOLD_INFLIGHT_LIMIT）
-    // 且活动已被游标消费的单，下一拍不再是候选=永久搁置（队列大片开放却长时间零派发）。
-    // 兜底=每 N 拍把非闭环（未 CLOSE）mirror 单补进候选（issues.list 全量每拍已取——镜像
-    // upsert 用，零额外平台 IO）；N=节流闸（防 noop 决策日志面无界放大）。候选去重：
-    // candidateSeen（活动候选段前已建——129-E 上移）复用，本拍已是候选的单不重复；
-    // 意图源名 'mirror'——
-    // 与活动源 'activity' 区分，救回派发的 DISPATCH note/决策条目可观测归因。
-    let rescanned = 0
-    const rescanEvery = config.mirrorRescanEveryTicks ?? 0
-    if (rescanEvery > 0 && seq % rescanEvery === 0) {
-      for (const issue of [...issues].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
-        if (closedSet.has(issue.id) || candidateSeen.has(issue.id)) continue
-        candidates.push({
-          ticket: issue.id,
-          intent: { kind: 'ticket', company: config.company, ticket: issue.id, source: 'mirror', priority: 0 },
-        })
-        candidateSeen.add(issue.id)
-        rescanned += 1
-      }
-    }
+    // —— 相位 2 前置②b/③：候选补齐（活动驱动＋镜像 rescan，DEV-42①；体=work/intent.ts）——
+    // 候选去重集初始化于 drain 之后（同拍一单至多一动作；relay/resume 推回的既有单恰可与
+    // 本拍活动集相交——双候选=双 dispatch 状态腐坏；活动候选只补位不覆盖意图面候选）；
+    // rescan 每 N 拍把非闭环（未 CLOSE）mirror 单补进候选（issues.list 全量每拍已取——
+    // 零额外平台 IO），复用同一去重集；节流闸防 noop 决策日志面无界放大。
+    const intake = collectWorkIntents({
+      candidates,
+      affected,
+      issues,
+      closed: closedSet,
+      company: config.company,
+      intentSource: config.intentSource,
+      seq,
+      ...(config.mirrorRescanEveryTicks !== undefined ? { mirrorRescanEveryTicks: config.mirrorRescanEveryTicks } : {}),
+    })
+    const rescanned = intake.rescanned
     // —— 队列候选触钟+定序（129-§6.2，studio-dev-167 单B）——
     // 触钟（touchQueueCarry）：队列成员候选首见种 FIFO 锚、重复意图只抬峰不重种；
     // 定序（orderCandidates）：生命周期候选（收割/合并/回收链）原序在前，队列候选
@@ -1859,63 +1604,55 @@ export function createEngine(deps: EngineDeps): Engine {
       else errors.push('judge 精序违背纯置换契约（候选集异动）——按规则档原序派发')
       if (refined.pick !== undefined || refined.interrupt !== undefined) judgeTick = { ...(refined.pick !== undefined ? { pick: refined.pick } : {}), ...(refined.interrupt !== undefined ? { interrupt: refined.interrupt } : {}) }
     }
-    // 本拍已排队派发的人位占用（两段式先决后执——人闸快照折算面，dispatch 即记入）
+    // 本拍已排队派发的人位占用（两段式先决后执——人闸快照折算面，dispatch 即记入）；
+    // 必须声明在开工门宿主之前（宿主 personGateOf 闭包引用本表）
     const dispatchPersons = new Map<TicketId, string>()
-    for (const cand of orderedCandidates) {
-      const ticket = cand.ticket
-      const issue = issueById.get(ticket) ?? (await platform.issues.get(ticket).catch(() => undefined))
-      if (issue === undefined) {
+    // —— 开工门快照宿主（IMPL-06-02 抽件 work/intake.ts：入参装配在彼，判定仍在 core）——
+    // 人闸快照（129-§6.2-R3 第四闸——decide passGates 序冻结：断路>泳道>人>每拍>在途）：
+    // 在工计数=内存 Inflight+本拍已排队派发（两段式先决后执拍内即时生效）；人不可解析=
+    // 不注 gate 闸面跳过——人员配置错不是停摆理由，派发面 resolvePerson 同源失败才拒派。
+    // 批示站立（studio-dev-171）：本拍归一动词优先，否则事件索引派生；approved 入参=D4
+    // 清偿点：autoApprove 恒批（demo 语义保持）∥批准站立=真实批示驱动。断路快照（DEV-46
+    // 半开面）：trippedAt 在册=熔断中；冷却窗进快照（缺省回退 decide 侧 30min 拟稿）——
+    // 无 trippedAt 的旧形快照 decide 按 fail-closed 恒 hold（golden 旧迹兼容）。
+    const workCandidateHost: WorkCandidateHost = {
+      issueOf: (ticket) => issueById.get(ticket),
+      fetchIssue: (ticket) => platform.issues.get(ticket).catch(() => undefined),
+      flowOf,
+      laneLeaseOf: (lane) => lanes.state(lane),
+      personIdOf: (issue) => resolvePerson(issue)?.id,
+      personGateOf: (personId) => personGateSnapshot(personId, dispatchPersons, inflight, personLimits),
+      verbNowOf: (ticket) => directiveVerbNow.get(ticket) ?? index.directiveStandingOf(ticket),
+      approvedNow: (verbNow) => config.autoApprove || verbNow === '批准',
+      seenKeys: index.seenKeys,
+      ownSeenKeyOf: (ticket, issue) => (flowOf(issue) === undefined ? null : index.seenKeyOf(ticket)),
+      breakerOf: (ticket) => {
+        const trippedAt = breakerTrippedAt(breaker, ticket)
+        return {
+          strikes: breakerStrikes(breaker, ticket),
+          threshold: config.breakerThreshold,
+          ...(trippedAt !== undefined ? { trippedAt } : {}),
+          ...(config.breakerCooldownMs !== undefined ? { cooldownMs: config.breakerCooldownMs } : {}),
+        }
+      },
+      onUnavailable: (ticket) => {
         errors.push(`state-diff：单 ${ticket} 平台取不到（跳过本拍）`)
-        continue
-      }
-      const lane = issue.lane ?? config.defaultLane
-      const intent = cand.intent
-      // 看门狗喂数豁免（DEV-44）：在工（已派发态）单的本单消费键不注入 seenIntentKeys——dedup 防 replay
-      // 不防健康探针；镜像键被上一誓消费后（咬合前在工期）STALL_SILENT 被 step1 挡成 DEDUP_NOOP，看门狗
-      // 对第二誓失明（「只叫不咬」深层机制，红证 ④）。豁免只影响在工单 noop 决策码面（DEDUP_NOOP→
-      // EVIDENCE_PENDING/STALL_SILENT）；重派安全由状态机守（已派发态无前向后继）；回滚新单态咬合收口已释放消费键（141 面），rescan 即可派。
-      const candFlow = flowOf(issue)
-      const ownSeenKey = candFlow === undefined ? null : index.seenKeyOf(ticket)
-      const inWork = candFlow !== undefined && issue.state === flowAnchors(candFlow).dispatched
-      // 人闸快照（129-§6.2-R3 第四闸——decide passGates 序冻结：断路>泳道>人>每拍>在途）：在工计数=
-      // 内存 Inflight+本拍已排队派发（两段式先决后执拍内即时生效）；人不可解析=不注 gate 闸面跳过——
-      // 人员配置错不是停摆理由，派发面 resolvePerson 同源失败才拒派（fail 点收口在 executeDispatch）。
-      const personId = resolvePerson(issue)?.id
-      const personGate = personGateSnapshot(personId, dispatchPersons, inflight, personLimits)
-      // 批示站立（studio-dev-171，docs/18-§2.5）：本拍归一动词优先，否则事件索引派生（APPROVE 置位/
-      // DISPATCH 清零）；approved 入参=D4 清偿点：autoApprove 恒批（demo 语义保持）∥批准站立=真实批示驱动
-      const verbNow = directiveVerbNow.get(ticket) ?? index.directiveStandingOf(ticket)
-      const out = decide({
-        issue,
-        laneLease: lanes.state(lane),
-        ...(personGate !== undefined ? { personGate } : {}),
-        // 在途计数=已落工位 + 本拍已排队派发（两段式「先决后执」下三闸仍须拍内即时生效）
-        inflightCount: inflight.size + dispatchQ.length,
-        tickActionCount: provisionalActions,
-        limits: config.limits,
-        intent,
-        seenIntentKeys: inWork && ownSeenKey !== null ? index.seenKeys.filter((k) => k !== ownSeenKey) : index.seenKeys,
-        // 断路快照（DEV-46 半开面）：trippedAt 在册=熔断中；冷却窗进快照（缺省回退
-        // decide 侧 DEFAULT_BREAKER_COOLDOWN_MS=30min 拟稿）——无 trippedAt 的旧形快照
-        // decide 按 fail-closed 恒 hold（golden 旧迹兼容）
-        breaker: (() => {
-          const trippedAt = breakerTrippedAt(breaker, ticket)
-          return {
-            strikes: breakerStrikes(breaker, ticket),
-            threshold: config.breakerThreshold,
-            ...(trippedAt !== undefined ? { trippedAt } : {}),
-            ...(config.breakerCooldownMs !== undefined ? { cooldownMs: config.breakerCooldownMs } : {}),
-          }
-        })(),
-        ...(config.autoApprove || verbNow === '批准' ? { approved: true } : {}),
-        ...(config.flows !== undefined ? { flows: config.flows } : {}),
-        now: startedAt,
-        stallAfterMs: config.stallAfterMs,
-      })
-      const { action, intentKey } = out
+      },
+      defaultLane: config.defaultLane,
+      limits: config.limits,
+      ...(config.flows !== undefined ? { flows: config.flows } : {}),
+      inflightCount: () => inflight.size + dispatchQ.length,
+      tickActionCount: () => provisionalActions,
+      now: () => startedAt,
+      stallAfterMs: config.stallAfterMs,
+    }
+    for (const cand of orderedCandidates) {
+      const decision = await decideWorkCandidate(workCandidateHost, cand)
+      if (decision === undefined) continue
+      const { ticket, issue, intentKey, action, personId } = decision
       // 5a 回弹抑制（studio-dev-171，docs/18-§2.5；判定件=directive/wire.ts）：打回/
       // 拆单/搁置站立期不自动呈批，观测面落 WAIT_APPROVAL（决策码零增删）
-      if (reboundSuppressed(verbNow, action.type)) {
+      if (decision.reboundSuppressed) {
         decisions.push({ ticket, intentKey, code: 'WAIT_APPROVAL', actionType: 'noop', state: issue.state })
         continue
       }
@@ -1965,26 +1702,39 @@ export function createEngine(deps: EngineDeps): Engine {
       }
     }
 
-    // —— 相位 3 派发：submit_approval（派发前置呈批）→ dispatch ——
-    let approvals = 0
-    for (const action of approvalQ) {
-      try {
-        const transitioned = await platform.issues.transition(action.ticket, action.toState)
-        syncMirror(transitioned)
-        approvals += 1
+    // —— 状态迁移编排宿主（IMPL-06-02 抽件 work/transition.ts：迁移→镜像→触发记录单一出口；
+    //    相位执行体=呈批/复验/回收三面，错误码与事件序列逐字保持）——
+    const workTransitionHost: WorkTransitionHost = transitionHostOf(tickEvents)
+    const workPhaseHost: WorkPhaseHost = {
+      ...workTransitionHost,
+      attemptOf: (ticket) => index.attemptOf(ticket),
+      flowOf,
+      errors,
+      actionResults,
+      onMutation: () => {
         mutations += 1
-        actionResults.push({
-          ticket: action.ticket,
-          actionType: action.type,
-          ok: true,
-          detail: `呈批→${action.toState}（v0 直迁，事件名待批示）`,
-        })
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        errors.push(`呈批迁移失败 ${action.ticket}：${msg}`)
-        actionResults.push({ ticket: action.ticket, actionType: action.type, ok: false, detail: msg })
-      }
+      },
     }
+    const roomClose =
+      rooms === undefined
+        ? undefined
+        : async (ticket: TicketId, carrier: IssueRecord, attempt: number): Promise<void> => {
+            await closeRoomDuty(rooms, ticket, (note) => {
+              makeEvent('ESCALATE', carrier, attempt, tickEvents, { note })
+            })
+          }
+    const workRecycleHost: WorkRecycleHost = {
+      ...workPhaseHost,
+      defaultLane: config.defaultLane,
+      releaseLane: (ticket, lane) => {
+        lanes.release(lane, ticket)
+      },
+      revokeCredential: (ticket) => revokeWorkerKey(workerKeys, ticket),
+      ...(roomClose !== undefined ? { closeRoom: roomClose } : {}),
+    }
+
+    // —— 相位 3 派发：submit_approval（派发前置呈批）→ dispatch ——
+    const approvals = await runApprovalTransitions(workPhaseHost, approvalQ)
     let dispatched = 0
     const budget: TickPhaseDispatchBudget = { budgetReserved: 0, budgetRefused: 0 }
     for (const { action, intentKey, resumePlan } of dispatchQ) {
@@ -2029,29 +1779,8 @@ export function createEngine(deps: EngineDeps): Engine {
         errors.push(`收割异常 ${entry.ticket}：${err instanceof Error ? err.message : String(err)}`)
       }
     }
-    for (const action of collectQ) {
-      try {
-        const fresh = await platform.issues.get(action.ticket)
-        const flow = flowOf(fresh)
-        if (flow === undefined) {
-          errors.push(`collect：单 ${action.ticket} 等级未登记流`)
-          actionResults.push({ ticket: action.ticket, actionType: action.type, ok: false, detail: '等级未登记流' })
-          continue
-        }
-        const anchors = flowAnchors(flow)
-        const transitioned = await platform.issues.transition(action.ticket, anchors.verified)
-        syncMirror(transitioned)
-        makeEvent('QA_PASS', transitioned, index.attemptOf(action.ticket), tickEvents, {
-          note: '证据就绪→复验通过（收割相位 QA 面）',
-        })
-        mutations += 1
-        actionResults.push({ ticket: action.ticket, actionType: action.type, ok: true, detail: `→${anchors.verified}` })
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        errors.push(`collect 失败 ${action.ticket}：${msg}`)
-        actionResults.push({ ticket: action.ticket, actionType: action.type, ok: false, detail: msg })
-      }
-    }
+    // 复验通过面（collect 动作；体=work/transition.ts runCollectTransitions——取拍末真态定流）
+    await runCollectTransitions(workPhaseHost, collectQ)
     // —— 相位 4 收割末段：STALL 响置（DEV-44——告警达阈咬合：kill 面/消亡面，executeStallResponse） ——
     for (const action of stallQ) {
       const result = await executeStallResponse(action, index, tickEvents).catch(
@@ -2104,31 +1833,9 @@ export function createEngine(deps: EngineDeps): Engine {
     }
 
     // —— 相位 6 回收：已交付 → 关单落账 + 泳道释放 + wkey 吊销（已交付为终态，无平台迁移） ——
-    let recycled = 0
-    for (const action of recycleQ) {
-      try {
-        const fresh = await platform.issues.get(action.ticket)
-        const lane = fresh.lane ?? config.defaultLane
-        lanes.release(lane, action.ticket)
-        // 17-§7「关单即吊销，杜绝归档后仍有效」：CLOSE 是 wkey 生命周期的收口点
-        // （GATE_PASS 后 key 存续到此处——验收/复验窗口内 worker 仍可署名回执）。
-        // 工位=**原位**归档（DEV-28，docs/43-§五）：tickets/<单号>/att<N> 证据不动（台账
-        // report_ref/summary_ref 引用不断链）、员工家永不删——回收只释放泳道+吊销凭据
-        const wkeyRevoked = revokeWorkerKey(workerKeys, action.ticket)
-        makeEvent('CLOSE', fresh, index.attemptOf(action.ticket), tickEvents, {
-          note: `交付回收：泳道释放、工位原位归档=.AIWS 家保留（docs/43-§五；会话归档归后续刀）${wkeyRevoked ? '；wkey=关单吊销（17-§7）' : ''}`,
-        })
-        // 单据房间归档（130-P3/DEV-20 P10）：只读归档；失败 ESCALATE 不阻回收（幂等重跑收敛）
-        if (rooms !== undefined) await closeRoomDuty(rooms, action.ticket, (note) => makeEvent('ESCALATE', fresh, index.attemptOf(action.ticket), tickEvents, { note }))
-        recycled += 1
-        mutations += 1
-        actionResults.push({ ticket: action.ticket, actionType: action.type, ok: true, detail: `lane=${lane} 释放` })
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        errors.push(`recycle 失败 ${action.ticket}：${msg}`)
-        actionResults.push({ ticket: action.ticket, actionType: action.type, ok: false, detail: msg })
-      }
-    }
+    // 体=work/transition.ts runRecycleTransitions（17-§7 关单即吊销；DEV-28 工位原位归档；
+    // 房间归档失败 ESCALATE 不阻回收——幂等重跑收敛）
+    const recycled = await runRecycleTransitions(workRecycleHost, recycleQ)
 
     // —— 相位 7 落账/心跳：零动作拍落 HEARTBEAT（游标/拍序已持久化） ——
     let heartbeat = false

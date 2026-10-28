@@ -9,6 +9,7 @@
     ".": "./src/index.ts"
   },
   "dsh": {
+    "entry": "src/index.ts",
     "bundle": {
       "patch": "./cordis.patch.yml"
     }

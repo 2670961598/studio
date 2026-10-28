@@ -16,7 +16,9 @@ import { createLocalPlatform } from '@studio-next/localplatform'
 import { createTaigaPlatform, type TaigaAuth, type TaigaEntity } from '@studio-next/taiga'
 import { createFakePlatform } from '../../engine/fakes.ts'
 import { createGatedPlatform } from '../../engine/tools/gated-platform.ts'
-import type { ServeConfig } from '../serve.ts'
+// 类型环破口（IMPL-06-05）：ServeConfig 归位 assembly/serve/config.ts（本件只做平台接线，
+// 不经 serve.ts 门面取型——门面只保留公共导出/转发）
+import type { ServeConfig } from '../serve/config.ts'
 
 /**
  * 网关写收口接线（17-§7：engine 直调 platform 是最后一条未收口写路径——本函数收口）。

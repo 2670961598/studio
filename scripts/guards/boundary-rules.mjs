@@ -161,7 +161,8 @@ export const lineBaseline = {
   "apps/boot/src/boot.test.ts": 645, // 217+219 双面测试叠加（新超限件随批示波次入基线）
   "packages/store/src/records.ts": 606,
   "packages/store/src/ledger.ts": 1684, // 179 132-D 定型面缝并入（叠加态实测 2026-10-23）
-  "apps/daemon/src/assembly/serve.ts": 1627, // 217+219 双面叠加态实测
+  // apps/daemon/src/assembly/serve.ts：IMPL-06-05 拆 config/runtime/run/executor-face 后
+  // 1627 → 45 行（薄壳只留公共导出/转发）——降至 ≤600 按 §十五.三.3 除名（基线净降登记）。
   "packages/company/src/repo-validate.ts": 1021,
   "apps/daemon/test/control/hot-reload.test.ts": 930,
   "apps/daemon/test/engine/scheduler.test.ts": 785,

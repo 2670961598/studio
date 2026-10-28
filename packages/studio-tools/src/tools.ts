@@ -315,6 +315,213 @@ export const STUDIO_TOOLS = [
 /** 工具名列表（= GATEWAY_ACTIONS 的镜像，供快速对照/测试） */
 export const STUDIO_TOOL_NAMES: readonly GatewayAction[] = STUDIO_TOOLS.map((t) => t.name)
 
+// ---------------------------------------------------------------------------
+// MCP-16 场景分组面（v2/14 §三；IMPL-06-10）
+//
+// 只声明「分组 / 工具名 / 对应哪条既有工具」，不实现新业务、不注册新工具：
+// 注册面仍是 STUDIO_TOOLS（= GATEWAY_ACTIONS 一一对应）。target 行是「目标（未证）」
+// 的落位声明，落地须各自立单并走契约批示流（v2/14 §三铁律 3/4）；本表不产生 server 注册。
+// 16 行 = MCP-HR-01..04 + MCP-FIN-01..03 + MCP-DEV-01..03 + MCP-GEN-01..06。
+// ---------------------------------------------------------------------------
+
+export const MCP_SCENARIO_GROUP_NAMES = ['hr', 'fin', 'dev', 'gen'] as const
+export type McpScenarioGroup = (typeof MCP_SCENARIO_GROUP_NAMES)[number]
+
+/** 既有（已与 GATEWAY_ACTIONS 对齐）｜目标（未证，只有声明没有实现） */
+export type McpScenarioToolStatus = 'existing' | 'target'
+
+export interface McpScenarioToolDeclaration {
+  /** v2/14 §三行号（MCP-<组>-<两位序号>） */
+  readonly id: string
+  readonly group: McpScenarioGroup
+  /** 工具名（MCP-GEN-06 一行为 kb.search / kb.upsert 两名） */
+  readonly names: readonly string[]
+  readonly summary: string
+  readonly status: McpScenarioToolStatus
+  /** 既有工具映射（status=target 时必为空；existing 行逐条指向 STUDIO_TOOLS 的名字） */
+  readonly existingTools: readonly GatewayAction[]
+}
+
+export interface McpScenarioGroupDeclaration {
+  readonly group: McpScenarioGroup
+  readonly title: string
+  readonly description: string
+  readonly tools: readonly McpScenarioToolDeclaration[]
+}
+
+export const MCP_SCENARIO_GROUPS: readonly McpScenarioGroupDeclaration[] = [
+  {
+    group: 'hr',
+    title: '人事',
+    description:
+      '人事改人事信息：档案修订/任命提议/状态迁移申请/利益申报。员工用工具「申请」，决定由有权位置经端口作出（v2/14 §三 MCP-HR-01..04）。',
+    tools: [
+      {
+        id: 'MCP-HR-01',
+        group: 'hr',
+        names: ['hr.profileAmend'],
+        summary: '本人/授权范围档案修订（回执=RevisionTicket，不是直接改档）',
+        status: 'target',
+        existingTools: [],
+      },
+      {
+        id: 'MCP-HR-02',
+        group: 'hr',
+        names: ['hr.appointmentPropose'],
+        summary: '拟任登记提议（按位置 +1 链；幂等键四元组）',
+        status: 'target',
+        existingTools: [],
+      },
+      {
+        id: 'MCP-HR-03',
+        group: 'hr',
+        names: ['hr.transitionRequest'],
+        summary: '人事状态迁移申请（按边触发者校验后进决定链）',
+        status: 'target',
+        existingTools: [],
+      },
+      {
+        id: 'MCP-HR-04',
+        group: 'hr',
+        names: ['hr.interestDeclare'],
+        summary: '利益关系申报（任职者申报＋独立检查位置检查）',
+        status: 'target',
+        existingTools: [],
+      },
+    ],
+  },
+  {
+    group: 'fin',
+    title: '财务',
+    description:
+      '财务查看：账/预算/成本警戒只读投影——缺源段=unknown 不补 0；多公司视图隔离（v2/14 §三 MCP-FIN-01..03）。',
+    tools: [
+      {
+        id: 'MCP-FIN-01',
+        group: 'fin',
+        names: ['fin.ledgerRead'],
+        summary: '账视图只读（预算/事件/月报，按 readScope 过滤）',
+        status: 'target',
+        existingTools: [],
+      },
+      {
+        id: 'MCP-FIN-02',
+        group: 'fin',
+        names: ['fin.budgetQuery'],
+        summary: '本单/本部门预算只读投影（现状 budget-query 的 V2 化）',
+        status: 'existing',
+        existingTools: ['budget-query'],
+      },
+      {
+        id: 'MCP-FIN-03',
+        group: 'fin',
+        names: ['fin.costguardStatus'],
+        summary: '成本警戒线状态只读视图（core costguard 投影）',
+        status: 'target',
+        existingTools: [],
+      },
+    ],
+  },
+  {
+    group: 'dev',
+    title: '研发',
+    description:
+      '研发申请权限/声明能力/登记资产——申请不是授权；资产登记写入者=daemon/部署（v2/14 §三 MCP-DEV-01..03）。',
+    tools: [
+      {
+        id: 'MCP-DEV-01',
+        group: 'dev',
+        names: ['dev.permissionRequest'],
+        summary: '申请授予面（purpose/scope/期限；回执=REC-CMD-01，申请不是授权）',
+        status: 'target',
+        existingTools: [],
+      },
+      {
+        id: 'MCP-DEV-02',
+        group: 'dev',
+        names: ['dev.capabilityDeclare'],
+        summary: '九维能力声明（声明是主张非认定）',
+        status: 'target',
+        existingTools: [],
+      },
+      {
+        id: 'MCP-DEV-03',
+        group: 'dev',
+        names: ['dev.assetRegister'],
+        summary: '资产项登记申请（写入者=daemon/部署）',
+        status: 'target',
+        existingTools: [],
+      },
+    ],
+  },
+  {
+    group: 'gen',
+    title: '通用工作',
+    description:
+      '通用工作面：意图/证据/交接/评论/心跳/知识——现状六工具即本组已实现子集（v2/14 §三 MCP-GEN-01..06）。',
+    tools: [
+      {
+        id: 'MCP-GEN-01',
+        group: 'gen',
+        names: ['work.intake'],
+        summary: '意图信封受理（回执 intentRef，REC-WORK-01）',
+        status: 'target',
+        existingTools: [],
+      },
+      {
+        id: 'MCP-GEN-02',
+        group: 'gen',
+        names: ['work.evidenceSubmit'],
+        summary: '证据项提交（材料引用＋证明边界；=现状 evidence-write）',
+        status: 'existing',
+        existingTools: ['evidence-write'],
+      },
+      {
+        id: 'MCP-GEN-03',
+        group: 'gen',
+        names: ['work.handoverSubmit'],
+        summary: '交接包提交（提交≠接收确认）',
+        status: 'target',
+        existingTools: [],
+      },
+      {
+        id: 'MCP-GEN-04',
+        group: 'gen',
+        names: ['work.comment'],
+        summary: '单据署名评论（=现状 comment）',
+        status: 'existing',
+        existingTools: ['comment'],
+      },
+      {
+        id: 'MCP-GEN-05',
+        group: 'gen',
+        names: ['work.heartbeat'],
+        summary: '活性心跳（不证工作完成；=现状 heartbeat）',
+        status: 'existing',
+        existingTools: ['heartbeat'],
+      },
+      {
+        id: 'MCP-GEN-06',
+        group: 'gen',
+        names: ['kb.search', 'kb.upsert'],
+        summary: '知识检索/文章沉淀（=现状 kb-search / article）',
+        status: 'existing',
+        existingTools: ['kb-search', 'article'],
+      },
+    ],
+  },
+]
+
+/** 全部 16 行扁平视图（分组声明不是注册面；注册面仍是 STUDIO_TOOLS） */
+export const MCP_SCENARIO_TOOLS: readonly McpScenarioToolDeclaration[] = MCP_SCENARIO_GROUPS.flatMap(
+  (g) => g.tools,
+)
+
+/** 既有工具 → MCP-16 分组行（反向索引；每个既有工具恰命中一行） */
+export function mcpScenarioToolOf(action: GatewayAction): McpScenarioToolDeclaration | undefined {
+  return MCP_SCENARIO_TOOLS.find((t) => t.existingTools.includes(action))
+}
+
 /** 供 AGENTS.md 生成器（prompt 包 L5）引用的摘要：名字+schema 摘要+对应 GatewayAction */
 export interface StudioToolSummary {
   readonly name: GatewayAction
