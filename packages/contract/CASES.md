@@ -163,3 +163,23 @@ import manifest from '<contract>/cases.json'
 const report = await runCases(manifest, { dir: loadCompanyDirectory }, { domains: ['dir'] })
 // report.failed 非空 = 契约红
 ```
+
+
+### rec 域登记（MIG-03 / IMPL-03-01，2026-10-28；**追加不重写**）
+
+> 域清单增补：新增 `rec` 域。上方「域清单（v0）」表为 v0 冻结行（改表=改契约，20-§二），
+> 故新增域以本节登记，不覆盖既有行。依据：plan/05 IMPL-03-01（领土含「CASES.md 域清单登记 rec 域」）、
+> v2/11 §一（REC- 74 类唯一登记处）、v2/14 §二 规则②（记录族形状落 `contract/src/records/`）。
+
+- **域归属**：`rec`＝**运行记录族形状校验面**（v2/11 §一 74 类）。subject 归属＝`packages/contract/src/records/`
+  的族校验器（envelope/auth/common/life/perf）；断言侧重＝**形状与拒绝条件**（字段必填/枚举投影/跨记录不变量），
+  不做语义判定（语义归各族校验器之后的位置记录，真机腿归 V3 各实现单）。
+- **落位**：本域用例**不以 cases.json 条目承载**（cases.json 唯一写者＝LANE-C 的 case 扩充单，见 IMPL-03-06），
+  而落 V2 新套件 `packages/contract/test/v2/records/**`（fixtures.ts＋org-root/rec-auth/rec-common/rec-life/rec-perf）。
+  因此本域不参与 `runCases` 路由；`bun run test:v2 -- packages/contract` 即本域回归命令。
+- **已覆盖 NEG（V1 形状腿）**：`NEG-ORG-09/11/12/13/14/15`（org-root.test.ts：无 root_delegation／子 agent 持 root／
+  root 超范围／N 单元域重叠／单元缺位静默／自审自称独立）＋`NEG-REC-01/02/03` 底行（rec-auth／rec-life／rec-perf
+  的族内拒绝条件）。V3（真机/网关）腿不在本域，归 07-06/07-10 与各编排单。
+- **登记面自检**：本域登记 3 族 28 类（AUTH 16＋LIFE 11＋PERF 1），余 46 类（WORK/EVD/ACC/CHG/CAP/REV/EVAL/
+  ASSET/OBS/MEM）归 IMPL-03-02；**74 类总数不变**（未新增记录类）。
+- **反证纪律**：每族至少一正一负（正例证明形状不自相矛盾、负例证明放行路径不存在）；不跑真机、不打桩 LLM。
