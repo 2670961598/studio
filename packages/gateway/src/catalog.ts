@@ -33,6 +33,10 @@
  *      「目录侧枚举不完整即拒」与「已撤后代无可用供给路径」，不宣称撤回已完成。
  *   6. **导出面收口不在本单领土**：`src/index.ts` 不在 IMPL-07-12 领土，故本件暂由显式路径
  *      消费（`./catalog.ts`），不新增包根导出；收口随 LANE-G 后续单。
+ *   7. **与 `PORT-TRUST` 的接缝**（v2/14 §1.7）：本件按目录口径收 `secretId`＋窗口；端口封套
+ *      （`CallContext`/`ReadContext` 授权面）、`verifySource`/`auditUse` 与 provider 编排不在此件
+ *     ——授权判定不归目录，装配归 v2/14 装配序（MIG-06 引用）。`supply` 返回的
+ *      `ShortLivedHandle` 即 contract 形状，`credentialId` 取逻辑引用（非值非路径）。
  */
 import type { CredentialRef, PortResult, ShortLivedHandle, TtlWindow } from '@studio-next/contract'
 import { deepFreeze, readCatalogEntry, readRevocationProof, reconcileRevocation, rejected } from './catalog-entry.ts'
