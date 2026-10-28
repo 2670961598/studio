@@ -111,3 +111,100 @@ grep -rn "SN_CRASH_POINT" apps/daemon/src apps/daemon/test
 ```
 
 > 波门引用：docs/plan/04 §二 MIG-04 ④ 使用 `CRASH_POINTS.length`（本代现值 5）；MIG-06 ① 使用 `bun run test -- crash-injection.test.ts`（本单不跑）。
+
+---
+
+## 七、2026-10-28 MIG-04 记录面注入点（第 6 点 `records-commit`）
+
+> **追加登记（只增不删：§一-§六 初代内容与旧五点逐字保留）**
+> - 日期：2026-10-28
+> - git HEAD（施工基线）：`2bfee5e`（`feat(v2): MIG-04-01..06/08 store 记录面 + cost_daily 限域`；本单五件改动在工作树，**未 commit**，遵单纪律）
+> - 工具链：bun **1.4.3** / node **v24.21.0**（`.mise.toml` 固定；命令统一 `mise exec --`）
+> - 执行者：DeepSeek-V41-Flash（StudioNext 施工代理；IMPL-04-07 / LANE-S）
+> - 性质：冻结表**新增第 6 点**（登记＋V2 crash 腿）；**①-⑤ 旧五点语义不变**、旧测试不改、**无生产调用点新增**
+> - 唯一权威：`apps/daemon/src/engine/crash-points.ts` 头注「六点冻结表（本表即唯一权威；改动走批示）」；本件为其 MIG-04 快照追加登记
+> - 依据：plan/05 IMPL-04-07；plan/04 §1.4/§1.9.4-7（V5 三不变量）；docs/v2/16 §四（DOM-04 限域）；docs/v2/17 §1.1 V5 行／§三 NEG-MIG-01/02；docs/v2/05 §三 DOM-05
+
+### 7.1 第 ⑥ 行（冻结表新增行；①-⑤ 行文未改，仅表头括注扩展）
+
+| # | 点名 | 相位（①-⑤ 17-§2；⑥ 记录面） | 注入位置（①-⑤ engine.ts；⑥ V2 crash 子进程） | 缝隙语义（F3-11 三段） |
+|---|---|---|---|---|
+| ⑥ | `records-commit` | 记录面（DOM-05；**非主循环七相位**） | store hist 记录事务 INSERT 后、COMMIT 前调 `crashHook('records-commit')`（**无生产调用点**——记录提交在 store，daemon 侧不 import） | **记录事务已写未提交**（提交前/后缝隙）：重启即回滚，records 无半截行；events/cost_daily 零副作用；再提交同 recordId 幂等（不重复副作用） |
+
+- **提交前/后缝隙的落法**：⑥ 覆盖「INSERT 已写、COMMIT 未发」的提交前缝隙（硬杀→回滚→无半截行）；同一测试的 commit 腿覆盖提交后缝隙（重启正常 COMMIT→行在且只一行→不重复副作用）。未把提交后拆成独立点名（本代只登记 1 点，避免虚增点数）。
+- **⑥ 恢复语义**：以库内**已提交行**为唯一判据——未 COMMIT 的事务由 SQLite 回滚，事务内可见的 `records=2` 在重启后必须回到 `records=1`；同 `recordId` 重放不得产生第二行。
+
+### 7.2 `CRASH_POINTS` 长度与生产调用点复算
+
+```bash
+mise exec -- node --input-type=module -e "import{CRASH_POINTS}from'./apps/daemon/src/engine/crash-points.ts';console.log(CRASH_POINTS.length);console.log(CRASH_POINTS.join(','))"
+# 本次实际输出（exit 0）：
+# 6
+# dispatch-reserved,dispatch-launched,harvest-verdict,heartbeat-write,shutdown-drain,records-commit
+
+grep -c "crashHook('" apps/daemon/src/engine/engine.ts
+# 本次实际输出：5（旧五点；⑥ 无生产调用点，未进 engine.ts）
+
+grep -rn "records-commit" apps/daemon/src
+# 本次实际命中：crash-points.ts 头注 3 处＋CRASH_POINTS 成员 1 处（无 engine.ts/其他生产件）
+```
+
+### 7.3 V2 crash 腿（真子进程 SIGKILL；无 mock）
+
+| 文件 | 行数 | 职责 |
+|---|---|---|
+| `apps/daemon/test/v2/crash/records-crash.test.ts` | 263 | 5 用例：冻结表登记、崩溃前种子基线、误点名零行为负控、真 SIGKILL 崩溃、重启正常提交；断言三不变量 |
+| `apps/daemon/test/v2/crash/fixtures/records-crash-child.ts` | 101 | 真子进程入口：openLedger→BEGIN→INSERT records→同步打印 `PRE_COMMIT`→COMMIT 前 `crashHook('records-commit')`；未命中点名恒 ROLLBACK＋exit 91（绝不提交） |
+| `apps/daemon/test/v2/crash/fixtures/records-crash-scenario.ts` | 165 | 确定性场景：种子 event/cost_daily/record 与缝隙 record 的 v14 列值＋原样 INSERT（测试夹具，不进生产面） |
+
+**实测证据（2026-10-28，本机；命令照录）**：
+
+```text
+$ mise exec -- bun run test:v2 -- apps/daemon/test/v2/crash
+stdout | records-crash.test.ts > records-commit 崩溃注入（提交前缝隙） > 命中 records-commit：INSERT 后 COMMIT 前 SIGKILL → 重启同库无半截行、events/cost_daily 零副作用
+[records-commit] signal=SIGKILL code=null 事务内records=2 重启后={"version":15,"records":1,"events":1,"costDaily":1}
+
+Test Files  1 passed (1)
+     Tests  5 passed (5)
+```
+
+- **硬杀证据**：`run.signal === 'SIGKILL'`、`run.code === null`；子进程 stdout 同步证据行 `PRE_COMMIT {"version":15,"records":2,"events":1,"costDaily":1,"recordId":"…"}`——证明 SIGKILL 前 INSERT 已在事务内生效、COMMIT 从未发出。
+- **重启证据**：同库重开 `{"version":15,"records":1,"events":1,"costDaily":1}`、`PRAGMA integrity_check='ok'`、缝隙 `recordId` 查无行、种子行仍为 `effective`——未提交事务回滚，无半截行。
+- **重放证据**：再 spawn 子进程正常提交同一 `recordId` → `COMMITTED {"mode":"commit","version":15,"records":2,"events":1,"costDaily":1,"inserted":true}`；记录按 id 恰 1 行、events/cost_daily 仍各 1 行（零重复副作用）。
+- **负控证据**：`SN_CRASH_POINT=dispatch-reserved` 时子进程**不自杀**（`signal=null`），回滚后 `exit 91`＋stderr `CRASH_HOOK_NOT_ARMED`，库零变化——env 门控非「必死进程」，且测试不靠 exit 0 冒充崩溃。
+
+**三不变量落点**：
+
+| 不变量 | 断言位置 | 本轮实测 |
+|---|---|---|
+| 不丢终态 | 崩溃前种子 records `effective`／events `CLOSE`／cost_daily `final` 跨崩溃与重放均存活 | 崩溃后 1/1/1、提交后仍 1/1/1；种子行在场 |
+| 不假绿 | 必须 `signal=SIGKILL`＋`code=null`；误点名必须 `exit 91`＋ROLLBACK；事务内 `records=2` 与重启后 `records=1` 的差值＝未提交 | 两项均实测通过 |
+| 不重复副作用 | 重启提交后 records=2（每 id 一行）、events=1、cost_daily=1；`integrity_check=ok` | 实测通过 |
+
+### 7.4 同期 NEG 覆盖与门禁
+
+| 项 | 落点 | 结果 |
+|---|---|---|
+| NEG-MIG-01（改/删 `cost_daily` 被拒） | `packages/store/test/v2/cost-frozen.test.ts`（6 用例：触发器在位／UPDATE／DELETE／append-only 仍可追加） | 绿；v12 触发器 ABORT 消息逐字断言、行零变化 |
+| NEG-MIG-02（备份值与事件账投影值分列可判） | `cost-frozen.test.ts`（自定义 1.25 vs 0.05＋drill 报告复算 0.75 vs 0.015、两值分列不判等）＋`rebuild.test.ts`（4 用例：只重放 events／零钱账／排除域报告／钱账行混入 JSONL 被整批回滚） | 绿；重建库 `cost_daily=0`，报告不含金额、不称「钱账已重建」 |
+| NEG-SEC-03（events 改/删被拒） | 既有 V2 件 `events-trigger.test.ts`（本单不改写）；本单 `rebuild.test.ts` 复核 v15 在库（`currentVersion=15`） | 绿（既有） |
+| NEG-EVD-05（分列可判） | 其「备份值与投影值分列」腿由本单 `cost-frozen.test.ts` §NEG-MIG-02 承载；「改/删快照可判」归既有 `backup.test.ts` | 绿（本单补强复算） |
+
+| 门 | 命令 | 本次结果 |
+|---|---|---|
+| typecheck | `mise exec -- bun run typecheck` | exit 0（无输出） |
+| typecheck:v2 | `mise exec -- bun run typecheck:v2` | exit 0（无输出） |
+| store V2 | `mise exec -- bun run test:v2 -- packages/store` | 10 files / **120 tests** passed；新件 `cost-frozen`(6)＋`rebuild`(4) |
+| crash V2 | `mise exec -- bun run test:v2 -- apps/daemon/test/v2/crash` | 1 file / **5 tests** passed |
+| guard | `mise exec -- bun run guard:boundaries` | PASS：扫描 737 文件（范围面代码件 595），**0 违例** |
+
+文件行数（阈 600）：`crash-points.ts` 72｜crash 测试 263｜child 101｜scenario 165｜`cost-frozen.test.ts` 291｜`rebuild.test.ts` 170——全部 ≤600。
+
+### 7.5 诚实边界（未解决缺口，不静默）
+
+1. **记录面只落 1/4 注入点**：plan/04 §1.4 登记的四类记录面注入点为「records 事务提交前后／备份快照写入中／投影重建中／rebuild 排除域报告写入中」；本单只落 `records-commit`（提交前后缝隙），**其余三点未登记、未建测试**——归后续 MIG-04 余单或 MIG-06/08，本件不冒充已覆盖。
+2. **⑥ 的写入是测试侧 v14 列级 INSERT**：daemon 侧不 import store 记录写面（hist.ts 未从包出口暴露），故崩溃子进程用 node:sqlite 原样写 v14 列——本腿证明的是**提交缝隙的库语义**，不证明 PORT-HIST 形状校验/幂等逻辑（后者归既有 `hist-append.test.ts`/`hist-query.test.ts`）。不因此宣称 hist 写口已被崩溃覆盖。
+3. **对账规则未决（GAP-V2-01）**：NEG-MIG-02 只证「备份恢复值与事件账投影值分列、差异可判」，**不证两账一致**；任何一致性结论仍需对账规则裁决。
+4. **events 哈希链（I-17/GAP-V2-05）仍目标未证**：NEG-SEC-03 只证改/删被行级触发器拒；`DROP TABLE` 不被行级触发器拦（v15 头注既有边界），本件不扩大为「append-only 已机制化」。
+5. **旧五点未在本单重跑**：旧 `apps/daemon/test/engine/crash-injection.test.ts` 只登记、不扩展（plan/04 §1.4）；V2 五点腿尚未建立，本单新增的 crash 腿只覆盖第 6 点。
+6. **未 commit**：本单改动（crash-points.ts、crash 测试三件、store NEG 两件、本基线追加）留在工作树，按单纪律由父级合并流处理；本件不声称已入库。
