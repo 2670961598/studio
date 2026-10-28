@@ -1,0 +1,55 @@
+# PRB-05 仓内既有负向证据（v2/12 §五 PRB-05「既有负向」引用的原始出处）
+# 采集：2026-10-28T07:57Z（UTC）｜HEAD 32aaf2a75e3978c00fd16f13948b16dcc7de8860｜执行者 DeepSeek-V41-Flash（IMPL-01-02）｜性质：只读探针日志
+# 说明：$ 行为实际执行命令；EXIT= 为紧随其后的退出码；未特别说明则 stdout+stderr 合并。
+# 脱敏：本机用户名/家目录已替换为 <user>/<home>（其余逐字保留；见 report.md §一-3）。
+
+$ grep -n 'SIGABRT\|strictRead\|读收口' packages/adapters/src/seatbelt.ts
+15: * attempt3 处置（宰相审验打回② 4d91e6b2-cc3b-11f1，处置三选一取 (a)「删 strictRead
+19: *       字面例外 → strictRead 形态 apply 时 **SIGABRT**（status=null+signal=SIGABRT）；
+21: *       (subpath "/"))` + 读面全 `file-read*` op 通配零混编 → **仍 SIGABRT**——
+23: *   - **结论（承宰相判词）**：「根域读收口」构造类本身在本机（macOS 26.3 arm64）
+24: *     属 SIGABRT 崩溃类——读白名单要表达「deny 一切换白名单再放行」，SBPL 里只有
+25: *     `(deny default)` 基线（aperion-shield 实测同崩类："fails as SIGABRT …
+27: *     **读收口在 sandbox-exec 面上不可表达**，留待 Apple 支持或换机制（远期归
+29: *   - attempt3 落法（(a)）：**删除 strictRead 形态与读域参数**——生成器只出写域/
+33: *   - **再引入纪律（红线）**：任何未来再引入读收口，必须附**未沙箱环境**（darwin
+114: *      读域宽放，读收口构造类=SIGABRT 崩溃类已删，见头注）
+EXIT=0
+
+$ sed -n '15,36p' packages/adapters/src/seatbelt.ts
+ * attempt3 处置（宰相审验打回② 4d91e6b2-cc3b-11f1，处置三选一取 (a)「删 strictRead
+ * 形态」——宰相最推荐项）：
+ *   - 打回事实链（两例同缺陷，均在宰相未沙箱环境 node spawnSync 直测复现）：
+ *     · att1 v1 构造：读块置前 + 无过滤 `(deny file-read*)` + `file-read-data`
+ *       字面例外 → strictRead 形态 apply 时 **SIGABRT**（status=null+signal=SIGABRT）；
+ *     · att2 v2 构造：`(allow default)` 基线先行 + 根过滤 `(deny file-read*
+ *       (subpath "/"))` + 读面全 `file-read*` op 通配零混编 → **仍 SIGABRT**——
+ *       v2 已按假设修正仍崩，证伪「构造细节嫌疑」假设。
+ *   - **结论（承宰相判词）**：「根域读收口」构造类本身在本机（macOS 26.3 arm64）
+ *     属 SIGABRT 崩溃类——读白名单要表达「deny 一切换白名单再放行」，SBPL 里只有
+ *     `(deny default)` 基线（aperion-shield 实测同崩类："fails as SIGABRT …
+ *     unshippable"）与根过滤读 deny（att1/att2 两构造）两条路，全部已知崩——
+ *     **读收口在 sandbox-exec 面上不可表达**，留待 Apple 支持或换机制（远期归
+ *     docs/43-§五③ 完全沙箱）。
+ *   - attempt3 落法（(a)）：**删除 strictRead 形态与读域参数**——生成器只出写域/
+ *     网域两个 fail-closed 收口面，读域宽放（基线 `(allow default)` 覆盖读面，
+ *     与平台 dsh 宿主对 worker 的既有圈定同形：写域收口、读宽放）。写域圈定=
+ *     docs/43-§五② 规范正主，三形态（wide/nonet/egress）宰相侧 status=0 全过已验证。
+ *   - **再引入纪律（红线）**：任何未来再引入读收口，必须附**未沙箱环境**（darwin
+ *     真机）的形态 spawnSync apply 面复验输出（status=0 且无崩溃信号）——会话内
+ *     已沙箱环境只能验编译面（65=文法错 / 71=编译过+嵌套 apply 拒 EPERM），崩不崩
+ *     在 apply 面不可见（attempt1/2「会话绿/门禁崩」分裂面的教训）。
+EXIT=0
+
+$ sed -n '925,933p' 'docs/78-技术细节-宿主平台与工作区绑定.md'
+〔事实〕`packages/adapters/src/seatbelt.ts`（macOS `sandbox-exec`）：
+
+| 事实 | 内容 | 锚点 |
+|---|---|---|
+| 写域可用 | 写域/网域 fail-closed 白名单，`sandbox-exec -f <profile> -- <argv>` | `:72-73`、`:147` |
+| 读域**不可表达** | 加读域规则后 apply 时 `SIGABRT`（status=null, signal=SIGABRT），三种写法均失败，最终**删除 `strictRead`**，读域放宽 | 文件头注释 §attempt3 |
+| 嵌套不可用 | 已沙箱进程内再 apply → `EPERM`（exit 71）；应用点必须在**未沙箱**的 daemon | 同上 |
+| 网域字面量受限 | host 只能 `*` 或 `localhost`（带端口）；IP 字面量编译错 | 同上 |
+| 已弃用 | `sandbox-exec` 自 macOS 10.x 起标记 deprecated，仍随系统分发 | 同上 |
+EXIT=0
+

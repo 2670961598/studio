@@ -1,0 +1,61 @@
+# PRB-04 可探性前置：dsh 沙箱配置面回显（配置回显≠运行行为证据，v2/12 §0.5-4）
+# 采集：2026-10-28T07:57Z（UTC）｜HEAD 32aaf2a75e3978c00fd16f13948b16dcc7de8860｜执行者 DeepSeek-V41-Flash（IMPL-01-02）｜性质：只读探针日志
+# 说明：$ 行为实际执行命令；EXIT= 为紧随其后的退出码；未特别说明则 stdout+stderr 合并。
+# 脱敏：本机用户名/家目录已替换为 <user>/<home>（其余逐字保留；见 report.md §一-3）。
+
+$ dsh --profile headless --dump-config-schema 2>/dev/null | wc -l
+   18883
+EXIT=0
+
+$ dsh --profile headless --dump-config-schema 2>/dev/null | grep -in 'sandbox' | head -20
+5765:                  "sandbox": "workspace-write",
+5771:                  "sandbox": "danger-full-access",
+5789:                          "sandbox": {
+5881:                          "sandbox",
+11976:                "const": "@deepseek-ai/dsh-sandbox-local"
+11999:                "const": "@deepseek-ai/dsh-sandbox-policy"
+12022:                "const": "@deepseek-ai/dsh-bash-sandbox"
+12045:                "const": "@deepseek-ai/dsh-pwsh-sandbox"
+13370:                "const": "@deepseek-ai/dsh-fs-sandbox"
+15261:                "const": "sandbox"
+15286:                          "@deepseek-ai/dsh-sandbox-local"
+15310:                "const": "sandbox-policy"
+15335:                          "@deepseek-ai/dsh-sandbox-policy"
+15359:                "const": "bash-sandbox"
+15384:                          "@deepseek-ai/dsh-bash-sandbox"
+15408:                "const": "pwsh-sandbox"
+15433:                          "@deepseek-ai/dsh-pwsh-sandbox"
+17956:                "const": "fs-sandbox"
+17981:                          "@deepseek-ai/dsh-fs-sandbox"
+18461:        "id": "sandbox",
+EXIT=0
+
+$ dsh --profile headless --dump-default-config 2>/dev/null | grep -in 'sandbox\|workspace-write\|workspaceRoot' | head -20
+127:- id: sandbox
+128:  name: '@deepseek-ai/dsh-sandbox-local'
+129:- id: sandbox-policy
+130:  name: '@deepseek-ai/dsh-sandbox-policy'
+132:    mode: !!js process.env.DSH_PERMISSION_MODE ?? 'workspace-write'
+133:    workspaceRoot: !!js process.cwd()
+134:- id: bash-sandbox
+135:  name: '@deepseek-ai/dsh-bash-sandbox'
+139:- id: pwsh-sandbox
+140:  name: '@deepseek-ai/dsh-pwsh-sandbox'
+146:      (process.env.DSH_PERMISSION_MODE ?? 'workspace-write') ===
+153:        sandbox: read-only
+155:      workspace-write:
+156:        sandbox: workspace-write
+159:        sandbox: danger-full-access
+363:- id: fs-sandbox
+364:  name: '@deepseek-ai/dsh-fs-sandbox'
+EXIT=0
+
+$ dsh --profile headless --dump-config 2>/dev/null | grep -in 'sandbox-policy' -A4 | head -12
+173:- id: sandbox-policy
+174:  name: '@deepseek-ai/dsh-sandbox-policy'
+175-  config:
+176-    mode: !!js process.env.DSH_PERMISSION_MODE ?? 'workspace-write'
+177-    workspaceRoot: !!js process.cwd()
+178-- id: bash-sandbox
+EXIT=0
+

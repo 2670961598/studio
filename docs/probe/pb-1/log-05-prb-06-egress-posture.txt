@@ -1,0 +1,33 @@
+# PRB-06 出站面：仅静态侦察；本轮未发出任何出站请求（详见 report.md 拒绝理由）
+# 采集：2026-10-28T07:57Z（UTC）｜HEAD 32aaf2a75e3978c00fd16f13948b16dcc7de8860｜执行者 DeepSeek-V41-Flash（IMPL-01-02）｜性质：只读探针日志
+# 说明：$ 行为实际执行命令；EXIT= 为紧随其后的退出码；未特别说明则 stdout+stderr 合并。
+# 脱敏：本机用户名/家目录已替换为 <user>/<home>（其余逐字保留；见 report.md §一-3）。
+
+$ sed -n '58,70p' packages/adapters/src/seatbelt.ts
+ *     （Chromium/WebKit 同源用法），语义以真机验证为准。
+ *   - **网域 host 字面量仅接受 `*` 与 `localhost`**（带端口）：IP 字面量
+ *     （`127.0.0.1:13800`）与域名（`example.com:443`）在 `remote tcp/ip` 过滤器里
+ *     一律编译错 `host must be * or localhost in network address`。落法：
+ *     ① 回环端点归一为 `localhost:<port>`（socket 目的地址等价）；② 非回环 host
+ *     **生成期显式拒绝**（fail-closed，不静默放宽成 `*:port` 通配——通配档位语义
+ *     由派发方显式传 `host:'*'` 自担）；③ 模型 API 等远程出口按域名收口**不可表达**
+ *     ——方案=daemon 侧本地代理（worker 出口只留 localhost:<proxyPort>，代理层做
+ *     域名白名单），或显式 `*:443` 端口档（宽 host），详见 deliverables RPC 评估。
+ *   - `(subpath …)` 过滤按内核解析路径匹配，不做符号链接归一化（Chromium 沙箱文档
+ *     同款已知限制）——写域的强归一化归 ③ 完全沙箱档。
+ */
+import { randomUUID } from 'node:crypto'
+EXIT=0
+
+$ grep -rn 'network-outbound' packages/adapters/src/seatbelt.ts | head -5
+packages/adapters/src/seatbelt.ts:45: *     profile（network-outbound 白名单）——写域圈定不触碰 network 面（file-write*
+packages/adapters/src/seatbelt.ts:117: *      `(allow network-outbound (remote tcp "localhost:port"/"*:port"))`（host 字面量
+packages/adapters/src/seatbelt.ts:138:    lines.push(`(allow network-outbound (remote tcp ${sbEndpoint(ep)}))`)
+packages/adapters/src/seatbelt.ts:141:    lines.push(`(allow network-outbound (remote tcp ${sbEndpoint(ep)}))`)
+EXIT=0
+
+$ grep -rni 'proxy' apps/daemon/src packages/adapters/src --include=*.ts | head -10
+packages/adapters/src/seatbelt.ts:65: *     ——方案=daemon 侧本地代理（worker 出口只留 localhost:<proxyPort>，代理层做
+packages/adapters/src/seatbelt.ts:186:        `远程出口走 daemon 侧本地代理（localhost:<proxyPort>）或显式 '*:${String(ep.port)}' 端口档`,
+EXIT=0
+

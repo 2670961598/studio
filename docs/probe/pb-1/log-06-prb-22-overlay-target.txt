@@ -1,0 +1,78 @@
+# PRB-22 可探性前置：overlay 落点、权限位与现状目录（静态/只读）
+# 采集：2026-10-28T07:57Z（UTC）｜HEAD 32aaf2a75e3978c00fd16f13948b16dcc7de8860｜执行者 DeepSeek-V41-Flash（IMPL-01-02）｜性质：只读探针日志
+# 说明：$ 行为实际执行命令；EXIT= 为紧随其后的退出码；未特别说明则 stdout+stderr 合并。
+# 脱敏：本机用户名/家目录已替换为 <user>/<home>（其余逐字保留；见 report.md §一-3）。
+
+$ sed -n '36,40p' apps/daemon/src/engine/instructions-store.ts
+/** 指令临时文件目录段（<rootDir>/tmp/instructions——workspace 外、rootDir 旗下） */
+export const INSTRUCTIONS_DIR = path.join('tmp', 'instructions')
+
+/** 每任务指令临时文件落点：<rootDir>/tmp/instructions/<单号>.md（同单重派重写同路径） */
+export function instructionsTarget(rootDir: string, ticket: TicketId): string {
+EXIT=0
+
+$ sed -n '75,112p' apps/daemon/src/engine/instructions-store.ts
+ * 生成 bridge 插件运行时 overlay：<rootDir>/tmp/dsh-bridge-overlay.yml。
+ * 内容=insert 条目（id=studio-next-bridge、name=锚定插件源的相对路径——docs/34-§3.1
+ * 铁律：insert 键包完整条目；相对路径锚定 overlay 文件所在目录，与包内 cordis.patch.yml
+ * 同形）。每次启动覆盖刷新（确定性内容——同仓同 rootDir 恒同 bytes）。
+ * dsh-bridge 包不在预期位置（仓外部署）→ undefined 如实回（调用方明报不静默）。
+ * opts.bridgeSrc 覆盖插件源解析位（测试注入面；缺省=仓内 monorepo 布局推导）。
+ */
+export function provisionDshBridgeOverlay(
+  rootDir: string,
+  opts?: { bridgeSrc?: string },
+): BridgeOverlay | undefined {
+  const bridgeSrc =
+    opts?.bridgeSrc ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), BRIDGE_SRC_REL)
+  if (!existsSync(bridgeSrc)) return undefined
+  const overlayPath = path.join(rootDir, 'tmp', 'dsh-bridge-overlay.yml')
+  // name 相对路径锚定 overlay 所在目录（装载法 B 真机实证形态——bridge 冒烟同款）
+  const name = path.relative(path.dirname(overlayPath), bridgeSrc)
+  const text = [
+    '# Studio Next daemon 生成（serve 启动刷新；生成物勿手改）',
+    '# dsh bridge 插件运行时 overlay（docs/34-§3.1 装载法 B）——挂法：agent.yaml 的 dsh',
+    '# cmd 追加 `--patch <本文件绝对路径>`。不落 profile、不动机器全局状态（docs/31-§5-5',
+    '# per-company patch 建议）；插件在无 STUDIO_NEXT_INSTRUCTIONS env 的进程里零行为（无害共存）。',
+    '- insert:',
+    '    - id: studio-next-bridge',
+    `      name: ${name}`,
+    '      config:',
+    '        instructionsEnv: STUDIO_NEXT_INSTRUCTIONS',
+    '',
+  ].join('\n')
+  mkdirSync(path.dirname(overlayPath), { recursive: true, mode: 0o700 })
+  writeFileSync(overlayPath, text, { encoding: 'utf8', mode: 0o600 })
+  return { overlayPath, bridgeSrc }
+}
+EXIT=0
+
+$ grep -n "rootDir: './var'" apps/daemon/src/assembly/serve.ts
+375:  rootDir: './var',
+EXIT=0
+
+$ for p in var tmp .AIWS; do if [ -e "$p" ]; then ls -ld "$p"; else echo "ABSENT: $p"; fi; done
+ABSENT: var
+ABSENT: tmp
+ABSENT: .AIWS
+EXIT=0
+
+$ grep -n 'seatbelt' apps/daemon/src/engine/judge/invoke.ts | head -5
+109:  /** 按调用一次性 adapter 工厂（seatbelt 选项构造期固定→每次新构造；缺省=dsh judge 位） */
+150: * 每次调用新构造 DshAdapter（seatbelt 选项构造期固定，写域=仅该次 DSH_HOME——workspace
+152: * 部署面（单B 接线随 sites 配置给——缺省禁远程，localhost 域名限制见 seatbelt.ts 头注）。
+174:      seatbelt: {
+EXIT=0
+
+$ sed -n '233,241p' packages/adapters/src/agentconfig.ts
+const BUILTIN_FACTORIES: Readonly<Record<ExecutorFamily, AdapterFactory>> = {
+  dsh: (cmd, patches) => {
+    const model = dshModelFromPatches(patches)
+    return new DshAdapter(cmd, model !== undefined ? { model } : undefined)
+  },
+  claude: (cmd) => new ClaudeAdapter(cmd),
+  codex: (cmd) => new CodexAdapter(cmd),
+  kimi: (cmd) => new KimiAdapter(cmd),
+}
+EXIT=0
+

@@ -1,0 +1,141 @@
+# PRB-01 可探性前置：宿主版本锁与插件挂载面（静态/只读）
+# 采集：2026-10-28T07:57Z（UTC）｜HEAD 32aaf2a75e3978c00fd16f13948b16dcc7de8860｜执行者 DeepSeek-V41-Flash（IMPL-01-02）｜性质：只读探针日志
+# 说明：$ 行为实际执行命令；EXIT= 为紧随其后的退出码；未特别说明则 stdout+stderr 合并。
+# 脱敏：本机用户名/家目录已替换为 <user>/<home>（其余逐字保留；见 report.md §一-3）。
+
+$ dsh --help
+Usage: dsh [--profile] <name> [options] [app-args...]
+       dsh plugin --profile <name> <pnpm-args...>
+
+dsh: boot a DeepSeek Harness profile — an ordered stack of plugin-bundle patch
+layers under your own overrides.
+
+Arguments:
+  args                           arguments for the booted profile's app (see:
+                                 dsh --profile <name> --help)
+
+Options:
+  -V, --version                  output the version number
+  --profile <name>               the profile under $DSH_HOME/profiles to boot
+  --from-default-profile <name>  initialize a new custom profile from a shipped
+                                 profile template
+  --patch <path>                 extra patch-list overlay applied after the
+                                 profile layer (repeatable)
+  --dump-config                  print the composed profile tree and exit
+  --dump-config-schema           print JSON Schema for profile entries and
+                                 patches without mounting
+  --dump-default-config          print the profile tree without its user layer
+                                 or --patch overlays and exit
+
+Examples:
+  dsh web                                   boot the web profile (same as: dsh --profile web)
+  dsh rescue --from-default-profile web
+                                            create rescue from the shipped web template, then boot it
+  dsh headless "run the tests"              answer one task, print the result, and exit
+  dsh tui --patch ./extra.yml               boot a custom profile with one extra overlay
+  dsh tui --resume <session>                arguments after the launcher flags reach the app
+  dsh web --help                            the web app's own flags and help
+  dsh plugin --profile tui add <package>    install a plugin into the tui profile
+
+EXIT=0
+
+$ grep -n 'LOCKED_VERSION' packages/adapters/src/dsh.ts
+110:const LOCKED_VERSION = '0.2.0-rc.2'
+368:      version === LOCKED_VERSION
+370:        : [`dsh-version-unlocked:expected ${LOCKED_VERSION},got ${version}`]
+EXIT=0
+
+$ grep -n 'DSH_DEFAULT_CMD' packages/adapters/src/dsh.ts
+107:export const DSH_DEFAULT_CMD: readonly string[] = ['dsh', '--profile', 'headless', '--json']
+318:  constructor(cmd: readonly string[] = DSH_DEFAULT_CMD, opts?: DshAdapterOptions) {
+319:    this.cmd = cmd.length > 0 ? cmd : DSH_DEFAULT_CMD
+341:    const binary = this.cmd[0] ?? DSH_DEFAULT_CMD[0] ?? 'dsh'
+434:    const [binary = DSH_DEFAULT_CMD[0] ?? 'dsh', ...args] = this.cmd
+EXIT=0
+
+$ grep -n 'provisionDshBridgeOverlay' apps/daemon/src/engine/instructions-store.ts apps/daemon/src/assembly/serve.ts
+apps/daemon/src/engine/instructions-store.ts:16: *     （provisionDshBridgeOverlay），agent.yaml 的 dsh cmd 以 `--patch <overlay 路径>` 挂载
+apps/daemon/src/engine/instructions-store.ts:82:export function provisionDshBridgeOverlay(
+apps/daemon/src/assembly/serve.ts:108:import { provisionDshBridgeOverlay } from '../engine/instructions-store.ts'
+apps/daemon/src/assembly/serve.ts:983:    const overlay = provisionDshBridgeOverlay(path.resolve(config.rootDir))
+EXIT=0
+
+$ ls -la packages/dsh-bridge/test/smoke
+total 32
+drwxr-xr-x@ 4 <user>  staff    128 Oct 19 12:39 .
+drwxr-xr-x@ 4 <user>  staff    128 Oct 19 12:39 ..
+-rw-r--r--@ 1 <user>  staff  10608 Oct 19 12:39 bridge-smoke.ts
+-rw-r--r--@ 1 <user>  staff    429 Oct 19 12:39 cordis.overlay.yml
+EXIT=0
+
+$ sed -n '1,22p' packages/dsh-bridge/test/smoke/bridge-smoke.ts
+/**
+ * studio-next-bridge 真机冒烟脚本（套外手动跑，不进 vitest、不进门禁 include——tsconfig 只含 src/test）。
+ *
+ * 用法（真机：dsh 0.2.0-rc.2 + deepseek 凭据已就位于 ~/.dsh/.env 的 DEEPSEEK_API_KEY——
+ * .env 是实例启动时加载，本脚本零接触凭据值）：
+ *   node packages/dsh-bridge/test/smoke/bridge-smoke.ts
+ * 可覆盖：DSH_BIN（缺省 /opt/homebrew/bin/dsh）
+ *
+ * 判据（制作人 2026-10-19 批准三件套之一的端到端验收）：临时 web 实例
+ * （--profile web --port 13899 --no-open）+ --patch overlay 挂本插件 + 注入指令文件
+ * （标记串只存在于注入文件、不存在于任务文本与 RPC 字段——判据独立性）→ 模型答复遵循
+ * 注入指令（会话日志终答含标记串）=「AGENTS.md 注入走 dsh 插件」通道端到端实证。
+ *
+ * RPC 形态（docs/34-§3.3 真机实录）：GET /?token= 换 cookie（303 + Set-Cookie）→
+ * POST /api/<service>/<method>，信封 {type:'client-request',rpcId,method,payload:{args:{request:{…}}}}；
+ * 会话面 session/create（cwd+sessionId）/ session/prompt（mode:queue）/ 读回走
+ * session/projections（拿 asOfSeq 快照游标）+ session/page（address{kind:'session'}，
+ * throughSeq=字面日志切点——-1 是空页不是「最新」，装机源码 paginate 核实）。
+ *
+ * 副作用纪律：13800 常驻宿主不碰；docker 三栈不碰；临时 web 进程 SIGTERM→SIGKILL 杀净；
+ * 临时目录删除；~/.dsh/sessions 下本冒烟 cwd 的会话目录 best-effort 清理（只删名字含
+ * dsh-bridge-smoke 者）；凭据零落盘零打印（诊断只回传 dsh 自身输出，dsh 不打印密钥值）。
+EXIT=0
+
+$ sed -n '76,92p' packages/dsh-bridge/test/smoke/bridge-smoke.ts
+}
+
+async function main(): Promise<void> {
+  // —— 前置自查（凭据只验存在性，不读值不打印值——凭据零落盘纪律）——
+  if (!existsSync(DSH_BIN)) fail('preflight', `dsh 不在 ${DSH_BIN}（可用 DSH_BIN 覆盖）`)
+  if (!existsSync(OVERLAY)) fail('preflight', `overlay 缺失：${OVERLAY}`)
+  const envText = existsSync(DSH_ENV_FILE) ? readFileSync(DSH_ENV_FILE, 'utf8') : ''
+  if (!/^\s*DEEPSEEK_API_KEY=\S/m.test(envText)) {
+    fail('preflight', `${DSH_ENV_FILE} 无 DEEPSEEK_API_KEY 条目（真机冒烟需 deepseek 凭据）`)
+  }
+  ok('preflight', `dsh=${DSH_BIN}；overlay 与凭据在位（值不读）`)
+
+  // —— 注入指令文件（标记串只在此处——判据独立性）——
+  const marker = `STUDIO-NEXT-BRIDGE-SMOKE-${Date.now().toString(36)}-${randomBytes(4).toString('hex')}`
+  const tmp = mkdtempSync(join(tmpdir(), 'dsh-bridge-smoke-'))
+  const instructionsPath = join(tmp, 'instructions.md')
+  const cwd = join(tmp, 'workspace')
+EXIT=0
+
+$ sed -n '107,129p' packages/dsh-bridge/test/smoke/bridge-smoke.ts
+        DSH_TELEMETRY_MODE: 'DISABLED', // 遥测红线（docs/31-§5-8）：真机拉起一律禁外发
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  )
+  let exited = false
+  proc.once('exit', () => {
+    exited = true
+  })
+  let stderrTail = ''
+  proc.stderr?.on('data', (c: Buffer) => {
+    stderrTail = (stderrTail + c.toString('utf8')).slice(-2_000)
+  })
+  try {
+    // stdout 等 token 行（docs/34-§3.3：http://127.0.0.1:<p>/?token=<进程令牌>）
+    const token = await new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('等 token 行超时（30s）')), 30_000)
+      let buf = ''
+      proc.stdout?.on('data', (c: Buffer) => {
+        buf += c.toString('utf8')
+        const m = /\/\?token=([A-Za-z0-9._-]+)/.exec(buf)
+        if (m !== null && m[1] !== undefined) {
+          clearTimeout(timer)
+EXIT=0
+

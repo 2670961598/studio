@@ -1,0 +1,57 @@
+# PB-1 · 探针环境实值
+# 采集：2026-10-28T07:57Z（UTC）｜HEAD 32aaf2a75e3978c00fd16f13948b16dcc7de8860｜执行者 DeepSeek-V41-Flash（IMPL-01-02）｜性质：只读探针日志
+# 说明：$ 行为实际执行命令；EXIT= 为紧随其后的退出码；未特别说明则 stdout+stderr 合并。
+# 脱敏：本机用户名/家目录已替换为 <user>/<home>（其余逐字保留；见 report.md §一-3）。
+
+$ date -u '+%Y-%m-%dT%H:%MZ'
+2026-10-28T07:57Z
+EXIT=0
+
+$ git rev-parse HEAD
+32aaf2a75e3978c00fd16f13948b16dcc7de8860
+EXIT=0
+
+$ git branch --show-current
+dev
+EXIT=0
+
+$ git log -1 --format='%H %ci %s'
+32aaf2a75e3978c00fd16f13948b16dcc7de8860 2026-10-28 14:54:50 +0800 docs: 49 闭合 V2 返工待裁余项——制作人批「同意」：(b)跳级任免修法通过（实际存在层才要+1、空缺层老板写说明）、(c) I-16 两角分设通过、(d) 随三省模型消解；新增返工启动门：决策全部落档完毕，R0/R1/R2 暂缓待制作人明令开工
+EXIT=0
+
+$ mise exec -- bun --version
+1.4.3
+EXIT=0
+
+$ mise exec -- node --version
+v24.21.0
+EXIT=0
+
+$ mise --version
+2026.10.11 macos-arm64 (2026-10-15)
+mise WARN  mise version 2026.10.20 available
+mise WARN  self-update is disabled for this install, update mise the same way you installed it
+EXIT=0
+
+$ uname -srm
+Darwin 25.3.0 arm64
+EXIT=0
+
+$ sw_vers -productVersion
+26.3
+EXIT=0
+
+$ dsh --version
+0.2.0-rc.2
+EXIT=0
+
+$ echo "DSH_HOME=${DSH_HOME:-<unset>}"; ls ~/.dsh/profiles
+DSH_HOME=<home>/.dsh
+headless
+web
+EXIT=0
+
+$ id -un
+<user>
+EXIT=0
+

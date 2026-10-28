@@ -1,11 +1,11 @@
 # V2·13 · 技术细节：TypeScript 工程与依赖
 
 > 头注：**v2，替代 docs/79**（docs/79 转历史·非现行，头注标「历史·非现行，由 v2/13 替代」）。
-> 版本：v2.0-draft｜日期：2026-10-27｜编写：宰相（TypeScript 工程与依赖卷撰写子代理·GLM-5.3）｜性质：V2 细节九卷之一的现行规范草案——**运行时与工具链约束、依赖登记与工程决策文档，本卷不写任何生产代码**。
+> 版本：v2.1-draft｜日期：2026-10-28（原 v2.0-draft 2026-10-27）｜编写：最高宰相（TypeScript 工程与依赖卷撰写子代理·GLM-5.3）｜修订依据：2026-10-28 制作人开工令（docs/49）＋修订令摘要 2026-10-28 修订令 §1.1-§1.8 与 §1.7 测试口径（明细见卷末「修订记录（2026-10-28）」）｜性质：V2 细节九卷之一的现行规范草案——**运行时与工具链约束、依赖登记与工程决策文档，本卷不写任何生产代码**。
 > 上位：v2/00（宪法与写作纪律/冻结门）、v2/09（全库 ID 族与决策主表总册——本卷 DEP-/DEC-13-/TOOL- 三族登记于此）、v2/05（分域权威表）。现状事实源（只读引用）：AGENTS.md §三/§四、根 `package.json`、`.mise.toml`、`scripts/guards/boundary-rules.mjs`。
 > 平级与下游：v2/10（zod 作参考 authoring 的语义面）、v2/11（记录形状与错误通道载体）、v2/12（宿主/系统 git/存储绑定面）、v2/14（运行时端口与装配落点）、v2/15（安全面：出站扫描/密钥）、v2/16（构建文件与 `files` 白名单的逐文件落位）、v2/17（未证项执行与验证矩阵）。
 > 主要输入：v1 docs/79 v0.3（素材，按 84b §5.1 重映射不默认继承；其依赖矩阵经 GLM H3b 对 bun.lock/import 图/双运行时探针逐条复核**全部属实**——版本照录）；docs/75 §六（依赖条目模板）与 §十（实锁基线索引）；84 裁决三（**MIT 已拍**）；84b 抉择 8（全量重写、不写生产代码——本卷是工程约束非代码）；H3b-P1-3/P2-2、DSF L3-H（P1×4+P2×8+P3×1）、C4a/C4b（根与依赖侧）、G1（D 裸号族/DEP 族/版本口径）。
-> 状态：**未经 DSF 复查，不构成施工依据**（v2/00 §一复查流程）。
+> 状态：**draft——F8 未签不得标「定稿」；施工按 `docs/49` 2026-10-28 开工令 §3 与 F8 并行**（F8 外部签认不阻断施工）。
 > 本卷主问题：**运行时与工具链受哪些机械约束、每个第三方依赖以什么证据准入与登记、分层宪法在工程面如何机械落位、测试分层如何防止自证、许可证口径是什么。**
 
 ---
@@ -24,7 +24,7 @@
 | 对 v2/15 | 出站扫描的依赖侧（redact 纯函数） | fail-closed 清单与秘密面归 15 |
 | 对 v2/16 | 双轨构建与 `files` 白名单的约束规则 | 逐文件契约与 MIG 波次归 16 |
 | 对 v2/17 | 未证项登记（§八） | 执行与验证矩阵归 17 |
-| 对 AGENTS.md | 以其 §三/§四为现状事实，**统一口径粗细**（§1.4） | 不改 AGENTS.md（其修订按 v2/00 §一，V2 定稿后统一办理） |
+| 对 AGENTS.md | 以其 §三/§四为现状事实，**统一口径粗细**（§1.4） | 不改 AGENTS.md 本体（其修订按 v2/00 §一；**施工时点＝MIG-04 入口前**——plan/03 §十三，docs/86 B6） |
 
 ### 0.2 标注与版本口径
 
@@ -88,7 +88,9 @@
 | `test/` 目录 | 全仓 185 个 `.ts`（`*.test.ts` 177＋夹具/冒烟 8）；**147 个不在任何 program**（daemon 86/company 21/panel 18/store 16/taiga 3/contract 2＋dsh-bridge smoke 1） | 无 |
 | 包级 program | 仅 4 个包级 tsconfig `include` 含 `test/**`（adapters/core/prompt/dsh-bridge，后者 exclude 了 smoke），已列入 38 个文件 | **零调用**；且 3 包当前红（core 36 / adapters 6 / prompt 19 个 TS 错，样本 `core/test/judge.test.ts:13` 的 TS1543 JSON import attribute） |
 
-〔结论〕「入 program」≠「已覆盖」：包级 program 无任何门禁调用且 3/4 已红。**处置写死两段：先修红（core/adapters/prompt 各一条，含 5 处缺 `with { type: "json" }` 的 `cases.json` 导入：`contract/test/schemas.test.ts:33`、`contract/test/contract.test.ts:7`、`core/test/judge.test.ts:13`、`company/test/deps-cases.test.ts:11`、`company/test/dir-cases.test.ts:8`）→ 再串 `typecheck:test` 门禁**。全部为目标（未证），落位 v2/16/17；不得写成「17 包全串」或「已切四个带 test 包」。AGENTS.md §三的对应修订（补 test 门禁缺口口径、§二 store 行删「+ drizzle」）登记为 V2 定稿后统一办理项，本卷不改。
+〔结论〕「入 program」≠「已覆盖」：包级 program 无任何门禁调用且 3/4 已红。**处置写死两段：先修红（core/adapters/prompt 各一条，含 5 处缺 `with { type: "json" }` 的 `cases.json` 导入：`contract/test/schemas.test.ts:33`、`contract/test/contract.test.ts:7`、`core/test/judge.test.ts:13`、`company/test/deps-cases.test.ts:11`、`company/test/dir-cases.test.ts:8`）→ 再串 `typecheck:test` 门禁**。全部为目标（未证），落位 v2/16/17；不得写成「17 包全串」或「已切四个带 test 包」。AGENTS.md §三的对应修订（补 test 门禁缺口口径、§二 store 行删「+ drizzle」）登记为 V2 定稿后统一办理项，**施工时点按 plan/03 §十三：MIG-04 入口前（docs/86 B6）**；本卷不改 AGENTS.md 本体。
+
+〔2026-10-28 口径同步〕测试政策以 **`docs/plan/04` 为准**（修订令 §1.7）：V2 开工 tag 之前已有＝旧测试、之后新增＝V2 新测试；**旧测试不作为施工门**（须逐文件台账登记，37 红逐条归属），MIG-02 不再以「61 个 TS 错清零／全量回归绿」为出口；G2 门＝源码 typecheck＋guard＋V2 新套件。故本节的「先修红→串 `typecheck:test`」降为 test 面类型门的**目标项**，不作为施工出口判据；上述 36/6/19 与 61 计数只作现状事实记录，判据以 plan/04 为准。
 
 ### 1.5 包管、版本唯一源与版本不变量（TOOL-04/05/07）
 
@@ -501,7 +503,7 @@
 
 | # | 未证项 | 需要的证据 |
 |---|---|---|
-| 1 | test 门禁三包红修复＋`typecheck:test` 串接（core 36/adapters 6/prompt 19；5 处 JSON import attribute） | 修红后逐包 0 错＋新脚本进根门禁 |
+| 1 | test 门禁三包红修复＋`typecheck:test` 串接（core 36/adapters 6/prompt 19；5 处 JSON import attribute）——**判据以 plan/04 为准**：旧测试不作施工门，改为「逐文件台账＋V2 新套件类型门」 | 修红后逐包 0 错＋新脚本进根门禁（目标项；不作 MIG-02 出口判据） |
 | 2 | 启动期版本 fail-fast | 进程入口读 `process.versions.node`/`features.typescript` 与期望比对，不满足拒绝启动 |
 | 3 | `engines.node` 收紧 `>=24.21 <25` 后的跨版本验证 | 一次跨版本探针记录（v2/17） |
 | 4 | `node:sqlite` 长跑稳定性 | 48h 级运行＋崩溃注入（WAL/锁/恢复） |
@@ -545,6 +547,19 @@
 | C4a-包侧（正面） | 逐包 manifest 依赖声明与实测逐字吻合（company 五项等） | §2.3 使用包清单照录 | 采信 |
 | 84-裁决三 | MIT 确认；公开时点维持待完善版 | §五＋DEC-13-14（已拍）；终裁簿补注 | 已拍 |
 | 84b-抉择 8 | 全量重写、不写生产代码 | 本卷仅工程约束文档；不创建/修改任何生产 TS/JS、构建配置、manifest、lock、测试脚本，不装依赖不跑测试 | 遵守 |
+
+---
+
+## 十、修订记录（2026-10-28）
+
+依据：2026-10-28 制作人开工令（docs/49）＋修订令摘要 §1.1-§1.8（尤其 §1.7 测试口径）、§二-F。版本升 v2.1-draft。
+
+1. **头注**：版本 v2.1-draft；编写者称谓改最高宰相；增列修订依据（含 §1.7 测试口径）。
+2. **G9/G8/老板证明/root key：本卷无此类句子**（全卷 grep 核过：无裸「宰相」、无「G9」「G8」「root key」「root_delegation」字样；仅头注/修订记录的「最高宰相」为作者称谓），故无治理句需改；本卷只落运行时/工具链/依赖/测试/许可工程面。
+3. **§1.4 新增〔2026-10-28 口径同步〕**：测试政策以 `docs/plan/04` 为准——旧/新测试以 V2 开工 tag 为界，旧测试不作施工门（逐文件台账），MIG-02 不以「61 个 TS 错清零/全量回归绿」为出口，G2 门＝源码 typecheck＋guard＋V2 新套件；本节 36/6/19 与 61 计数只作现状事实。
+4. **§八 未证项第 1 行**：补「判据以 plan/04 为准」，修红目标降为 test 面类型门目标项、不作 MIG-02 出口。
+5. **未改**：DEP- 21 条、TOOL-01..08、DEC-13-01..14、分层宪法（§三）、测试五层（§四）、许可（§五）、§七 否定式、§九 审计处置表原有条目。
+6. **2026-10-28 复核修复（M5）**：§1.4 与 §0.1「对 AGENTS.md」行的修订时点补「**MIG-04 入口前**（plan/03 §十三；docs/86 B6）」——与 plan/03 §十三、v2/00 §一 同口径；AGENTS.md 本体仍未改（不在本卷领土）。
 
 ---
 

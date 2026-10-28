@@ -1,0 +1,23 @@
+# PRB-05 本日复验：sandbox-exec 读域收口构造类（对照组＋三种读 deny 构造）
+# 采集：2026-10-28T07:57Z（UTC）｜HEAD 32aaf2a75e3978c00fd16f13948b16dcc7de8860｜执行者 DeepSeek-V41-Flash（IMPL-01-02）｜性质：只读探针日志
+# 说明：$ 行为实际执行命令；EXIT= 为紧随其后的退出码；未特别说明则 stdout+stderr 合并。
+# 脱敏：本机用户名/家目录已替换为 <user>/<home>（其余逐字保留；见 report.md §一-3）。
+
+$ uname -m; sw_vers -productVersion
+arm64
+26.3
+EXIT=0
+
+$ sandbox-exec -p '(version 1)(allow default)' /bin/echo ok
+ok
+EXIT=0
+
+$ sandbox-exec -p '(version 1)(allow default)(deny file-read* (subpath "/"))' /bin/echo ok
+EXIT=134
+
+$ sandbox-exec -p '(version 1)(allow default)(deny file-read*)(allow file-read-data (literal "/bin/echo"))' /bin/echo ok
+EXIT=134
+
+$ sandbox-exec -p '(version 1)(allow default)(deny file-read*)' /bin/echo ok
+EXIT=134
+

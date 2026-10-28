@@ -1,11 +1,11 @@
 # V2·14 · 技术细节：运行时·MCP·对外 API 接口
 
 > 头注：**v2，替代 docs/80（扩 MCP＋API 面）**——docs/80 及其 55 个 `TS-PORT-*` 整体转「历史·非现行」素材；V2 端口语义以 v2/05 §四 13 端口为准，接口签名与端口-文件映射的唯一主表在本卷。
-> 版本：v2.0-draft｜日期：2026-10-27｜编写：宰相（运行时接口卷撰写子代理·GLM-5.3）｜性质：V2 细节九卷之一。
+> 版本：v2.1-draft｜日期：2026-10-28（原 v2.0-draft 2026-10-27）｜编写：最高宰相（运行时接口卷撰写子代理·GLM-5.3）｜修订依据：2026-10-28 制作人开工令（docs/49）＋修订令摘要 2026-10-28 修订令 §1.1-§1.8（明细见卷末「修订记录（2026-10-28）」）｜性质：V2 细节九卷之一。**端口计数不变＝13（修订令 §〇.5「PORT 14」与 05/09/14 现行口径及「不新增端口」指令冲突，已在卷末与回报中列明）。**
 > 上位：v2/00（宪法——冻结门 F5「端口-文件映射单点」）、v2/05（PORT- 13 端口表·DOM- 分域权威表）；语义上游：v2/02/03/04（三册）、v2/06（ASSET-）、v2/07（CAP-/EXEC-/派生树）、v2/08（EVD-/MEM-/MON-/OBS-）、v2/11（REC- 74 类记录——本卷接口覆盖其读写，生产者主表在彼）、v2/12（BIND-/WS- 六区/PRM 段语义）、v2/15（SEC-SIG/SEC-WD/SEC-RD/SEC-FC）。
 > 制作人裁决：**84 裁决二**（studio-tools MCP 与对外 API 纳入本次大重构：「人事改人事信息、财务查看、研发申请权限等都经 StudioNext 的 MCP 提供，而不是一股脑塞提示词」「对外除 MCP 外还要提供很多 API 与其他工具对接」）；docs/24（AI 接入面分层——现状设计事实：知识归 AGENTS.md 组装／工具归内部 MCP／对外归协议端点）。
 > 审计输入：GLM H3b（P0×1＋P1×3）、C3-P1×3、K5；DSF V08-P0-02/P0-04、V11（P0×1＋P1×7）、L3-I（P1×6）／L3-J（P0×1＋P1×11）／L3-K（P0×1＋P1×7）。
-> 状态：**未经 DSF 复查，不构成施工依据**（v2/00 §一）。
+> 状态：**draft——F8 未签不得标「定稿」；施工按 `docs/49` 2026-10-28 开工令 §3 与 F8 并行**（F8 外部签认不阻断施工）。
 > 本卷主问题：**13 个端口的接口签名是什么、每个端口的类型落点在哪个文件且只有一处；员工与外部系统分别经什么工具面与端点面触达框架而不越过权责链；每一次平台写入在接口层如何携带署名、公司维与幂等键。**
 
 ---
@@ -216,7 +216,7 @@ emergencyStop(req: EmergencyStopRequest, ctx): PortResult<StopReceipt>  // REC-W
 | ID | 工具名 | 入参（简） | 出参 | 所需权限 | 署名 | 公司维 |
 |---|---|---|---|---|---|---|
 | MCP-HR-01 | hr.profileAmend | 本人/授权范围 subjectRef＋field patch＋理由＋依据 | 修订候选回执（RevisionTicket） | 本人档案=任职者本人；他人=人事职能位（+1 提议） | person | 必带（DOM-01 挂单） |
-| MCP-HR-02 | hr.appointmentPropose | positionRef＋holderRef＋nominationRef＋scope/term | 拟任登记回执（REC-LIFE-01 拟任面，幂等键四元组） | +1 提议位（G9 提名者=老板，v2/03 §3.3） | person | 必带 |
+| MCP-HR-02 | hr.appointmentPropose | positionRef＋holderRef＋nominationRef＋scope/term | 拟任登记回执（REC-LIFE-01 拟任面，幂等键四元组） | +1 提议位按位置（v2/03 §3.3；2026-10-28 新模型）：**G9 最高宰相＝外部老板提议；G8 一级单元首长＝最高宰相或另一单元首长提议；G8 部门首长＝一级单元首长提议、最高宰相任免；G7 及以下逐级 +1** | person | 必带 |
 | MCP-HR-03 | hr.transitionRequest | from/to＋trigger 主张＋依据 | 申请回执（按边触发者校验后进 REC-LIFE-02 决定链） | 按边触发者（v2/11 §14.2）；辞职=任职者本人 | person | 必带 |
 | MCP-HR-04 | hr.interestDeclare | holdings＋利益关系＋复核期 | 登记回执（REC-LIFE-05 申报面） | 任职者申报＋独立检查位置检查 | person | 必带 |
 | MCP-FIN-01 | fin.ledgerRead | 时间窗＋账段（预算/事件/月报）＋readScope | 只读账视图（缺源段=unknown，不补 0） | 财务知悉范围（v2/02 §八；readScope 字段承载） | person | 必带（多公司视图隔离） |
@@ -250,11 +250,11 @@ emergencyStop(req: EmergencyStopRequest, ctx): PortResult<StopReceipt>  // REC-W
 | API-15 | POST /v1/hooks/{source}（签名入站） | HMAC＋时间戳＋nonce＋重放窗＋载荷上限；产意图同触发面收口 | 目标（未证） |
 | API-16 | POST/GET /v1/subscriptions（出站订阅） | allowlist＋SSRF 拒＋退避＋死信（REC-EVT-03）＋重放窗 | 目标（未证） |
 
-**触发面公共入参槽（治 V11-01 P0——外部委托链起点）**：`company`｜`requestKind`｜`dedupKey`｜**`commissioner`**（外部委托主体引用；未映射时显式声明＋identity_mapping 依据，不留空）｜**`dispatcherAnchor`**（派单人锚，缺省=主 PM 治理位；等级封顶随锚声明）｜`body`｜`correlation?`。回执（IntentReceipt）带 `commissionerRef/anchorRef`。**幂等键**=四槽意图保留键（§0.2-3）；同键同内容=200＋duplicate，同键异内容=409。
+**触发面公共入参槽（治 V11-01 P0——外部委托链起点）**：`company`｜`requestKind`｜`dedupKey`｜**`commissioner`**（外部委托主体引用；未映射时显式声明＋identity_mapping 依据，不留空）｜**`dispatcherAnchor`**（派单人锚；**缺省＝意图受理治理位：N=1 默认形态＝最高宰相，N>1 按域＝所属一级单元首长**，引 v2/03 表 D；等级封顶随锚声明）｜`body`｜`correlation?`。回执（IntentReceipt）带 `commissionerRef/anchorRef`。**幂等键**=四槽意图保留键（§0.2-3）；同键同内容=200＋duplicate，同键异内容=409。
 
 **跨公司一致性（治 V08-P0-04/SEC-WD-01）**：`?company=` 读与写同一解析规则；**写请求解析出的公司维与平台绑定维不一致＝4xx 拒绝**，不得静默落错库；单公司部署可省略 company，多公司缺维=请求非法。
 
-**凭证三档（治 V11-06）**：公开（public 视图）｜伙伴（凭据目录条目：随机 credential ID＋scope＋TTL＋吊销——**接 PORT-TRUST/REC-AUTH-04**；吊销后 30s 内失效=fail-closed 目标）｜签名（HMAC＋时间戳＋nonce）。**单静态 token＝禁止形态**（v2/15 §一口径；v1 单 token 装配面废止）。**默认绑定＝环回 127.0.0.1，显式旗标才开放局域网**（治 V11-10——V2 裁决取 fail-closed 方向；AGENTS.md「默认局域网」现状句待按 V2 修订，登记转卷）。
+**凭证三档（治 V11-06）**：公开（public 视图）｜伙伴（凭据目录条目：随机 credential ID＋scope＋TTL＋吊销——**接 PORT-TRUST/REC-AUTH-04**；吊销后 30s 内失效=fail-closed 目标）｜签名（HMAC＋时间戳＋nonce）。**凭据分级另轴（2026-10-28）**：`credential_class`＝**root／scoped**——operating root key 只由最高宰相（G9，内部老板）持有，**不进入任何接口载荷/回执/日志/提示词**；子 agent、执行体与外部伙伴只持 scoped key；接口层不得以「持 root」代替授权链核验（安全机制 v2/15 §七 SEC-ROOT-01..05；值集 v2/09 **ENU-136 凭据类别**，字段形状 v2/11）。**单静态 token＝禁止形态**（v2/15 §一口径；v1 单 token 装配面废止）。**默认绑定＝环回 127.0.0.1，显式旗标才开放局域网**（治 V11-10——V2 裁决取 fail-closed 方向；AGENTS.md「默认局域网」现状句待按 V2 修订，登记转卷）。
 
 **错误模型（沿用 v1 80-§9.4 冻结口径，唯一错误体）**：`{ error:{ failure, category, subcause }, traceId }`（422 加 fieldPath、429 加 retryAfter、501 加 reason，均在外层）。三边界不串味：记录不存在=Ok(undefined)→对外 503 receipt-not-in-snapshot；路由不存在=404；读不出来=500（subcause 透传）。HTTP 拒绝（401/403/409/422/429）只写拒绝审计；结果不明才落 REC-EVT-03（unknown_scope.intentRef 必指 REC-WORK-01）；观察缺口落 REC-OBS-02。**工具面分级（治 V11-04）**：①只读 ②落单/评论 ③派工与收割——**第三级显式不存在**，非「默认不授」的开关。
 
@@ -300,7 +300,7 @@ emergencyStop(req: EmergencyStopRequest, ctx): PortResult<StopReceipt>  // REC-W
 | DSF V11-02 | 对外 MCP 与内部工具面同名异义 | §三铁律 4：内/外两面分立命名；对外 MCP 复用 API- 资源语义（目标未证）；本卷前缀裁定 TOOL-→MCP- 同病同防 | 已解（规范面） |
 | DSF V11-04 | 三级 scope「永不」vs「默认不授」 | §四写死：第三级（派工与收割）=显式不存在 | 已解 |
 | DSF V11-05 | 端点集合静默缩窄、无差异去向 | §四端点族表逐项标注状态（骨架/目标未证）；/v1/docs・/v1/games・people history 等旧需求项未入族=显式不承载（差异以本表为去向登记） | 已解 |
-| DSF V11-06 | 凭证单 token 与凭据目录双源 | §四凭证三档接 PORT-TRUST 凭据目录；单静态 token=禁止形态 | 规范已解；机制目标未证 |
+| DSF V11-06 | 凭证单 token 与凭据目录双源 | §四凭证三档接 PORT-TRUST 凭据目录；单静态 token=禁止形态；**补 credential_class root/scoped 分级（root 不入接口面）** | 规范已解；机制目标未证 |
 | DSF V11-10 | 默认绑定两说（环回 vs 局域网） | §四裁决：缺省环回＋显式开放（fail-closed）；AGENTS.md 现状句待按 V2 修订 | 已解（规范面）；AGENTS.md 修订转卷 |
 | 84 裁决二 | MCP 与对外 API 纳入大重构、不塞提示词 | §三原则成文＋MCP-16 工具表；§四 API-16 端点族；场景分组面全部目标（未证） | 方向已定（新增面未证） |
 | docs/24 对齐 | 知识/工具/对外三层分工 | §三沿用三层并升格规范；现状六工具映射 MCP-GEN-04/05/06・MCP-GEN-02・MCP-FIN-02 | 已解（对齐） |
@@ -317,6 +317,19 @@ emergencyStop(req: EmergencyStopRequest, ctx): PortResult<StopReceipt>  // REC-W
 | L3-I-01 | digest unknown 无载体 | PORT-HIST.payload byteDigestState 三态（'present'/'unknown'/'not-collected'）；字段形状归 v2/11 | 方向已定（登记转 v2/11） |
 | L3-I-05/06 及 L3-J P2 簇 | 公司时区无归属、matrix 工厂论据、RunServeOpts 清单等 | 记录/装配/工程面归 v2/10・v2/16（MIG-06）；本卷不私设 | 登记转卷 |
 | GLM K5 | 端口-文件映射双源 | §二即唯一映射源（F5）；v2/05 §四零文件路径、v2/16 零端口路径断言已成文 | 已解（三卷合围） |
+
+---
+
+## 十、修订记录（2026-10-28）
+
+依据：2026-10-28 制作人开工令（docs/49）＋修订令摘要 §1.1-§1.8、§二-F（只改接口中涉 G9/G8/老板证明/root key 的句子；**不新增端口、端口计数不变＝13**）。版本升 v2.1-draft。
+
+1. **头注**：版本 v2.1-draft；编写者称谓改最高宰相；增列修订依据，并明示端口计数＝13、修订令 §〇.5「PORT 14」的冲突已回报。
+2. **§三 工具表 MCP-HR-02（任命提议）**：权限列按新模型改写——**G9 最高宰相＝外部老板提议；G8 一级单元首长＝最高宰相或另一单元首长提议；G8 部门首长＝一级单元首长提议、最高宰相任免；G7 及以下逐级 +1**（引 v2/03 §3.3）。删旧句「G9 提名者=老板」。
+3. **§四 触发面 `dispatcherAnchor`**：缺省由「主 PM 治理位」改为**意图受理治理位**——N=1 默认形态＝最高宰相，N>1 按域＝所属一级单元首长（引 v2/03 表 D）。
+4. **§四 凭证三档**：新增**凭据分级另轴** `credential_class`＝root／scoped（安全机制 v2/15 §七 SEC-ROOT-01..05；值集 v2/09 ENU-136）——operating root key 只由最高宰相持有、不进任何接口载荷/回执/日志/提示词；子 agent/执行体/外部伙伴只持 scoped key；不得以「持 root」代替授权链核验（语义与字段**登记 v2/09**、形状 v2/11）。审计表 DSF V11-06 行同步标注。
+5. **称谓**：卷内「宰相」改「最高宰相」。
+6. **未改**：PORT- 13 端口与 §二端口-文件映射单点表（F5）、MCP- 16 工具与 API- 16 端点计数、§0.2 接口层总约定、§五 署名与 ctl- 词族、§六 PRM 生成器接口、§七 工作空间端口、§九 审计处置表其余条目。
 
 ---
 
