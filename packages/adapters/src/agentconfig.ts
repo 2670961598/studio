@@ -49,13 +49,20 @@
  *     tier:'workspace-write'＋绝对路径根＋authorization 留痕——缺一构造期 CONFIG_INVALID。
  *   - 运行时兜底同向：JS 调用方省略第三参=read-only，**不存在**「不传=全权」路径（档位
  *     守门唯一=seatbelt.ts resolveSeatbeltGrant；非法档/未授权放宽一律拒收）。
- *   - 接线面：dsh 家唯一有 seatbelt 端子（dsh.ts DshSeatbeltOptions，profile 随派发参数化）；
- *     claude/codex/kimi 无端子——**显式放宽一律拒收**（不在无端子家族上盖「已放宽」章），
- *     read-only 缺省的实际拦截缺失按 seatbelt.ts 头注 PRB-04 前置声明登记（未证，不冒充
- *     已封死）；补齐归 G-PORT-WS 接线腿。
- *   - **接口耦合**：本面签名变更的派发域调用方随动归 IMPL-07-09（串行 07-08→07-09）——
- *     本单不改 daemon/派发面，daemon 现有 `judgeAwareResolver(tierAwareResolver())` 组合
- *     仍零改动可编译，只是派工缺省圈定从「不圈定」翻成 read-only。
+ *   - 接线面：dsh 家唯一有 seatbelt 端子；claude/codex/kimi 无端子——**显式放宽一律拒收**
+ *     （不在无端子家族上盖「已放宽」章）；read-only 缺省的实际拦截缺失按 PRB-04 前置登记（未证）。
+ *   - **接口耦合**：派发域调用方随动归 IMPL-07-09（串行 07-08→07-09）；daemon 现有
+ *     `judgeAwareResolver(tierAwareResolver())` 零改动可编译，只是缺省圈定翻成 read-only。
+ *
+ * 未证能力对齐（IMPL-07-05；v2/12 §2.1 铁律／v2/17 §五 PB-6）：codex/kimi 的 session_resume
+ * 静态声明是拟稿（PRB-25/26 未执行）——**未证按不支持**。适配器文件本单不动（改它们须探针
+ * 证据另行立单）；对齐点在本文件，真值源＝bindcard/cli-cards.ts 的 PB6_DRAFT_POINTS（不造第二张表）：
+ * ① 注册时把能力声明投影为对齐值（Object.create 影子属性，本体零侵入）——pick({sessionResume:true})
+ *   不再选中 codex/kimi；② checkCapabilityDrift 以对齐值为镜像真值——配置写 true 得
+ *   agentconfig/cap-unproven，写 false 或省略照过。**不改变合法行为**：只翻 unsupported 布尔面
+ * （当前恰 codex/kimi 续跑）；dsh/claude 声明原样、agents_md 只登记不改值、运行时零改动。
+ * 旧测试影响：registry.test.ts「要续跑→四家全过／false→四家皆无」与 agentconfig.test.ts
+ * 「kimi session_resume:true 镜像一致」按设计转红（断言的正是本次对齐的拟稿），已随单登记。
  */
 import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
@@ -66,6 +73,7 @@ import { CodexAdapter } from './codex.ts'
 import { DshAdapter } from './dsh.ts'
 import type { DshAdapterOptions, DshSeatbeltOptions } from './dsh.ts'
 import { KimiAdapter } from './kimi.ts'
+import { failClosedCapabilities, unprovenProbeIdOf } from './bindcard/index.ts'
 import { DEFAULT_SEATBELT_PLAN, resolveSeatbeltGrant } from './seatbelt.ts'
 import type { SeatbeltGrant, SeatbeltPlan } from './seatbelt.ts'
 import type { ExecutorRegistry } from './registry.ts'
@@ -122,9 +130,7 @@ export interface AgentConfig {
 }
 
 /**
- * 装载 agent.yaml 文本 → AgentConfig。
- * 四态明报（CONFIG_INVALID）：yaml 语法错（parse，带行号）/ 缺 executors 段
- * （missing-section）/ 形状不合（shape，带 zod 路径）/ 空段（no-executors）。
+ * 装载 agent.yaml 文本 → AgentConfig（四态明报：parse 带行号 / missing-section / shape / no-executors）。
  */
 export function loadAgentConfig(text: string): AgentConfig {
   let raw: unknown
@@ -173,15 +179,10 @@ export function loadAgentConfig(text: string): AgentConfig {
 // ---------------------------------------------------------------------------
 
 /**
- * 适配器工厂：cmd 为配置覆盖位（undefined=适配器缺省命令，17-§6）；patches 为该家
- * agent.yaml patches 段透传（132-§6.1 单A·studio-dev-168——dsh 家消费
- * `agent-default-model` 声明注入 ResultStats.model，见 dshModelFromPatches；其余家忽略）。
- * 第二参可选：少参工厂字面量（既有测试/调用点）类型兼容零改动。
- *
- * seatbelt 不在此签名上：圈定计划由**解析器绑定**（builtinResolver 第二参 /
- * judgeAwareResolver、tierAwareResolver 的 seatbelt 参数）——本类型的工厂一律已带计划
- * （省略=read-only 最严，见文件头注「seatbelt 必填化」）；直接构造适配器绕过工厂
- * （`new DshAdapter(cmd)` 无 opts）不属注册面，判例见 dsh.ts。
+ * 适配器工厂：cmd 为配置覆盖位（undefined=缺省命令，17-§6）；patches 为 patches 段透传
+ * （dsh 家消费 `agent-default-model` 注入 ResultStats.model，其余家忽略）；第二参可选使少参
+ * 工厂字面量类型兼容零改动。seatbelt 不在本签名上——圈定计划由解析器绑定（省略=read-only
+ * 最严）；直接构造适配器（`new DshAdapter(cmd)`）不属注册面，判例见 dsh.ts。
  */
 export type AdapterFactory = (
   cmd: readonly string[] | undefined,
@@ -192,9 +193,10 @@ export type AdapterFactory = (
 export type AdapterResolver = (name: string) => AdapterFactory | undefined
 
 /**
- * 按 AgentConfig 把适配器工厂接进注册表（cmd 覆盖注入；注册序=书写序）。
- * 未知 executor 名 / 能力漂移 / 注册表拒收（重名、双 default）→ CONFIG_INVALID 明报。
- * 返回传入的 registry（链式便利）。
+ * 按 AgentConfig 把适配器工厂接进注册表（cmd 覆盖注入；注册序=书写序）。未知 executor 名 /
+ * 能力漂移 / 未证能力 over-claim / 注册表拒收（重名、双 default）→ CONFIG_INVALID 明报。
+ * 未证能力对齐（IMPL-07-05）：漂移以 `effectiveCapabilities` 对齐值为真值——配置写 codex/kimi
+ * `session_resume: true` 得 cap-unproven，写 false/省略照过；注册条目同投影（合法面零改动）。
  *
  * seatbelt：由 resolver 在解析期绑定（内置面见 builtinResolver 第二参 / 两个感知解析器的
  * seatbelt 参数）；本函数不再另开一个 seatbelt 入参——圈定决策只有一个入口，避免
@@ -222,16 +224,16 @@ export function wireRegistry(
     }
     // cmd 覆盖注入（无 cmd=适配器缺省命令）+ patches 透传（家族工厂自决消费，本层不解释）
     const adapter = factory(rec.cmd, rec.patches)
+    // 能力镜像以未证对齐值为真值（codex/kimi session_resume 拟稿→按不支持）；注册面同向投影
     checkCapabilityDrift(rec, adapter.capabilities)
-    registry.register(adapter, { default: rec.default })
+    registry.register(alignRegisteredAdapter(rec.name, adapter), { default: rec.default })
   }
   return registry
 }
 
 /**
- * registerBuiltins 的单项覆盖：cmd 改道（测试假 CLI/本机路径）+ default 旗标改写
- * ＋ **seatbelt 派工圈定授权**（省略=read-only 最严；放宽须显式 workspace-write＋绝对
- * 路径根＋authorization 留痕——构造期校验见 seatbelt.ts resolveSeatbeltGrant）。
+ * registerBuiltins 的单项覆盖：cmd 改道 + default 旗标改写 + **seatbelt 派工圈定授权**
+ * （省略=read-only 最严；放宽须显式 workspace-write＋绝对路径根＋authorization 留痕）。
  */
 export interface BuiltinOverride {
   cmd?: readonly string[] | undefined
@@ -246,6 +248,8 @@ export type BuiltinOverrides = Partial<Record<ExecutorFamily, BuiltinOverride>>
  * 四家内置注册捷径：dsh（default）/ claude / codex / kimi 一行接入
  * （`registerBuiltins(createRegistry())`）。cmd/default/seatbelt 可按家覆盖。
  * 未给 seatbelt 的家绑 read-only 最严档（**不传=不圈定的旧全权缺省已删除**）。
+ * 注册面能力投影：未证能力按不支持（当前恰 codex/kimi 的 `session_resume`——PB-6 拟稿点，
+ * 见 bindcard/cli-cards.ts）；dsh/claude 等合法声明原样。
  * 注册表已有同名 → CONFIG_INVALID（registry 拒收，不后写覆盖）。
  */
 export function registerBuiltins(
@@ -256,7 +260,9 @@ export function registerBuiltins(
     const o = overrides[name]
     // 档位解析=构造期守门：非法档/未授权放宽在此抛（不等到 launch 才败）
     const plan = resolveSeatbeltGrant(o?.seatbelt)
-    registry.register(BUILTIN_FACTORIES[name](o?.cmd, undefined, plan), {
+    // 注册面能力投影：未证按不支持（codex/kimi session_resume；合法面返回原适配器）
+    const adapter = alignRegisteredAdapter(name, BUILTIN_FACTORIES[name](o?.cmd, undefined, plan))
+    registry.register(adapter, {
       default: o?.default ?? name === 'dsh', // dsh 缺省 default（docs/17-§6 默认主力）
     })
   }
@@ -267,9 +273,8 @@ export function registerBuiltins(
 const BUILTIN_ORDER: readonly ExecutorFamily[] = ['dsh', 'claude', 'codex', 'kimi']
 
 /**
- * 家族工厂（内部面）：第三参 seatbelt（圈定计划）**类型上必填**——SEC-FC-05 的接口耦合
- * 点，家族工厂不再有「不圈定」缺省。类型必填保证每个调用点给出圈定决策；运行时仍兜底
- * （JS 调用方省略第三参=read-only 最严，见各条目 `seatbelt ?? DEFAULT_SEATBELT_PLAN`）。
+ * 家族工厂（内部面）：第三参 seatbelt **类型上必填**（SEC-FC-05 接口耦合点）——保证每个调用点
+ * 给出圈定决策；运行时仍兜底（JS 省略=read-only，见各条目 `seatbelt ?? DEFAULT_SEATBELT_PLAN`）。
  */
 type BuiltinFactory = (
   cmd: readonly string[] | undefined,
@@ -301,16 +306,12 @@ const BUILTIN_FACTORIES: Readonly<Record<ExecutorFamily, BuiltinFactory>> = {
 }
 
 /**
- * dsh 家 patches['agent-default-model'] 声明解析（132-§6.1 单A·C3，studio-dev-168）：
- * dsh 无 `--model` 旗标，模型=profile `agent-default-model` 插件配置（provider+model，
- * docs/31-§2 表）——机器级 profile patch 是 dsh 侧事实，daemon 直读机器全局态与
- * per-company 隔离纪律相抵（docs/31-§5-5）；agent.yaml 的 patches 段是部署对该 patch
- * 的**声明镜像**（「capabilities 是镜像」同构——配置声明既有事实，非新增第三事实源）。
- * 形状照录 profile patch 条目：`{config: {provider, model}}`（两非空串且不含 `/`——
- * 归一形 `provider/model` 无歧义）；返回归一形字符串；缺该键=undefined（未声明=无从
- * 可知，ResultStats.model 如实缺席）；键在而形状坏 → CONFIG_INVALID 明报（不静默不猜）。
- * generic 层「patches 透传不解释」纪律维持——本解析是 dsh 家族工厂的家族专属消费
- * （cmd 家族专属消费的同位先例），其余家不读 patches。
+ * dsh 家 patches['agent-default-model'] 声明解析（132-§6.1 单A·C3）：dsh 无 `--model` 旗标，
+ * 模型=profile 插件配置（provider+model）——daemon 直读机器全局态与 per-company 隔离相抵，
+ * agent.yaml patches 段是部署对该 patch 的**声明镜像**（非新增第三事实源）。形状照录
+ * `{config: {provider, model}}`（两非空串且不含 `/`）；缺键=undefined（如实缺席），键在而
+ * 形状坏 → CONFIG_INVALID（不静默不猜）。generic 层「patches 透传不解释」维持：本解析是 dsh
+ * 家族专属消费（cmd 同位先例），其余家不读 patches。
  */
 export function dshModelFromPatches(patches: Readonly<Record<string, unknown>> | undefined): string | undefined {
   if (patches === undefined || !Object.hasOwn(patches, 'agent-default-model')) return undefined
@@ -341,13 +342,10 @@ export function dshModelFromPatches(patches: Readonly<Record<string, unknown>> |
 }
 
 /**
- * 内置解析器：四家名 → 工厂；未知名 undefined（wireRegistry 明报）。
- * daemon 装载 agent.yaml 时作为缺省 resolver 传入；注入自定义家可包一层。
- *
- * seatbelt（第二参，SEC-FC-05）：派工圈定授权——**省略=read-only 最严**（绑定
- * DEFAULT_SEATBELT_PLAN，写域零放行；「不传=不圈定」的全权缺省已删除）；放宽须显式
- * `{tier:'workspace-write', writeRoots:[绝对路径…], authorization:'…'}`，非法档/未授权
- * 放宽在**解析期**即 CONFIG_INVALID（构造期守门，不等到 launch 才败）。
+ * 内置解析器：四家名 → 工厂；未知名 undefined（wireRegistry 明报）；daemon 装载 agent.yaml
+ * 时作缺省 resolver。seatbelt（第二参，SEC-FC-05）：**省略=read-only 最严**（全权缺省已删）；
+ * 放宽须显式 `{tier:'workspace-write', writeRoots:[绝对路径…], authorization:'…'}`，非法档/
+ * 未授权放宽在**解析期**即 CONFIG_INVALID（构造期守门，不等到 launch 才败）。
  */
 export function builtinResolver(name: string, seatbelt?: SeatbeltGrant): AdapterFactory | undefined {
   const family = builtinFamilyOf(name)
@@ -363,8 +361,8 @@ function builtinFamilyOf(name: string): ExecutorFamily | undefined {
 }
 
 /**
- * 缺省绑定（read-only 最严）：公共面省略 seatbelt 时返回的工厂——每家**单例**（同一
- * 解析器两次调用返回同一函数对象，解析面可比较、零隐藏状态）。
+ * 缺省绑定（read-only 最严）：公共面省略 seatbelt 时返回的工厂——每家**单例**（同一解析器
+ * 两次调用返回同一函数对象，解析面可比较、零隐藏状态）。
  */
 const BUILTIN_DEFAULT_FACTORIES: Readonly<Record<ExecutorFamily, AdapterFactory>> = {
   dsh: (cmd, patches) => BUILTIN_FACTORIES.dsh(cmd, patches, DEFAULT_SEATBELT_PLAN),
@@ -396,11 +394,9 @@ export function judgeFamilyOf(name: string): ExecutorFamily | undefined {
 }
 
 /**
- * 同族适配器**改名注册**（judge 位专用）：Object.create 原型链挂名——家族适配器本体
- * 零侵入（dsh.ts 行基线不动）。方法经原型链委托到本尊实例（`this.*` 读写直达；TS
- * `private` 是擦除型关键字、无 #品牌校验，委托安全）；`name` 不可写重遮蔽。
- * 为什么必须改名：注册表以 adapter.name 为键去重（registry.register 同名拒收），
- * judge 位与本尊是同族**两个注册实例**（不同 cmd=不同模型档），不改名即撞键。
+ * 同族适配器**改名注册**（judge 位专用）：Object.create 原型链挂名——本体零侵入（方法与
+ * `this.*` 经原型链直达；TS private 擦除无 #品牌校验）；name 不可写重遮蔽。注册表以 name
+ * 去重，judge 位与本尊是同族两个注册实例（不同 cmd=不同模型档），不改名即撞键。
  */
 function renameExecutor(adapter: ExecutorAdapter, name: string): ExecutorAdapter {
   return Object.create(adapter, { name: { value: name } })
@@ -412,11 +408,9 @@ function renameExecutor(adapter: ExecutorAdapter, name: string): ExecutorAdapter
  * 无工具档由 agent.yaml 的 cmd 数组声明，17-§4「cmd=配置覆盖注入位」）。daemon 装载
  * agent.yaml 时包在 builtinResolver 外即可让 judge 位注册成功。
  *
- * seatbelt（第二参，SEC-FC-05）：judge 位工厂同样**必带**圈定计划——省略=read-only
- * 最严；本解析器只对 judge 位行使该计划，四家名仍走 base（base 的圈定授权归 base 自己；
- * 缺省 base=builtinResolver 时把 seatbelt 一并下传，两层面同源）。judge 的**实际调用**
- * 走 judge/invoke.ts 的 dshJudgeAdapterFactory（workspace 只读档、写域=一次性 DSH_HOME），
- * 不消费本层注册实例的 seatbelt 选项——本层只保证注册期不缺省全权。
+ * seatbelt（第二参，SEC-FC-05）：judge 位工厂同样**必带**圈定计划（省略=read-only 最严）；
+ * 四家名仍走 base。judge 的**实际调用**走 judge/invoke.ts 的 dshJudgeAdapterFactory（workspace
+ * 只读档），不消费本层注册实例的 seatbelt 选项——本层只保证注册期不缺省全权。
  */
 export function judgeAwareResolver(base?: AdapterResolver, seatbelt?: SeatbeltGrant): AdapterResolver {
   const plan = resolveSeatbeltGrant(seatbelt)
@@ -431,7 +425,6 @@ export function judgeAwareResolver(base?: AdapterResolver, seatbelt?: SeatbeltGr
     return resolveBase(name)
   }
 }
-
 
 // ---------------------------------------------------------------------------
 // 模型档注册位（studio-dev-196，制作人 2026-10-22 三档定调：大/中/小）：`<family>-<tier>`
@@ -452,9 +445,8 @@ export function isModelTierExecutorName(name: string): boolean {
 }
 
 /**
- * 模型档注册位 → {family, tier}（`dsh-high`→{family:'dsh', tier:'high'}）；非档位形态
- * 或家族不存在 → undefined。裸家族名（`dsh`）不是档位——undefined（现役语义不变）。
- * 家族表=BUILTIN_FACTORIES 键（四家）——未配置家族的档位由 resolver 明报，不静默。
+ * 模型档注册位 → {family, tier}（`dsh-high`→{family:'dsh',tier:'high'}）；非档位形态或家族
+ * 不存在 → undefined（裸家族名不是档位；未配置家族的档位由 resolver 明报，不静默）。
  */
 export function tierOfExecutorName(name: string): { family: ExecutorFamily; tier: ModelTierSuffix } | undefined {
   for (const suffix of MODEL_TIER_SUFFIXES) {
@@ -478,15 +470,10 @@ export function tierExecutorName(family: string, tier: ModelTierSuffix): string 
  * 工厂并以档位名注册（studio-dev-196：档位是**全功能派工位**——同家族不同档=不同 cmd
  * `--patch` overlay 绑定不同 agent-default-model，17-§4「cmd=配置覆盖注入位」）。
  *
- * 与 judgeAwareResolver 的语义差（勿混）：**patches 透传**——档位的
- * `patches['agent-default-model']` 是模型留痕镜像（132-§6.1 单A，ResultStats.model 注入
- * 源），resolve 时必须连同 cmd 一起交给家族工厂；judge 位不透传（判断位镜像无意义）。
- * 档位**可标 default**（`dsh-mid: default` 即缺省主力位——档位是派工泳道，与 judge 位
- * 「不得标 default」相反；wireRegistry 无档位特设闸，配置自证）。
- *
- * seatbelt（第二参，SEC-FC-05）：档位位工厂同样**必带**圈定计划（省略=read-only 最严）；
- * 与 judge 解析器同构——计划只作用于档位位，四家名走 base（缺省 base=builtinResolver
- * 时下传 seatbelt，两层面同源）。
+ * 与 judgeAwareResolver 的语义差（勿混）：**patches 透传**（`agent-default-model` 是模型留痕
+ * 镜像、ResultStats.model 注入源），judge 位不透传；档位**可标 default**（派工泳道，与 judge
+ * 位「不得标 default」相反）。seatbelt（第二参，SEC-FC-05）：档位位工厂同样**必带**圈定计划
+ * （省略=read-only 最严），计划只作用于档位位，四家名走 base。
  */
 export function tierAwareResolver(base?: AdapterResolver, seatbelt?: SeatbeltGrant): AdapterResolver {
   const plan = resolveSeatbeltGrant(seatbelt)
@@ -503,6 +490,37 @@ export function tierAwareResolver(base?: AdapterResolver, seatbelt?: SeatbeltGra
 }
 
 // ---------------------------------------------------------------------------
+// 未证能力对齐面（IMPL-07-05；v2/12 §2.1 铁律／v2/17 §五 PB-6 拟稿点登记）
+// ---------------------------------------------------------------------------
+
+/** 注册名 → 基础家族名（裸名/`<family>-judge`/`<family>-<tier>` 归家族；未登记名 undefined）。 */
+export function familyOfExecutorName(name: string): ExecutorFamily | undefined {
+  const bare = builtinFamilyOf(name)
+  if (bare !== undefined) return bare
+  const judge = judgeFamilyOf(name)
+  if (judge !== undefined) return judge
+  return tierOfExecutorName(name)?.family
+}
+
+/**
+ * 有效能力声明（本文件唯一声明真值面）：未证能力按不支持；未登记家族/能力原样返回**同引用**
+ * （合法面零改动）。对齐源＝bindcard/cli-cards.ts `PB6_DRAFT_POINTS`（当前 codex/kimi 续跑→false）。
+ */
+export function effectiveCapabilities(name: string, declared: ExecutorCapabilities): ExecutorCapabilities {
+  return failClosedCapabilities(familyOfExecutorName(name), declared)
+}
+
+/**
+ * 注册面能力投影（Object.create 影子属性，本体零侵入——renameExecutor 同款手法）：对齐值与原始
+ * 声明同一引用时返回原适配器（dsh/claude/自定义家零改动）；运行时方法原样委托。
+ */
+function alignRegisteredAdapter(name: string, adapter: ExecutorAdapter): ExecutorAdapter {
+  const aligned = effectiveCapabilities(name, adapter.capabilities)
+  if (aligned === adapter.capabilities) return adapter
+  return Object.create(adapter, { capabilities: { value: Object.freeze(aligned) } })
+}
+
+// ---------------------------------------------------------------------------
 // 内部工具（纯函数）
 // ---------------------------------------------------------------------------
 
@@ -512,8 +530,8 @@ export function tierAwareResolver(base?: AdapterResolver, seatbelt?: SeatbeltGra
  *     不白名单：read-only 档不白名单 scratch，dsh boot 要写=派发方显式放宽，不静默给）
  *   - plan.tier=workspace-write ⇒ `writeRootsOverride: plan.writeRoots`（显式绝对路径根；
  *     authorization 已由 resolveSeatbeltGrant 校验——留痕落账归派发域 IMPL-07-09）
- * writeRootsOverride **恒给**：dsh 缺省会把 task.workspace/extraWriteRoots/dshHomeRedirect
- * 隐式并入写域——缺省最严不允许隐式加根；切片式覆写把「写域根从哪来」收回到本计划一处。
+ * writeRootsOverride **恒给**：dsh 缺省会把 workspace/extraWriteRoots/dshHomeRedirect 隐式并入
+ * 写域——缺省最严不允许隐式加根；切片式覆写把「写域根从哪来」收回到本计划一处。
  */
 function dshAdapterOptions(plan: SeatbeltPlan, model: string | undefined): DshAdapterOptions {
   const seatbelt: DshSeatbeltOptions = {
@@ -528,10 +546,9 @@ function dshAdapterOptions(plan: SeatbeltPlan, model: string | undefined): DshAd
 }
 
 /**
- * 无 seatbelt 端子的家族（claude/codex/kimi——argv 包线只在 dsh.ts 接）：**显式放宽一律
- * 拒收**。没有端子就没有 profile 可落，声称「已放宽到 workspace-write」=假证据（比缺省
- * 更坏）；read-only 缺省照过，但实际圈定缺失按 seatbelt.ts 头注 PRB-04 前置声明登记
- * （未证，不冒充已封死）——端子补齐归 G-PORT-WS 接线腿。
+ * 无 seatbelt 端子的家族（claude/codex/kimi）：**显式放宽一律拒收**——没有端子就没有 profile
+ * 可落，声称「已放宽到 workspace-write」=假证据；read-only 缺省照过，实际圈定缺失按 PRB-04
+ * 前置登记（未证）——端子补齐归 G-PORT-WS 接线腿。
  */
 function assertSeatbeltTerminal(family: ExecutorFamily, plan: SeatbeltPlan): void {
   if (plan.tier === 'read-only') return
@@ -542,25 +559,29 @@ function assertSeatbeltTerminal(family: ExecutorFamily, plan: SeatbeltPlan): voi
 }
 
 /**
- * 能力镜像逐字段比对（能力以适配器代码为准，头注口径）：配置提供的每个能力字段必须与
- * 适配器声明真值相等，否则 CONFIG_INVALID/agentconfig/cap-drift（拒绝配置伪造能力）。
+ * 能力镜像逐字段比对（以适配器代码为准＋未证按不支持的对齐值）：普通漂移 → cap-drift；
+ * 未证能力 over-claim（codex/kimi session_resume 写 true）→ cap-unproven（指名 PB-6 探针）。
  */
-function checkCapabilityDrift(rec: AgentExecutorConfig, actual: ExecutorCapabilities): void {
-  const FIELDS = [
-    'budget_cap',
-    'cancel_turn',
-    'session_resume',
-    'agents_md',
-    'cost_native',
-  ] as const satisfies readonly (keyof ExecutorCapabilities)[]
+function checkCapabilityDrift(rec: AgentExecutorConfig, declaredByCode: ExecutorCapabilities): void {
+  const family = familyOfExecutorName(rec.name)
+  const aligned = failClosedCapabilities(family, declaredByCode)
+  const FIELDS = ['budget_cap', 'cancel_turn', 'session_resume', 'agents_md', 'cost_native'] as const satisfies
+    readonly (keyof ExecutorCapabilities)[]
   for (const f of FIELDS) {
     const declared = rec.capabilities[f]
-    if (declared !== undefined && declared !== actual[f]) {
+    if (declared === undefined) continue
+    if (declared === aligned[f]) continue
+    if (aligned[f] !== declaredByCode[f]) {
+      const probeId = unprovenProbeIdOf(family, f) ?? '未登记探针'
       configInvalid(
-        'agentconfig/cap-drift',
-        `${rec.name}.capabilities.${f}：配置=${String(declared)} 代码=${String(actual[f])}——能力声明以适配器代码为准，配置漂移明报`,
+        'agentconfig/cap-unproven',
+        `${rec.name}.capabilities.${f}：配置=${String(declared)} 未证→按不支持（探针 ${probeId}；v2/12 §2.1 铁律／PB-6）——配置镜像只准写 false 或省略；改适配器静态声明须探针证据另行立单`,
       )
     }
+    configInvalid(
+      'agentconfig/cap-drift',
+      `${rec.name}.capabilities.${f}：配置=${String(declared)} 代码=${String(aligned[f])}——能力声明以适配器代码为准，配置漂移明报`,
+    )
   }
 }
 
