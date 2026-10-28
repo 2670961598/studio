@@ -148,7 +148,7 @@ beforeAll(async () => {
 })
 
 describe('第 6 点登记与种子基线', () => {
-  it('CRASH_POINTS 长度=6：第 6 点 records-commit；旧五点名称与顺序逐字不变', () => {
+  it('CRASH_POINTS 长度=9：①-⑤ 旧五点＋⑥ records-commit＋MIG-06 ⑦-⑨；前六项名称与顺序逐字不变', () => {
     expect(CRASH_POINTS).toEqual([
       'dispatch-reserved',
       'dispatch-launched',
@@ -156,8 +156,11 @@ describe('第 6 点登记与种子基线', () => {
       'heartbeat-write',
       'shutdown-drain',
       'records-commit',
+      'backup-snapshot',
+      'projection-rebuild',
+      'exclusion-report',
     ])
-    expect(CRASH_POINTS).toHaveLength(6)
+    expect(CRASH_POINTS).toHaveLength(9)
     expect(CRASH_POINTS[5]).toBe(CRASH_POINT_NAME)
   })
 
