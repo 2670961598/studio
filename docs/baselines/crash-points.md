@@ -118,7 +118,7 @@ grep -rn "SN_CRASH_POINT" apps/daemon/src apps/daemon/test
 
 > **追加登记（只增不删：§一-§六 初代内容与旧五点逐字保留）**
 > - 日期：2026-10-28
-> - git HEAD（施工基线）：`2bfee5e`（`feat(v2): MIG-04-01..06/08 store 记录面 + cost_daily 限域`；本单七件改动（2 改＋5 新）在工作树，**未 commit**，遵单纪律）
+> - git HEAD（施工基线）：`2bfee5e`（`feat(v2): MIG-04-01..06/08 store 记录面 + cost_daily 限域`；本单七件改动（2 改＋5 新）；本代理未自行 commit，父级合并流于 `3e5bed7` 入库（本登记件同批））
 > - 工具链：bun **1.4.3** / node **v24.21.0**（`.mise.toml` 固定；命令统一 `mise exec --`）
 > - 执行者：DeepSeek-V41-Flash（StudioNext 施工代理；IMPL-04-07 / LANE-S）
 > - 性质：冻结表**新增第 6 点**（登记＋V2 crash 腿）；**①-⑤ 旧五点语义不变**、旧测试不改、**无生产调用点新增**
@@ -202,9 +202,9 @@ Test Files  1 passed (1)
 
 ### 7.5 诚实边界（未解决缺口，不静默）
 
-1. **记录面只落 1/4 注入点**：plan/04 §1.4 登记的四类记录面注入点为「records 事务提交前后／备份快照写入中／投影重建中／rebuild 排除域报告写入中」；本单只落 `records-commit`（提交前后缝隙），**其余三点未登记、未建测试**——归后续 MIG-04 余单或 MIG-06/08，本件不冒充已覆盖。
+1. **记录面只落 1/4 注入点**：plan/04 §1.4 登记的四类记录面注入点为「records 事务提交前后／备份快照写入中／投影重建中／rebuild 排除域报告写入中」；本单只落 `records-commit`（提交前后缝隙），**其余三点未登记、未建测试**——按 2026-10-28 父级登记归 plan/03 MIG-06 补登（`64d4bdc`），本件不冒充已覆盖。
 2. **⑥ 的写入是测试侧 v14 列级 INSERT**：daemon 侧不 import store 记录写面（hist.ts 未从包出口暴露），故崩溃子进程用 node:sqlite 原样写 v14 列——本腿证明的是**提交缝隙的库语义**，不证明 PORT-HIST 形状校验/幂等逻辑（后者归既有 `hist-append.test.ts`/`hist-query.test.ts`）。不因此宣称 hist 写口已被崩溃覆盖。
 3. **对账规则未决（GAP-V2-01）**：NEG-MIG-02 只证「备份恢复值与事件账投影值分列、差异可判」，**不证两账一致**；任何一致性结论仍需对账规则裁决。
 4. **events 哈希链（I-17/GAP-V2-05）仍目标未证**：NEG-SEC-03 只证改/删被行级触发器拒；`DROP TABLE` 不被行级触发器拦（v15 头注既有边界），本件不扩大为「append-only 已机制化」。
 5. **旧五点未在本单重跑**：旧 `apps/daemon/test/engine/crash-injection.test.ts` 只登记、不扩展（plan/04 §1.4）；V2 五点腿尚未建立，本单新增的 crash 腿只覆盖第 6 点。
-6. **未 commit**：本单改动（crash-points.ts、crash 测试三件、store NEG 两件、本基线追加）留在工作树，按单纪律由父级合并流处理；本件不声称已入库。
+6. **未自行 commit**：本单七件改动（crash-points.ts、crash 测试三件、store NEG 两件、本基线追加）由父级合并流提交（`3e5bed7` 含代码＋基线；`267d381` 措辞收口，`64d4bdc` 余点归 MIG-06 登记）；本代理未执行 `git commit`。
