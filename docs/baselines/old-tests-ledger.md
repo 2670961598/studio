@@ -499,3 +499,29 @@ mise exec -- node scripts/verify/old-test-ledger.mjs
 ---
 
 *本件为旧套件观察位登记件，不是施工门、不是能力证据。V2 门见 `docs/baselines/gates.md` 与根 `package.json` 的 `verify:v2`。*
+
+---
+
+## 七、MIG-04 触及面复跑补充登记（2026-10-28）
+
+> 性质：**触及面旧测试复跑登记**（plan/04 §1.8.5-4：共享契约/根配置/迁移面算触及面，跑一次并登记，红也登记、不阻塞 V2 门）。本表**不属于 §二 209 行冻结主表**（不参与 `old-test-ledger.mjs` 的 209＋口径差/13 红/20 红用例计数），只追加、不删行。
+> 触发：MIG-04 v14 records/v15 events 触发器把 `LATEST_VERSION` 从 13 推到 15；下列旧测试硬编码「v13」版本号，复跑转红。
+> 归属：**版本断言机械更新，不是行为回归**；修旧测试不立项（plan/04 §1.8.2），处置列「保留观察」，责任波「V2 后存废门」。
+
+| 文件 | 复跑结果 | 红用例 | 失败类 | 原因 | 处置 | 责任波 |
+|---|---|---|---|---|---|---|
+| `packages/store/test/drill.test.ts` | 红 | 2/6 | 断言 | 期望 schema v13 → 现 v15 | 保留观察 | V2 后存废门 |
+| `packages/store/test/ledger.test.ts` | 红 | 2/10 | 断言 | 同上 | 保留观察 | V2 后存废门 |
+| `packages/store/test/rebuild.test.ts` | 红 | 1/5 | 断言 | 同上 | 保留观察 | V2 后存废门 |
+| `packages/store/test/v11-usage.test.ts` | 红 | 1/7 | 断言 | 同上 | 保留观察 | V2 后存废门 |
+| `packages/store/test/v12-cost.test.ts` | 红 | 2/9 | 断言 | 同上 | 保留观察 | V2 后存废门 |
+| `packages/store/test/v2-tables.test.ts` | 红 | 3/25 | 断言 | 同上 | 保留观察 | V2 后存废门 |
+| `packages/store/test/v3-jobs.test.ts` | 红 | 3/15 | 断言 | 同上 | 保留观察 | V2 后存废门 |
+| `packages/store/test/v4-debts.test.ts` | 红 | 3/17 | 断言 | 同上 | 保留观察 | V2 后存废门 |
+| `packages/store/test/v5-candidates.test.ts` | 红 | 2/29 | 断言 | 同上 | 保留观察 | V2 后存废门 |
+| `packages/store/test/v6-reports.test.ts` | 红 | 2/19 | 断言 | 同上 | 保留观察 | V2 后存废门 |
+| `packages/store/test/v8-model.test.ts` | 红 | 2/3 | 断言 | 同上 | 保留观察 | V2 后存废门 |
+| `packages/store/test/v8-todo-queue.test.ts` | 红 | 1/8 | 断言 | 同上 | 保留观察 | V2 后存废门 |
+| `packages/store/test/v9-pricing.test.ts` | 红 | 3/26 | 断言 | 同上 | 保留观察 | V2 后存废门 |
+
+**复跑命令**：`mise exec -- node_modules/.bin/vitest run packages/store --reporter=json --outputFile=/tmp/store-old-vitest.json`；实测 13 红文件 / 27 红用例 / 其余全绿（exit 1）。**不修、不删、不 skip**；V2 门不以此表判。
