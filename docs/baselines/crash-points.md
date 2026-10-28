@@ -303,7 +303,7 @@ Test Files  2 passed (2)
 |---|---|---|
 | typecheck | `mise exec -- bun run typecheck` | exit 0（无输出） |
 | typecheck:v2 | `mise exec -- bun run typecheck:v2` | exit 0（无输出） |
-| crash V2 | `mise exec -- bun run test:v2 -- apps/daemon/test/v2/crash` | 2 files / **19 tests** passed（records 5＋surfaces 14） |
+| crash V2 | `mise exec -- bun run test:v2 -- apps/daemon/test/v2/crash` | 2 files / **16 tests** passed（records 5＋surfaces 11；另 store crash-surfaces 3，合计 19） |
 | store V2 | `mise exec -- bun run test:v2 -- packages/store` | 11 files / **123 tests** passed（新增 crash-surfaces 3） |
 | guard | `mise exec -- bun run guard:boundaries` | PASS：扫描 **825** 文件（范围面代码件 **683**），**0 违例** |
 
