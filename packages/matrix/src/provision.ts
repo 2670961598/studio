@@ -27,9 +27,8 @@
  * 单据房间列；归档=events_default→50（PL0 只读）。E2EE 恒不启用（21A-§5.7：
  * encryption 事件 PL 100 挡）。
  *
- * 纪律：薄供给层零平台耦合——输入是窄结构快照（CompanySnapshot 的结构子集，
- * boot 组合根负责装配），不 import @studio-next/daemon（依赖方向冻结，docs/20-§十五）。
- * PL 基线/频道规格类型/同值判据拆至 power-levels.ts（20-§十五「先拆再增」）。
+ * 纪律：薄供给层零平台耦合——输入是窄结构快照（CompanySnapshot 的结构子集，boot 组合根负责装配），
+ * 不 import @studio-next/daemon（依赖方向冻结，docs/20-§十五）；PL 基线/频道规格类型/同值判据拆至 power-levels.ts（20-§十五「先拆再增」）。
  */
 /** 毫秒睡（邀请节流/限流退避——2026-10-23） */
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -39,6 +38,10 @@ import { jsonEqual, powerLevelTarget, powerLevelsMatch, type ChannelMapPlan, typ
 // 公共 API 同源 re-export（拆件后消费面 import 路径不变——index.ts/测试零改动）
 export { powerLevelTarget } from './power-levels.ts'
 export type { ChannelKind, PowerLevelColumn, PowerLevelsContent, ChannelSpec, ChannelMapPlan } from './power-levels.ts'
+
+/** bot 密码目录条目（SEC-T1；IMPL-07-12／v2/15 §4.1、78-§7.4.1、80-§11.2.1）：用途**恰两项**＝platform-auth（登录）＋outbound-redaction（脱敏）；`matrix-register` 已删且**不留保留位**（治 L3O-01/Q-01），请求该用途即 rejected_forbidden；只含类别与逻辑引用，值永不入本声明/日志/包。 */
+export const BOT_PASSWORD_SECRET = Object.freeze({ secretId: 'SEC-MX-BOT-PASSWORD', kind: 'password',
+  allowedUses: Object.freeze(['platform-auth', 'outbound-redaction'] as const) } as const)
 
 // ————————————————————————— 输入类型（结构子集，零 contract import 也可被其结构满足） —————————————————————————
 
@@ -86,7 +89,6 @@ export interface ChannelMapInput {
   /** 制作人 MXID（神号全知——每群 PL100；缺省 @opengames:localhost，21A-§2.2） */
   producerMxid: string
 }
-
 
 // ————————————————————————— 小工具 —————————————————————————
 
@@ -170,7 +172,6 @@ function isAlreadyInRoomError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err)
   return msg.includes('M_FORBIDDEN')
 }
-
 
 // ————————————————————————— 八类地图规划（纯函数） —————————————————————————
 
