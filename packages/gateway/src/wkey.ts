@@ -17,11 +17,26 @@
  *   - 签名比对 timing-safe；长度不等直接拒（不抛异常——异长是坏凭据不是程序错）
  *
  * 纯逻辑零 IO：唯一依赖 node:crypto（内建）；已见 nonce/吊销集合均在内存（拟稿：生产换 store）。
+ *
+ * ctl- 词族（SEC-SIG-03；plan/05 IMPL-07-10）：scope 白名单取网关动作词表（worker 六动词 ∪
+ * ctl- 六动词）而非 contract 冻结表——控制面平台写凭据必须能在 scope 内声明 ctl- 动词，
+ * 否则「入网关校验」落成死词。contract 表仍是 worker 面唯一值域源，扩表走批示流；
+ * 词表本体只在 actions.ts 出现一次（本文件不重述字面量，防第二值域源）。
+ * 控制面自用 key（issueControlKey）scope 仍＝contract 六动词全量：冻结表未扩前不擅自加面
+ * （破「控制面 key scope＝白名单全量」的既有口径），ctl- 写按调用方显式 scope 签发。
  */
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
 import { GATEWAY_ACTIONS, configInvalid } from '@studio-next/contract'
-import type { GatewayAction, TicketId, WkeyClaims } from '@studio-next/contract'
+import type { TicketId, WkeyClaims } from '@studio-next/contract'
+import { GATEWAY_ACTION_WORDS } from './actions.ts'
+import type { GatewayActionWord } from './actions.ts'
+
+/**
+ * 网关侧签发入参：scope 取网关动作词表（worker 面 ∪ ctl- 面）。
+ * 与 contract 的 WkeyClaims 结构同形、scope 更宽——旧调用方传 WkeyClaims 可直接赋值。
+ */
+export type GatewayWkeyClaims = Omit<WkeyClaims, 'scope'> & { scope: GatewayActionWord[] }
 
 /** 拒绝码（fail-closed 家族；facade 侧再加 gw- 前缀路由） */
 export type WkeyRejectReason =
@@ -36,7 +51,7 @@ export type WkeyRejectReason =
 /** 校验通过后回读的 claims 视图（token 内的权威形态：exp 到期时刻，无原 ttl 串） */
 export interface VerifiedWkey {
   readonly ticket: TicketId
-  readonly scope: readonly GatewayAction[]
+  readonly scope: readonly GatewayActionWord[]
   readonly exp: number
   readonly nonce: string
 }
@@ -46,7 +61,7 @@ export interface WkeyVerifyCheck {
   /** 提供则做单号绑定校验（写路径必须提供；省略=跳过，仅控制面自检用，拟稿） */
   ticket?: TicketId
   /** 提供则做 scope 校验 */
-  action?: GatewayAction
+  action?: GatewayActionWord
 }
 
 export type WkeyVerifyResult = { ok: true; claims: VerifiedWkey } | { ok: false; reason: WkeyRejectReason }
@@ -60,10 +75,10 @@ export const CONTROL_TICKET = '__control__' as const
 /** 控制面 wkey 默认 TTL（短命：全开 scope 越短越安全，拟稿待批） */
 export const CONTROL_TTL_DEFAULT = '15m' as const
 
-/** 签发输入 schema（exp 由 clock 计算，不在输入里；scope 必须落在 GATEWAY_ACTIONS 白名单内——表外动作进不了 token） */
+/** 签发输入 schema（exp 由 clock 计算，不在输入里；scope 必须落在网关动作词表内——表外动作进不了 token） */
 const ClaimsInputSchema = z.strictObject({
   ticket: z.string().min(1),
-  scope: z.array(z.enum(GATEWAY_ACTIONS)).min(1),
+  scope: z.array(z.enum(GATEWAY_ACTION_WORDS)).min(1),
   nonce: z.string().min(1),
 })
 
@@ -71,7 +86,7 @@ const ClaimsInputSchema = z.strictObject({
 const PayloadSchema = z.strictObject({
   v: z.literal(1),
   ticket: z.string().min(1),
-  scope: z.array(z.enum(GATEWAY_ACTIONS)).min(1),
+  scope: z.array(z.enum(GATEWAY_ACTION_WORDS)).min(1),
   exp: z.number().int().positive(),
   nonce: z.string().min(1),
 })
@@ -99,7 +114,7 @@ const b64uEncode = (bytes: Uint8Array): string => Buffer.from(bytes.buffer, byte
 
 export interface WkeyAuthority {
   /** 签发（claims 全部由调用方给定——测试可确定性注入 nonce；exp 由 clock 计算） */
-  issue(claims: WkeyClaims): string
+  issue(claims: GatewayWkeyClaims): string
   /** 校验（fail-closed 全家；完整成功才记 nonce） */
   verify(token: string, check: WkeyVerifyCheck): WkeyVerifyResult
   /** 关单即吊销：同单全部 key 立即失效；幂等 */
@@ -121,7 +136,7 @@ export function createWkeyAuthority(secret: Uint8Array, clock: () => number): Wk
   const mac = (payloadB64u: string): Uint8Array => createHmac('sha256', secret).update(payloadB64u, 'utf8').digest()
 
   return {
-    issue(claims: WkeyClaims): string {
+    issue(claims: GatewayWkeyClaims): string {
       const parsed = ClaimsInputSchema.safeParse({ ticket: claims.ticket, scope: claims.scope, nonce: claims.nonce })
       if (!parsed.success) throw configInvalid('gw-bad-claims', `claims 形状不符：${parsed.error.issues.map((i) => i.path.join('.')).join(',')}`)
       const exp = clock() + ttlToMs(claims.ttl)
@@ -186,6 +201,9 @@ export function createWkeyAuthority(secret: Uint8Array, clock: () => number): Wk
  *   - 默认短 TTL（CONTROL_TTL_DEFAULT），用毕即 revoke(CONTROL_TICKET)
  *   - 单号固定 CONTROL_TICKET（保留名，拟稿），吊销 = revoke(CONTROL_TICKET) 一刀切
  *   - 仍走同一 verify 链（含 nonce 单次有效）——控制面不豁免任何检查
+ *   - scope 口径＝contract 冻结六动词（「白名单全量」既有语义）——**不擅自加 ctl- 面**：
+ *     冻结表扩表走批示流（v2/14 §二）；ctl- 写按调用方显式 scope 签发（authority.issue）。
+ *     本口子不构成绕过：ctl- 写仍过同一条 verify 链的 scope 判定。
  */
 export function issueControlKey(authority: WkeyAuthority, opts?: { ttl?: string }): ControlKey {
   const nonce = randomUUID()

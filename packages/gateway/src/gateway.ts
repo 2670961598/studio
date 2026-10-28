@@ -22,25 +22,40 @@
  *     **前置短路**（isFreeformChinese 且非 @action 行 → 直接 needsLlmFallback，不跑 verify 不烧
  *     nonce——LLM 回退重提交要用同一 token；fallback 只是路由信号不是授权，无信息泄露）。
  *     结构化路径 verify 成功即烧 nonce，其后 parse 失败不退（客户端须重新领 key：一调用一签发）
+ *   - **ctl- 词族二次入口**（SEC-SIG-03；plan/05 IMPL-07-10）：控制面平台写走 `gateWriteCtl`
+ *     （申报动作 ∈ ctl- 六动词），与 `gateWrite`（worker 面六动词）共用同一闸链（verify →
+ *     parse → 申报/实文一致 → 署名）；两个入口只切申报动词域，**不是两条闸**、不设旁路。
+ *     申报与首行字面动词分叉＝gw-action-mismatch；args.op 自述与申报动作分叉同拒
+ *     （resolveAuditAction.mismatch → gw-action-mismatch，不猜以哪边为准）。
+ *     迁移期 comment + args.op 借道允许：结果附 audit（审计动作还原为 ctl-，downgraded=true），
+ *     交台账记降级标记——transition 不得显示为 comment（v2/15 §二）。
  *   - 实例按单绑定：opts.ticket 是本闸收口的单号（verify 的单号绑定锚）。控制面自用请用
  *     ticket=CONTROL_TICKET 的独立实例（17-§7：控制面也过网关，但不与按单实例混用）
  */
 import { CONTROL_TICKET, createWkeyAuthority, issueControlKey as issueControlKeyOn } from './wkey.ts'
-import type { ControlKey, WkeyAuthority, WkeyRejectReason } from './wkey.ts'
-import { isFreeformChinese, parseAction } from './actions.ts'
-import type { ActionRejectReason } from './actions.ts'
+import type { ControlKey, GatewayWkeyClaims, WkeyAuthority, WkeyRejectReason } from './wkey.ts'
+import { isCtlAction, isFreeformChinese, isGatewayAction, parseAction, resolveAuditAction } from './actions.ts'
+import type { ActionAudit, ActionRejectReason, CtlAction, GatewayActionWord } from './actions.ts'
 import { signedBody } from './signature.ts'
 import type { SignatureContext } from './signature.ts'
 import { createRootDelegationGate } from './root-delegation.ts'
 import type { RootActionRequest, RootDelegationOptions, RootPreflightResult } from './root-delegation.ts'
 import { configInvalid } from '@studio-next/contract'
-import type { GatewayAction, PersonId, SignedBody, TicketId, WkeyClaims } from '@studio-next/contract'
+import type { GatewayAction, PersonId, SignedBody, TicketId } from '@studio-next/contract'
 
 /** 运行期拒绝码（gw- 前缀族；子码继承 wkey/actions 的拒绝码） */
 export type GateRejectReason = `gw-verify-${WkeyRejectReason}` | `gw-action-${ActionRejectReason}` | 'gw-action-mismatch' | 'gw-freeform-chinese'
 
 export type GateWriteResult =
-  | { allowed: true; action: GatewayAction; args: Record<string, unknown>; signed: SignedBody }
+  | {
+      allowed: true
+      /** 申报动作（worker 面六动词或 ctl- 六动词）——审计面 transition 不得显示为 comment */
+      action: GatewayActionWord
+      args: Record<string, unknown>
+      signed: SignedBody
+      /** 仅迁移期 comment + args.op 借道时出现：审计动作已还原为 ctl-，downgraded=true（记台账） */
+      audit?: ActionAudit
+    }
   | { allowed: false; reason: GateRejectReason; needsLlmFallback?: true }
 
 /** 签根最小长度（HMAC-SHA256 门限；SEC-FC-02：不足即拒启，不做「短钥也能跑」的降级） */
@@ -69,10 +84,15 @@ export interface GatewayOptions {
 }
 
 export interface Gateway {
-  /** 写路径闸：鉴权 → 结构化校验 → 署名。任一步失败=拒+reason 码 */
+  /** worker 面写路径闸（申报动作 ∈ contract 六动词）：鉴权 → 结构化校验 → 署名。任一步失败=拒+reason 码 */
   gateWrite(token: string, action: GatewayAction, payload: string): GateWriteResult
+  /**
+   * 控制面平台写路径闸（申报动作 ∈ ctl- 六动词；SEC-SIG-03）：与 gateWrite 同一条闸链，
+   * 只切申报动词域——不是第二条闸，无旁路。申报/实文分叉仍返 gw-action-mismatch。
+   */
+  gateWriteCtl(token: string, action: CtlAction, payload: string): GateWriteResult
   /** 签发按单 wkey（daemon 派工时给 worker 的唯一凭据；nonce 由调用方给定） */
-  issue(claims: WkeyClaims): string
+  issue(claims: GatewayWkeyClaims): string
   /** 控制面自用 wkey（scope 全开，独立类型；头注警示见 wkey.ts） */
   issueControlKey(opts?: { ttl?: string }): ControlKey
   /** 关单即吊销（透传 wkey 机构；幂等） */
@@ -131,6 +151,35 @@ export function createGateway(opts: GatewayOptions): Gateway {
     opts.root === undefined
       ? undefined
       : createRootDelegationGate({ ...opts.root, clock: opts.root.clock ?? opts.clock })
+
+  /**
+   * 唯一闸链（两个入口共用；SEC-SIG-03）：申报动作→verify（含 scope）→parse→申报/实文一致
+   * →op 自述一致→署名。入口只决定申报动词域，不增删任何一步检查。
+   */
+  function runGate(token: string, action: GatewayActionWord, payload: string): GateWriteResult {
+    // 0) 自由中文前置短路（不烧 nonce；只标记，LLM 回退归上层——17-§7）
+    if (!payload.startsWith('@action') && isFreeformChinese(payload)) {
+      return { allowed: false, reason: 'gw-freeform-chinese', needsLlmFallback: true }
+    }
+    // 1) 鉴权（签名/吊销/过期/单号/scope/nonce 重放，fail-closed 全家）
+    const verified = authority.verify(token, { now: opts.clock(), ticket: opts.ticket, action })
+    if (!verified.ok) return { allowed: false, reason: `gw-verify-${verified.reason}` }
+    // 2) 结构化校验（申报动作 vs payload 首行字面动词，分叉即拒）
+    const parsed = parseAction(payload)
+    if (!parsed.ok) {
+      // 到这一步的 not-an-action 必是非中文非结构化正文（中文已在 0 短路）——纯拒
+      return { allowed: false, reason: `gw-action-${parsed.reason}` }
+    }
+    if (parsed.action !== action) return { allowed: false, reason: 'gw-action-mismatch' }
+    // 3) args.op 自述一致性（迁移期借道口径）：分叉同拒；借道只在 comment + 控制面 op 一处合法
+    const audit = resolveAuditAction(action, parsed.args)
+    if (audit.mismatch) return { allowed: false, reason: 'gw-action-mismatch' }
+    // 4) 署名注入（正文不改写；落款=四身份位）
+    const signed = signedBody(opts.ctx, opts.author, payload)
+    // 借道写附审计行（降级标记）——transition 不得显示为 comment；非借道不增字段（冻结结果形状）
+    return audit.downgraded ? { allowed: true, action, args: parsed.args, signed, audit } : { allowed: true, action, args: parsed.args, signed }
+  }
+
   return {
     authority,
     issue: (claims) => authority.issue(claims),
@@ -140,22 +189,15 @@ export function createGateway(opts: GatewayOptions): Gateway {
       rootGate === undefined ? { allowed: false, reason: 'gw-root-no-delegation' } : rootGate.preflight(request),
 
     gateWrite(token: string, action: GatewayAction, payload: string): GateWriteResult {
-      // 0) 自由中文前置短路（不烧 nonce；只标记，LLM 回退归上层——17-§7）
-      if (!payload.startsWith('@action') && isFreeformChinese(payload)) {
-        return { allowed: false, reason: 'gw-freeform-chinese', needsLlmFallback: true }
-      }
-      // 1) 鉴权（签名/吊销/过期/单号/scope/nonce 重放，fail-closed 全家）
-      const verified = authority.verify(token, { now: opts.clock(), ticket: opts.ticket, action })
-      if (!verified.ok) return { allowed: false, reason: `gw-verify-${verified.reason}` }
-      // 2) 结构化校验（申报动作 vs payload 动作词，分叉即拒）
-      const parsed = parseAction(payload)
-      if (!parsed.ok) {
-        // 到这一步的 not-an-action 必是非中文非结构化正文（中文已在 0 短路）——纯拒
-        return { allowed: false, reason: `gw-action-${parsed.reason}` }
-      }
-      if (parsed.action !== action) return { allowed: false, reason: 'gw-action-mismatch' }
-      // 3) 署名注入（正文不改写；落款=四身份位）
-      return { allowed: true, action, args: parsed.args, signed: signedBody(opts.ctx, opts.author, payload) }
+      // 运行期硬化（擦除后无类型）：worker 面入口只收 contract 六动词，ctl- 不得从此口混入
+      if (!isGatewayAction(action)) return { allowed: false, reason: 'gw-action-mismatch' }
+      return runGate(token, action, payload)
+    },
+
+    gateWriteCtl(token: string, action: CtlAction, payload: string): GateWriteResult {
+      // 运行期硬化（同上）：控制面入口只收 ctl- 六动词
+      if (!isCtlAction(action)) return { allowed: false, reason: 'gw-action-mismatch' }
+      return runGate(token, action, payload)
     },
   }
 }

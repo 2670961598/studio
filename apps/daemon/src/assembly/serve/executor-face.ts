@@ -16,9 +16,7 @@
 import {
   createRegistry,
   isJudgeExecutorName,
-  judgeAwareResolver,
   loadAgentConfig,
-  tierAwareResolver,
   wireRegistry,
   type ExecutorRegistry,
 } from '@studio-next/adapters'
@@ -33,6 +31,7 @@ import { createQueueJudge, parseJudgeSites, type QueueJudgeHook } from '../../en
 import { checkTierPositionDeclarations, parseModelTierTickets, provisionModelTierOverlays } from '../../engine/tier/model-tier.ts'
 import { createFakeAdapter } from '../../engine/fakes.ts'
 import { provisionDshBridgeOverlay } from '../../engine/instructions-store.ts'
+import { dispatchAdapterResolver } from '../../engine/work/dispatch-seatbelt.ts'
 import type { ServeConfig } from './config.ts'
 
 /**
@@ -82,8 +81,12 @@ export function wireExecutorFace(config: ServeConfig, deps: ExecutorFaceDeps): E
     agentConf = loadAgentConfig(agentText)
     // resolver 组合（studio-dev-196）：judge 外包 tier——`<family>-<tier>` 档位（patches
     // 透传，agentconfig.ts）+ `<family>-judge` 判断位两层都可注册（此前裸 builtinResolver
-    // 对两形态都 unknown-executor——judge 位从未真正可装配的潜伏缺口随本单一并闭合）
-    wireRegistry(registry, agentConf, judgeAwareResolver(tierAwareResolver()))
+    // 对两形态都 unknown-executor——judge 位从未真正可装配的潜伏缺口随本单一并闭合）。
+    // seatbelt 圈定（IMPL-07-09 / SEC-FC-05 后半）：组合走派发域唯一调用点
+    // （dispatch-seatbelt.ts；07-08 两参签名随动），省略 grant＝read-only 最严——「不传=
+    // 不圈定」路径不存在。显式放宽的配置来源（daemon.yaml 键）未立单，故此处只绑缺省档；
+    // 放宽入口=该单的 dispatchAdapterResolver(grant) 一处（不在此另开第二写面）。
+    wireRegistry(registry, agentConf, dispatchAdapterResolver())
     log(
       `[serve] executor 注册（agent.yaml=${config.agentYaml}）：${registry.list().map((e) => `${e.name}${e.default ? '(default)' : ''}`).join('、')}`,
     )

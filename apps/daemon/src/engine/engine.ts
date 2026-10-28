@@ -173,7 +173,7 @@ import {
   type BreakerState,
   type FlowTable,
 } from '@studio-next/core'
-import type { ExecutorRegistry } from '@studio-next/adapters'
+import type { ExecutorRegistry, SeatbeltGrant } from '@studio-next/adapters'
 import type { Ledger } from '@studio-next/store'
 import { modelTierDispatchFace, resolveModelTier } from './tier/model-tier.ts'
 import { gateDispatch, settleDispatch, type BudgetGateDeps } from './budget-gate.ts'
@@ -282,6 +282,8 @@ import { createMergeLeaseRegistry, mergeQueueFace, renewMergeLeases } from './me
 // 状态迁移=work/transition）
 import { acceptRevivals, collectWorkIntents, type WorkIntentCandidate } from './work/intent.ts'
 import { decideWorkCandidate, type WorkCandidateHost } from './work/intake.ts'
+// 派发域 seatbelt 圈定（IMPL-07-09 / SEC-FC-05 后半）：缺省 read-only；校验/留痕见模块头注
+import { resolveWorkerDispatchSeatbelt, seatbeltNote } from './work/dispatch-seatbelt.ts'
 import {
   applyWorkTransition,
   runApprovalTransitions,
@@ -371,6 +373,7 @@ export interface EngineDeps {
    */
   onWorkComplete?: (signal: RelayWorkSignal) => void
   mergeRun?: MergeRunDeps // 202-P2 studio-dev-232：注入=相位 5 真单刀面开；缺省=v0 模拟轨零行为
+  dispatchSeatbelt?: SeatbeltGrant // IMPL-07-09 派发域 seatbelt 圈定授权（省略=read-only 最严；放宽须显式授权并留痕；校验/留痕面见 work/dispatch-seatbelt.ts）
 }
 
 // ————————————————————————— TickReport（17-§2「tick 返回结构化 actions」；各面类型驻 tick-report/types.ts） —————————————————————————
@@ -693,14 +696,10 @@ export function createEngine(deps: EngineDeps): Engine {
       inflight.delete(ticket)
       return { ticket, actionType: action.type, ok: false, detail }
     }
-    if (inflight.has(ticket)) {
-      return fail('该单已有在途工位（幂等跳过，不双写）')
-    }
+    if (inflight.has(ticket)) return fail('该单已有在途工位（幂等跳过，不双写）')
     const fresh = await platform.issues.get(ticket)
     const person = resolvePerson(fresh)
-    if (person === undefined) {
-      return fail('人员索引为空（people 未注入）——不派工')
-    }
+    if (person === undefined) return fail('人员索引为空（people 未注入）——不派工')
     // 模型档选位（studio-dev-196）：单>岗>角色三级解析（model-tier.ts）；面关（models.yaml
     // 未装载）=tierFace undefined，选位与现行为逐字节一致。档面在 resume 面前：resume 不可
     // 续的 fallback=档位适配器（降级新派不降档——接力同档）。
@@ -755,11 +754,11 @@ export function createEngine(deps: EngineDeps): Engine {
     let launched: Handle | undefined
     let prevUmask: number | undefined
     try {
+      // 派发域 seatbelt 圈定前置（SEC-FC-05 后半）：失败即抛 → 本 catch → DISPATCH_FAIL，detect/装配/launch 零调用（work/dispatch-seatbelt.ts）
+      const seatbelt = resolveWorkerDispatchSeatbelt({ ticket, executor: adapter.name, workspace, grant: deps.dispatchSeatbelt })
       // detect 前置（18-§一：launch 前必跑；不达标明报不静默降级）
       const detect = await adapter.detect()
-      if (!detect.ok) {
-        return fail(`executor ${adapter.name} detect 不达标：${detect.gaps.join('；')}`)
-      }
+      if (!detect.ok) return fail(`executor ${adapter.name} detect 不达标：${detect.gaps.join('；')}`)
       // 读面分级（17-§7）：dispatch 装配时按岗选档（装配期选择非运行期闸——daemon 自身
       // 读不拦，见 src/engine/read-tiers.ts 头注与写闸的区别）。Blind 档在此补齐冻结验收命令
       //（config 同源）+ 本工位证据面路径；缺验收 → CONFIG_INVALID fail-closed（无验收
@@ -900,7 +899,7 @@ export function createEngine(deps: EngineDeps): Engine {
         size: Buffer.byteLength(assembled.agentsMd.text, 'utf8'),
         payload_hash: `sha256:${createHash('sha256').update(assembled.agentsMd.text, 'utf8').digest('hex')}`,
         ...(resumeFace !== undefined ? { causation_id: resumeFace.causationId } : {}),
-        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version}${tierFace?.noteAnchor ?? ''};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${minted !== undefined ? `;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=${minted.nonce}` : ''}${action.breakerProbe === true ? `;breaker=half-open-probe（冷却窗过——单次试探：成功即复位，失败回全开续冷却，DEV-46）` : ''}${queueAnchor}${resumeFace?.noteAnchor ?? ''}`,
+        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version}${tierFace?.noteAnchor ?? ''};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${minted !== undefined ? `;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=${minted.nonce}` : ''}${action.breakerProbe === true ? `;breaker=half-open-probe（冷却窗过——单次试探：成功即复位，失败回全开续冷却，DEV-46）` : ''};${seatbeltNote(seatbelt)}${queueAnchor}${resumeFace?.noteAnchor ?? ''}`,
       })
       // 派发成功即出队（129-§6.2）：携带条删——GATE_FAIL 回滚再入队走 touchQueueCarry
       // 新钟（attempt 轮次可区分，队列等待观测口径=每誓一钟，不跨轮累计）。
