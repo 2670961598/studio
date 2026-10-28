@@ -118,7 +118,7 @@ grep -rn "SN_CRASH_POINT" apps/daemon/src apps/daemon/test
 
 > **追加登记（只增不删：§一-§六 初代内容与旧五点逐字保留）**
 > - 日期：2026-10-28
-> - git HEAD（施工基线）：`2bfee5e`（`feat(v2): MIG-04-01..06/08 store 记录面 + cost_daily 限域`；本单五件改动在工作树，**未 commit**，遵单纪律）
+> - git HEAD（施工基线）：`2bfee5e`（`feat(v2): MIG-04-01..06/08 store 记录面 + cost_daily 限域`；本单七件改动（2 改＋5 新）在工作树，**未 commit**，遵单纪律）
 > - 工具链：bun **1.4.3** / node **v24.21.0**（`.mise.toml` 固定；命令统一 `mise exec --`）
 > - 执行者：DeepSeek-V41-Flash（StudioNext 施工代理；IMPL-04-07 / LANE-S）
 > - 性质：冻结表**新增第 6 点**（登记＋V2 crash 腿）；**①-⑤ 旧五点语义不变**、旧测试不改、**无生产调用点新增**
