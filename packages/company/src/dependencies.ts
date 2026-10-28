@@ -1,49 +1,25 @@
 /**
- * dependencies —— 依赖清单与插件绑定引擎（DEV-26 正式化）
+ * dependencies —— 依赖清单与插件绑定引擎（DEV-26）＋V2 资产依赖面（IMPL-05-02）
  *
- * 规范依据（冻结，2026-10-20 制作人批准）：
- *   - docs/43-§四「依赖清单与插件绑定：员工的行为面」（v1.1 新增主特性）
- *   - docs/43-§十-5/6/7/8（spike 反馈定稿增补）
- *   - 判定 normative 标尺：docs/51-契约 D（D-1..D-4）与 C-7
- *   - spike 原型与 22 用例证据：StudioNext-spike 仓 packages/company（docs/44-§v1.1
- *     机制二，判定通过）
+ * 规范依据：docs/43-§四「依赖清单与插件绑定：员工的行为面」（v1.1 主特性）、§十-5/6/7/8
+ * （spike 定稿增补）、docs/51-契约 D（D-1..D-4）与 C-7；V2 面引 v2/06 §3.4（必备资产二选一/
+ * 装载报告）、§3.5（传播≠授权）、§4.5（plugins/ 四条约束）与 v2/10 §4.4/§4.5。
  *
- * 语义总纲（与 spike 逐条对齐——docs/44 §v1.1 判定表的证据面不回退）：
- *   1. dependencies.yaml：属性值 → dsh 插件映射（when:{attr,is} → plugins[{name,version}]）；
- *      strictObject 未知键一律拒收（docs/43-§四）；
- *   2. 绑定域=档案已知键封闭枚举（role/dept/level/skills/executor/status，未知拒收——
- *      docs/43-§十-5 / 51-C-7）；dept 匹配=path 全量+末段名双候选，skills 逐元素，
- *      level 字符串化（docs/43-§十-5）——「属性面=档案正文自由字典」与「行为面=已知键
- *      绑定」的边界由此定清；
- *   3. version 只收 `^x.y(.z)`（caret）与 `x.y[.z]`（精确）两形态，缺 patch 归一 .0；
- *      `^0.x` 锁 minor、`^0.0` 锁 patch；多绑定命中同一插件=约束并集，源版本须满足
- *      全部约束，无解=conflict 如实上报、**不装错版本**（docs/43-§十-6 / 51-D-1/D-2）；
- *   4. 安装目标=注入的**隔离插件根目录**——本引擎无缺省值，结构上不可能写用户 ~/.dsh
- *      （docs/43-§四；测试/daemon 各自注入 tmp/var 根）；
- *   5. 可见面：registry.json 登记 + install-log.jsonl 追加 + confirm 确认位（回调
- *      拒=false → 只出计划零落盘）——docs/43-§四「安装动作对制作人可见、可确认」；
- *   6. 缺源双面：默认 missing 进安装报告如实可见、不阻断导入（依赖清单同时是能力
- *      声明的同源数据）；failOnMissing=true 为导入侧 fail-fast 严格面（docs/43-§十-7 /
- *      51-D-3）；源=公司包内 plugins/ 目录优先，外部源按序询问（PluginSource 接口，
- *      npm/registry 源落位归正式后续单）；
- *   7. 热重载：配置指纹=sha256(dependencies.yaml 原文 ‖ 排序后启用集投影)，变化 →
- *      插件集重算+增量补装；不变 → 零动作幂等；启用集收缩**不卸载**（registry=追加
- *      事实，卸载语义归正式后续单）——docs/43-§十-8。
+ * 语义总纲（与 spike／docs/44 §v1.1 判定面逐条对齐，证据面不回退）：
+ *   1. dependencies.yaml：when:{attr,is} → plugins[{name,version}]，strictObject 未知键拒收；
+ *      绑定域=档案已知键封闭枚举（role/dept/level/skills/executor/status——51-C-7）；
+ *   2. version 只收 `^x.y(.z)` 与 `x.y[.z]`（缺 patch 归 .0；^0.x 锁 minor、^0.0 锁 patch）；
+ *      多绑定命中同一插件=约束并集，无解=conflict 如实上报、不装错版本（51-D-1/D-2）；
+ *   3. 安装目标=注入的隔离插件根，本引擎无缺省值（结构上不可能写用户 ~/.dsh）；
+ *   4. 可见面=registry.json＋install-log.jsonl＋confirm 确认位（拒=只出计划零落盘）；
+ *   5. 缺源双面：默认 missing 进报告不阻断；failOnMissing=true 为导入侧 fail-fast（51-D-3）；
+ *   6. 热重载：指纹=sha256(dependencies.yaml 原文‖排序启用集投影)，变→重算+补装，不变→零动作，
+ *      启用集收缩不卸载（registry=追加事实）——docs/43-§十-8；
+ *   7. V2 资产依赖面（本单新增）：版本并集判定 `resolveVersionUnion`＋必备资产判定
+ *      `judgeRequiredAssets`；资产清单/装载报告在 assets/（loader.ts），定义包导入在 assets/import.ts。
  *
- * 相对 spike 原型的正式化增量（主仓纪律倒逼，决策/执行语义零改动）：
- *   - 安装决策拆出零 IO 纯面 `planPluginInstalls`（输入=依赖+人员+已装快照+源快照）——
- *     对齐 validator.ts「零 IO 可进契约」的 house style（docs/08 纯逻辑纪律），契约
- *     deps 域经 `depsSubject` 消费（分工同 dir 域：契约断言语义，company 单测断言
- *     位置与 IO 细节）；
- *   - 公司包 plugins/ 源按 51-D-4 收紧 dsh 插件形态闸：package.json name/version +
- *     `dsh.bundle` 声明 + 所指 patch 文件在位（docs/34-§3.1「dsh.bundle 是 profile 层
- *     入场券」）；spike 只查 name/version（docs/44 v0 边界注记）。外部源保持宽松
- *     （注入方责任面，不合法即跳过询问下一源）。
- *
- * v1 边界（诚实标注，归后续单）：
- *   - 插件 hash 内容寻址比对（docs/43-§四「内容寻址」→ manifest 层 hash）；
- *   - 卸载语义（docs/43-§十-8：registry=追加事实）；npm/registry 外部源落位
- *     （docs/43-§十-7：PluginSource 接口已留位）。
+ * v1 边界（诚实标注，归后续单）：插件 hash 内容寻址比对、卸载语义、npm/registry 外部源落位
+ * （PluginSource 接口已留位）；V2 SCH-DEP-01 声明面待 MIG-06 端口接线。
  */
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -52,6 +28,11 @@ import path from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
 import { configInvalid } from '@studio-next/contract'
+import type {
+  RequiredAssetDecision,
+  RequiredAssetPolicy,
+  RequiredAssetUnavailable,
+} from './assets/types.ts'
 
 // ————————————————————————— 1. dependencies.yaml schema（strictObject——docs/43-§四） —————————————————————————
 
@@ -110,10 +91,8 @@ export function parseDependencies(src: string): CompanyDependencies {
 }
 
 /**
- * 非抛解析面（DEV-32 公司仓库判定器消费）：YAML 语法/结构错误不抛 CONFIG_INVALID，
- * 返回逐条 `{path, message}` issue——判定器把 C-7（when.attr 枚举域）/D-1（version 形态）/
- * B-5（dependencies.yaml 逐文件 schema）违规定位到键路径。schema 仍走 DependenciesSchema
- * 单源（与 parseDependencies 同表——判定面唯一事实源不变）。
+ * 非抛解析面（DEV-32 公司仓库判定器消费）：返回逐条 `{path, message}` issue（不抛
+ * CONFIG_INVALID），判定器据此把 C-7/D-1/B-5 违规定位到键路径；schema 仍单源。
  */
 export interface DepsParseIssue {
   path: string
@@ -188,11 +167,7 @@ export function extractPersonAttrs(orgConfigSrc: string): PersonAttrs[] {
   return out
 }
 
-/**
- * 属性候选值（docs/43-§十-5：绑定域匹配面）：
- *   dept=path 全量+末段名双候选（`is: 研发部` 是部门名而 person.dept 是 path——两形态都收）；
- *   skills=逐元素；level=字符串化；role/executor/status=单值。
- */
+/** 属性候选值（docs/43-§十-5）：dept=path 全量+末段名双候选；skills 逐元素；其余单值 */
 export function attributeCandidates(person: PersonAttrs): Partial<Record<PersonAttrName, string[]>> {
   const out: Partial<Record<PersonAttrName, string[]>> = {}
   if (person.role !== undefined) out.role = [person.role]
@@ -222,10 +197,7 @@ export function enabledPluginsFor(person: PersonAttrs, deps: CompanyDependencies
   return [...byName.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
 }
 
-/**
- * 全员需求汇总（docs/43-§十-6：多绑定命中同一插件=约束并集）：
- * 插件名 → 全部命中约束的 version 原文列表（去重、保序）。
- */
+/** 全员需求汇总（docs/43-§十-6）：插件名 → 全部命中约束原文（去重保序——约束并集输入） */
 export function demandedPlugins(deps: CompanyDependencies, persons: readonly PersonAttrs[]): Map<string, string[]> {
   const byName = new Map<string, string[]>()
   for (const person of persons) {
@@ -269,10 +241,7 @@ export function parsePlainVersion(src: string): VersionSpec | null {
   return spec !== null && spec.kind === 'exact' ? spec : null
 }
 
-/**
- * 版本判定：exact=三元组等值；caret=同 major 下界闭开区间，且
- * `^0.x` 锁 minor（0.x 内不许跨 minor）、`^0.0` 锁 patch（docs/43-§十-6 标准 caret 表）。
- */
+/** 版本判定：exact=三项等值；caret=同 major 下界闭开区间，^0.x 锁 minor、^0.0 锁 patch（51-D-1） */
 export function satisfiesSpec(spec: VersionSpec, version: string): boolean {
   const v = parsePlainVersion(version)
   if (v === null) return false
@@ -317,13 +286,7 @@ export interface PluginInstallItem {
   detail: string
 }
 
-/**
- * 安装决策（纯函数）：全员需求汇总 → 逐插件动作判定——
- *   missing=无源（docs/43-§十-7 默认面）；conflict=源版本不满足全部约束（51-D-2 不装错）；
- *   satisfied=已装版本满足全部约束（幂等零动作）；install/replace=装/换（docs/43-§四）。
- * 与 IO 无关：installCompanyPlugins 组装真实源快照后委托本函数——决策唯一实现，语义与
- * spike 决策循环逐条等价（docs/44-§v1.1 机制二判定面）。
- */
+/** 安装决策（纯函数）：missing=无源；conflict=源版本不满足全部约束（不装错）；satisfied=幂等；install/replace=装/换 */
 export function planPluginInstalls(input: PluginPlanInput): PluginInstallItem[] {
   const demanded = demandedPlugins(input.deps, input.persons)
   const planned: PluginInstallItem[] = []
@@ -474,11 +437,8 @@ async function readPluginPackageVersion(dir: string): Promise<string | null> {
 }
 
 /**
- * 公司包 plugins/<name>/ 源解析（51-D-4 形态闸——正式版收紧）：
- * 目录在位即要求合法 dsh 插件形态：package.json 的 name/version 齐备 + `dsh.bundle`
- * 声明（profile 层入场券，docs/34-§3.1）+ 所指 patch 文件在位；不符 → CONFIG_INVALID
- * （公司包内代码唯一例外=dsh 插件——docs/43-§四，形态不合法即包不合法）。无目录 →
- * null（缺源面归 missing/外部源）。spike 只查 name/version（docs/44 v0 边界注记）。
+ * 公司包 plugins/<name>/ 源解析（51-D-4 形态闸）：package.json name/version + `dsh.bundle`
+ * 声明 + 所指 patch 在位，不符即包不合法；无目录 → null（归 missing/外部源）。
  */
 async function resolvePackagePlugin(companyDir: string, name: string): Promise<{ dir: string; version: string } | null> {
   const dir = path.join(path.resolve(companyDir), 'plugins', name)
@@ -515,11 +475,9 @@ interface InstallLogEntry {
 }
 
 /**
- * 依赖清单安装（docs/43-§四「框架替他安装」；安装=落位+登记——插件目录整体复制进隔离根，
- * dsh 侧 profile patch 指向隔离根即装载，insert 条目随插件 cordis.patch.yml 旅行：
- * docs/34-§3.1 两种装法的本地相对路径形态）。
- *
- * 无依赖清单 → 空报告（能力声明语义：无绑定面=零安装，仍留日志一行）。
+ * 依赖清单安装（docs/43-§四「框架替他安装」；安装=落位+登记）：插件目录整体复制进隔离根，
+ * dsh 侧 profile patch 指向隔离根即装载，insert 条目随插件 cordis.patch.yml 旅行。
+ * 无依赖清单 → 空报告（无绑定面=零安装，仍留日志一行）。
  */
 export async function installCompanyPlugins(opts: PluginInstallOptions): Promise<PluginInstallReport> {
   const by = opts.by ?? 'producer'
@@ -635,10 +593,7 @@ export interface PluginState {
   enabled: Record<string, PluginRef[]>
 }
 
-/**
- * 配置指纹（docs/43-§十-8）：sha256(dependencies.yaml 原文 ‖ 排序后启用集投影)——
- * deps 内容与命中面任一变化都翻转指纹；排序保证投影与遍历序无关。
- */
+/** 配置指纹（docs/43-§十-8）：sha256(dependencies.yaml 原文 ‖ 排序启用集投影)；排序保证与遍历序无关 */
 export function pluginSetFingerprint(depsSrc: string, enabled: Record<string, PluginRef[]>): string {
   const projection = Object.keys(enabled)
     .sort()
@@ -657,10 +612,8 @@ export interface PluginReloadResult {
 }
 
 /**
- * 热重载同步：读 deps 原文与全员启用集 → 算指纹；与隔离根状态文件比对——
- * 指纹不变 → 零动作（不补装、不写状态、不出安装日志）；变化 → 重算+增量补装
- * （satisfied/install/replace/missing/conflict 全语义复用安装面）并落新状态。
- * 启用集收缩时已装插件保留（registry=追加事实，卸载语义归后续单——docs/43-§十-8）。
+ * 热重载同步：指纹不变 → 零动作（不补装/不写状态/不出日志）；变化 → 重算+增量补装
+ * 并落新状态；启用集收缩保留已装（registry=追加事实，卸载归后续单——docs/43-§十-8）。
  */
 export async function syncCompanyPlugins(opts: {
   companyDir: string
@@ -714,12 +667,8 @@ function asRecord(v: unknown): Record<string, unknown> | null {
 }
 
 /**
- * deps 域契约 subject：case 输入按键路由到引擎纯面——
- *   {parse: string} → parseDependencies；{enabled: {person, deps}} → enabledPluginsFor；
- *   {demanded: {deps, persons}} → demandedPlugins 投影；{satisfies: {pairs}} → 版本判定表；
- *   {plan: PluginPlanInput} → planPluginInstalls；{fingerprint: {deps, enabled}} → 指纹三态。
- * 安装执行面（隔离根落位/registry/log/confirm/failOnMissing/热重载）由 company 单测
- * dependencies.test.ts 承载——分工同 dir 域（CASES.md：契约断言语义，行号定位归单测）。
+ * deps 域契约 subject：case 输入按键路由到引擎纯面（parse/enabled/demanded/satisfies/plan/fingerprint）；
+ * 安装执行面由 company 单测 dependencies.test.ts 承载（CASES.md：契约断言语义，行号定位归单测）。
  */
 export function depsSubject(input: unknown): unknown {
   const i = asRecord(input)
@@ -772,4 +721,53 @@ export function depsSubject(input: unknown): unknown {
   }
 
   configInvalid('deps/contract-bad-input', 'deps 域 case 的 input 未命中任何路由键（parse/enabled/demanded/satisfies/plan/fingerprint）')
+}
+
+// ————————————————————————— 8. V2 资产依赖面（IMPL-05-02；v2/06 §3.4 必备资产二选一） —————————————————————————
+
+export type { RequiredAssetDecision, RequiredAssetPolicy, RequiredAssetUnavailable } from './assets/types.ts'
+
+/** 版本并集判定（零 IO）：多约束求交，只给满足全部约束的候选——绝不隐式选「最新」 */
+export interface VersionUnionResolution {
+  ok: boolean
+  satisfying: string[]
+  conflict?: string
+}
+
+/** 版本并集：任一约束无解/无候选即 conflict 如实上报（不装错版本——51-D-1/D-2） */
+export function resolveVersionUnion(specs: readonly string[], available: readonly string[]): VersionUnionResolution {
+  const parsed = specs.map(parseVersionSpec)
+  const invalid = specs.filter((_, index) => parsed[index] === null)
+  if (invalid.length > 0) return { ok: false, satisfying: [], conflict: `版本约束形态不支持：${invalid.join('、')}` }
+  const satisfying = [...new Set(available)]
+    .filter((version) => parsed.every((spec) => spec !== null && satisfiesSpec(spec, version)))
+    .sort(compareVersions)
+  return satisfying.length > 0
+    ? { ok: true, satisfying }
+    : { ok: false, satisfying: [], conflict: `无候选满足全部约束 ${specs.join('、')}（候选：${available.join('、') || '无'}）` }
+}
+
+function compareVersions(a: string, b: string): number {
+  const pa = parsePlainVersion(a)
+  const pb = parsePlainVersion(b)
+  if (pa === null || pb === null) return a < b ? -1 : a > b ? 1 : 0
+  return pa.major - pb.major || pa.minor - pb.minor || pa.patch - pb.patch
+}
+
+/**
+ * 必备资产判定（v2/06 §3.4）：缺则二选一，无第三态。缺省拒绝（fail-closed）；降级须接收方
+ * 部署者具名选择并留痕（actor/note 非空），否则拒——禁止静默降级、禁止默认可用。
+ */
+export function judgeRequiredAssets(
+  unavailable: readonly RequiredAssetUnavailable[],
+  options: { policy?: RequiredAssetPolicy; decision?: { actor: string; note: string } } = {},
+): RequiredAssetDecision {
+  const policy = options.policy ?? 'refuse'
+  if (unavailable.length === 0) return { policy, outcome: 'none', unavailable: [] }
+  if (policy === 'refuse') return { policy, outcome: 'refused', unavailable: [...unavailable] }
+  const decision = options.decision
+  if (decision === undefined || decision.actor.trim() === '' || decision.note.trim() === '') {
+    configInvalid('assets/degrade-decision-required', '必备资产不可用时降级装载须具名选择并留痕（actor/note 非空——v2/06 §3.4）；禁止静默降级')
+  }
+  return { policy, outcome: 'degraded', unavailable: [...unavailable], decision }
 }

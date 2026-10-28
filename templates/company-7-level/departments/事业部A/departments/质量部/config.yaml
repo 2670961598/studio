@@ -1,11 +1,13 @@
 # 质量部 · 部门章程与规定
 #
 # 契约依据：docs/04-§二（部门领导配置 = 本文件；leader 指向工号）
-# 生成来源：company-7-level（docs/33-§3 L7 事业部骨架）
+# V2 依据：docs/v2/03 §6.2（Dn=负责人 Gn，D9 不启用；D3-D5 最低设立层 CL8）/§6.3（部门硬核
+# 由部长上一层批准与保管，部长只改软外围）/§2.3 表 A′（未设岗权力显式归老板，不悬空）。
+# 生成来源：company-7-level（CL7 事业部骨架；结构=负责人职级决定部门 D 级——v2/03 §6.2 表 E）
 
 name: 质量部
 path: departments/事业部A/departments/质量部
-level: 7 # 部门 level=公司等级（沿 2 级模板先例）；嵌套深度看目录
+level: 7 # 部门等级 D7（=负责人 G7 拟任职级；v2/03 §6.2 表 E；D9 不启用）
 parent: departments/事业部A # 上级部门 path（根部门为 null）
 leader: QA-1 # 主管工号（指向 people/ 内人事档案）
 functions: # 部门职能

@@ -21,22 +21,26 @@
 ## 组织
 
 - 部门与人事：见 `departments/`（目录即 API，网页按约定直读）
-- 组织配置：见 `org-config.yaml`（公司与编制的唯一事实源）
+- 组织配置：见 `org-config.yaml`（组织与编制的**拟任**声明入口——拟任≠事实，v2/06 §5.1）
 
 ## 目录说明
 
 ```
-org-config.yaml        公司与编制（唯一事实源）
+org-config.yaml        组织与编制的拟任声明（拟任≠事实——v2/06 §5.1）
 charter.md             公司章程（基础规定）
 README.md              公司自述（本文件）
 departments/           部门树：每部门一个目录，内含 config.yaml 与 people/
 reports/               报表（按 <date>-<type>-<节点>-<总结>.md 约定）
 docs/                  公司文档库（规范/知识/案例）
 prompts/               公司级提示词片段（L1 层内容源）
-.studio-next.yaml      挂载元信息（schema 版本/挂载时间/最近校验）
+.studio-next.yaml      挂载元信息（定义段随包传播；戳记属部署面、传播前剥离——v2/06 §4.4）
+assets.yaml            资产清单（ASSET-01 目标文件位；本波未随模板分发——v2/16）
 ```
 
 ## 单据类型流（workflows.types[]）
+
+> 分发口径：`company-2-level` 随附 `workflows`/`hooks`/`yt` 示例段；`company-3-level`..`9-level`
+> 骨架**不随附**这些可选段（缺省走框架兜底流，需要时按 2 级模板增补——模板骨架最小面口径）。
 
 `org-config.yaml` 的 `workflows.types[]` 按单据类型声明状态链（引擎 `T:<type>` 流表键——
 类型优先于等级查表）。内置两样例：

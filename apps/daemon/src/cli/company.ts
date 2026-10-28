@@ -1,5 +1,6 @@
 // ✦ DEV-45 结构刀（studio-dev-78）：本文件自 apps/daemon/src/bin.ts L359-L576 逐字节拆出（纯移动零功能变更；核验=对 git 历史旧路径对应行区间字节一致，仅增本行头注、import 头与 export 关键字）。
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { companyAddGitUrl, deriveDirNameFromGitUrl } from '@studio-next/company'
 import { materializeCompanyRepoInput, renderRepoValidation, repoValidationJson, validateCompanyRepo } from '@studio-next/company'
@@ -9,6 +10,7 @@ import type { CreatePlatform } from '@studio-next/company'
 import { createLocalPlatform } from '@studio-next/localplatform'
 import { openLedger } from '@studio-next/store'
 import type { FlowPlatform } from '@studio-next/contract'
+import { applyOrgChangeOrder, inspectSoleWriter, parseOrgChangeOrderJson, renderSoleWriterAudit } from '../engine/company-commit/index.ts'
 import { seedJobs } from '../assembly/serve.ts'
 import { renderDaemonYamlSkeleton } from './serve.ts'
 import { cmdCompanyCheck } from './validate.ts'
@@ -289,3 +291,60 @@ export async function cmdCompanyValidate(argv: string[]): Promise<number> {
   }
 }
 
+/**
+ * company org-commit —— 公司目录运行期写路径挂点（MIG-05 / IMPL-05-06，LANE-E）
+ *
+ * 依据：plan/05 IMPL-05-06（apps/daemon/src/cli/company.ts＝写路径挂点）；docs/v2/05 §三
+ * DOM-01（唯一写入者＝daemon 挂单 commit）；docs/v2/14 §二（PORT-REG 备注「DOM-01 挂单
+ * commit 由 daemon」）。
+ *
+ * 形态：**函数入口**（本单不接子命令表/help 全文——`usage.ts` 与子命令表不属本单领土，
+ * 命令面接线归命令面另单；e2e 直调本函数作挂点证据）。语义＝引擎编排的薄壳：
+ *   - 默认：`<公司目录> --order <订单.json>` → 一次组织变更＝一个 commit，打印挂单证据；
+ *   - `--audit`：只读巡检唯一写入者（旁路写/脏树/前置缺失），发现即 exit 1；
+ *   - `--json`：机器面单行 JSON（人不混流）；
+ *   - 退出码：0＝成功/仅存无旁路（audit）；1＝拒写/发现旁路/用法错。
+ * 零交互、零网络、零库：本函数只经引擎编排写公司目录，不碰其它事实源。
+ */
+export async function cmdCompanyOrgCommit(argv: string[]): Promise<number> {
+  const parsed = parseArgv(argv, new Set(['order']), undefined, new Set(['json', 'audit']))
+  if ('error' in parsed) return usageFail('company org-commit', parsed.error, CONCISE.company)
+  const dir = parsed.positionals[0]
+  if (dir === undefined) {
+    return usageFail('company org-commit', '缺少 <公司目录>（例：studio-next company org-commit ./my-corp --order org-change.json）', CONCISE.company)
+  }
+  if (parsed.positionals.length > 1) {
+    return usageFail('company org-commit', `多余的位置参数：${parsed.positionals.slice(1).join(' ')}`, CONCISE.company)
+  }
+  const json = parsed.booleans.has('json')
+  try {
+    if (parsed.booleans.has('audit')) {
+      const audit = await inspectSoleWriter(path.resolve(dir))
+      if (json) {
+        console.log(JSON.stringify({ ok: audit.soleWriter, audit }))
+      } else {
+        console.log(renderSoleWriterAudit(audit))
+      }
+      return audit.soleWriter ? 0 : 1
+    }
+    const orderFile = parsed.flags['order']
+    if (orderFile === undefined) {
+      return usageFail('company org-commit', '缺少 --order <订单.json>（或 --audit 只读巡检）', CONCISE.company)
+    }
+    const order = parseOrgChangeOrderJson(await readFile(path.resolve(orderFile), 'utf8'))
+    const evidence = await applyOrgChangeOrder(dir, order)
+    if (json) {
+      console.log(JSON.stringify({ ok: true, evidence }))
+      return 0
+    }
+    console.log(`挂单：${evidence.status}（单号 ${evidence.orderId}）`)
+    if (evidence.commit !== null) console.log(`commit：${evidence.commit}`)
+    console.log(`改动路径：${evidence.paths.length === 0 ? '（字节无变化，未造空 commit）' : evidence.paths.join('、')}`)
+    console.log(`记录引用：${evidence.recordRefs.join('、')}`)
+    if (evidence.baseline !== null) console.log(`基线：${evidence.baseline}（首单采纳既有 HEAD）`)
+    return 0
+  } catch (err) {
+    console.error(`company org-commit 失败：${errText(err)}`)
+    return 1
+  }
+}

@@ -1,0 +1,26 @@
+# 项目组 · 部门章程与规定
+#
+# 契约依据：docs/04-§二（部门领导配置 = 本文件；leader 指向工号）
+# V2 依据：docs/v2/03 §6.2（Dn=负责人 Gn，D9 不启用；D3-D5 最低设立层 CL8）/§6.3（部门硬核
+# 由部长上一层批准与保管，部长只改软外围）/§2.3 表 A′（未设岗权力显式归老板，不悬空）。
+# 生成来源：company-9-level（CL9 控股骨架）；CL8 部门嵌套深度≥3 的第三层（D4：负责人 G4；D3-D5 最低设立层 CL8）
+
+name: 项目组
+path: departments/子公司A/departments/研发部/departments/项目组
+level: 4 # 部门等级 D4（=负责人 G4 拟任职级；v2/03 §6.2 表 E）
+parent: departments/子公司A/departments/研发部 # 上级部门 path
+leader: OPS-1 # 主管工号（指向 people/ 内人事档案）
+functions: # 部门职能
+  - 交付
+lanes: # 泳道：资源标签 + 并行开发单元（一泳道一 worker 一分支）
+  - core
+reports_to: departments/子公司A/departments/研发部 # 汇报线：本部门向哪个节点汇报
+
+# 部门规定（部门内部规则；不得与 charter.md 的红线冲突——部门硬核由上一层批准保管）
+rules:
+  - 一切交付以落盘证据为准（REPORT + 闸门 exit=0）
+  - 在途单一律挂泳道租约，忙则顺延不抢锁
+  - 部门自改硬核（章程/预算上限/验收口径/部门审计）无效——v2/03 §6.3
+
+# 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}
+relations: []

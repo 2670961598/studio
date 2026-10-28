@@ -1,10 +1,12 @@
 # 工程部 · 部门章程与规定
 #
 # 契约依据：docs/04-§二（部门领导配置 = 本文件；leader 指向工号）
+# V2 依据：docs/v2/03 §6.2（Dn=负责人 Gn，D9 不启用；D3-D5 最低设立层 CL8）/§6.3（部门硬核
+# 由部长上一层批准与保管，部长只改软外围）/§2.3 表 A′（未设岗权力显式归老板，不悬空）。
 
 name: 工程部
 path: departments/工程部
-level: 2 # 部门层级 = 目录嵌套深度；9 级为最长链，不是每部门都要到 9
+level: 2 # 部门等级 D2（=负责人 G2 拟任职级；v2/03 §6.2 表 E；D9 不启用）
 parent: null # 上级部门 path（根部门为 null）
 leader: AGENT-1 # 主管工号（指向 people/ 内人事档案）
 functions: # 部门职能
@@ -25,4 +27,4 @@ relations: []
 # 本部门名下的定时岗（清单与 org-config.yaml 的 jobs 段保持一致）
 jobs:
   - health-patrol-工程部
-  - daily-report-工程部 # 日报岗：每日汇总叶子节点产出（D9 通用模型的一个实例）
+  - daily-report-工程部 # 日报岗：每日汇总叶子节点产出（定时岗通用模型的一个实例）

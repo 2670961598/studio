@@ -1,11 +1,12 @@
 ---
-# 人事档案 front-matter（契约：docs/01-需求-公司面.md C2-04 / docs/04-§二）
+# 人事档案 front-matter（契约：docs/v2/06 §4.1（人员档案=提示词资产面）/§5.1（拟任≠事实）；
+# 工号=文件名=永不变主键；六节固定格式见 v2/06 §四.1）
 id: NET-2 # 工号 = 文件名 = 永不变主键
 name: 前端工程师
 login: net-web # YouTrack 账号锚点（账号=等级锚点，工号=人）
 level: 2
 dept: departments/研发部
-role: 前端工程师 # 依赖清单 role 命中位：role=前端工程师 → dsh-web-test（dependencies.yaml）
+role: 前端工程师
 reports_to: NET-1 # 汇报线（上级工号）
 skills: [typescript, react] # 技能本体（内部工种映射，不用自由文本）
 side_effects: [写盘] # 副作用等级，防派错工

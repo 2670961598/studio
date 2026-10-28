@@ -1,12 +1,47 @@
-# Studio Next · 公司组织配置（org-config.yaml）—— company-7-level（事业部骨架）
+# Studio Next · 公司组织配置（org-config.yaml）—— company-7-level（CL7 事业部骨架）
 #
-# 逐级部门表依据：docs/33-§3（L7 事业部）；生成器 packages/company/src/gen-template.ts
-# （结构源=level-specs.ts，花名种子=company-7-level 冻结——手改本文件会被再生成覆盖）
-# 契约依据：docs/04-公司目录与等级体系.md §二；校验规则见 packages/company zod schema。
+# V2 依据（唯一主表，本文件不复制矩阵本体）：
+#   - docs/v2/03 §2.2 表 A（CL2-CL9 必设矩阵）／§2.3 表 A′（保留权力：未设岗权力显式归老板）
+#     ／§2.4（CL 判据=在编结构事实，「只改 level 字段」无效）／§6.2 表 E（部门 D 族：
+#     Dn=负责人 Gn，D9 不启用；D3-D5 最低设立层 CL8，D6=CL6，D7=CL5，D8=CL4）／§7.2（组织变更）
+#   - docs/v2/06 §5.1（拟任≠事实）／§5.2（CL 只是主张；包内不复制表 A 本体）／§六（模板=生成物源，
+#     不是公司包本体；以模板初始化≠公司已设立）
+#   - docs/v2/10 §4.3（SCH-ORG-01 字段表）／§3.3（schema 字面量=迁移期绑定标识，V2 替代为 schemaRef）
 #
-# 骨架口径（双口径）：编制目标 600-1500 人、跨度 7-10——本模板只放 13 名
-# 骨架（负责人＋单岗＋代表执行）；填满编制归 company create 向导（docs/36-§4 M-B）。
-# 示范要点：事业部内嵌研发/质量闭环（A 双嵌、B 单嵌）＋集团职能（人事/财务/审计/战略/平台工程）
+# 拟任声明（v2/06 §5.1）：本文件只登记**拟任**——最高宰相（G9）与各级人员皆为拟任安排；任命是否
+# 生效、任职是否接受、谁实际在编，归记录（v2/11），不由本文件断言。设立=外部老板的设立记录＋
+# root_delegation（v2/03 §3.1）；模板只产目录，不构成设立。
+#
+# CL 主张（v2/03 §2.4）：company.level=7 只是主张；判据=在编结构可满足的最高层判据。
+# 本骨架声明 CL7 事业部骨架；结构下限（表 A CL7 行）：
+#   - 最高宰相 G9（拟任）
+#   - 一级单元 N≥1（本示例 N=2；默认仍为 1）
+#   - 执行成员 G2-G1 正式任职
+#   - G8 部长与第二个 D8 部门在编
+#   - 中间层 G7 与 G6 在编
+#   - D7 子部门在编（部门内嵌套，CL7 判据）
+#   - 专职部门审计位置在编（审计合规部，CL7 判据）
+#   - 部门审计制度（周期记录；本骨架由 audit-cycle 定时岗承载）
+# 保留（可不设，缺位时权力按表 A′ 显式归老板；本文件不复制表 A′ 正文）：未列出的更高岗位。
+#
+# 一级单元 N（GAP-V2-17；v2/06 §5.2）：N≥1，**默认 1**。N 是**设立记录参数**，不是本文件字段
+# （SCH-ORG-01 无 unitCount/units 字段——docs/v2/10 §4.3；本波按记录面方案定形，MIG-05 入口；
+# MIG-03 未冻结该字段）。unitCount/units[]/domain/headRef/vacancyState 的记录面承载见投影输入
+# 边界（ParsedUnit），本文件不新增 YAML 键。
+# 本模板结构示例 N（示例）= 2（单元域=事业部A（研发交付/质量）、事业部B（研发交付）；N=2 仅示例，默认 1）——**示例不是规范**：
+# 「三省」N=3 只是示例；任何 N 由设立记录确认；增删单元=组织变更（v2/03 §7.2），不靠改字段。
+#
+# 部门结构（v2/03 §6.2 表 E）：本骨架部门等级 D8×6（总部职能）＋D7（事业部A、A/研发部、A/质量部、事业部B）＋D6（B/研发部）
+# 最高宰相为**公司层岗位**（不在部门硬核内）：people[].dept 仅作派工索引挂靠，不参与部门 Dn 判定。
+#
+# 部门审计制度（CL4 起必设的周期记录）：由审计岗/公司级审计岗按周期产出审计记录（本文件只声明
+# 拟任与定时岗；审计记录归台账 v2/11，审计者≠本次评价者——v2/03 §4.2/§4.3）。
+#
+# 缺口登记 DEC-OPEN-16（软阻断，未裁）：解散/清算是否纳入公司硬核**未决**——本模板与
+# charter.md **不写**解散/清算条款（不预设裁决结果）；裁决落卷后按批示流补条款并留痕。
+#
+# 字节惰性（v2/06 §2.2／v2/10 §4.8）：全模板除 plugins/ 下 DSH 插件（资产部专属资产位）外均为
+# 纯配置/人读文本，不含脚本、宿主命令、自动执行钩子、本机路径或秘密值。
 
 schema: studio-next/org@1 # 本文件的 schema 版本（须与 .studio-next.yaml 的 schema 一致）
 
@@ -15,100 +50,101 @@ company:
   slug: example-corp # 目录 slug（init 替换占位）；概览路由 http://<host>:8789/<slug>/...
   mission: 用一条可验证的交付链，把需求变成有证据的产出 # 使命（L1）
   charter_ref: charter.md # 公司章程路径（相对公司目录根）
-  level: 7 # 公司等级 2-9（docs/33-§3 L7 事业部）
-  level_distribution: # 等级分布（骨架实数，与 people[].level 逐档相等；编制目标另见顶部双口径注记）
-    4: 2
-    5: 3
-    6: 7
-    7: 1
+  level: 7 # CL 主张（判据=结构事实，v2/03 §2.4；「只改 level 字段」无效）
+  level_distribution: # 拟任人数按 G 档实数（与 people[].level 逐档相等——投影规则）
+    2: 1
+    6: 1
+    7: 4
+    8: 6
+    9: 1
 
 # 部门索引：部门领导 = 该部门 config.yaml 的 leader；部门成员 = people/ 内档案
-# dept.level = 公司等级（沿 2 级模板先例）；部门嵌套深度看目录（8 根部门）
+# dept.level = Dn（=负责人 Gn；v2/03 §6.2 表 E；D9 不启用）；嵌套深度看目录（8 根部门）
 departments:
   - name: 事业部A
     path: departments/事业部A # 相对本目录根；即该部门的目录
     leader: BU-1 # 主管工号（指向 people 索引与人事档案）
-    level: 7
+    level: 7 # D7（=负责人 G7 拟任职级——v2/03 §6.2 表 E；D9 不启用）
     parent: null # 上级部门 path；根部门为 null
     lanes: [core] # 泳道 = 资源标签 + 并行开发单元（锁粒度）
     functions: [经营] # 部门职能
     relations: [] # 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}（C2-02）
   - name: 研发部
     path: departments/事业部A/departments/研发部 # 相对本目录根；即该部门的目录
-    leader: ENG-1
-    level: 7
+    leader: ENG-1 # 主管工号（指向 people 索引与人事档案）
+    level: 7 # D7（=负责人 G7 拟任职级——v2/03 §6.2 表 E；D9 不启用）
     parent: departments/事业部A # 上级部门 path；根部门为 null
     lanes: [core] # 泳道 = 资源标签 + 并行开发单元（锁粒度）
     functions: [交付] # 部门职能
     relations: [] # 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}（C2-02）
   - name: 质量部
     path: departments/事业部A/departments/质量部 # 相对本目录根；即该部门的目录
-    leader: QA-1
-    level: 7
+    leader: QA-1 # 主管工号（指向 people 索引与人事档案）
+    level: 7 # D7（=负责人 G7 拟任职级——v2/03 §6.2 表 E；D9 不启用）
     parent: departments/事业部A # 上级部门 path；根部门为 null
     lanes: [qa] # 泳道 = 资源标签 + 并行开发单元（锁粒度）
     functions: [质量] # 部门职能
     relations: [] # 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}（C2-02）
   - name: 事业部B
     path: departments/事业部B # 相对本目录根；即该部门的目录
-    leader: BU-2
-    level: 7
+    leader: BU-2 # 主管工号（指向 people 索引与人事档案）
+    level: 7 # D7（=负责人 G7 拟任职级——v2/03 §6.2 表 E；D9 不启用）
     parent: null # 上级部门 path；根部门为 null
     lanes: [core] # 泳道 = 资源标签 + 并行开发单元（锁粒度）
     functions: [经营] # 部门职能
     relations: [] # 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}（C2-02）
   - name: 研发部
     path: departments/事业部B/departments/研发部 # 相对本目录根；即该部门的目录
-    leader: ENG-3
-    level: 7
+    leader: ENG-3 # 主管工号（指向 people 索引与人事档案）
+    level: 6 # D6（=负责人 G6 拟任职级——v2/03 §6.2 表 E；D9 不启用）
     parent: departments/事业部B # 上级部门 path；根部门为 null
     lanes: [core] # 泳道 = 资源标签 + 并行开发单元（锁粒度）
     functions: [交付] # 部门职能
     relations: [] # 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}（C2-02）
   - name: 人事部
     path: departments/人事部 # 相对本目录根；即该部门的目录
-    leader: HR-0
-    level: 7
+    leader: HR-0 # 主管工号（指向 people 索引与人事档案）
+    level: 8 # D8（=负责人 G8 拟任职级——v2/03 §6.2 表 E；D9 不启用）
     parent: null # 上级部门 path；根部门为 null
     lanes: [ops] # 泳道 = 资源标签 + 并行开发单元（锁粒度）
     functions: [人事] # 部门职能
     relations: [] # 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}（C2-02）
   - name: 财务部
     path: departments/财务部 # 相对本目录根；即该部门的目录
-    leader: FIN-0
-    level: 7
+    leader: FIN-0 # 主管工号（指向 people 索引与人事档案）
+    level: 8 # D8（=负责人 G8 拟任职级——v2/03 §6.2 表 E；D9 不启用）
     parent: null # 上级部门 path；根部门为 null
     lanes: [ops] # 泳道 = 资源标签 + 并行开发单元（锁粒度）
     functions: [财务] # 部门职能
     relations: [] # 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}（C2-02）
   - name: 审计合规部
     path: departments/审计合规部 # 相对本目录根；即该部门的目录
-    leader: AUD-0
-    level: 7
+    leader: AUD-0 # 主管工号（指向 people 索引与人事档案）
+    level: 8 # D8（=负责人 G8 拟任职级——v2/03 §6.2 表 E；D9 不启用）
     parent: null # 上级部门 path；根部门为 null
     lanes: [audit] # 泳道 = 资源标签 + 并行开发单元（锁粒度）
     functions: [审计] # 部门职能
     relations: [] # 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}（C2-02）
   - name: 战略部
     path: departments/战略部 # 相对本目录根；即该部门的目录
-    leader: INT-0
-    level: 7
+    leader: INT-0 # 主管工号（指向 people 索引与人事档案）
+    level: 8 # D8（=负责人 G8 拟任职级——v2/03 §6.2 表 E；D9 不启用）
     parent: null # 上级部门 path；根部门为 null
     lanes: [intel] # 泳道 = 资源标签 + 并行开发单元（锁粒度）
     functions: [战略] # 部门职能
     relations: [] # 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}（C2-02）
   - name: 平台工程部
     path: departments/平台工程部 # 相对本目录根；即该部门的目录
-    leader: PF-0
-    level: 7
+    leader: PF-0 # 主管工号（指向 people 索引与人事档案）
+    level: 8 # D8（=负责人 G8 拟任职级——v2/03 §6.2 表 E；D9 不启用）
     parent: null # 上级部门 path；根部门为 null
     lanes: [platform] # 泳道 = 资源标签 + 并行开发单元（锁粒度）
     functions: [平台工程] # 部门职能
     relations: [] # 跨部门关系：{to, type∈联签|下游交付|共享泳道, protocol}（C2-02）
   - name: 综合部
     path: departments/综合部 # 相对本目录根；即该部门的目录
-    leader: PRIME-0
-    level: 7
+    leader: EXT-1 # 主管工号（指向 people 索引与人事档案）
+    level: 8 # D8（=负责人 G8 拟任职级——v2/03 §6.2 表 E；D9 不启用）
     parent: null # 上级部门 path；根部门为 null
     lanes: [ops] # 泳道 = 资源标签 + 并行开发单元（锁粒度）
     functions: [管理, 对外] # 部门职能
@@ -119,9 +155,9 @@ people:
   - id: PRIME-0 # 工号 = 文件名 = 永不变主键
     name: 松窗
     login: prime-0 # YouTrack 账号锚点（账号=等级锚点，工号=人）
-    level: 7
+    level: 9
     dept: departments/综合部
-    role: 总裁 # 岗位（岗位 → 模型档映射见框架级 models.yaml）
+    role: 最高宰相
     reports_to: null # 汇报线（上级工号）
     skills: [管理] # 技能本体（内部工种映射表，不用自由文本）
     status: active # active | paused | retired（只改状态不删号，历史不悬空）
@@ -130,9 +166,9 @@ people:
   - id: EXT-1
     name: 缓篁
     login: ext-1
-    level: 4
+    level: 8
     dept: departments/综合部
-    role: 对外（单岗）
+    role: 综合部负责人（对外）
     reports_to: PRIME-0
     skills: [对外]
     status: active
@@ -141,7 +177,7 @@ people:
   - id: BU-1
     name: 溪径
     login: bu-1
-    level: 6
+    level: 7
     dept: departments/事业部A
     role: 事业部A 总经理
     reports_to: PRIME-0
@@ -152,7 +188,7 @@ people:
   - id: ENG-1
     name: 野檐
     login: eng-1
-    level: 5
+    level: 7
     dept: departments/事业部A/departments/研发部
     role: 研发部长（A）
     reports_to: BU-1
@@ -163,7 +199,7 @@ people:
   - id: ENG-2
     name: 屿径
     login: eng-2
-    level: 4
+    level: 2
     dept: departments/事业部A/departments/研发部
     role: 程序工程师
     reports_to: ENG-1
@@ -174,7 +210,7 @@ people:
   - id: QA-1
     name: 直檐
     login: qa-1
-    level: 5
+    level: 7
     dept: departments/事业部A/departments/质量部
     role: 质量部长（A）
     reports_to: BU-1
@@ -185,7 +221,7 @@ people:
   - id: BU-2
     name: 松钟
     login: bu-2
-    level: 6
+    level: 7
     dept: departments/事业部B
     role: 事业部B 总经理
     reports_to: PRIME-0
@@ -196,7 +232,7 @@ people:
   - id: ENG-3
     name: 星隼
     login: eng-3
-    level: 5
+    level: 6
     dept: departments/事业部B/departments/研发部
     role: 研发部长（B）
     reports_to: BU-2
@@ -207,7 +243,7 @@ people:
   - id: HR-0
     name: 听杉
     login: hr-0
-    level: 6
+    level: 8
     dept: departments/人事部
     role: 人事部长
     reports_to: PRIME-0
@@ -218,7 +254,7 @@ people:
   - id: FIN-0
     name: 澈亭
     login: fin-0
-    level: 6
+    level: 8
     dept: departments/财务部
     role: 财务部长
     reports_to: PRIME-0
@@ -229,9 +265,9 @@ people:
   - id: AUD-0
     name: 澄桥
     login: aud-0
-    level: 6
+    level: 8
     dept: departments/审计合规部
-    role: 审计合规部长
+    role: 审计合规部长（专职部门审计位置）
     reports_to: PRIME-0
     skills: [审计]
     status: active
@@ -240,7 +276,7 @@ people:
   - id: INT-0
     name: 岚隼
     login: int-0
-    level: 6
+    level: 8
     dept: departments/战略部
     role: 战略部长
     reports_to: PRIME-0
@@ -251,7 +287,7 @@ people:
   - id: PF-0
     name: 岚亭
     login: pf-0
-    level: 6
+    level: 8
     dept: departments/平台工程部
     role: 平台工程部长
     reports_to: PRIME-0
@@ -260,22 +296,22 @@ people:
     executor: dsh
     file: departments/平台工程部/people/PF-0.md
 
-# 定时岗清单（D9 通用模型）：每个根部门 2 岗——health-patrol-<部门>（巡查：结构性零产出，
+# 定时岗清单（定时岗通用模型）：每个根部门 2 岗——health-patrol-<部门>（巡查：结构性零产出，
 # 不声明 output——127-A）＋ daily-report-<部门>（日报）；shape 沿 2 级模板。
 jobs:
   - id: health-patrol-事业部A # 巡查岗：5 分钟巡逻（巡检台账/在途/心跳，随事件留痕）
     dept: departments/事业部A
     cron: "*/5 * * * *" # 每 5 分钟（本地时区）
-    role: 事业部A 总经理 # 岗位
-    level: 7 # 该岗等级
+    role: 事业部A 总经理 # 岗位（随部门负责人拟任岗位）
+    level: 7 # 该岗等级（随部门负责人拟任职级）
     type: patrol # patrol×output=结构性零产出，不声明 output（127-A）
     model_tier: low
     budget_cap: 1 # USD/次
   - id: daily-report-事业部A # 日报岗：每日汇总叶子节点产出
     dept: departments/事业部A # 所属部门节点
     cron: "0 18 * * *" # 本地时区
-    role: 事业部A 总经理 # 岗位
-    level: 7 # 该岗等级
+    role: 事业部A 总经理 # 岗位（随部门负责人拟任岗位）
+    level: 7 # 该岗等级（随部门负责人拟任职级）
     type: report # 任务类型（report | audit | ...，自由扩展，框架不写死）
     model_tier: low # 模型档：high | mid | low
     budget_cap: 2 # 预算帽（USD/次；预留-结算，超额在调用前拒绝）
@@ -283,16 +319,16 @@ jobs:
   - id: health-patrol-事业部B
     dept: departments/事业部B
     cron: "*/5 * * * *" # 每 5 分钟（本地时区）
-    role: 事业部B 总经理 # 岗位
-    level: 7 # 该岗等级
+    role: 事业部B 总经理 # 岗位（随部门负责人拟任岗位）
+    level: 7 # 该岗等级（随部门负责人拟任职级）
     type: patrol
     model_tier: low
     budget_cap: 1 # USD/次
   - id: daily-report-事业部B
     dept: departments/事业部B # 所属部门节点
     cron: "0 18 * * *" # 本地时区
-    role: 事业部B 总经理 # 岗位
-    level: 7 # 该岗等级
+    role: 事业部B 总经理 # 岗位（随部门负责人拟任岗位）
+    level: 7 # 该岗等级（随部门负责人拟任职级）
     type: report # 任务类型（report | audit | ...，自由扩展，框架不写死）
     model_tier: low # 模型档：high | mid | low
     budget_cap: 2 # 预算帽（USD/次；预留-结算，超额在调用前拒绝）
@@ -300,16 +336,16 @@ jobs:
   - id: health-patrol-人事部
     dept: departments/人事部
     cron: "*/5 * * * *" # 每 5 分钟（本地时区）
-    role: 人事部长 # 岗位
-    level: 7 # 该岗等级
+    role: 人事部长 # 岗位（随部门负责人拟任岗位）
+    level: 8 # 该岗等级（随部门负责人拟任职级）
     type: patrol
     model_tier: low
     budget_cap: 1 # USD/次
   - id: daily-report-人事部
     dept: departments/人事部 # 所属部门节点
     cron: "0 18 * * *" # 本地时区
-    role: 人事部长 # 岗位
-    level: 7 # 该岗等级
+    role: 人事部长 # 岗位（随部门负责人拟任岗位）
+    level: 8 # 该岗等级（随部门负责人拟任职级）
     type: report # 任务类型（report | audit | ...，自由扩展，框架不写死）
     model_tier: low # 模型档：high | mid | low
     budget_cap: 2 # 预算帽（USD/次；预留-结算，超额在调用前拒绝）
@@ -317,16 +353,16 @@ jobs:
   - id: health-patrol-财务部
     dept: departments/财务部
     cron: "*/5 * * * *" # 每 5 分钟（本地时区）
-    role: 财务部长 # 岗位
-    level: 7 # 该岗等级
+    role: 财务部长 # 岗位（随部门负责人拟任岗位）
+    level: 8 # 该岗等级（随部门负责人拟任职级）
     type: patrol
     model_tier: low
     budget_cap: 1 # USD/次
   - id: daily-report-财务部
     dept: departments/财务部 # 所属部门节点
     cron: "0 18 * * *" # 本地时区
-    role: 财务部长 # 岗位
-    level: 7 # 该岗等级
+    role: 财务部长 # 岗位（随部门负责人拟任岗位）
+    level: 8 # 该岗等级（随部门负责人拟任职级）
     type: report # 任务类型（report | audit | ...，自由扩展，框架不写死）
     model_tier: low # 模型档：high | mid | low
     budget_cap: 2 # 预算帽（USD/次；预留-结算，超额在调用前拒绝）
@@ -334,16 +370,16 @@ jobs:
   - id: health-patrol-审计合规部
     dept: departments/审计合规部
     cron: "*/5 * * * *" # 每 5 分钟（本地时区）
-    role: 审计合规部长 # 岗位
-    level: 7 # 该岗等级
+    role: 审计合规部长（专职部门审计位置） # 岗位（随部门负责人拟任岗位）
+    level: 8 # 该岗等级（随部门负责人拟任职级）
     type: patrol
     model_tier: low
     budget_cap: 1 # USD/次
   - id: daily-report-审计合规部
     dept: departments/审计合规部 # 所属部门节点
     cron: "0 18 * * *" # 本地时区
-    role: 审计合规部长 # 岗位
-    level: 7 # 该岗等级
+    role: 审计合规部长（专职部门审计位置） # 岗位（随部门负责人拟任岗位）
+    level: 8 # 该岗等级（随部门负责人拟任职级）
     type: report # 任务类型（report | audit | ...，自由扩展，框架不写死）
     model_tier: low # 模型档：high | mid | low
     budget_cap: 2 # 预算帽（USD/次；预留-结算，超额在调用前拒绝）
@@ -351,16 +387,16 @@ jobs:
   - id: health-patrol-战略部
     dept: departments/战略部
     cron: "*/5 * * * *" # 每 5 分钟（本地时区）
-    role: 战略部长 # 岗位
-    level: 7 # 该岗等级
+    role: 战略部长 # 岗位（随部门负责人拟任岗位）
+    level: 8 # 该岗等级（随部门负责人拟任职级）
     type: patrol
     model_tier: low
     budget_cap: 1 # USD/次
   - id: daily-report-战略部
     dept: departments/战略部 # 所属部门节点
     cron: "0 18 * * *" # 本地时区
-    role: 战略部长 # 岗位
-    level: 7 # 该岗等级
+    role: 战略部长 # 岗位（随部门负责人拟任岗位）
+    level: 8 # 该岗等级（随部门负责人拟任职级）
     type: report # 任务类型（report | audit | ...，自由扩展，框架不写死）
     model_tier: low # 模型档：high | mid | low
     budget_cap: 2 # 预算帽（USD/次；预留-结算，超额在调用前拒绝）
@@ -368,16 +404,16 @@ jobs:
   - id: health-patrol-平台工程部
     dept: departments/平台工程部
     cron: "*/5 * * * *" # 每 5 分钟（本地时区）
-    role: 平台工程部长 # 岗位
-    level: 7 # 该岗等级
+    role: 平台工程部长 # 岗位（随部门负责人拟任岗位）
+    level: 8 # 该岗等级（随部门负责人拟任职级）
     type: patrol
     model_tier: low
     budget_cap: 1 # USD/次
   - id: daily-report-平台工程部
     dept: departments/平台工程部 # 所属部门节点
     cron: "0 18 * * *" # 本地时区
-    role: 平台工程部长 # 岗位
-    level: 7 # 该岗等级
+    role: 平台工程部长 # 岗位（随部门负责人拟任岗位）
+    level: 8 # 该岗等级（随部门负责人拟任职级）
     type: report # 任务类型（report | audit | ...，自由扩展，框架不写死）
     model_tier: low # 模型档：high | mid | low
     budget_cap: 2 # 预算帽（USD/次；预留-结算，超额在调用前拒绝）
@@ -385,44 +421,59 @@ jobs:
   - id: health-patrol-综合部
     dept: departments/综合部
     cron: "*/5 * * * *" # 每 5 分钟（本地时区）
-    role: 总裁 # 岗位
-    level: 7 # 该岗等级
+    role: 综合部负责人（对外） # 岗位（随部门负责人拟任岗位）
+    level: 8 # 该岗等级（随部门负责人拟任职级）
     type: patrol
     model_tier: low
     budget_cap: 1 # USD/次
   - id: daily-report-综合部
     dept: departments/综合部 # 所属部门节点
     cron: "0 18 * * *" # 本地时区
-    role: 总裁 # 岗位
-    level: 7 # 该岗等级
+    role: 综合部负责人（对外） # 岗位（随部门负责人拟任岗位）
+    level: 8 # 该岗等级（随部门负责人拟任职级）
     type: report # 任务类型（report | audit | ...，自由扩展，框架不写死）
     model_tier: low # 模型档：high | mid | low
     budget_cap: 2 # 预算帽（USD/次；预留-结算，超额在调用前拒绝）
     output: reports/综合部/ # 产出落点（报表按 <date>-<type>-<节点>-<总结>.md 命名）
 
 # YouTrack 账号锚点映射（账号=等级锚点，不随新增公司而新增账号）——根部门负责人
+  - id: audit-cycle-审计合规部 # 部门审计制度（CL4 起必设的周期记录；审计者≠本次评价者——v2/03 §4.2/§4.3）
+    dept: departments/审计合规部
+    triggers:
+      cadence: monthly
+      at: "05:00"
+    role: 审计合规部长（专职部门审计位置）
+    level: 8
+    type: audit # 审计周期岗：周期记录入台账（记录面归 v2/11；岗位只声明拟任）
+    model_tier: low
+    budget_cap: 2 # 预算帽（USD/次；预留-结算）
+    output: reports/审计合规部/ # 产出落点
+
 accounts:
   - login: bu-1
     level: 7 # 账号锚定的等级（与人档案的工号解耦）
-    note: 事业部A 总经理（事业部A负责人）
+    note: 事业部A负责人等级锚点（拟任岗位：事业部A 总经理）
   - login: bu-2
     level: 7 # 账号锚定的等级（与人档案的工号解耦）
-    note: 事业部B 总经理（事业部B负责人）
+    note: 事业部B负责人等级锚点（拟任岗位：事业部B 总经理）
   - login: hr-0
-    level: 7 # 账号锚定的等级（与人档案的工号解耦）
-    note: 人事部长（人事部负责人）
+    level: 8 # 账号锚定的等级（与人档案的工号解耦）
+    note: 人事部负责人等级锚点（拟任岗位：人事部长）
   - login: fin-0
-    level: 7 # 账号锚定的等级（与人档案的工号解耦）
-    note: 财务部长（财务部负责人）
+    level: 8 # 账号锚定的等级（与人档案的工号解耦）
+    note: 财务部负责人等级锚点（拟任岗位：财务部长）
   - login: aud-0
-    level: 7 # 账号锚定的等级（与人档案的工号解耦）
-    note: 审计合规部长（审计合规部负责人）
+    level: 8 # 账号锚定的等级（与人档案的工号解耦）
+    note: 审计合规部负责人等级锚点（拟任岗位：审计合规部长（专职部门审计位置））
   - login: int-0
-    level: 7 # 账号锚定的等级（与人档案的工号解耦）
-    note: 战略部长（战略部负责人）
+    level: 8 # 账号锚定的等级（与人档案的工号解耦）
+    note: 战略部负责人等级锚点（拟任岗位：战略部长）
   - login: pf-0
-    level: 7 # 账号锚定的等级（与人档案的工号解耦）
-    note: 平台工程部长（平台工程部负责人）
-  - login: prime-0
-    level: 7 # 账号锚定的等级（与人档案的工号解耦）
-    note: 总裁（综合部负责人）
+    level: 8 # 账号锚定的等级（与人档案的工号解耦）
+    note: 平台工程部负责人等级锚点（拟任岗位：平台工程部长）
+  - login: ext-1
+    level: 8 # 账号锚定的等级（与人档案的工号解耦）
+    note: 综合部负责人等级锚点（拟任岗位：综合部负责人（对外））
+  - login: prime-0 # 最高宰相账号锚点（G9 恒定——v2/03 表 A）
+    level: 9 # 账号锚定的等级（与人档案的工号解耦）
+    note: 最高宰相（内部老板；拟任）

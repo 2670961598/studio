@@ -1,7 +1,11 @@
 # Studio Next 挂载元信息（.studio-next.yaml）
 #
+# 定义描述段（schema/template）随公开定义传播；挂载戳记段（created_at/last_validated_at/
+# last_validation/framework_version）属部署面状态，**传播前剥离**——v2/06 §4.4、v2/10 §4.7。
+# 本波保留戳记占位以兼容 init 通道（init 负责写戳记；剥离与仓库规范收口归 v2/16）。
 # 由框架维护：挂载时间与最近校验结果由 daemon 写入（挂单 commit 留痕），人工不要手改。
-# 契约依据：docs/04-§二 / §九（公司目录 schema 版本迁移由 daemon 执行，可 git revert）
+# schema 与 org-config.yaml 同源；schema 字面量为迁移期绑定标识（v2/10 §3.3），
+# V2 正式替代为 SCH-PKG-01 的 schemaRef（v2/10 §4.1）。
 
 schema: org-config/v1 # 公司目录 schema 版本（须与 org-config.yaml 的 schema 一致）
 template: company-2-level # 生成本目录所用的模板名

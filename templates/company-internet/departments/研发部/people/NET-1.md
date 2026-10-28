@@ -1,11 +1,12 @@
 ---
-# 人事档案 front-matter（契约：docs/01-需求-公司面.md C2-04 / docs/04-§二）
+# 人事档案 front-matter（契约：docs/v2/06 §4.1（人员档案=提示词资产面）/§5.1（拟任≠事实）；
+# 工号=文件名=永不变主键；六节固定格式见 v2/06 §四.1）
 id: NET-1 # 工号 = 文件名 = 永不变主键
 name: 全栈工程师
 login: net-eng # YouTrack 账号锚点（账号=等级锚点，工号=人）
-level: 3
+level: 2
 dept: departments/研发部
-role: 研发负责人 # 依赖清单 role 命中位（docs/43-§四：属性决定插件开关）
+role: 研发负责人
 reports_to: null # 汇报线（上级工号）
 skills: [typescript, nodejs] # 技能本体（内部工种映射，不用自由文本）
 side_effects: [写盘] # 副作用等级（写库/改单/对外发言），防派错工

@@ -525,3 +525,21 @@ mise exec -- node scripts/verify/old-test-ledger.mjs
 | `packages/store/test/v9-pricing.test.ts` | 红 | 3/26 | 断言 | 同上 | 保留观察 | V2 后存废门 |
 
 **复跑命令**：`mise exec -- node_modules/.bin/vitest run packages/store --reporter=json --outputFile=/tmp/store-old-vitest.json`；实测 13 红文件 / 27 红用例 / 其余全绿（exit 1）。**不修、不删、不 skip**；V2 门不以此表判。
+
+---
+
+## 八、MIG-05 触及面复跑补充登记（2026-10-28）
+
+> 性质：**MIG-05 模板迁移触及面旧测试复跑登记**（plan/04 §1.8.5-4；红也登记、不阻塞 V2 门）。不属 §二 209 行冻结主表，不参与 209/13/20 计数。
+> 触发：MIG-05 把 8 层级 + game/internet 模板迁到 v2 结构；旧生成器/夹具仍按 v1 精确清单断言。
+> 归属：**模板结构迁移导致**；生成器 v1 漂移已登记 **GAP-V2-18**（重写/退役前不得再生成）；旧测试不修、不删、不 skip。
+
+| 文件 | 复跑结果 | 红用例 | 失败类 | 原因 | 处置 | 责任波 |
+|---|---|---|---|---|---|---|
+| `packages/company/test/gen-template.test.ts` | 红 | 7 | 断言 | 生成器仍 v1，产出与 v2 模板不一致 | 保留观察 | GAP-V2-18 |
+| `packages/company/test/industry-templates.test.ts` | 红 | 2 | 断言 | people 精确清单新增 PRIME-0 | 保留观察 | V2 后存废门 |
+| `packages/company/test/init.test.ts` | 红 | 2＋1 timeout | 断言/超时 | 2 级文件集 9→10、5 级 jobs 12→13；spawn 5s 超时族 | 保留观察 | V2 后存废门 |
+| `packages/company/test/create.test.ts` | 红 | 1 | 断言 | AIWS 工位 1→2 | 保留观察 | V2 后存废门 |
+| `packages/company/test/multifile.test.ts` | 红 | 1 | 断言 | people 清单变化 | 保留观察 | V2 后存废门 |
+
+**复跑命令**：`mise exec -- node_modules/.bin/vitest run packages/company apps/daemon/test/cli/industry-templates.e2e.test.ts --testTimeout=60000`；实测 5 文件 / 13 语义红＋1 既有 spawn 超时；其余旧套件复跑仍绿（dependencies/deps-cases/jobs-loading/groups/hooks/state-hygiene/workflows/cost-guard）。**不修、不删、不 skip**；V2 门不以此表判。

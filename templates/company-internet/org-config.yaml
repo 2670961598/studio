@@ -1,14 +1,46 @@
-# Studio Next · 行业示例公司包 · 互联网公司（templates/company-internet）
+# Studio Next · 公司组织配置（org-config.yaml）—— company-internet（CL3 行业示例骨架（互联网公司））
 #
-# 契约依据：docs/43-§三（行业模板包：同 schema、不同资产——「下载即可开一家互联网公司」）
-# 与 docs/43-§二（org-config schema 冻结契约）；目录契约见 docs/51-契约 A/B。
+# V2 依据（唯一主表，本文件不复制矩阵本体）：
+#   - docs/v2/03 §2.2 表 A（CL2-CL9 必设矩阵）／§2.3 表 A′（保留权力：未设岗权力显式归老板）
+#     ／§2.4（CL 判据=在编结构事实，「只改 level 字段」无效）／§6.2 表 E（部门 D 族：
+#     Dn=负责人 Gn，D9 不启用；D3-D5 最低设立层 CL8，D6=CL6，D7=CL5，D8=CL4）／§7.2（组织变更）
+#   - docs/v2/06 §5.1（拟任≠事实）／§5.2（CL 只是主张；包内不复制表 A 本体）／§六（模板=生成物源，
+#     不是公司包本体；以模板初始化≠公司已设立）
+#   - docs/v2/10 §4.3（SCH-ORG-01 字段表）／§3.3（schema 字面量=迁移期绑定标识，V2 替代为 schemaRef）
 #
-# 本文件是**公司与编制的唯一事实源**：与 templates/company-2-level 同一张 schema
-# （org-config/v1），行业差异全部表达在资产（charter/prompts 战役/jobs 岗/依赖清单），
-# 不动 schema——「规范少、上限高」的关键取舍（docs/43-§二末条）。
+# 拟任声明（v2/06 §5.1）：本文件只登记**拟任**——最高宰相（G9）与各级人员皆为拟任安排；任命是否
+# 生效、任职是否接受、谁实际在编，归记录（v2/11），不由本文件断言。设立=外部老板的设立记录＋
+# root_delegation（v2/03 §3.1）；模板只产目录，不构成设立。
 #
-# 上手说明见 README.md；传播通道=git 网址即公司（docs/43-§一）：
-#   studio-next company add <本包的 git-url> [名] --work-root <目录>
+# CL 主张（v2/03 §2.4）：company.level=3 只是主张；判据=在编结构可满足的最高层判据。
+# 本骨架声明 CL3 行业示例骨架（互联网公司）；结构下限（表 A CL3 行）：
+#   - 最高宰相 G9（拟任）
+#   - 一级单元 N≥1（默认 1）
+#   - 执行成员 G2-G1 正式任职
+#   - 部长 G8／中间层 G7+/部门审计制度：保留（CL3 不设）
+# 保留（可不设，缺位时权力按表 A′ 显式归老板；本文件不复制表 A′ 正文）：未列出的更高岗位。
+#
+# 一级单元 N（GAP-V2-17；v2/06 §5.2）：N≥1，**默认 1**。N 是**设立记录参数**，不是本文件字段
+# （SCH-ORG-01 无 unitCount/units 字段——docs/v2/10 §4.3；本波按记录面方案定形，MIG-05 入口；
+# MIG-03 未冻结该字段）。unitCount/units[]/domain/headRef/vacancyState 的记录面承载见投影输入
+# 边界（ParsedUnit），本文件不新增 YAML 键。
+# 本模板结构示例 N（示例）= 1（单元域=交付（研发部班组）＋增长（增长部班组）；最高宰相直管）——**示例不是规范**：
+# 「三省」N=3 只是示例；任何 N 由设立记录确认；增删单元=组织变更（v2/03 §7.2），不靠改字段。
+#
+# 部门结构（v2/03 §6.2 表 E）：本骨架部门等级 D2×2（两个班组：负责人 G2；CL3 下限只允许 D1/D2 部门——D3+ 有最低设立层）
+# 最高宰相为**公司层岗位**（不在部门硬核内）：people[].dept 仅作派工索引挂靠，不参与部门 Dn 判定。
+#
+# 资产部（v2/06 §三/§4.5）：plugins/dsh-web-test 是 DSH 插件**专属资产**（84 裁决一：保留不迁出）；
+# 本模板资产清单条目登记在框架仓 registry 数据面（builtinAssets：exclusive/targetExecutor=dsh/必备性/
+# 来源/摘要）。assets.yaml 为目标文件位（v2/06 §4.1），随模板分发归 v2/16（现仓库规范封闭集未含该件）。
+# 传播语义（v2/06 §3.4）：接收方无 dsh 执行器时该资产**明示不可用**（不冒充已装）；必备不可用由接收
+# 方部署者具名二选一（拒绝装载／降级装载）。
+#
+# 缺口登记 DEC-OPEN-16（软阻断，未裁）：解散/清算是否纳入公司硬核**未决**——本模板与
+# charter.md **不写**解散/清算条款（不预设裁决结果）；裁决落卷后按批示流补条款并留痕。
+#
+# 字节惰性（v2/06 §2.2／v2/10 §4.8）：全模板除 plugins/ 下 DSH 插件（资产部专属资产位）外均为
+# 纯配置/人读文本，不含脚本、宿主命令、自动执行钩子、本机路径或秘密值。
 
 schema: org-config/v1
 
@@ -17,10 +49,10 @@ company:
   slug: internet-corp # 概览路由 http://<host>:8789/<slug>/...；升级通道按此认家
   mission: 用小步快跑的可度量迭代，把用户需求变成拿得出手的互联网产品 # 使命（L1）
   charter_ref: charter.md # 公司章程路径（相对公司目录根）
-  level: 3 # 公司等级 2-9；3 级=多部门协作的完整产品公司
-  level_distribution: # 等级分布（人数必须与 people[].level 实数相等）
-    3: 1 # 研发负责人 1 名
-    2: 2 # 前端工程师 / 增长运营 各 1 名
+  level: 3 # CL 主张（判据=结构事实，v2/03 §2.4；「只改 level 字段」无效）
+  level_distribution: # 拟任人数按 G 档实数（与 people[].level 逐档相等——投影规则）
+    2: 3
+    9: 1
   platform: localfile # 声明性平台绑定（docs/23-§二：换平台=改配置行；导入流据此走字段 provision）
 
 # 部门索引：纵向=等级锚权限，横向=部门树；互联网公司的两轴=研发交付 + 增长运营
@@ -28,15 +60,15 @@ departments:
   - name: 研发部
     path: departments/研发部
     leader: NET-1 # 主管工号（指向 people 索引与人事档案）
-    level: 3
+    level: 2 # D2（=负责人 G2 拟任职级——v2/03 §6.2 表 E；D9 不启用）
     parent: null # 根部门
     lanes: [core, feature] # 泳道 = 资源标签 + 并行开发单元（core=主线，feature=特性并行）
     functions: [交付] # 部门职能
     relations: [] # 跨部门关系（本模板最小面；扩展形见 docs/25 DeptRelation）
   - name: 增长部
     path: departments/增长部
-    leader: GRO-1
-    level: 2
+    leader: GRO-1 # 主管工号（指向 people 索引与人事档案）
+    level: 2 # D2（=负责人 G2 拟任职级——v2/03 §6.2 表 E；D9 不启用）
     parent: null
     lanes: [growth] # 增长泳道：实验与数据并行位
     functions: [增长运营]
@@ -47,20 +79,20 @@ people:
   - id: NET-1 # 工号 = 文件名 = 永不变主键
     name: 全栈工程师
     login: net-eng # YouTrack 账号锚点（账号=等级锚点，工号=人）
-    level: 3
+    level: 2
     dept: departments/研发部
-    role: 研发负责人 # 岗位（依赖清单 role 命中位——docs/43-§四：属性决定插件开关）
+    role: 研发负责人
     reports_to: null
     skills: [typescript, nodejs] # 技能本体（内部工种映射表，不用自由文本）
     status: active
-    executor: dsh # executor 偏好；v1 唯一保证面=dsh（docs/43-§六）
+    executor: dsh # executor 偏好（ENU-88 执行器值集；dsh=当前唯一保证面——docs/43-§六）
     file: departments/研发部/people/NET-1.md
   - id: NET-2
     name: 前端工程师
     login: net-web
     level: 2
     dept: departments/研发部
-    role: 前端工程师 # 依赖清单命中位：role=前端工程师 → dsh-web-test（见 dependencies.yaml）
+    role: 前端工程师
     reports_to: NET-1 # 汇报线（上级工号）
     skills: [typescript, react]
     status: active
@@ -77,14 +109,25 @@ people:
     status: active
     executor: dsh
     file: departments/增长部/people/GRO-1.md
+  - id: PRIME-0
+    name: 最高宰相
+    login: prime-0
+    level: 9
+    dept: departments/研发部
+    role: 最高宰相
+    reports_to: null
+    skills: [管理]
+    status: active
+    executor: dsh
+    file: departments/研发部/people/PRIME-0.md
 
-# 定时岗清单（04-§三 D9 通用模型）：互联网公司的两岗=站点巡逻 + 增长日报
+# 定时岗清单（04-§三 定时岗通用模型）：互联网公司的两岗=站点巡逻 + 增长日报
 jobs:
   - id: net-site-patrol # 站点健康巡逻：每 10 分钟看一次可用性与错误率
     dept: departments/研发部
     cron: "*/10 * * * *" # 本地时区
-    role: 研发负责人
-    level: 2
+    role: 研发负责人 # 岗位（随部门负责人拟任岗位）
+    level: 2 # 该岗等级（随部门负责人拟任职级）
     type: patrol # 巡逻岗：巡检在途/告警面，产出巡逻纪要（随事件留痕——无归档落点，127-A：patrol×output=结构性零产出，不声明 output）
     model_tier: low
     budget_cap: 1 # USD/次
@@ -95,8 +138,8 @@ jobs:
     triggers: # 节奏档位（与 cron 恰给其一——docs/35-§3）
       cadence: daily
       at: "18:30"
-    role: 增长运营
-    level: 2
+    role: 增长运营 # 岗位（随部门负责人拟任岗位）
+    level: 2 # 该岗等级（随部门负责人拟任职级）
     type: report
     model_tier: low
     budget_cap: 2
@@ -168,15 +211,15 @@ hooks:
 
 # YouTrack 账号锚点映射（账号=等级锚点，不随新增公司而新增账号）
 accounts:
-  - login: net-eng
-    level: 3
-    note: 星潮互联网：研发负责人等级锚点
-  - login: net-web
-    level: 2
-    note: 星潮互联网：前端工程师等级锚点
-  - login: growth-ops
-    level: 2
-    note: 星潮互联网：增长运营等级锚点
+  - login: net-1
+    level: 2 # 账号锚定的等级（与人档案的工号解耦）
+    note: 研发部负责人等级锚点（拟任岗位：研发负责人）
+  - login: gro-1
+    level: 2 # 账号锚定的等级（与人档案的工号解耦）
+    note: 增长部负责人等级锚点（拟任岗位：增长运营）
+  - login: prime-0 # 最高宰相账号锚点（G9 恒定——v2/03 表 A）
+    level: 9 # 账号锚定的等级（与人档案的工号解耦）
+    note: 最高宰相（内部老板；拟任）
 
 # YouTrack 字段/状态流映射覆盖（公司可整体替换；fields 供导入流 provision——docs/23）
 yt:
