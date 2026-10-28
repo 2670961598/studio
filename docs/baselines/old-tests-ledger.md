@@ -560,3 +560,19 @@ mise exec -- node scripts/verify/old-test-ledger.mjs
 | `apps/daemon/test/cli/*` | 红 | 13 | timeout | 真 bin spawn 5s 超时族（本机负载；既有一族） | 保留观察 | V2 后存废门 |
 
 **复跑命令**：`mise exec -- node_modules/.bin/vitest run apps/daemon/test/engine apps/daemon/test/cli`；实测 engine 60 文件/58 过/2 红（1 断言+1 collection），cli 13 红全 timeout；assembly 6 文件/52 全绿；V2 e2e/records 全绿。**不修、不删、不 skip**；V2 门不以此表判。
+
+---
+
+## 十、MIG-06-09 退役触及面旧测试登记（2026-10-28）
+
+> 性质：**退役单触及面旧测试登记**（plan/04 §1.8.5-4；红也登记、不阻塞 V2 门）。不属 §二 209 行冻结主表。
+> 触发：MIG-06-09 删除 `packages/panel/src/external/`、`apps/daemon/src/cli/external.ts`，对应旧测试失去被测件；`help-face` 仍断言已退役的 `external` 子命令。
+> 处置：功能面由 `packages/api`（API-01..16）替代；旧测试**退役/重写**，不修不 skip，删除单随 MIG-08 存废门立。
+
+| 文件 | 复跑结果 | 红用例 | 失败类 | 原因 | 处置 | 责任波 |
+|---|---|---|---|---|---|---|
+| `packages/panel/test/external-serve.test.ts` | 红（collection） | 全文件 | 环境 | `../src/external/index.ts` 已删；功能迁 packages/api | 退役（替代=api 端点测试） | V2 后存废门 |
+| `packages/panel/test/external.test.ts` | 红（collection） | 全文件 | 环境 | 同上 | 退役（替代=api 端点测试） | V2 后存废门 |
+| `apps/daemon/test/cli/help-face.test.ts` | 红 | 1 | 断言 | `external` 子命令已退役，help 面不再列 | 重写（删 external 期望） | V2 后存废门 |
+
+**复跑命令**：`mise exec -- node_modules/.bin/vitest run packages/panel/test/external-serve.test.ts packages/panel/test/external.test.ts apps/daemon/test/cli/help-face.test.ts`；实测 2 collection 红＋1 断言红。**不修、不删、不 skip**；V2 门不以此表判。

@@ -1,36 +1,98 @@
+#!/usr/bin/env node
 /**
- * Studio Next · daemon —— 框架唯一常驻进程（骨架占位实现）
+ * Studio Next · daemon —— 唯一常驻进程的**真实入口**（serve 装配入口）
  *
- * 定位（文档依据）：
- *   - 主循环：采集 → state-diff → 派发 → 收割 → 合并 → 回收 → 落账/心跳。每拍幂等（docs/17-§2）
- *   - 调度：SQLite jobs 表 + croner 表达式解析；启动补跑错过的槽位（docs/18-§三）
- *   - 公司目录：挂载前做 schema 校验，不合法拒绝启动并给 文件:行（docs/04-§二 / §九）
- *   - 唯一写入者：公司目录与 SQLite 台账的写路径全部收口在本进程（docs/08-§二 第三不变律）
+ * 依据（实现单引用）：
+ *   - docs/plan/05 IMPL-06-09「退役收尾」（LANE-M）：plan/01 §五 退役件之
+ *     `apps/daemon/src/index.ts` 骨架横幅（「打印横幅后退出」的假常驻）在此退役；
+ *   - docs/16-§四（v0.5 serve 主循环入口）、docs/17-§2（主循环七相位）、
+ *     docs/18-§三（调度）；plan/05 §二 3.2 退役件表行「apps/daemon/src/index.ts、
+ *     cli/external.ts → serve 装配入口；根 package.json daemon 脚本同步改」。
  *
- * TODO(骨架阶段)：以下能力尚未实现，按里程碑逐版本落地（docs/16-§四）
- *   [x] v0.1  `studio-next init` 从 templates/company-2-level 生成公司目录 + 目录校验器（M3：src/cli/main.ts 出 studio-next bin）
- *   [ ] v0.1  契约包接线：cases.json 规格测试进 CI
- *   [ ] v0.2  store 接线：SQLite 台账建表、migration、快照/重建脚本
- *   [x] v0.3  panel 接线：:8791 只读监控（jobs/runs/workers/事件流；`studio-next panel --db`）
- *   [x] v0.4  首个定时岗：调度表 + 启动补跑（coalesce 成一次）+ 结果落账
- *             （apps/daemon/src/engine/scheduler.ts + engine.ingest 意图入口 + serve jobs 开关；
- *             48h 连续运行证据与真实系统岗归后续运维单——诚实边界见 scheduler.ts 头注）
- *   [x] v0.5  合龙件：主循环七相位引擎 + `studio-next serve`（demo 模式=fake 全家桶端到端，
- *             apps/daemon/src/engine/engine.ts / serve.ts / test/e2e.test.ts）
- *   [ ] v0.5  真单：dsh 真跑 + YouTrack/网关 wkey + localfile 平台 + 审批流 + 真闸门验收命令
- *   [ ] v0.6+ 四家适配器、公司面 :8789、唤起六源、对外 API :8788、进化管线
+ * 语义（退役后）：
+ *   - `node apps/daemon/src/index.ts --config <daemon.yaml>`＝真跑 serve 主循环
+ *     （装配＝assembly/serve/run.runServe，与 `studio-next serve --config …` 同一实现）；
+ *     退出码与 CLI 面一致：0 优雅停 / 1 配置或装配失败 / 2 tick 中断；
+ *   - 无 `--config`（或出现未知参数）＝打印入口 usage → exit 1，**绝不假装常驻**；
+ *   - `-h/--help/help`＝打印入口 usage → exit 0。
+ *
+ * 分层纪律（为何此处不复用 cli/serve.ts 的 cmdServe）：本文件是宪法纵轴 root 层
+ * 纯入口（D2），唯一冻结出边是 root → assembly（scripts/guards/boundary-rules.mjs
+ * allowedVerticalEdges）；root → cli 未冻结（BC-V1）。故入口直接调 assembly 面，
+ * 参数全文与单命令帮助面仍以 cli 侧为单一源（`studio-next serve --help`）。
+ *
+ * 根 package.json `daemon` 脚本即指本入口：`node apps/daemon/src/index.ts`
+ * （跑法：`bun run daemon -- --config var/daemon.yaml`）。
  */
+import { runServe } from './assembly/serve.ts'
 
-const BANNER = `
-┌───────────────────────────────────────────────┐
-│ Studio Next · daemon                          │
-│ AI 公司框架 —— 唯一常驻进程（骨架占位，无逻辑） │
-└───────────────────────────────────────────────┘
-`;
+const USAGE = `用法：
+  node apps/daemon/src/index.ts --config <daemon.yaml>
+  （等价 CLI 面：studio-next serve --config <daemon.yaml>；全文：studio-next serve --help）
 
-console.log(BANNER);
-console.log("[daemon] 骨架阶段：打印横幅后退出，不启动任何服务、不触碰任何事实源。");
-console.log("[daemon] 实现顺序与验收口径见 docs/16-技术实现与里程碑.md §四（v0.1 → v1.0）。");
+无 --config 时本入口只打印本段用法并 exit 1（不启动主循环——不假装常驻）。`
 
-// 骨架阶段显式成功退出：等到主循环落地后，这里应换成 supervisor 看护下的常驻循环。
-process.exit(0);
+/** 错误面文本（root 层不引 cli 小件；只取 message，分类由调用点保留） */
+function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+/** 用法错误面：错误行→stderr、入口 usage→stdout、exit 1（与 CLI 面用法错同退码） */
+function usageFail(message: string): number {
+  console.error(`daemon：${message}`)
+  console.log(USAGE)
+  return 1
+}
+
+async function main(argv: readonly string[]): Promise<number> {
+  if (argv.some((arg) => arg === '-h' || arg === '--help' || arg === 'help')) {
+    console.log(USAGE)
+    return 0
+  }
+
+  // 只收 --config <path> / --config=<path> 两式（与 CLI 旗标同义规则一致）；
+  // 其余参数=用法错（不静默吞，避免「以为配了」的假常驻）
+  let configPath: string | undefined
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]
+    if (arg === '--config') {
+      const value = argv[i + 1]
+      if (value === undefined || value.startsWith('--')) return usageFail('--config 缺值')
+      configPath = value
+      i += 1
+      continue
+    }
+    if (arg !== undefined && arg.startsWith('--config=')) {
+      const value = arg.slice('--config='.length)
+      if (value === '') return usageFail('--config 缺值')
+      configPath = value
+      continue
+    }
+    return usageFail(`未知参数：${String(arg)}`)
+  }
+  if (configPath === undefined) return usageFail('缺少 --config <daemon.yaml>')
+
+  try {
+    const result = await runServe(configPath)
+    if (result.stopReason === 'error') {
+      console.error(`daemon：运行中断（tick 异常）：${result.lastError ?? '未知'}`)
+      return 2
+    }
+    console.log(`daemon：已停机（共 ${result.ticks} 拍）`)
+    return 0
+  } catch (err) {
+    // 配置解析/平台接线/公司目录装载失败：CONFIG_INVALID 形状，如实分类上报
+    console.error(`daemon 启动失败：${errText(err)}`)
+    return 1
+  }
+}
+
+main(process.argv.slice(2)).then(
+  (code) => {
+    process.exitCode = code
+  },
+  (err) => {
+    console.error(`daemon：未预期错误：${errText(err)}`)
+    process.exitCode = 1
+  },
+)

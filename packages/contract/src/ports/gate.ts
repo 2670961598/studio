@@ -15,6 +15,13 @@
  *   - 单静态 token 入站（三档凭证在类型上无 `token` 槽；`public` 档只读，不入站）；
  *   - 外部委托主体/派单人锚留空（未映射＝显式声明＋identity_mapping 依据）。
  * 零实现、零 IO；实现域 assembly/intent＋api 装配（v2/14 §二）。
+ *
+ * ── v0 兼容面（MIG-06 / IMPL-06-09 迁移）────────────────────────────────
+ * 原 `invoke.ts`（InvokeIntent/InvokeSource/SourceManifest）与 `notifier.ts`
+ * （Notification/Notifier/EXTERNAL_AI_TOOLS/ExternalAiTool）已并入本文件并删除源件
+ * （docs/v2/14 §二 PORT-GATE 行：吸收现状 invoke.ts/notifier.ts，两件并入后退役）。
+ * 同名导出保持——matrix/boot 等实现域仍以 `import type { Notifier, InvokeSource }
+ * from '@studio-next/contract'` 编译；V2 形状见 `NotificationEnvelope`/`DeliveryReceipt`。
  */
 import type {
   CallContext,
@@ -24,6 +31,7 @@ import type {
   ReadContext,
   ReconcileHandle,
 } from './def.ts'
+import type { CompanySlug, TicketId } from './kernel.ts'
 
 /** 端口名常量 */
 export const PORT_GATE = 'PORT-GATE' as const
@@ -150,9 +158,9 @@ export interface IntentReceipt {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * 通知封套（吸收 v0 `notifier.ts` 的 Notification 语义；MIG-06 前两件并存，
- * 见 notifier.ts 头注）：`notificationId`＋`dedupKey` 直达订阅方；
- * `evidenceRefs` 留送达与来源证据（缺证据不得宣称已送达）。
+ * 通知封套（吸收原 v0 `notifier.ts` 的 Notification 语义，见本文件§五兼容面）：
+ * `notificationId`＋`dedupKey` 直达订阅方；`evidenceRefs` 留送达与来源证据
+ * （缺证据不得宣称已送达）。
  */
 export interface NotificationEnvelope {
   readonly notificationId: string
@@ -201,3 +209,91 @@ export interface GatePort {
   receipt(key: IntentKey, rc: ReadContext): PortResult<IntentReceipt | undefined>
   notify(e: NotificationEnvelope, ctx: CallContext): PortResult<DeliveryReceipt>
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 五、v0 兼容面（MIG-06 / IMPL-06-09 自 invoke.ts、notifier.ts 迁入；同名导出保持）
+// ─────────────────────────────────────────────────────────────────────────────
+// 纪律：这一段是**兼容期形状**（matrix/boot 等实现域消费），不是 V2 业务面；
+//   删除源件后字段不得再增（新增语义进上行 §一..§四 的 V2 形状）。退役删除归
+//   DISP-04 后续波次，届时同步改实现域（本单只做「并入＋保持编译绿」）。
+
+/**
+ * 唤起源端口 —— 源注册表协议（docs/25-§3.4，依据 docs/22 原文冻结）。
+ * 源只产意图，绝不直接驱动 worker；决策归状态机主循环。
+ *
+ * kind='escalate'（docs/35-§3 岗位运作规格首刀，制作人 2026-10-19 批复）：SLA/升级
+ * 计时器源产——payload 携单号+超时档；附原单上下文唤起（35-§4「升级唤起」）的引擎
+ * 消费面归后续刀。
+ *
+ * kind='data-change'（studio-dev-129 提案 C1，制作人 2026-10-22 全批·批示②；
+ * 先例='escalate' v1.4 同款路径）：数据变更类源产（129-§6.1 分类学①——首源=
+ * people-change 挂 hr-sync peopleDiff 出口双写，源与 org-config 路由表归拆单 C）。
+ * payload={class:'people-change', classifier,person,field?,prev?,next?,linked_ticket?}；
+ * dedupKey=变更指纹 `person+classifier+prev→next`（源侧设置，引擎消费面校验一致
+ * ——129-§6.1 铁律2 幂等双层）。引擎消费面（联动单物化+路由指派）=拆单 A
+ * （studio-dev-166）。
+ */
+export interface InvokeIntent {
+  kind: 'ticket' | 'mention' | 'schedule' | 'relay' | 'resume' | 'webhook' | 'escalate' | 'data-change'
+  company: CompanySlug
+  ticket?: TicketId
+  payload?: unknown
+  /** 来源源名 */
+  source: string
+  priority?: number
+  /** 去重键（v1.3）：无 ticket 的意图（如 mention）必填——主循环按 (source, kind, company, dedupKey) 幂等 */
+  dedupKey?: string
+}
+
+/** 唤起源（start 注册 emit；stop 干净停，不得留孤儿定时器） */
+export interface InvokeSource {
+  readonly name: string
+  start(emit: (intent: InvokeIntent) => void): void
+  stop(): void
+}
+
+/** 源清单（注册与灰度用；源的增删走进化管线，configSchema=zod schema 引用） */
+export interface SourceManifest {
+  name: string
+  kind: InvokeIntent['kind']
+  /** zod schema 引用（注册与灰度用；源的增删走进化管线） */
+  configSchema: string
+}
+
+/**
+ * 通知载荷（v0 展示面；V2 形状见上行 `NotificationEnvelope`——送达/去重/证据面）。
+ * `from`＝展示性发件人（v1.3，如「宰相」「daemon」）——**非安全边界**，外部鉴权归
+ * docs/21-§五 token 机制；`links` 仅展示。
+ */
+export interface Notification {
+  kind: string
+  title: string
+  body: string
+  /** 展示性发件人（v1.3，如「宰相」「daemon」）——非安全边界，外部鉴权归 21-§五 token 机制 */
+  from?: string
+  links?: { label: string; url: string }[]
+}
+
+/** 通知出口（Matrix 等实现；V2 出口见上行 `GatePort.notify`——送达≠接受） */
+export interface Notifier {
+  send(channel: string, message: Notification): Promise<void>
+}
+
+/**
+ * 对外 MCP server 工具名（docs/25-§4.2 十名冻结；触发类只落单不派工）。
+ * V2 工具面分级见上行 `API_TOOL_SCOPES`（第三级「派工与收割」显式不存在）。
+ */
+export const EXTERNAL_AI_TOOLS = [
+  'company.get',
+  'org.get',
+  'people.get',
+  'progress.get',
+  'finance.get',
+  'request.create',
+  'explore.trigger',
+  'task.create',
+  'intel.submit',
+  'events.subscribe',
+] as const
+
+export type ExternalAiTool = (typeof EXTERNAL_AI_TOOLS)[number]

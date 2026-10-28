@@ -3,12 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Studio Next 面板：:8787 框架监控（v0.3 只读面）+ :8789 公司概览（v0.7 读面）+ :8788 对外 API（v0.9 信息/触发骨架）（Hono + SSE）",
+  "description": "Studio Next 面板：:8787 框架监控（v0.3 只读面）+ :8789 公司概览（v0.7 读面）（Hono + SSE）；:8788 对外 API 已退役（MIG-06 / IMPL-06-09，端点面归 packages/api + daemon 装配）",
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
     "./overview": "./src/overview/index.ts",
-    "./external": "./src/external/index.ts",
     "./inbox": "./src/inbox.ts",
     "./judge": "./src/judge.ts"
   },

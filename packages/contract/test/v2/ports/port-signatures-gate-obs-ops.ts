@@ -9,6 +9,9 @@
  * 两段：
  *   1. `compileOnlyGateObsOpsSurface`：最小合法值＋三端口方法签名调用；
  *   2. `pinRejectedShapes`：关键拒绝条件的**类型级**钉子（`@ts-expect-error` 放行即红）。
+ * v0 兼容面（InvokeSource/Notifier/Notification/EXTERNAL_AI_TOOLS 等）随 MIG-06
+ * 自 invoke.ts/notifier.ts 并入 `gate.ts` §五：本文件用 `Gate.*` 与包根 `Contract.*`
+ * 双面钉住同名导出（matrix/boot 的导入路径保持）。
  */
 import type * as Contract from '../../../src/index.ts'
 import type * as Gate from '../../../src/ports/gate.ts'
@@ -256,14 +259,23 @@ export function compileOnlyGateObsOpsSurface(): void {
   void migration
   void stopReceipt
 
-  // —— 导出面收口：新形状可经包根（src/index.ts）取用，旧形状未破 ——
+  // —— 导出面收口：新形状可经包根（src/index.ts）取用；v0 兼容形状归 gate.ts（MIG-06）——
   const viaRoot: Contract.PortResult<Contract.IntentReceipt> = { kind: 'ok', value: receipt }
   const viaRootProjection: Contract.Projection = projection
   const viaRootStop: Contract.StopReceipt = stopReceipt
-  const legacyNotifier: Contract.Notifier = { send: () => Promise.resolve() }
+  // legacyNotifier/legacyNotification：invoke.ts/notifier.ts 删除后由 gate.ts §五同名再出
+  const legacyNotifier: Gate.Notifier = { send: () => Promise.resolve() }
+  const legacyNotification: Gate.Notification = { kind: 'k', title: 't', body: 'b' }
+  const legacySource: Gate.InvokeSource = { name: 'mention', start: () => {}, stop: () => {} }
+  const legacyIntent: Gate.InvokeIntent = { kind: 'ticket', company: 'acme', source: 'matrix' }
+  const legacyManifest: Gate.SourceManifest = { name: 'mention', kind: 'mention', configSchema: 'zod#mention' }
+  const legacyTools: readonly Gate.ExternalAiTool[] = ['events.subscribe']
+  // 包根再出面同步保留（matrix/boot 的 @studio-next/contract 导入路径不破）
+  const viaRootNotifier: Contract.Notifier = legacyNotifier
+  const viaRootNotification: Contract.Notification = legacyNotification
+  const viaRootSource: Contract.InvokeSource = legacySource
   const legacyPage: Contract.Page<number> = { items: [1] }
   const legacyResult: Contract.Result<number, string> = { kind: 'ok', value: 1 }
-  const legacyNotification: Contract.Notification = { kind: 'k', title: 't', body: 'b' }
   // 13/13 端口接口名可经包根取用（收口后无重名歧义、无被静默吞掉的导出）
   const portInterfaces: readonly [
     Contract.DefinitionPort,
@@ -299,9 +311,16 @@ export function compileOnlyGateObsOpsSurface(): void {
   void viaRootProjection
   void viaRootStop
   void legacyNotifier
+  void legacyNotification
+  void legacySource
+  void legacyIntent
+  void legacyManifest
+  void legacyTools
+  void viaRootNotifier
+  void viaRootNotification
+  void viaRootSource
   void legacyPage
   void legacyResult
-  void legacyNotification
 }
 
 /**

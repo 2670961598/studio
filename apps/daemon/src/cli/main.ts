@@ -35,7 +35,6 @@ import { cmdGray } from './gray.ts'
 import { cmdPostmortem } from './postmortem.ts'
 import { cmdPanel } from './panel.ts'
 import { cmdOverview } from './overview.ts'
-import { cmdExternal } from './external.ts'
 import { cmdReload } from './reload.ts'
 import { cmdStop } from './stop.ts'
 import { cmdServe } from './serve.ts'
@@ -69,8 +68,6 @@ async function main(): Promise<number> {
       return cmdPanel(rest)
     case 'overview':
       return cmdOverview(rest)
-    case 'external':
-      return cmdExternal(rest)
     case 'serve':
       return cmdServe(rest)
     case 'taiga-cure':

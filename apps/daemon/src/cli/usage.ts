@@ -127,14 +127,6 @@ export const SECTION = {
        → /<slug>/ 概览/组织/人事/进度/财务五读面（全 GET 只读、零前端依赖）；
        --db 可选（给出则进度/财务页读台账，必须已存在——只读不代建）；Ctrl-C 优雅关闭
 `,
-  external: `  studio-next external --company <目录> [--company <目录2> …] [--db <库路径>] [--port 8788]
-                       [--token <触发面令牌>] [--requests-per-minute N] [--lan]
-       :8788 对外 API（v0.9 信息/触发骨架，docs/16-§四/17-§8/25-§4.2）：信息端点全 GET 全公开
-       （/v1/company|org|people|projects|issues|finance|reports|agent-card）；触发端点
-       POST /v1/requests（X-SN-Token 必带——只落单不派工、幂等键防重、IP 每分钟配额 429）；
-       越权调用全部 fail-closed；--token 缺省=触发面全 401；--lan 才绑 0.0.0.0（缺省 127.0.0.1，
-       D4 拟稿反转：局域网开放须显式旗标）；Ctrl-C 优雅关闭
-`,
   serve: `  studio-next serve --config <daemon.yaml>
        常驻主循环（v0.5，docs/16-§四）：七相位引擎 + 心跳日志 + SIGINT/SIGTERM 优雅停。
        配置最小面（扁平 YAML 子集）：db / platform(fake|localfile) / company / rootDir / tickMs /
@@ -247,11 +239,6 @@ export const CONCISE = {
   例：studio-next overview --company ./my-company
   本命令全文：studio-next overview --help
 `,
-  external: `external —— :8788 对外 API（信息端点全 GET 公开；触发端点 X-SN-Token 只落单不派工；缺省只绑 127.0.0.1，--lan 才开局域网）
-  studio-next external --company <目录> [--company <目录2> …] [--db <库路径>] [--port 8788] [--token <触发面令牌>] [--requests-per-minute N] [--lan]
-  例：studio-next external --company ./my-company --token secret
-  本命令全文：studio-next external --help
-`,
   serve: `serve —— 常驻主循环（七相位引擎+心跳；SIGINT/SIGTERM 优雅停；配置=扁平 YAML 子集，样例见全文）
   studio-next serve --config <daemon.yaml>
   例：studio-next serve --config var/daemon.yaml
@@ -279,9 +266,9 @@ export const USAGE_HEADER = `studio-next —— Studio Next 框架 CLI（v0.1）
 用法：
 `
 
-export const USAGE_TAIL = `默认值：--dir 缺省 ./<slug>；--name 缺省 <slug>；--port 缺省 8791（panel）/ 8789（overview）/ 8788（external）
+export const USAGE_TAIL = `默认值：--dir 缺省 ./<slug>；--name 缺省 <slug>；--port 缺省 8791（panel）/ 8789（overview）
 语法位：位置参数=必给先给（init <slug>；company add <git-url> [名]）；旗标=--key value 或
-  --key=value（两式同效）；布尔旗标无值（--dry-run/--json/--lan/--allow-extra/--product/
+  --key=value（两式同效）；布尔旗标无值（--dry-run/--json/--allow-extra/--product/
   --no-restart/--no-gray/--check/--close）；-h/--help/help 任何位置=该命令帮助面（先于
   参数解析，零副作用）
 旗标同义：-h ≡ --help ≡ help；--flag=value ≡ --flag value；短旗标仅 -h 与 -V（版本）

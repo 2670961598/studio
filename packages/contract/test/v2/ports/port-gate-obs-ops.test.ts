@@ -9,7 +9,8 @@
  * 本文件＋同目录 `port-signatures-gate-obs-ops.ts` 合计只证五件事（不冒充业务覆盖）：
  *   1. gate/obs/ops 三模块可导入，`PORT_*` 常量与 v2/14 §二 映射一致；
  *   2. 13 端口映射完整 13/13（模块常量＝映射表＝`ports/index.ts` 导出值，三面一致）；
- *   3. `ports/index.ts` 收口后 `PORT_VERSION` 仍为 `v0`，v0 旧导出未删（兼容期）；
+ *   3. `ports/index.ts` 收口后 `PORT_VERSION` 仍为 `v0`；v0 兼容导出（invoke/notifier）
+ *      在 MIG-06 删除源件后由 `gate.ts` §五同名承载（不再有 invoke.ts/notifier.ts）；
  *   4. 关键拒绝条件由**类型**承载（`@ts-expect-error` 钉死：消息当承诺/发送≠接受/
  *      监控改事实/未知补 0/迁移候选当激活/新权源/comment 借道——放行即类型门红）；
  *   5. 最小合法值可构造、三端口方法签名可调用（编译期，桩对象不执行端口逻辑）。
@@ -66,8 +67,11 @@ const PORT_FILE_MAP = [
   ['PORT-OPS', 'ops.ts', opsPort.PORT_OPS],
 ] as const
 
-/** 目录平铺名额上限（docs/v2/14 §二 目录预算：阈=25（B4/v2/16）；ports 现 22，余量留提案流） */
+/** 目录平铺名额上限（docs/v2/14 §二 目录预算：阈=25（B4/v2/16）；MIG-06 删 invoke/notifier 后现 20＝终态，余量留提案流） */
 const MAX_PORTS_FILES = 25
+
+/** v2/14 §二 冻结终态件数（13 端口件＋index＋6 件 v0 承载；再增须提案流） */
+const PORTS_FILES_FINAL = 20
 
 describe('V2 ports 分区 gate/obs/ops＋导出面收口（IMPL-03-04）', () => {
   it('PORT_VERSION 仍为 v0（收口不动 experimental 声明）', () => {
@@ -103,7 +107,7 @@ describe('V2 ports 分区 gate/obs/ops＋导出面收口（IMPL-03-04）', () =>
     expect(portConsts).toHaveLength(13)
     expect(portConsts.sort()).toEqual(PORT_FILE_MAP.map(([id]) => id.replace('-', '_')).sort())
 
-    // v0 兼容期：invoke/notifier 等旧件的值导出不删（退役归 MIG-06）
+    // v0 兼容期：invoke/notifier 的值导出不删（MIG-06 改由 gate.ts §五再出；退役归 DISP-04）
     for (const legacy of ['EXTERNAL_AI_TOOLS', 'GATEWAY_ACTIONS', 'PLATFORM_ACTIVITY_KINDS']) {
       expect(Object.keys(portsIndex)).toContain(legacy)
     }
@@ -147,17 +151,32 @@ describe('V2 ports 分区 gate/obs/ops＋导出面收口（IMPL-03-04）', () =>
     expect(opsPort.CONTROL_PLANE_ACTIONS).not.toContain('comment')
   })
 
-  it('v0 旧件头注带退役注记且正文面未改（MIG-06 删除）', () => {
-    const invokeSrc = readFileSync(new URL('invoke.ts', PORTS_DIR), 'utf8')
-    const notifierSrc = readFileSync(new URL('notifier.ts', PORTS_DIR), 'utf8')
-    for (const src of [invokeSrc, notifierSrc]) {
-      expect(src).toContain('MIG-06')
-      expect(src).toContain('退役')
+  it('v0 旧件已删（MIG-06），兼容导出由 gate.ts §五承担', () => {
+    const dirFiles = readdirSync(fileURLToPath(PORTS_DIR))
+    // 终态 20 件＝v2/14 §二 目录预算（13 端口件＋index＋6 件 v0 承载）：invoke/notifier 删除后不复存在
+    expect(dirFiles).toHaveLength(PORTS_FILES_FINAL)
+    expect(dirFiles).not.toContain('invoke.ts')
+    expect(dirFiles).not.toContain('notifier.ts')
+    expect(() => readFileSync(new URL('invoke.ts', PORTS_DIR), 'utf8')).toThrow()
+    expect(() => readFileSync(new URL('notifier.ts', PORTS_DIR), 'utf8')).toThrow()
+
+    // 同名兼容导出（matrix/boot 经包根 @studio-next/contract 照旧编译）→ 现由 gate.ts 承载
+    const gateSrc = readFileSync(new URL('gate.ts', PORTS_DIR), 'utf8')
+    for (const name of [
+      'InvokeIntent',
+      'InvokeSource',
+      'SourceManifest',
+      'Notification',
+      'Notifier',
+      'EXTERNAL_AI_TOOLS',
+      'ExternalAiTool',
+    ]) {
+      expect(gateSrc).toContain(name)
     }
-    expect(invokeSrc).toContain('export interface InvokeSource')
-    expect(invokeSrc).toContain("kind: 'ticket' | 'mention' | 'schedule'")
-    expect(notifierSrc).toContain('export interface Notifier')
-    expect(notifierSrc).toContain('EXTERNAL_AI_TOOLS')
+    // 运行期值导出面：十名工具表经 gate（不再经已删 notifier）
+    expect(gatePort.EXTERNAL_AI_TOOLS).toHaveLength(10)
+    expect(gatePort.EXTERNAL_AI_TOOLS).toContain('events.subscribe')
+    expect(portsIndex.EXTERNAL_AI_TOOLS).toBe(gatePort.EXTERNAL_AI_TOOLS)
   })
 
   it('类型级调用面可编译（三端口桩对象，不执行端口调用）', () => {
