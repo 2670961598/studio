@@ -65,6 +65,19 @@ export const OUTBOUND_EVENT_VOCAB_GAP = {
     '但「事件名级」的告警路由要等 contract 词表增补——不得据此宣称失败事件已入词表',
 } as const
 
+/**
+ * 观察面呈现缺口（v2/15 §4.4-③「扫描失败/跳过/覆盖缺口入 MON-12/15 行（证据与审计、
+ * 监控自身）」）：本单交付**可判记录＋落账**（ESCALATE note）与覆盖快照；监控行呈现归
+ * v2/08 §3 观察面（MIG-08 波）。显式 open——不得把「台账可判」冒充成「监控行已覆盖」。
+ */
+export const OUTBOUND_MON_OBSERVATION_GAP = {
+  status: 'open',
+  target: 'MON-12/MON-15（docs/v2/08 §3 观察面）',
+  means:
+    '扫描失败/阻断/覆盖缺口已可判定并可落账；监控行呈现未接线（归观察面单）——' +
+    '不得据此宣称 MON-12/15 已覆盖（观察面缺口与机制缺口分开记）',
+} as const
+
 /** 单失败事件名的词表状态（registered=已在冻结词表；gap=显式缺口，落账走 fallbackEvent） */
 export interface OutboundVocabularyStatus {
   readonly name: string

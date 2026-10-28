@@ -38,6 +38,7 @@ import type { Ledger } from '@studio-next/store'
 import {
   OUTBOUND_EVENT_VOCAB_GAP,
   OUTBOUND_EXIT_IDS,
+  OUTBOUND_MON_OBSERVATION_GAP,
   OutboundBlockedError,
   collectOutboundKnowns,
   createLedgerFailureSink,
@@ -372,6 +373,9 @@ describe('NEG-SEC-07/N-g：失败事件可判定（确定性失败行，值零�
     for (const name of OUTBOUND_EVENT_VOCAB_GAP.names) expect(isEventName(name)).toBe(false)
     expect(isEventName(OUTBOUND_EVENT_VOCAB_GAP.fallbackEvent)).toBe(true) // 落账承载是冻结名
     expect(OUTBOUND_EVENT_VOCAB_GAP.proposalRef).toContain('IMPL-07-11')
+    // 观察面呈现也是显式缺口：台账可判≠监控行已覆盖（v2/15 §4.4-③）
+    expect(OUTBOUND_MON_OBSERVATION_GAP.status).toBe('open')
+    expect(OUTBOUND_MON_OBSERVATION_GAP.target).toContain('MON-12')
   })
 
   it('词表增补后自动翻转：registered＋vocab=registered（机制先就位）', () => {
