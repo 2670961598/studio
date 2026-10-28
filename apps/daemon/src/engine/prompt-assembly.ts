@@ -21,6 +21,14 @@
  *   - 同类教训 top-k（L4 lessons）v0 传空——知识库检索面未接线。
  *   - 冻结验收命令（L4 acceptance）来自 daemon 配置常量注入，任务书粒度的验收冻结
  *     （单据验收命令字段）归真单刀。
+ *
+ * 出口义务（IMPL-06-12，治 L3N-01；docs/v2/15 §4.5、docs/v2/16 §三 prompt 行、
+ * docs/80-§11.2.1「内部供给」面、docs/audit-DSF/L3-N-细节层-逐文件B-DSF.md L3N-01）：
+ *   daemon 追加的「单据读面」节（含单据正文/评论——最高频凭据误贴面）在 prompt 包闸外，
+ *   故**成品 brief.text** 在返回/落盘前由 daemon 统一过 `redactKnown`（只换已知秘密值、
+ *   不做形状兜底；提示词/任务书是内部供给面，示例文本必须原样可见）。无扫描通道的出口
+ *   逐条登记缺口（`AssembleDispatchOutput.exitScan.gaps`，不静默放行、不冒充已扫描）；
+ *   AGENTS.md 出口本单无扫描通道（prompt 包秘密边界未落位），同样登记缺口。
  */
 import path from 'node:path'
 import type {
@@ -82,6 +90,18 @@ export interface AssembleDispatchInput {
 export interface AssembleDispatchOutput {
   agentsMd: AssembleResult
   brief: BriefRenderResult
+  /**
+   * 出口扫描台账（IMPL-06-12 出口义务；docs/v2/15 §4.5）：
+   *   - scanned：已过 `redactKnown` 的成品文本位（仅有扫描通道时记；不得冒充）
+   *   - gaps：无扫描通道的出口登记码（逐条登记，不静默放行）——
+   *     · `brief.text:no-scan-channel`：未注入 redactKnown（成品任务书未过已知值脱敏）；
+   *     · `agentsMd.text:no-scan-channel`：持久指令出口不在本单扫描范围（prompt 包
+   *       秘密边界未落位；本单只承担成品 brief.text 出口义务）。
+   */
+  exitScan: {
+    readonly scanned: readonly string[]
+    readonly gaps: readonly string[]
+  }
 }
 
 /** 装配器端口（engine deps 注入点；默认实现见 createDefaultAssembler） */
@@ -99,6 +119,21 @@ export interface AssemblerContext {
   docRefs: string[]
   /** 同类教训 top-k（v0 空） */
   lessons?: string[]
+  /**
+   * 出口扫描通道（IMPL-06-12；docs/80-§11.2.1「内部供给」面）：`redactKnown` 是
+   * KnownSecretSet.redactKnown 的结构子集——只把**已知秘密值**替换为 `<redacted:N>`，
+   * **不做形状兜底**（提示词/任务书是内部供给面：`password=…` 一类示例/夹具文本必须
+   * 原样可见，走 redactOutbound 会连教学文本一起毁掉）。装配期接线：
+   * `assembly/hrsync/assemble.ts` 的 `createRedactors(knownSecrets).redactKnown`。
+   * 缺省=无扫描通道：成品出口在 AssembleDispatchOutput.exitScan.gaps 登记缺口
+   * （不静默放行、不冒充已扫描）。
+   */
+  redactKnown?: (text: string) => string
+  /**
+   * 出口扫描台账日志面（可选）：只报出口名/缺口码，**绝不回显秘密值**。缺省不落日志——
+   * 缺口登记恒在输出 exitScan 中，不依赖日志面。
+   */
+  log?: (line: string) => void
 }
 
 /** 部门正文（L2 deptConfig）：快照 DeptNode → 受信文本（公司 git 目录 daemon 唯一写入） */
@@ -193,7 +228,27 @@ export function createDefaultAssembler(ctx: AssemblerContext): PromptAssembler {
       ...brief,
       text: `${brief.text}${renderReadViewSection(input.readView)}`,
     }
-    return { agentsMd, brief: withView }
+    // 出口义务（IMPL-06-12；头注与 docs/v2/15 §4.5）：成品 brief.text（已含 daemon
+    // 追加的读面节——正文/评论是最高频凭据误贴面，L3N-01）统一过 redactKnown；
+    // 无扫描通道=显式缺口登记（不静默放行、不冒充已扫描）。AGENTS.md 是六层组装
+    // 产物，本单无扫描通道（prompt 包秘密边界未落位）——同样登记缺口。
+    const scanned: string[] = []
+    const gaps: string[] = []
+    let text = withView.text
+    if (ctx.redactKnown !== undefined) {
+      text = ctx.redactKnown(text)
+      scanned.push('brief.text')
+    } else {
+      gaps.push('brief.text:no-scan-channel')
+    }
+    gaps.push('agentsMd.text:no-scan-channel')
+    const exitScan: AssembleDispatchOutput['exitScan'] = { scanned, gaps }
+    // 日志面只报出口名/缺口码（绝不回显秘密值）；缺省不落日志，缺口登记恒在 exitScan
+    ctx.log?.(
+      `[prompt-assembly] 出口扫描：已扫描 ${scanned.length > 0 ? scanned.join('、') : '无'}；` +
+        `缺口 ${gaps.length > 0 ? gaps.join('、') : '无'}（登记不静默）`,
+    )
+    return { agentsMd, brief: { ...withView, text }, exitScan }
   }
 }
 

@@ -6,13 +6,18 @@
  * §5.2 步2-3/§9.1（L1 热重载 apply 段 diffPeople 入队——哨兵票，零平台 IO）。
  * 配置面在 ./config.ts；消化器实现体在 src/engine/hrsync/hrsync.ts。
  *
+ * 出口脱敏注入点（DEV-48 → IMPL-06-12 扩展）：`collectHrSecrets` 收集的同一已知秘密集
+ * 经 `createRedactors` 构造出站面 `redact`（redactOutbound）与内部供给面 `redactKnown`
+ * （redactKnownSecrets）；后者供 engine/prompt-assembly.ts 的成品 brief.text 出口注入，
+ * 两档对同一已知值给出一致标记（`<redacted:N>`）。
+ *
  * hrSync 关=零装配零注入，既有行为字节不变（缺省关——docs/52-§九）。
  */
 
 import { readFileSync } from 'node:fs'
 import { resolve as resolvePath } from 'node:path'
 import type { CompanySnapshot, FlowPlatform } from '@studio-next/contract'
-import { redactOutbound, type PeopleChange } from '@studio-next/core'
+import { redactKnownSecrets, redactOutbound, type PeopleChange } from '@studio-next/core'
 import type { Ledger } from '@studio-next/store'
 import { buildContext } from '@studio-next/taiga'
 import {
@@ -51,6 +56,28 @@ export interface AssembleHrSyncArgs {
 }
 
 /**
+ * 脱敏双档工厂（IMPL-06-12：:59-60 `redactOutbound` 注入点扩展，覆盖新增导出物）：
+ * 同一已知秘密集构造两个出口面——
+ *   - `redact`＝`redactOutbound`（已知值 + 形状兜底）：**出站面**总闸（hr-sync note/
+ *     last_error 等，docs/52-§十二既定接线）；
+ *   - `redactKnown`＝`redactKnownSecrets`（只换已知值、不做形状兜底）：**内部供给面**
+ *     （成品提示词/任务书——docs/80-§11.2.1 分工表把「内部供给」划给 redactKnown；
+ *     本单供 engine/prompt-assembly.ts 的 `AssemblerContext.redactKnown` 注入）。
+ * 两档同源同标记（`<redacted:N>`，N=原值长度），不同出口对同一已知值结果一致；
+ * 秘密值只在闭包内参与比对，不回显、不落任何持久层（core secrets.ts 纯函数纪律）。
+ * MIG-07 出站闸接管全出口后，本工厂随装配单元迁入统一闸（本单只扩注入点）。
+ */
+export function createRedactors(knownSecrets: readonly string[]): {
+  redact: (text: string) => string
+  redactKnown: (text: string) => string
+} {
+  return {
+    redact: (text: string): string => redactOutbound(text, knownSecrets),
+    redactKnown: (text: string): string => redactKnownSecrets(text, knownSecrets),
+  }
+}
+
+/**
  * 人事同步器装配（docs/52-§九）：返回消化器（注入 EngineDeps.hrSync——相位 7 尾
  * drain）；hrSync 关=undefined（零注入零行为）。启动期顺带台账镜像接线与断电复位。
  */
@@ -58,7 +85,7 @@ export function assembleHrSync(args: AssembleHrSyncArgs): { drain(): Promise<HrS
   const { config, ledger, snapshot, clock, log } = args
   if (!config.hrSync) return undefined
   const knownSecrets = collectHrSecrets(process.env, args.hrKnownSecrets)
-  const redact = (text: string): string => redactOutbound(text, knownSecrets)
+  const { redact } = createRedactors(knownSecrets)
   const faces: { taiga?: TaigaHrFace; matrix?: MatrixHrFace; rooms?: HrRoomAliases } = {}
   if (config.platform === 'taiga') {
     const inviteLogPath = resolvePath(config.hrTaigaInviteLog ?? '')
