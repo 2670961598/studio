@@ -436,3 +436,14 @@ $ git status --porcelain
 - **API 响应出口已闭**：`runServe` → `wireServeApi`（`assembleApi` + `createApiApp` + `readers/auth` + `node:http` ephemeral/`apiPort`）→ `guardApiResponse`；`MIG-06` 装配欠账中的「API 装配未接线／readers/auth 未供给」两条关闭。
 - **证据**：`apps/daemon/test/v2/api/live.test.ts` 12 tests（HTTP 200/403/503、触发 401、root 403、停机 close）；`test:v2 -- apps/daemon/test/v2/api` 21 tests；全 V2 **1266 tests**；`outbound-gate/exits.ts` 的 `api-response` 由 gap 翻 wired，security 78 tests 复跑绿。
 - **仍未闭**：OPS `appendRecord`→PORT-HIST（REC-WORK-18 端口形状缺 `notified`/`independent_review`/`actions_taken` 等槽，需 v2/14 提案补形；不臆造记录）；evidence-export 仍 gap；NEG 76/119；PB-3/PB-5 未过；F8 未签。本节只更新装配事实，不改 §六 历史记录。
+
+---
+
+## 十四、复验补记（2026-10-29，API 第 5 出口＋D12 后）
+
+- `scan-repo-secrets` 新命中 0；`verify:docs` PASS 6/6。
+- `verify:v2` **连续 3 次 exit 0**（本轮实测，均 **83 files / 1275 tests**）：
+  1) 68s；2) 68s；3) 67s。
+- API 第 5 出口：`runServe` 同进程装配 `createApiApp`（readers/auth/node:http），`api-response` 由 gap 翻 wired；`live.test.ts` 13 tests。
+- PB-5 D12：`openLedgerReadonly`（`readOnly:true`＋`query_only=ON`）落位，8 tests；**PRB-14 正面仍不成立**（无 WriterLease/围栏），PB-5 仍不通过。
+- NEG 冻结命令复算仍 **76/119**；未新增伪造 ID。
