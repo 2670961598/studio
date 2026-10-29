@@ -34,3 +34,30 @@ export function openSqlite(path: string): DatabaseSync {
   db.exec('PRAGMA busy_timeout = 5000')
   return db
 }
+
+/**
+ * 只读打开既有台账库（D12；docs/80 §8.2）：
+ *   - `readOnly:true`：文件不存在时**不建库**，SQLite 引擎拒绝一切写语句；
+ *   - 只设连接级 `query_only=ON`（双保险，回读校验必须为 1）与 `busy_timeout`；
+ *     **不**设 journal_mode / synchronous / foreign_keys——前两者会写库头，且只读分支
+ *     不得改变库结构；
+ *   - 不迁移、不建表、不清理 WAL：DDL 只归 daemon 的独占迁移窗口。
+ *
+ * 调用方（readonly.ts）负责缺库/版本偏移的分类与只读 face 封装；本函数只保证引擎级
+ * 只读，失败即关闭句柄并抛出（不把半开句柄外泄）。
+ */
+export function openSqliteReadonly(path: string): DatabaseSync {
+  const db = new DatabaseSync(path, { readOnly: true })
+  try {
+    db.exec('PRAGMA query_only = ON')
+    db.exec('PRAGMA busy_timeout = 5000')
+    const row = db.prepare('PRAGMA query_only').get() as { query_only?: unknown } | undefined
+    if (row === undefined || Number(row.query_only) !== 1) {
+      throw new Error('PRAGMA query_only 未生效（拒绝外发可写句柄）')
+    }
+  } catch (err) {
+    db.close()
+    throw err
+  }
+  return db
+}

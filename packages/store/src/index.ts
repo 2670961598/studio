@@ -155,6 +155,17 @@ export type { Migration } from './migrations.ts'
 export { openLedger } from './ledger.ts'
 export type { AppendResult, BudgetListQuery, BudgetScope, CompanySyncResult, DumpResult, EventQuery, InsertCandidateResult, Ledger, PersonnelTimelineEntry } from './ledger.ts'
 
+// D12 只读打开/围栏（PB-5 入口；docs/80 §8.2）：readOnly:true + query_only=ON，
+// 不迁移/不 DDL/不写 WAL；缺库→unavailable/STALL/db-missing，版本偏移→
+// rejected_version/EVOLVE_REJECT/schema-behind|ahead（见 src/readonly.ts 头注）
+export { openLedgerReadonly } from './readonly.ts'
+export type {
+  OpenLedgerReadonlyResult,
+  ReadOnlyLedger,
+  ReadOnlyLedgerError,
+  ReadOnlyLedgerOpen,
+} from './readonly.ts'
+
 // v9 定价快照面（132-§6.2 单B·studio-dev-169）：唯一写面 appendPriceSnapshot（单据锚）
 // + 读面 listPriceSnapshots；形状闸与冻结词表复制随面落 src/pricing.ts
 export {
