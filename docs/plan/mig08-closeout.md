@@ -452,8 +452,8 @@ $ git status --porcelain
 
 ## 十五、NEG 覆盖补强（2026-10-29，后续施工）
 
-- 冻结命令复算由 **76/119 → 110/119**：新增 34 个 NEG-ID 的真行为测试（EMP 12、ORG 6、WRK 11、EVD 4、RUN 1；含 NEG-ORG-15/NEG-SEC-08 既有点）。
+- 冻结命令复算由 **76/119 → 101/119**：新增 **25** 个 NEG-ID 的真行为测试（ORG/EMP 9＋WRK 11＋EVD 4＋RUN 1；含既有点 NEG-ORG-15/NEG-SEC-08 不计新增）。**勘误**：本节初稿写 110 是错的——9 个 target ID 曾被写进测试注释，冻结 grep 把它们计入；注释已删，当前实测 **101**，不以注释充数。
 - 测试落点：`apps/daemon/test/v2/neg/{work-gates,harvest-neg,run-revocation}.test.ts`、`packages/company/test/v2/neg-org.test.ts`、`packages/contract/test/v2/{neg-emp,neg-org}.test.ts`；每个测试调用生产函数并做变异验证，未用注释/文档充数。
-- 仍缺 **9**：RING-01..05（价值/权责/能力/组织/进化环，V6·SCEN/目标）＋ENG-01/02/04/05（跨版本探针/spike/纪律，波外目标）；其中 RING-04、ENG-01、ENG-05 为 `not-executed`，不得写「119 已覆盖」。
+- 仍缺 **18**：①无机制 target 9 条（EMP-02/04/06/07/08/09、ORG-02/05/08）；②RING-01..05（价值/权责/能力/组织/进化环，V6·SCEN/目标）＋ENG-01/02/04/05（跨版本探针/spike/纪律，波外目标）9 条。其中 RING-04、ENG-01、ENG-05 为 `not-executed`，不得写「119 已覆盖」。
 - 全 V2 门：**1328 tests** 全绿；`verify:docs` 6/6；`guard` 0 违例。
 - 结论：NEG 覆盖率显著提升，但 **MIG-08 的 119 终值仍未达**；剩余 9 条缺的是机制/场景/跨版本探针，不是测试写法。
