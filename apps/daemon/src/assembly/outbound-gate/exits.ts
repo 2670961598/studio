@@ -88,11 +88,11 @@ export const OUTBOUND_EXIT_CATALOG: readonly OutboundExitDef[] = [
   {
     id: 'api-response',
     label: 'API 响应',
-    status: 'gap',
+    status: 'wired',
     wiring:
-      '闸侧 wrapper 已备（wireOutboundGate().guardApiResponse）；runServe 的 API 装配位（assembleApi）' +
-      '尚未接线（IMPL-06-07/08 端点族接线单），响应面当前无生产出口',
-    gap: 'api-response:api-assembly-not-wired',
+      'runtime.ts 经 wireServeApi({guardResponse: outbound.guardApiResponse}) 接 HTTP 响应面；' +
+      'runServe 同进程装配 createApiApp（只读 readers/fail-closed auth/gated gate）；' +
+      '响应 JSON 出站前过 guardApiResponse（MIG-06 API 第 5 出口，2026-10-29 接线）',
   },
 ]
 

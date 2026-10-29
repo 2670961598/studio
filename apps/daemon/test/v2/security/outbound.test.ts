@@ -215,13 +215,14 @@ describe('五出口覆盖：目录是唯一定义，wired/gap 逐条可判（v2/
       'platform-write',
       'notify',
       'log-egress',
+      'api-response',
     ])
-    expect(coverage.gaps).toEqual(['evidence-export:no-export-channel', 'api-response:api-assembly-not-wired'])
-    expect(coverage.gapCount).toBe(2)
+    expect(coverage.gaps).toEqual(['evidence-export:no-export-channel'])
+    expect(coverage.gapCount).toBe(1)
     expect(coverage.gaps.every((code) => code.includes(':'))).toBe(true)
   })
 
-  it('装配行显式带两个缺口＋词表缺口（serve 装配真实入口）', () => {
+  it('装配行显式带剩余缺口＋词表缺口（serve 装配真实入口）', () => {
     const capture = fakeLedger()
     const lines: string[] = []
     const wiring = wireServeOutboundGate({
@@ -236,7 +237,7 @@ describe('五出口覆盖：目录是唯一定义，wired/gap 逐条可判（v2/
       },
     })
     expect(wiring.startupLine).toContain('evidence-export:no-export-channel')
-    expect(wiring.startupLine).toContain('api-response:api-assembly-not-wired')
+    expect(wiring.startupLine).not.toContain('api-response:api-assembly-not-wired')
     expect(wiring.startupLine).toContain('redaction-failed')
     expect(lines.join('\n')).toContain('outbound-gate')
   })
@@ -304,10 +305,10 @@ describe('探针秘密五出口零泄漏（PRB-07 扩全出口）', () => {
     const api = gate.guardApiResponse({ data: { title: PROBE_TOKEN, nested: { body: [PROBE_KEY] } }, count: 1 })
     expect(JSON.stringify(api)).not.toContain(PROBE_TOKEN)
     expect(JSON.stringify(api)).not.toContain(PROBE_KEY)
-    // gap 仍是 gap：wrapper 可用≠生产出口已覆盖（两条不同事实）
+    // 生产出口已接线；evidence-export 仍是 gap（两条不同事实）
     const coverage = gate.coverage()
     expect(coverage.exits.find((e) => e.id === 'evidence-export')?.status).toBe('gap')
-    expect(coverage.exits.find((e) => e.id === 'api-response')?.status).toBe('gap')
+    expect(coverage.exits.find((e) => e.id === 'api-response')?.status).toBe('wired')
     expect(coverage.scanned).toBeGreaterThanOrEqual(2)
   })
 })
