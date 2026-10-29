@@ -217,3 +217,70 @@ EXIT=0
 - 对 PRB-14 的意义：**写侧负向已从「无围栏」变为「框架围栏拒绝第二写者」**；PRB-14 正面可复测（附录 A 的「仍不得宣称」由本附录更新）。
 - PB-5 仍不通过：**PRB-23 仍 not-executed**（部署值表/消费方观察缺口写口缺位），PRB-13 未执行；平台读侧契约仍不成立。
 - 全 V2 门复跑：1561 tests 全绿（`verify:v2`）。
+
+### B.1 落位与语义（本单补记）
+
+| 件 | 内容 |
+|---|---|
+| `packages/store/src/writer-lease.ts`（新，383 行） | `writerLeasePath(dbPath)`=唯一锁路径口径（`<resolve(db)>.writer.lock`）。`acquireWriterLease(dbPath, owner)`：锁文件以 `fs.openSync(lockPath, 'wx', 0o600)` 排他创建，写入 `{pid, owner, at}`＋换行并 fsync；已存在则读 pid——进程存活（`process.kill(pid,0)`；EPERM/未知按存活，fail-closed）→ `STALL/writer-lease-held`（detail 含持有者 pid/owner/at，**不覆盖**）；进程已死（ESRCH）→ 复核锁内容未被换手后清理一次、重试创建；内容不可解析 → `STALL/writer-lease-unreadable`（fail-closed，不自动删）；创建/读写/清理 IO 失败 → `STALL/writer-lease-io`；父目录不存在 → `CONFIG_INVALID/writer-lease-path-invalid`；清理一次后仍抢不到 → `STALL/writer-lease-contended`。`release()` 仅当锁文件内容逐字等于本次写入时删除（不误删他人锁；同 handle 幂等，文件已消失/内容不符返 false）。`at` 只作审计/观测，不参与存活判定（无 TTL）。 |
+| `packages/store/src/index.ts` | 公共出口新增 `acquireWriterLease` / `openLedgerWriter` / `writerLeasePath` / `type WriterLease`；**不新增记录类/端口**（锁内容是 OS 锁文件，不是台账记录；也不是 PORT 注入面）。 |
+| `apps/daemon/src/assembly/serve/run.ts` | `runServe` 改用 `openLedgerWriter(path.resolve(config.db))`（import 自 `@studio-next/store`）：另一 daemon 存活时 `STALL/writer-lease-held` 拒启；既有提前退出路径的 `ledger.close()` 经 wrapper 释放锁；`runtime.stop` 关库路径不变。 |
+| `packages/store/test/v2/writer-lease.test.ts`（新，425 行） | 9 tests：锁文件 0600/内容/release 幂等；同进程第二写者拒；死 pid 恢复；不可解析 fail-closed；不误删他人锁；入参/路径分类；openLedgerWriter 写读/close 顺序；打开失败释放 lease；两真实子进程 A 持锁→B 拒→A 关闭→B 取并读写。 |
+
+`openLedgerWriter(dbPath, owner?)` 语义：先取 lease → `openLedger`；`openLedger`（建库/migrate）失败时**先释放本次 lease** 再上抛（已分类错误原样保留；未分类引擎错误包装 `STALL/db-open-failed`，detail 脱敏）；返回的 `Ledger.close()` **先关 db、成功后释放 lease**（关库失败不释放——fail-closed，残留锁由下次启动按死 pid 清理）；close 幂等。直接 `ledger.db.close()` 会绕过释放（文档已注明）。
+
+### B.2 两进程证据（原始日志：`log-07-writer-lease.txt`）
+
+```text
+$ mise exec -- node <tmp>/sn-pb5-lease-probe.mjs
+--- 子进程 A：先开写者（持锁） ---
+A> openLedgerWriter ok pid=38965 owner=probe-A
+A> lock raw={"pid":38965,"owner":"probe-A","at":1793277137109}
+--- 子进程 B：A 仍持锁时尝试开写者 ---
+probe-B> rejected: {"category":"STALL","subcause":"writer-lease-held","detail":"台账写者租约已被 pid=38965 owner=probe-A 持有（at=1793277137109）；拒绝并发打开，未覆盖持锁文件",...}
+B> exit=0
+--- A 关闭（先关库、后释放锁） ---
+A> ledger.close ok（先关库再释放锁）
+A> exit=0
+after-A-close lock exists=false
+--- 子进程 B2：A 关闭后重新取锁并读写 ---
+probe-B2> openLedgerWriter ok, kvSet/kvGet=probe-B2
+probe-B2> close ok, lock exists=false
+B2> exit=0
+after-B2-close lock exists=false
+EXIT=0
+```
+
+要点：B 是**真独立进程**（`spawn` 子进程，非线程/mock），在 A 持锁期间被框架围栏直接拒绝——**不是** `log-04` 那种 SQLite WAL/`busy_timeout` 引擎串行化（后者等待 1584ms 后写入成功）；被拒时锁文件逐字保留（detail 中持有者 pid/owner 与 A 锁内容一致）；A `close()` 后锁文件消失，B2 取锁并完成 kvSet/kvGet。完整逐字输出见 `log-07-writer-lease.txt` §一。
+
+### B.3 测试与门禁
+
+| 门 | 命令 | 结果 |
+|---|---|---|
+| 类型门（根） | `bun run typecheck` | exit 0（`tsc --noEmit`） |
+| 类型门（V2） | `bun run typecheck:v2` | exit 0（`tsc --noEmit -p tsconfig.v2.json`） |
+| 目标测试门 | `bun run test:v2 -- packages/store apps/daemon/test/v2/e2e` | **15 files / 158 tests passed**（writer-lease 9；readonly 8；e2e 4＋14 不回归） |
+| 分层宪法 | `bun run guard:boundaries` | PASS：928 文件，0 违例 |
+| 文档门 | `bun run verify:docs` | PASS：V0 六项 6/6，真悬空 0 |
+| 全 V2（独立复跑） | `bun run verify:v2` | **104 files / 1561 tests passed**；manifest 5/5；旧测试台账 7/7；exit 0 |
+
+- 运行时分双分支验证：bun 与 node（`mise exec -- node node_modules/vitest/vitest.mjs ...`）各自 9 tests 全绿——子进程脚本在两种运行时均走真实 spawn。
+- 新文件行数：`writer-lease.ts` 383、`writer-lease.test.ts` 425，均 <600；锁文件只落仓外临时目录，仓内无 `*.writer.lock`。
+- `log-07-writer-lease.txt` 为本附录的原始日志；§六 日志清单是 2026-10-29 采集时的历史快照，本单**只追加**新日志、未回改旧日志/旧清单。
+
+### B.4 PRB-14 状态（不代行主表判定）
+
+- **正面判据（v2/12 §5.3「第二个被拒或串行化」）在 `openLedgerWriter` 路径上已取到**：第二写者为真独立进程，被框架围栏以 `STALL/writer-lease-held` 拒绝（detail 含持有者 pid/owner，不覆盖）；`release` 后第二写者可取并读写。**可复测**（`writer-lease.test.ts`＋`log-07` 探针）。
+- **不自行改判主表**：§二 PRB-14 行仍是 2026-10-29 采样时的 `executed（负向）` 历史登记；是否把「框架围栏拒绝第二写者」升为该行正面结论、以及是否重跑 PRB-14 探针并更新主表，归 v2/12 §5.3 唯一主表的探针收口方复核。本附录**不写「PRB-14 通过」**。
+- **PB-5 仍不通过**：PRB-23 仍 `not-executed`（部署值表/消费方观察缺口写口缺位；平台读侧契约不成立）；PRB-13 仍 `not-executed`。本附录不宣布 PB-5 通过。
+- **不宣布「台账单写」整体成立**：围栏只覆盖 `openLedgerWriter` 调用者（本单=`runServe`）；本仓 CLI/panel/rebuild/drill 等仍直接 `openLedger`，可绕过围栏；多机/容器/NFS/路径别名未验证。
+- **不是 docs/80 §8.2/§8.5 的 `WriterLeasePort`**：无 TTL/续期/`LeaseGrant`/单调 `FenceToken`；pid 复用按存活 fail-closed；O_EXCL 后内容落盘前崩溃留空锁需人工清理（`writer-lease-unreadable` 拒启，不自动删无法证明死亡的锁）。
+
+### B.5 缺口（下一步）
+
+1. **其它写者未纳围栏**：CLI/panel/rebuild/drill 的 `openLedger` 调用点需迁 `openLedgerWriter`（写命令）或 `openLedgerReadonly`（读命令）；迁移完成前不得称台账唯一写入者由机制保证。
+2. **WriterLeasePort 语义仍缺**：TTL/renew、单调 fence、`REC-AUTH-05/06` 记录形状与跨进程交接协议（docs/80 §8.2/§8.5）未实现。
+3. **PRB-14 探针复核**：按 v2/12 §5.3 由收口方复测/登记（正负同验、原始日志留档）；PRB-23/PRB-13 的未执行项不受影响。
+4. **跨环境互斥未验证**：容器 pid 命名空间、NFS/overlay 的 `O_EXCL` 语义、符号链接/绑定点路径别名——本件只承诺同机同文件系统同规范路径。
+5. **崩溃窗口**：取锁后内容落盘前崩溃留空锁（需人工清理）；pid 复用会误判存活（fail-closed）。无自动 stale 清理，避免误删活锁。
+

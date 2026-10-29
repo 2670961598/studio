@@ -1,0 +1,114 @@
+# PB-5 · WriterLease 围栏落位与两进程证据（附录 B 原始日志）
+#
+# 日期：2026-10-29（探针/测试 20:29–20:34 CST）
+# git HEAD：6d574bf618973a12a0d29ff529068edd497db177（分支 dev）
+# 工具链：node v24.21.0 / bun 1.4.3（mise exec --）；宿主同 log-00（macOS arm64）
+# 性质：仓外临时探针脚本＋仓外临时台账目录，跑后清理；无真实网络/模型调用；
+#       不写公司目录/宿主 profile；本单未执行 git commit（代码/测试由并发收口会话提交）。
+# 脱敏：仓根→<repo>，临时目录→<tmp>；其余命令输出逐字保留。
+# 边界：本日志只证 openLedgerWriter 路径的跨进程写围栏，不证 PRB-13/23，
+#       不宣布 PB-5 通过，也不宣布「台账单写」整体成立（其它 openLedger 调用点未纳围栏）。
+
+## 一、两真实子进程探针（A 持锁 → B 被拒 → A 关闭 → B2 可取）
+
+$ mise exec -- node <tmp>/sn-pb5-lease-probe.mjs
+=== PB-5 WriterLease 两进程探针 ===
+db=<tmp>/ledger.db  lock=<tmp>/ledger.db.writer.lock
+--- 子进程 A：先开写者（持锁） ---
+A> openLedgerWriter ok pid=38965 owner=probe-A
+A> lock raw={"pid":38965,"owner":"probe-A","at":1793277137109}
+--- 子进程 B：A 仍持锁时尝试开写者 ---
+probe-B> rejected: {"category":"STALL","subcause":"writer-lease-held","detail":"台账写者租约已被 pid=38965 owner=probe-A 持有（at=1793277137109）；拒绝并发打开，未覆盖持锁文件","message":"STALL/writer-lease-held：台账写者租约已被 pid=38965 owner=probe-A 持有（at=1793277137109）；拒绝并发打开，未覆盖持锁文件"}
+B> exit=0
+--- A 关闭（先关库、后释放锁） ---
+A> ledger.close ok（先关库再释放锁）
+A> exit=0
+after-A-close lock exists=false
+--- 子进程 B2：A 关闭后重新取锁并读写 ---
+probe-B2> openLedgerWriter ok, kvSet/kvGet=probe-B2
+probe-B2> close ok, lock exists=false
+B2> exit=0
+after-B2-close lock exists=false
+EXIT=0
+
+## 二、新测试（同链路 + 死 pid/内容校验/失败分类，9 tests）
+
+$ mise exec -- bun run test:v2 -- packages/store/test/v2/writer-lease.test.ts --reporter=verbose
+ ✓ packages/store/test/v2/writer-lease.test.ts > acquireWriterLease（跨进程写围栏） > O_EXCL 锁文件 0600、内容 pid/owner/at；release 只删自己的锁且幂等
+ ✓ packages/store/test/v2/writer-lease.test.ts > acquireWriterLease（跨进程写围栏） > 同进程第二写者被拒：STALL/writer-lease-held 含持有者 pid/owner，锁文件不被覆盖
+ ✓ packages/store/test/v2/writer-lease.test.ts > acquireWriterLease（跨进程写围栏） > 死 pid 锁可恢复：清理一次后接管，锁内容换成本次写入
+ ✓ packages/store/test/v2/writer-lease.test.ts > acquireWriterLease（跨进程写围栏） > 锁内容不可解析：STALL/writer-lease-unreadable，fail-closed 不覆盖
+ ✓ packages/store/test/v2/writer-lease.test.ts > acquireWriterLease（跨进程写围栏） > release 内容校验：他人锁不删（返回 false、文件逐字保留）
+ ✓ packages/store/test/v2/writer-lease.test.ts > acquireWriterLease（跨进程写围栏） > 入参/路径分类：空 owner、空 dbPath、父目录不存在 = CONFIG_INVALID
+ ✓ packages/store/test/v2/writer-lease.test.ts > openLedgerWriter（lease → openLedger；close 先关库再释放） > 写/读正常；close 后锁释放、库可重开读回事件
+ ✓ packages/store/test/v2/writer-lease.test.ts > openLedgerWriter（lease → openLedger；close 先关库再释放） > 打开失败释放 lease：分类 STALL/db-open-failed，锁文件不残留
+ ✓ packages/store/test/v2/writer-lease.test.ts > openLedgerWriter（lease → openLedger；close 先关库再释放） > 两真实子进程：A 持锁 → B 被 STALL/writer-lease-held 拒 → A 关闭后 B 可取并读写
+
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+EXIT=0
+
+## 三、node 运行时复跑（子进程脚本 node 分支，非 bun）
+
+$ mise exec -- node node_modules/vitest/vitest.mjs run --config vitest.v2.config.ts packages/store/test/v2/writer-lease.test.ts
+ Test Files  1 passed (1)
+      Tests  9 passed (9)
+EXIT=0
+
+## 四、目标测试门（本单冻结命令）
+
+$ mise exec -- bun run test:v2 -- packages/store apps/daemon/test/v2/e2e
+ Test Files  15 passed (15)
+      Tests  158 passed (158)
+EXIT=0
+
+## 五、其它门
+
+$ mise exec -- bun run typecheck
+$ tsc --noEmit
+EXIT=0
+
+$ mise exec -- bun run typecheck:v2
+$ tsc --noEmit -p tsconfig.v2.json
+EXIT=0
+
+$ mise exec -- bun run guard:boundaries
+边界门禁 PASS：扫描 928 文件（范围面代码件 771），0 违例（分层宪法 20-§十五）
+EXIT=0
+
+$ mise exec -- bun run verify:docs
+v0-doc-check PASS：V0 六项 6/6（docs/v2 18 卷＋docs/plan 10 卷；真悬空 0）
+EXIT=0
+
+## 六、全 V2 门复跑（独立确认并发收口件登记的 1561 tests）
+
+$ mise exec -- bun run verify:v2
+ Test Files  104 passed (104)
+      Tests  1561 passed (1561)
+[v2-suite-manifest] OK ① include 2 个 glob，全部只含 test/v2
+[v2-suite-manifest] OK ② test/v2 测试文件 104 件（test/v2 下 .ts 共 125 件），静态用例 1483 条
+[v2-suite-manifest] OK ③ 禁标记 skip/only/todo/retry 命中 0 处
+[v2-suite-manifest] OK ④ test:v2 无 --passWithNoTests / --retry，指向 vitest.v2.config.ts
+[v2-suite-manifest] OK ⑤ 配置 retry: 0
+v2-suite-manifest PASS：V2 新套件清单自检 5/5（plan/04 §1.9.2/§1.9.4）
+[old-test-ledger] PASS：旧测试台账自检 7/7（plan/04 §1.8.4）
+VERIFY_V2_EXIT=0
+
+## 七、行数与锁文件卫生
+
+$ wc -l packages/store/src/writer-lease.ts packages/store/test/v2/writer-lease.test.ts
+     383 packages/store/src/writer-lease.ts
+     425 packages/store/test/v2/writer-lease.test.ts
+
+- 锁文件全部落在仓外临时目录（mkdtemp）；测试/探针结束删除临时根；仓内无 `*.writer.lock`。
+- 新增行数：src 383 / test 425，均 <600（边界门禁四-尺寸阈）。
+
+## 八、附：探针脚本说明（仓外临时脚本，不随仓交付）
+
+- 探针脚本为仓外临时 `.mjs`（置于 `<tmp>`，跑后随临时根清理），不随仓交付；可复现的仓内件=
+  `packages/store/test/v2/writer-lease.test.ts`（§二/§三 9 tests 已覆盖同链路）。
+- 脚本行为：父进程 spawn 真子进程 A（`openLedgerWriter` 持锁，等 stdin `close`）；再 spawn B
+  （`openLedgerWriter` 尝试，被拒时打印 category/subcause/detail/message JSON）；A close 后
+  spawn B2（取锁并 kvSet/kvGet）。三段均为独立 `node` 进程，非线程/非同进程 mock。
+- 脚本经 store 公共出口 `packages/store/src/index.ts` 取 `openLedgerWriter`，未 mock 引擎、
+  未改生产分支、未触网。
