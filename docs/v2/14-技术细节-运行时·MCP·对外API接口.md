@@ -173,6 +173,8 @@ circuitBreak(req, ctx): PortResult<BreakReceipt>       // 止损围栏
 emergencyStop(req: EmergencyStopRequest, ctx): PortResult<StopReceipt>  // REC-WORK-18 落口（命名治 L3J-P1-07「停机通道」）
 ```
 
+**PORT-OPS 记录请求形状（OPS 补形 A，2026-10-29）**：`emergencyStop` 与 `circuitBreak` 都落 REC-WORK-18，故两请求均须携全记录必填面：`actionsTaken`（实际处置动作，非空）、`notAuthorized`（明确未做，非空）、`evidencePreserved`（`OpsRef` 显式版本）、`notified`（`OpsRef` 具名接收者，非空）、`review`（独立复核位置/期限/结论）。`emergencyStop` 另带 `boundary`（预设边界须 `boundaryRecordRef`＝`OpsRecordRef` 显式类型/ID/版本）与 `triggerRef`；`circuitBreak` 另带 `target`/`fence`/`triggerRef`。**一切 refVersion 由调用方显式提供**，端口与记录适配层不硬编码、不臆造；记录经 PORT-HIST 写入，形状缺口不再以 `gaps` 占位。依据：`docs/49` OPS 补形 A；记录字段仍以 v2/11 §六为唯一源。
+
 **覆盖核对（一句话，防双源）**：REC- 74 类的写入面全部由上述 13 端口方法承载，逐类「生产者/写入者」以 v2/11 §一总表为唯一口径；端口方法缺承载的记录类＝缺口登记 v2/17（判据：v2/11 每族「生产者」列可指回本卷某方法签名）。
 
 ---

@@ -226,6 +226,11 @@ export function compileOnlyGateObsOpsSurface(): void {
     target: { kind: 'work', workRef: 'work-1' },
     fence: { scope: ['executors'], stopInjection: true, revokeDerived: true, mechanismProven: false },
     triggerRef: 'trigger-1',
+    actionsTaken: ['冻结出工段'],
+    notAuthorized: ['未撤销授权'],
+    evidencePreserved: [{ refId: 'evidence-1', refVersion: '1.0.0' }],
+    notified: [{ refId: 'position-1', refVersion: '1.0.0' }],
+    review: { reviewerRef: 'position-2', due: '2026-11-02T00:00:00Z' },
   }
   const stopReq: Ops.EmergencyStopRequest = {
     authorization,
@@ -233,9 +238,10 @@ export function compileOnlyGateObsOpsSurface(): void {
     requiresPlatformWrite: false,
     triggerRef: 'trigger-1',
     boundary: { preset: false, escalationRef: 'escalation-1', prohibitedAmplification: true },
+    actionsTaken: ['冻结出工段'],
     notAuthorized: ['未撤销授权'],
-    evidencePreserved: ['evidence-1'],
-    notified: ['position-1'],
+    evidencePreserved: [{ refId: 'evidence-1', refVersion: '1.0.0' }],
+    notified: [{ refId: 'position-1', refVersion: '1.0.0' }],
     review: { reviewerRef: 'position-2', due: '2026-11-02T00:00:00Z' },
   }
   const stopReceipt: Ops.StopReceipt = {
@@ -504,10 +510,11 @@ export function pinRejectedShapes(): void {
     requiresPlatformWrite: false,
     triggerRef: 'trigger-1',
     boundary: { preset: false, escalationRef: 'escalation-1', prohibitedAmplification: true },
+    actionsTaken: ['冻结出工段'],
     // @ts-expect-error —— notAuthorized 非空元组
     notAuthorized: [],
     evidencePreserved: [],
-    notified: ['position-1'],
+    notified: [{ refId: 'position-1', refVersion: '1.0.0' }],
     review: { reviewerRef: 'position-2', due: '2026-11-02T00:00:00Z' },
   } satisfies Ops.EmergencyStopRequest
   // 止损不追认原动作、不等于恢复、不推广为常态

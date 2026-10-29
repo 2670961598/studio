@@ -130,12 +130,16 @@ export async function runServe(
     }
   }
 
-  const { engine, sources, stop, hotReload, notifyRelay, api } = buildServeRuntime(config, ledger, snapshot, {
+  const { engine, sources, stop, hotReload, notifyRelay, api, ops } = buildServeRuntime(config, ledger, snapshot, {
     ...(opts?.matrixSource !== undefined ? { matrixSource: opts.matrixSource } : {}),
     ...(opts?.matrixRoomFace !== undefined ? { matrixRoomFace: opts.matrixRoomFace } : {}),
     ...(opts?.notifyBroadcast !== undefined ? { notifyBroadcast: opts.notifyBroadcast } : {}),
     ...(opts?.hrMatrixFace !== undefined ? { hrMatrixFace: opts.hrMatrixFace } : {}),
   })
+  // PORT-OPS 装配面（OPS 补形 A）：runtime 已把 emergencyStop/circuitBreak 接到
+  // REC-WORK-18 → PORT-HIST（assembly/ops）。runServe **只持有装配面、不自动触发**
+  // emergencyStop——控制面停机仍走 stop-channel 文件协议（行为/顺序不变）。
+  void ops
 
   // 未挂公司目录的 daemon：L1 热重载不适用——reload 请求仍回执拒绝（不悬空 CLI 轮询）
   let answeredRequestId: string | null = null

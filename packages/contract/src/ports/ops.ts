@@ -13,7 +13,10 @@
  *     （`EmergencyBoundary` 两态）；止损不追认原动作、不等于恢复、不推广为常态
  *     （`StopReceipt.effectOnOriginal` 三枚 `false` 字面量）；
  *   - 控制面动作借道 comment：`ControlPlaneDeclaration` 只收 ctl- 词族；迁移期 `op`
- *     借道须显式降级标记（ENU-119；transition 不得显示为 comment）。
+ *     借道须显式降级标记（ENU-119；transition 不得显示为 comment）；
+ *   - 记录必填面缺项：紧急止损/围栏两请求必须携 REC-WORK-18 全字段（实际处置动作、
+ *     未授权清单、保全物、具名通知、独立复核，及落记录所需的显式引用版本）——缺项
+ *     =记录闸拒，不以「形状缺口」占位、不臆造版本（OPS 补形 A）。
  * 零实现、零 IO；实现域 control＋cli 一命令一模块。
  */
 import type { EndpointRef } from './reg.ts'
@@ -171,6 +174,24 @@ export interface PreservationReceipt {
 // 四、止损与围栏（先止损、保全、说明）
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * 显式版本引用（`OpsRef{refId, refVersion}`）：`notified`/`evidencePreserved` 落
+ * REC-WORK-18 记录 `ObjectRef` 的唯一来源。**refVersion 只由调用方显式提供**——端口与
+ * 记录适配层不硬编码、不臆造版本（v2/11 §0.4-2「一切引用形如 ID＋版本」）。
+ */
+export interface OpsRef {
+  readonly refId: string
+  readonly refVersion: string
+}
+
+/**
+ * 记录引用（`OpsRecordRef{refType, refId, refVersion}`）：预设紧急边界落 REC-WORK-18
+ * `boundary_ref`（RecordRef）的唯一来源；`refType`/`refVersion` 同样由调用方显式给出。
+ */
+export interface OpsRecordRef extends OpsRef {
+  readonly refType: string
+}
+
 /** 止损目标：只引用既有工作/出工段/执行体，不新造对象 */
 export type BreakTarget =
   | { readonly kind: 'work'; readonly workRef: string }
@@ -188,12 +209,29 @@ export interface FenceDeclaration {
   readonly mechanismProven: boolean
 }
 
-/** 止损围栏请求：`triggerRef` 为触发记录引用（观察事件不构成迁移权源，也不构成止损权源） */
+/**
+ * 止损围栏请求：`triggerRef` 为触发记录引用（观察事件不构成迁移权源，也不构成止损权源）。
+ *
+ * REC-WORK-18 必填面（OPS 补形 A）：围栏同样落紧急止损记录，故本请求补齐
+ * `actionsTaken`（实际处置动作，非空）/`notAuthorized`（明确未做的事，非空）/
+ * `evidencePreserved`（保全物，`OpsRef` 显式版本）/`notified`（具名接收者，非空且
+ * 拒匿名）/`review`（事后独立复核）——不再以「请求形状无槽位」记缺口。
+ */
 export type CircuitBreakRequest = OpsRequestBase &
   OpsPlatformTouch & {
     readonly target: BreakTarget
     readonly fence: FenceDeclaration
     readonly triggerRef: string
+    /** 实际处置动作（至少一项；空集不得冒充「已止损」） */
+    readonly actionsTaken: readonly [string, ...string[]]
+    /** 明确未做的事（空集不得冒充「未越权」——REC-WORK-18 判定条件） */
+    readonly notAuthorized: readonly [string, ...string[]]
+    /** 保全物（显式版本引用；空集＝未保全，不是「无需保全」） */
+    readonly evidencePreserved: readonly OpsRef[]
+    /** 具名接收者（非空；禁匿名责任者，I-11） */
+    readonly notified: readonly [OpsRef, ...OpsRef[]]
+    /** 事后独立复核（位置/期限；复核者不得是现场责任主体＝自审） */
+    readonly review: EmergencyReview
   }
 
 /**
@@ -217,11 +255,15 @@ export interface BreakReceipt {
  * 紧急边界两态（REC-WORK-18.boundary_ref）：有预设边界＝边界内先行保全与止损；
  * 无预设边界＝只能采取不进入禁止/保留权限的保全与升级（`escalationRef` 必填）。
  * 紧急止损是唯一允许在生效前验收缺位下先行的情形，且只允许最小保全与止损。
+ *
+ * `boundaryRecordRef` 是落记录 `boundary_ref`（RecordRef：类型＋ID＋版本）的显式引用——
+ * 版本由调用方给，不臆造；`boundaryRef` 保留为边界具名锚（回执/审计可读面）。
  */
 export type EmergencyBoundary =
   | {
       readonly preset: true
       readonly boundaryRef: string
+      readonly boundaryRecordRef: OpsRecordRef
       readonly permittedActions: readonly [string, ...string[]]
     }
   | {
@@ -238,16 +280,20 @@ export interface EmergencyReview {
 }
 
 /**
- * 紧急止损请求：`notAuthorized` 逐项写**明确未做的事**（空集不得冒充「未越权」）；
- * `notified` 为具名接收者（禁匿名责任者，I-11）；`evidencePreserved` 逐项列保全物。
+ * 紧急止损请求：`actionsTaken` 为**实际处置动作**（至少一项，空集不得冒充「已处置」）；
+ * `notAuthorized` 逐项写**明确未做的事**（空集不得冒充「未越权」）；
+ * `notified` 为具名接收者（非空、禁匿名责任者，I-11）；`evidencePreserved` 逐项列保全物
+ * （显式版本引用）；`review` 为事后独立复核（位置/期限/结论，必填）。
+ * 请求形状即 REC-WORK-18 必填面（OPS 补形 A）——落记录不再有「形状缺口」。
  */
 export type EmergencyStopRequest = OpsRequestBase &
   OpsPlatformTouch & {
     readonly triggerRef: string
     readonly boundary: EmergencyBoundary
+    readonly actionsTaken: readonly [string, ...string[]]
     readonly notAuthorized: readonly [string, ...string[]]
-    readonly evidencePreserved: readonly string[]
-    readonly notified: readonly [string, ...string[]]
+    readonly evidencePreserved: readonly OpsRef[]
+    readonly notified: readonly [OpsRef, ...OpsRef[]]
     readonly review: EmergencyReview
   }
 

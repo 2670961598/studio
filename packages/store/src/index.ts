@@ -273,6 +273,26 @@ export type {
   WorkRecord,
 } from './records.ts'
 
+// v14 PORT-HIST 记录唯一写口（IMPL-04-06；v2/14 §1.6）——hist.ts 面工厂与读写形状。
+// 记录写口唯一：append/correct；读面 get/query/reconcile/memory 均 fail-closed 于坏行。
+// 生产装配面：daemon assembly/ops（OPS 补形 A：REC-WORK-18 记录经 createHistFace(ledger.db)
+// .append 落 records；同 recordId 幂等）经本出口取用——不从 src/hist.ts 深引。
+export {
+  createHistFace,
+  type HistCorrectionDraft,
+  type HistFace,
+  type HistFaceOptions,
+  type HistMemoryQuery,
+  type HistQuery,
+  type HistRecord,
+  type HistRecordRef,
+  type HistReconcileBatch,
+  type HistReconcileDifference,
+  type HistReconcileQuery,
+  type HistTx,
+  type HistTxReceipt,
+} from './hist.ts'
+
 // 快照与重建
 export { rebuild } from './rebuild.ts'
 export type { RebuildResult } from './rebuild.ts'

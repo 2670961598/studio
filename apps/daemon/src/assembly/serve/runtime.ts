@@ -39,6 +39,7 @@ import { buildServeDirectiveDeps } from '../../engine/directive/index.ts'
 import { createDefaultGateRunner, createAcceptanceGateRunner } from '../../engine/gate.ts'
 import { createDefaultMergeRunDeps } from '../../engine/merge/default-deps.ts'
 import { createHotReload, type HotReload, type HotReloadApplyReport } from '../../control/hot-reload.ts'
+import { wireServeOps, type ServeOpsFace } from '../ops/index.ts'
 import { makeUlid } from '../../engine/tools/id.ts'
 import { logJobContractWarnings } from '../../engine/jobs/freshness.ts'
 import { registerJobSources } from '../sources/jobs.ts'
@@ -68,8 +69,8 @@ import { wireExecutorFace } from './executor-face.ts'
 import { wireServeApi, type ServeApiWiring } from '../api/serve-face.ts'
 import type { WorkerKeyDeps } from '../../engine/worker-key.ts'
 
-/** serve 运行栈（engine + 唤起源注册表 + 统一停机面；runServe 与测试共用装配） */
-export interface ServeRuntime {
+/** serve 运行栈（engine + 唤起源注册表 + PORT-OPS 面 + 统一停机面；runServe 与测试共用装配） */
+export interface ServeRuntime extends ServeOpsFace {
   engine: Engine
   scheduler: Scheduler | null
   /** 唤起源注册表（22-§一）：startAll 的 emit 统一进 engine.ingest（runServe 接线） */
@@ -199,12 +200,12 @@ export function buildServeRuntime(
     ...(opts?.hrKnownSecrets !== undefined ? { extraKnowns: opts.hrKnownSecrets } : {}),
   })
   const log = outbound.guardLog(rawLog)
-  // 三不入·库（docs/v2/15 §4.5）：台账写口一处收口——此后一切装配单元共用受闸 ledger
-  //（失败落账 sink 持原件，避免「闸的失败事件再进闸」自噬）
+  // 三不入·库（docs/v2/15 §4.5）：台账写口一处收口（失败落账 sink 持原件，避免自噬）
   ledger = outbound.createStoreWriteGuard(ledger)
 
-  // —— 公司面活持有者（docs/38-§2 L1 热重载的替换点）：装配器/cadence 源/热重载 apply 段
-  //    统一读此对象——快照整组换（companyState.snapshot = next），闭包零重建
+  // —— PORT-OPS 面（OPS 补形 A；v2/14 §1.8）：装配体在 assembly/ops/serve-face.ts；不自动触发。
+  const opsFace = wireServeOps({ ledger, clock, guardRecord: outbound.gate.guardStoreRecord, log })
+  // —— 公司面活持有者（docs/38-§2 L1 热重载替换点）：快照整组换，闭包零重建
   const companyState: { snapshot: CompanySnapshot } = { snapshot }
 
   // 类型流表（DEV-43）：workflows 声明 → T:<type> 键（无声明=undefined=不注入，D9）
@@ -580,6 +581,7 @@ export function buildServeRuntime(
     scheduler,
     sources,
     api,
+    ...opsFace,
     evolveSelfCheck,
     ...(hotReload !== undefined ? { hotReload } : {}),
     // 129-E（184）：续命意图推送面露头（resume: true 时；调用面归 B4 CLI resume——另批）
