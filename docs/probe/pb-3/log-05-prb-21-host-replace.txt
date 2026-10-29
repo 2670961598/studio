@@ -1,0 +1,45 @@
+# PB-3 / PRB-21 HCL-4 宿主内原子替换面（未执行；静态面登记）
+DATE=2026-10-29T07:00:25Z
+HEAD=af0621643b39fc72ad990243df36232170d77891
+$ dsh --help
+Usage: dsh [--profile] <name> [options] [app-args...]
+       dsh plugin --profile <name> <pnpm-args...>
+
+dsh: boot a DeepSeek Harness profile — an ordered stack of plugin-bundle patch
+layers under your own overrides.
+
+Arguments:
+  args                           arguments for the booted profile's app (see:
+                                 dsh --profile <name> --help)
+
+Options:
+  -V, --version                  output the version number
+  --profile <name>               the profile under $DSH_HOME/profiles to boot
+  --from-default-profile <name>  initialize a new custom profile from a shipped
+                                 profile template
+  --patch <path>                 extra patch-list overlay applied after the
+                                 profile layer (repeatable)
+  --dump-config                  print the composed profile tree and exit
+  --dump-config-schema           print JSON Schema for profile entries and
+                                 patches without mounting
+  --dump-default-config          print the profile tree without its user layer
+                                 or --patch overlays and exit
+
+Examples:
+  dsh web                                   boot the web profile (same as: dsh --profile web)
+  dsh rescue --from-default-profile web
+                                            create rescue from the shipped web template, then boot it
+  dsh headless "run the tests"              answer one task, print the result, and exit
+  dsh tui --patch ./extra.yml               boot a custom profile with one extra overlay
+  dsh tui --resume <session>                arguments after the launcher flags reach the app
+  dsh web --help                            the web app's own flags and help
+  dsh plugin --profile tui add <package>    install a plugin into the tui profile
+
+EXIT=0
+$ grep -rni "plugin.*replace\|replace.*plugin\|热插拔" packages/dsh-bridge/src packages/adapters/src apps/daemon/src --include=*.ts
+EXIT=0
+$ grep -rni "rollback" packages/dsh-bridge/src packages/adapters/src --include=*.ts
+EXIT=0
+$ grep -rn "plugin --profile\|plugin add" packages apps --include=*.ts
+packages/dsh-bridge/src/index.ts:27: *   - bundle：dsh plugin --profile <p> add <本包路径>（dsh.bundle.patch 声明）
+EXIT=0

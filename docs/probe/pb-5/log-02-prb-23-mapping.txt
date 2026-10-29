@@ -1,0 +1,134 @@
+# PB-5 / PRB-23 平台读侧未映射状态（映射腿行为观察；整行未执行，不宣称读侧契约成立）
+DATE=2026-10-29T07:00:40Z
+HEAD=af0621643b39fc72ad990243df36232170d77891
+$ REPO_ROOT=<repo> mise exec -- node <tmp>/sn-probe/pb5-map.mjs
+== yt ==
+bindingProfile: kind=ok bindingId=BIND-PLAT-YT-01 stateMappings=0 probes=["PRB-13:not-executed","PRB-23:not-executed"]
+legal-unmapped-ascii: {"kind":"ok","platformState":"In Progress","workStates":[],"verification":"unverified","unmappedBehavior":"observe-unmapped"}
+legal-unmapped-workstate-literal: {"kind":"ok","platformState":"in_progress","workStates":[],"verification":"unverified","unmappedBehavior":"observe-unmapped"}
+legal-unmapped-accepted-literal: {"kind":"ok","platformState":"accepted","workStates":[],"verification":"unverified","unmappedBehavior":"observe-unmapped"}
+legal-unmapped-raw-whitespace: {"kind":"ok","platformState":"  In Progress  ","workStates":[],"verification":"unverified","unmappedBehavior":"observe-unmapped"}
+empty: {"kind":"err","category":"CONFIG_INVALID","subcause":"platform-state-invalid"}
+whitespace-only: {"kind":"err","category":"CONFIG_INVALID","subcause":"platform-state-invalid"}
+non-string-null: {"kind":"err","category":"CONFIG_INVALID","subcause":"platform-state-invalid"}
+non-string-number: {"kind":"err","category":"CONFIG_INVALID","subcause":"platform-state-invalid"}
+== taiga ==
+bindingProfile: kind=ok bindingId=BIND-PLAT-TAIGA-01 stateMappings=0 probes=["PRB-13:not-executed","PRB-23:not-executed"]
+legal-unmapped-ascii: {"kind":"ok","platformState":"In Progress","workStates":[],"verification":"unverified","unmappedBehavior":"observe-unmapped"}
+legal-unmapped-workstate-literal: {"kind":"ok","platformState":"in_progress","workStates":[],"verification":"unverified","unmappedBehavior":"observe-unmapped"}
+legal-unmapped-accepted-literal: {"kind":"ok","platformState":"accepted","workStates":[],"verification":"unverified","unmappedBehavior":"observe-unmapped"}
+legal-unmapped-raw-whitespace: {"kind":"ok","platformState":"  In Progress  ","workStates":[],"verification":"unverified","unmappedBehavior":"observe-unmapped"}
+empty: {"kind":"err","category":"CONFIG_INVALID","subcause":"platform-state-invalid"}
+whitespace-only: {"kind":"err","category":"CONFIG_INVALID","subcause":"platform-state-invalid"}
+non-string-null: {"kind":"err","category":"CONFIG_INVALID","subcause":"platform-state-invalid"}
+non-string-number: {"kind":"err","category":"CONFIG_INVALID","subcause":"platform-state-invalid"}
+== localplatform ==
+bindingProfile: kind=ok bindingId=BIND-PLAT-LOCAL-01 stateMappings=0 probes=["PRB-23:not-executed"]
+legal-unmapped-ascii: {"kind":"ok","platformState":"In Progress","workStates":[],"verification":"unverified","unmappedBehavior":"observe-unmapped"}
+legal-unmapped-workstate-literal: {"kind":"ok","platformState":"in_progress","workStates":[],"verification":"unverified","unmappedBehavior":"observe-unmapped"}
+legal-unmapped-accepted-literal: {"kind":"ok","platformState":"accepted","workStates":[],"verification":"unverified","unmappedBehavior":"observe-unmapped"}
+legal-unmapped-raw-whitespace: {"kind":"ok","platformState":"  In Progress  ","workStates":[],"verification":"unverified","unmappedBehavior":"observe-unmapped"}
+empty: {"kind":"err","category":"CONFIG_INVALID","subcause":"platform-state-invalid"}
+whitespace-only: {"kind":"err","category":"CONFIG_INVALID","subcause":"platform-state-invalid"}
+non-string-null: {"kind":"err","category":"CONFIG_INVALID","subcause":"platform-state-invalid"}
+non-string-number: {"kind":"err","category":"CONFIG_INVALID","subcause":"platform-state-invalid"}
+EXIT=0
+$ grep -rn "mapState\|readIssueState" packages apps --include=*.ts | grep -v "test/"
+packages/taiga/src/binding.ts:11: *   - v2/14 §八：平台三件套统一签名（bindingProfile/mapState/lossReport＋bindingId 选择器，治 L3J-P1-05）
+packages/taiga/src/binding.ts:169: * 行都是编造。空表下 mapState 对一切非空合法原值返回 Ok(unverified)+workStates=[]（只观察）；
+packages/taiga/src/binding.ts:240: * mapState/lossReport/bindingProfile 全部经它。
+packages/taiga/src/binding.ts:268:export function mapState(platformState: string, bindingId?: string): Result<StateMapping, ClassifiedError> {
+packages/taiga/src/platform.ts:41:import { bindingProfile, mapState, type StateMapping, type StateMappingRow } from './binding.ts'
+packages/taiga/src/platform.ts:280:export async function readIssueState(
+packages/taiga/src/platform.ts:290:  const mapping = mapState(record.state, bindingId)
+packages/yt/src/binding.ts:10: *   - v2/14 §八：平台三件套统一签名（bindingProfile/mapState/lossReport＋bindingId 选择器，
+packages/yt/src/binding.ts:165: * 空表下 mapState 对一切非空合法原值返回 Ok(unverified)+workStates=[]（只观察）；
+packages/yt/src/binding.ts:243: * mapState/lossReport/bindingProfile 全部经它。
+packages/yt/src/binding.ts:271:export function mapState(platformState: string, bindingId?: string): Result<StateMapping, ClassifiedError> {
+packages/yt/src/platform.ts:38:import { bindingProfile, mapState, type StateMapping, type StateMappingRow } from './binding.ts'
+packages/yt/src/platform.ts:268:export async function readIssueState(
+packages/yt/src/platform.ts:278:  const mapping = mapState(record.state, bindingId)
+packages/localplatform/src/binding.ts:12: *   - v2/14 §八：平台三件套统一签名（bindingProfile/mapState/lossReport＋bindingId 选择器，治 L3J-P1-05）
+packages/localplatform/src/binding.ts:166: * `verified` 行都是编造。空表下 mapState 对一切非空合法原值返回 Ok(unverified)；
+packages/localplatform/src/binding.ts:227: * mapState/lossReport/bindingProfile 全部经它。
+packages/localplatform/src/binding.ts:255:export function mapState(platformState: string, bindingId?: string): Result<StateMapping, ClassifiedError> {
+packages/localplatform/src/platform.ts:34:import { bindingProfile, mapState, type StateMapping, type StateMappingRow } from './binding.ts'
+packages/localplatform/src/platform.ts:241:export async function readIssueState(
+packages/localplatform/src/platform.ts:251:  const mapping = mapState(record.state, bindingId)
+EXIT=0
+$ grep -rn "REC-OBS-02" apps packages --include=*.ts | grep -v "test/" | grep -v "packages/contract/src/records/obs.ts"
+packages/contract/src/ports/obs.ts:133:// 三、监控故障（REC-OBS-02；一等观察，不是沉默）
+packages/contract/src/ports/obs.ts:168: * 监控故障（REC-OBS-02 写入面）：发生与发现时间分离；`lastTrustedCursor` 必填
+packages/contract/src/ports/obs.ts:246: * `reportFault` 是本端口唯一写方法，且只落投影侧故障记录（REC-OBS-02），
+packages/taiga/src/binding.ts:263: * 平台态→工作十态**纯判决**（零 IO、不写记录、不读时钟；REC-OBS-02 由消费方落）。
+packages/yt/src/binding.ts:266: * 平台态→工作十态**纯判决**（零 IO、不写记录、不读时钟；REC-OBS-02 由消费方落）。
+packages/localplatform/src/binding.ts:250: * 平台态→工作十态**纯判决**（零 IO、不写记录、不读时钟；REC-OBS-02 由消费方落）。
+packages/store/src/obs.ts:24: *   ⑧ 投影失败/陈旧/冲突以 fault 复述（类别复用 ENU-59），是一等观察的只读呈现；不写 REC-OBS-02。
+packages/store/src/obs.ts:103:/** 投影侧故障观察（类别复用 ENU-59；**不落 REC-OBS-02**——写入面归 PORT-OBS.reportFault） */
+EXIT=0
+$ grep -rn "reportFault" apps packages --include=*.ts | grep -v "test/"
+apps/daemon/src/assembly/api/inject.ts:16: *   - `obs`    ：PORT-OBS 的**只读子口**（snapshot/clock/newId/health）——`reportFault`
+apps/daemon/src/assembly/api/inject.ts:43:/** API 读面：PORT-OBS 只读子口（写槽 reportFault 不注入；无改事实方法槽） */
+apps/daemon/src/assembly/api/inject.ts:87:/** 只读子口方法名（wrapper 收窄清单；`reportFault` 不在内＝只读面在运行期也不可达） */
+apps/daemon/src/assembly/api/inject.ts:156: * 只读读面：四方法齐全才注入；wrapper 只转调这四槽（reportFault 在装配面不可达）。
+apps/daemon/src/assembly/api/inject.ts:173:        `obs 缺只读方法 ${method}（API 读面=${OBS_READ_METHODS.join('/')}；reportFault 等写槽不注入）`,
+apps/daemon/src/assembly/api/index.ts:56:    /** PORT-OBS 只读子口（snapshot/clock/newId/health；reportFault 不可达） */
+packages/contract/src/ports/obs.ts:246: * `reportFault` 是本端口唯一写方法，且只落投影侧故障记录（REC-OBS-02），
+packages/contract/src/ports/obs.ts:251:  reportFault(f: ProjectionFault, ctx: CallContext): PortResult<FaultRef>
+packages/api/src/app.ts:19: *   - 收窄并冻结注入句柄：obs 只留四只读方法（reportFault 不可达）、gate 只留 PORT-GATE
+packages/api/src/app.ts:88:/** obs 只读子口方法名（reportFault 等写槽不注入） */
+packages/api/src/types.ts:18: *     `ApiObservationReadFace` 是 PORT-OBS 的 Pick 收窄（reportFault 等写槽不注入），
+packages/api/src/types.ts:39:/** PORT-OBS 只读子口（snapshot/clock/newId/health；reportFault 等写槽不注入） */
+packages/store/src/obs.ts:13: * 读侧口径（本文件只读；写面归 IMPL-04-06 hist.ts 与 IMPL-06 PORT-OBS.reportFault，均不在本单领土）：
+packages/store/src/obs.ts:103:/** 投影侧故障观察（类别复用 ENU-59；**不落 REC-OBS-02**——写入面归 PORT-OBS.reportFault） */
+EXIT=0
+
+# ---- 附：探针脚本源（仓外临时件；非原始输出；运行前设 REPO_ROOT=<repo>） ----
+/**
+ * PB-5 / PRB-23 映射腿探针（只读；不写仓内文件）
+ * 运行：REPO_ROOT=<repo> node pb5-map.mjs
+ * 输出只含相对标识/状态值，不打印本机绝对路径。
+ */
+const REPO = process.env.REPO_ROOT
+if (!REPO) throw new Error('REPO_ROOT 未设')
+
+const yt = await import(`${REPO}/packages/yt/src/binding.ts`)
+const taiga = await import(`${REPO}/packages/taiga/src/binding.ts`)
+const local = await import(`${REPO}/packages/localplatform/src/binding.ts`)
+
+const platforms = [
+  ['yt', yt],
+  ['taiga', taiga],
+  ['localplatform', local],
+]
+
+const cases = [
+  ['legal-unmapped-ascii', 'In Progress'],
+  ['legal-unmapped-workstate-literal', 'in_progress'],
+  ['legal-unmapped-accepted-literal', 'accepted'],
+  ['legal-unmapped-raw-whitespace', '  In Progress  '],
+  ['empty', ''],
+  ['whitespace-only', '   '],
+  ['non-string-null', null],
+  ['non-string-number', 42],
+]
+
+for (const [name, mod] of platforms) {
+  const profile = mod.bindingProfile()
+  const p = profile.kind === 'ok' ? profile.value : null
+  console.log(`== ${name} ==`)
+  console.log(`bindingProfile: kind=${profile.kind} bindingId=${p?.bindingId ?? '-'} stateMappings=${p?.stateMappings.length ?? '-'} probes=${JSON.stringify(p?.probes?.map((x) => `${x.probeId}:${x.state}`))}`)
+  for (const [label, value] of cases) {
+    let out
+    try {
+      out = mod.mapState(value)
+    } catch (err) {
+      out = { kind: 'throw', error: String(err) }
+    }
+    const r = out.kind === 'ok'
+      ? { kind: 'ok', platformState: out.value.platformState, workStates: out.value.workStates, verification: out.value.verification, unmappedBehavior: out.value.unmappedBehavior }
+      : { kind: 'err', category: out.error?.category, subcause: out.error?.subcause }
+    console.log(`${label}: ${JSON.stringify(r)}`)
+  }
+}
+# ---- 脚本源结束 ----

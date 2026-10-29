@@ -1,0 +1,25 @@
+# PB-5 探针环境（只读）
+DATE=2026-10-29T06:59:59Z
+HEAD=af0621643b39fc72ad990243df36232170d77891
+BRANCH=dev
+$ uname -srm
+Darwin 25.3.0 arm64
+EXIT=0
+$ sw_vers
+ProductName:		macOS
+ProductVersion:		26.3
+BuildVersion:		25D125
+EXIT=0
+$ mise exec -- node --version
+v24.21.0
+EXIT=0
+$ mise exec -- bun --version
+1.4.3
+EXIT=0
+$ node -e "sqlite_version/user_version via node:sqlite"
+sqlite_version=3.53.4
+EXIT=0
+$ git status --porcelain
+?? docs/probe/pb-3/
+?? docs/probe/pb-5/
+EXIT=0

@@ -1,0 +1,54 @@
+# PB-5 / PRB-23 平台读腿（LocalFile 真实盘面：未映射合法状态 → readIssueState）
+DATE=2026-10-29T07:00:44Z
+HEAD=af0621643b39fc72ad990243df36232170d77891
+$ REPO_ROOT=<repo> mise exec -- node <tmp>/sn-probe/pb5-local-read.mjs
+stateMappingTable: kind=ok rows=0
+platform.issues.create: id=LOCAL-1 state="In Progress"
+readIssueState: OK record.state="In Progress" mapping={"platformState":"In Progress","workStates":[],"verification":"unverified","unmappedBehavior":"observe-unmapped"}
+readIssueState(missing): OK undefined
+EXIT=0
+
+# ---- 附：探针脚本源（仓外临时件；非原始输出；运行前设 REPO_ROOT=<repo>） ----
+/**
+ * PB-5 / PRB-23 平台读腿：LocalFile 真实盘面建单（未映射合法状态）→ readIssueState
+ * 只写系统临时目录；输出不含本机路径。
+ */
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+
+const REPO = process.env.REPO_ROOT
+if (!REPO) throw new Error('REPO_ROOT 未设')
+const { createLocalPlatform } = await import(`${REPO}/packages/localplatform/src/index.ts`)
+const { readIssueState, stateMappingTable } = await import(`${REPO}/packages/localplatform/src/platform.ts`)
+
+const root = await mkdtemp(path.join(tmpdir(), 'sn-pb5-read-'))
+try {
+  const platform = createLocalPlatform(root)
+  const table = stateMappingTable()
+  console.log(`stateMappingTable: kind=${table.kind} rows=${table.kind === 'ok' ? table.value.length : '-'}`)
+  const issued = await platform.issues.create({ title: 'PB-5 PRB-23 探针单', initialState: 'In Progress' })
+  console.log(`platform.issues.create: id=${issued.id} state=${JSON.stringify(issued.state)}`)
+  const ctx = {
+    readScope: {
+      company: { companyId: 'probe-company', slug: 'probe-company' },
+      fields: ['state', 'title'],
+      purpose: 'PB-5/PRB-23 read-side probe',
+    },
+    caller: { callerId: 'probe-pb5', kind: 'program' },
+  }
+  const read = await readIssueState(platform, issued.id, ctx)
+  if (read.kind === 'err') {
+    console.log(`readIssueState: ERR ${read.error.category}/${read.error.subcause}`)
+  } else if (read.value === undefined) {
+    console.log('readIssueState: OK undefined（平台权威确认不存在）')
+  } else {
+    const { record, mapping } = read.value
+    console.log(`readIssueState: OK record.state=${JSON.stringify(record.state)} mapping=${JSON.stringify(mapping)}`)
+  }
+  const missing = await readIssueState(platform, 'LOCAL-999999', ctx)
+  console.log(`readIssueState(missing): ${missing.kind === 'ok' && missing.value === undefined ? 'OK undefined' : JSON.stringify(missing)}`)
+} finally {
+  await rm(root, { recursive: true, force: true })
+}
+# ---- 脚本源结束 ----

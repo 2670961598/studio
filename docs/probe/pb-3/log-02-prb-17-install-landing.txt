@@ -1,0 +1,140 @@
+# PB-3 / PRB-17 HCL-0A 落位面探针（库级导入＋插件安装日志面；负向登记）
+DATE=2026-10-29T07:00:09Z
+HEAD=af0621643b39fc72ad990243df36232170d77891
+$ REPO_ROOT=<repo> mise exec -- node <tmp>/sn-probe/pb3-prb17.mjs
+== importDefinitionPackage ==
+artifactId=company.pb3-probe version=1.0.0 specVersion=2.0.0
+parts=[{"partId":"definition.main","partType":"definition"}] files=[".studio-next.yaml","org-config.yaml","package.yaml"]
+installAuthorization=required staged=false
+scanNote="本扫描只声明「文本面未发现疑似秘密/本机路径」，不证明绝无秘密（v2/15 §四）"
+report marker(宿主未承认/未加载) = false
+target entries = [".studio-next.yaml","org-config.yaml","package.yaml"]
+target install-log.jsonl exists = false
+target registry.json exists = false
+target file marker scan = [".studio-next.yaml:false","org-config.yaml:false","package.yaml:false"]
+== installCompanyPlugins ==
+confirmed=true items=["dsh-pb3-probe:install"]
+log exists = true
+install-log line count = 1
+install-log marker(宿主未承认/未加载) = false
+install-log first line = {"at":"2026-10-29T00:00:00.000Z","company":"company","summary":"install:1","confirmed":true,"items":[{"name":"dsh-pb3-probe","action":"install","required":["1.0.0"],"origin":"package"}]}
+EXIT=0
+$ grep -rn "importDefinitionPackage" packages apps --include=*.ts | grep -v "test/"
+packages/company/src/assets/import.ts:109:export async function importDefinitionPackage(opts: ImportDefinitionPackageOptions): Promise<ImportDefinitionPackageReport> {
+EXIT=0
+$ grep -rn "宿主未承认" packages apps --include=*.ts
+EXIT=0
+$ grep -rn "install-log.jsonl\|INSTALL_LOG_FILE" packages/company/src --include=*.ts
+packages/company/src/dependencies.ts:14: *   4. 可见面=registry.json＋install-log.jsonl＋confirm 确认位（拒=只出计划零落盘）；
+packages/company/src/dependencies.ts:397:  /** 安装清单日志落点（install-log.jsonl——审计面） */
+packages/company/src/dependencies.ts:402:const INSTALL_LOG_FILE = 'install-log.jsonl'
+packages/company/src/dependencies.ts:420:/** 追加安装清单日志（install-log.jsonl——对制作人可见；无依赖清单也留一行空报告，审计面完整） */
+packages/company/src/dependencies.ts:423:  await appendFile(path.join(path.resolve(pluginRoot), INSTALL_LOG_FILE), `${JSON.stringify(entry)}\n`, 'utf8')
+packages/company/src/dependencies.ts:468:/** 安装日志行（install-log.jsonl 追加——对制作人可见的安装清单） */
+packages/company/src/dependencies.ts:488:  const logFile = path.join(pluginRoot, INSTALL_LOG_FILE)
+EXIT=0
+
+# ---- 附：探针脚本源（仓外临时件；非原始输出；运行前设 REPO_ROOT=<repo>） ----
+/**
+ * PB-3 / PRB-17 HCL-0A 落位面探针（只写系统临时目录）
+ * 1) importDefinitionPackage：定义包落位 → 检查返回记录/目标目录是否有「宿主未承认」明记与安装日志
+ * 2) installCompanyPlugins：插件落位+登记 → 检查 install-log.jsonl 是否有「宿主未承认」明记
+ * 输出不含本机路径。
+ */
+import { mkdtemp, mkdir, writeFile, readdir, readFile, rm } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+
+const REPO = process.env.REPO_ROOT
+if (!REPO) throw new Error('REPO_ROOT 未设')
+const { importDefinitionPackage } = await import(`${REPO}/packages/company/src/assets/index.ts`)
+const { installCompanyPlugins } = await import(`${REPO}/packages/company/src/dependencies.ts`)
+
+const root = await mkdtemp(path.join(tmpdir(), 'sn-pb3-17-'))
+const markerRe = /宿主未承认|未加载|未承认|host.*unrecogni|host.*unacknowledg/i
+try {
+  // ── 1. PKG-DEF 能力包导入 ──
+  const src = path.join(root, 'pkg-src')
+  const target = path.join(root, 'pkg-target')
+  await mkdir(src, { recursive: true })
+  await writeFile(path.join(src, 'package.yaml'), [
+    'schema: studio-next/pkg-def@1',
+    'artifactId: company.pb3-probe',
+    'artifactVersion: 1.0.0',
+    'specVersion: 2.0.0',
+    'parts:',
+    '  - {partId: definition.main, partType: definition}',
+    '',
+  ].join('\n'))
+  await writeFile(path.join(src, 'org-config.yaml'), [
+    'schema: org-config/v1',
+    'company:',
+    '  name: PB3 探针公司',
+    '  slug: pb3-probe',
+    '  level: 2',
+    '',
+  ].join('\n'))
+  await writeFile(path.join(src, '.studio-next.yaml'), [
+    'schema: studio-next/org@1',
+    'template: company-2-level',
+    '',
+  ].join('\n'))
+
+  const structureFacts = {
+    established: true,
+    rootDelegation: true,
+    bossCovered: true,
+    inPositionLevels: [],
+    deptCount: 0,
+    maxDeptDepth: 1,
+    auditPosition: false,
+  }
+  const report = await importDefinitionPackage({ sourceDir: src, targetDir: target, structureFacts })
+  console.log('== importDefinitionPackage ==')
+  console.log(`artifactId=${report.artifactId} version=${report.artifactVersion} specVersion=${report.specVersion}`)
+  console.log(`parts=${JSON.stringify(report.parts)} files=${JSON.stringify(report.files)}`)
+  console.log(`installAuthorization=${report.installAuthorization} staged=${report.staged}`)
+  console.log(`scanNote=${JSON.stringify(report.scanNote)}`)
+  const reportText = JSON.stringify(report)
+  const markerInReport = markerRe.test(reportText)
+  console.log(`report marker(宿主未承认/未加载) = ${markerInReport}`)
+  const targetEntries = (await readdir(target)).sort()
+  console.log(`target entries = ${JSON.stringify(targetEntries)}`)
+  console.log(`target install-log.jsonl exists = ${existsSync(path.join(target, 'install-log.jsonl'))}`)
+  console.log(`target registry.json exists = ${existsSync(path.join(target, 'registry.json'))}`)
+  const targetTexts = []
+  for (const rel of targetEntries.filter((e) => e.endsWith('.yaml') || e.endsWith('.md') || e.endsWith('.json'))) {
+    targetTexts.push(`${rel}:${markerRe.test(await readFile(path.join(target, rel), 'utf8'))}`)
+  }
+  console.log(`target file marker scan = ${JSON.stringify(targetTexts)}`)
+
+  // ── 2. 插件安装日志面 ──
+  const companyDir = path.join(root, 'company')
+  const pluginRoot = path.join(root, 'plugin-root')
+  const pluginName = 'dsh-pb3-probe'
+  await mkdir(path.join(companyDir, 'plugins', pluginName, 'src'), { recursive: true })
+  await writeFile(path.join(companyDir, 'dependencies.yaml'), [
+    'schema: studio-next/dependencies@1',
+    'bindings:',
+    '  - when: { attr: role, is: dev }',
+    '    plugins:',
+    `      - { name: ${pluginName}, version: 1.0.0 }`,
+    '',
+  ].join('\n'))
+  await writeFile(path.join(companyDir, 'plugins', pluginName, 'package.json'), `${JSON.stringify({ name: pluginName, version: '1.0.0', type: 'module', dsh: { bundle: { patch: './cordis.patch.yml' } } }, null, 2)}\n`)
+  await writeFile(path.join(companyDir, 'plugins', pluginName, 'cordis.patch.yml'), `- insert:\n    - id: ${pluginName}\n      name: ./src/index.mjs\n      config: {}\n`)
+  await writeFile(path.join(companyDir, 'plugins', pluginName, 'src', 'index.mjs'), `export const name = '${pluginName}'\n`)
+  const persons = [{ id: 'AGENT-1', dept: '工程部', level: 2, role: 'dev' }]
+  const install = await installCompanyPlugins({ companyDir, pluginRoot, persons, by: 'probe', now: () => new Date('2026-10-29T00:00:00Z') })
+  console.log('== installCompanyPlugins ==')
+  console.log(`confirmed=${install.confirmed} items=${JSON.stringify(install.items.map((i) => `${i.name}:${i.action}`))}`)
+  console.log(`log exists = ${existsSync(install.logFile)}`)
+  const logText = existsSync(install.logFile) ? await readFile(install.logFile, 'utf8') : ''
+  console.log(`install-log line count = ${logText.trim() === '' ? 0 : logText.trim().split('\n').length}`)
+  console.log(`install-log marker(宿主未承认/未加载) = ${markerRe.test(logText)}`)
+  console.log(`install-log first line = ${logText.trim().split('\n')[0] ?? ''}`)
+} finally {
+  await rm(root, { recursive: true, force: true })
+}
+# ---- 脚本源结束 ----

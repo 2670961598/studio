@@ -1,0 +1,122 @@
+# PB-3 / PRB-19/20 HCL-2 双差分侦察腿（不构成本行探针证据；前置 PB-2/PRB-08 未执行）
+DATE=2026-10-29T07:00:19Z
+HEAD=af0621643b39fc72ad990243df36232170d77891
+$ REPO_ROOT=<repo> mise exec -- node <tmp>/sn-probe/pb3-prb19-20.mjs
+== segment plan ==
+old: {"enabled":true,"sourceRefs":["cap-a","plan-old"],"note":null}
+new: {"enabled":true,"sourceRefs":["cap-a","cap-b","plan-new"],"note":null}
+== segment tools ==
+old: {"enabled":true,"sourceRefs":["cap-a"],"note":"ptc:forbidden"}
+new: {"enabled":true,"sourceRefs":["cap-a","cap-b"],"note":"ptc:forbidden"}
+== segment authority ==
+old: {"enabled":true,"sourceRefs":["grant-a","grant-b"],"note":null}
+new: {"enabled":true,"sourceRefs":["grant-a","grant-c"],"note":null}
+== segment sandbox ==
+old: {"enabled":true,"sourceRefs":["per_task_shortlived","sandbox-root-old"],"note":"mode:workspace-write;network:external-only"}
+new: {"enabled":true,"sourceRefs":["per_task_shortlived","platform_token","sandbox-root-new"],"note":"mode:workspace-write;network:external-only"}
+== segment validity ==
+old: {"enabled":true,"sourceRefs":["2026-11-01T00:00:00Z","2026-12-01T00:00:00Z"],"note":null}
+new: {"enabled":true,"sourceRefs":["2026-11-01T00:00:00Z","2026-12-01T00:00:00Z"],"note":null}
+diff tools: added=["cap-b"] removed=[]
+diff authority: added=["grant-c"] removed=["grant-b"]
+diff sandbox: added=["platform_token","sandbox-root-new"] removed=["sandbox-root-old"]
+diff plan: added=["cap-b","plan-new"] removed=["plan-old"]
+digest old=sha256:7c7ed152bd83045d5697fd395671c1685603e1d9c68acbdb29d0a33483e16438
+digest new=sha256:503827e13d218bb97bb1d5296bb30181249ed3071b68a8e8f0be05f9b2e7bd99
+unsupportedSegments old=[] new=[]
+static: permission_diff/secret_diff = contract record fields only（REC-CAP-ACTIVATE）; 运行期 diff 生成器未检索到
+static: deployment supply confirmation = 无供给确认载体（探针不代证）
+EXIT=0
+$ grep -rn "permission_diff\|secret_diff" packages apps --include=*.ts | grep -v "test/"
+packages/contract/src/records/cap.ts:17: *   3. `permission_diff`/`secret_class_diff` 差分形状正文未给 → 结构化 {added, removed} 槽（双差分单列）。
+packages/contract/src/records/cap.ts:190:  permission_diff: DiffSchema,
+packages/contract/src/records/cap.ts:313:    checks.push(recordReject('payload.permission_diff', '权限差分与秘密类别差分须单列、不可由其他探针代证（HCL-2 双差分——§九）'))
+packages/contract/src/records/cap.ts:318:  if (payload.permission_diff.added.length > 0 || payload.secret_class_diff.added.length > 0) {
+EXIT=0
+$ grep -n "HCL-2" docs/v2/07-技术抽象-执行能力与工作运行.md
+183:主表分工：**级别语义/可否声称/闭合判据在本卷**；宿主绑定档案、**探针清单与步骤、探针编号唯一主表 v2/12**；验证行 v2/17。**每级闭合判据在 v2/12 必须有对应登记探针行——无登记行即不得宣称该级可闭合**（治 V8-P1-2：四行锚缺、HCL-2 双差分无探针）。**编号说明（2026-10-28 改号，17 待修 #10）**：本族规范 ID 由原 H0a/H0b/H1/H2/H3/H4 改为 **HCL-0A/HCL-0B/HCL-1/HCL-2/HCL-3/HCL-4**（Capability Closure Level；消除与 GLM 链条审计号 H0a/H0b…H3b 的撞形——K11 同型）；各级语义与判据不变；本卷审计处置表内引用审计报告代号的 H0a/H0b 系外部文件名，保留原形。
+190:| HCL-2 新出工备战 | 新能力过验证与批准，可供给新出工；在途钉旧版 | 可称受控上线，不称在途热替换 | 独立验证＋激活批准＋**权限差分＋秘密类别/逻辑引用差分（须单列，不可由其他探针代证）**＋部署供给确认＋新出工可用且旧出工仍钉旧版 | 双差分探针（必列，登记 → v2/12） |
+194:**版本批准不新增权限、不夹带秘密**：新增/扩大权限或秘密类别不是版本升级的附带效果，须另经激活批准与部署供给确认。默认目标＝**HCL-2/HCL-3**；HCL-4 是可选宿主能力，不是公司理论前提。
+211:| HCL-2 上线/HCL-3 替换 | （不驱动迁移；触发重判） | — | 执行配置变更触发开工五门重判（v2/04 §四）；在途钉旧计划 |
+EXIT=0
+$ grep -n "REC-CAP-ACTIVATE" docs/v2/11-技术细节-运行记录与行为契约.md | head -5
+39:2. **决定面封闭清单**（恰为下列类型，其他类型不得强加）：REC-AUTH-07、REC-AUTH-08、REC-WORK-02、REC-WORK-04、REC-WORK-06、REC-WORK-07、REC-WORK-09、REC-WORK-12、REC-LIFE-01、REC-LIFE-02、REC-LIFE-07、REC-LIFE-09、REC-CAP-ACTIVATE、REC-ACC-02。清单外类型（如 REC-WORK-11/17、REC-LIFE-10）由本类型自有的决定者/依据/异议字段承载决定面，**也不得另写 REC-DEC-01**。
+205:| REC-CAP-ACTIVATE | 能力激活批准 | 决定 | 激活批准段在能力语境的专用形状（含双差分） | v2/07 §六、v2/08 §六 | 激活批准位置（三门不合并） | HCL-0B/HCL-2 闭合、新出工供给、围栏 |
+654:**专用段记录规则**：能力语境的「激活批准」段由 REC-CAP-ACTIVATE 专用形状承载（含双差分），成立时**不再为同段另写 REC-CHG-01**（一事件一身份，§0.3）；组织语境的合并/分立在 REC-LIFE-09 承载并引用本链。**方法沉淀**（v2/04 §十一学习第 2 层）的决定不得只落泛型 REC-DEC-01 而无激活/后验语义段——落本记录或 REC-CAP-ACTIVATE（治 V6-P1-1）。
+683:**REC-CAP-ACTIVATE 能力激活批准**（V6-P1-1 载体｜决定面封闭清单成员｜语义源 v2/07 §六、v2/08 §六｜DOM-03｜生产者：激活批准位置（不得由被进化对象及其直接受益方单独作出）｜消费者：HCL-0B/HCL-2 闭合、新出工供给、围栏与代次）。
+750:| MON-14 变更与进化 | REC-CHG-01、REC-CAP-ACTIVATE |
+EXIT=0
+
+# ---- 附：探针脚本源（仓外临时件；非原始输出；运行前设 REPO_ROOT=<repo>） ----
+/**
+ * PB-3 / PRB-19/20 侦察腿（不构成本行探针证据）
+ * 用 PRM 生成器编译新旧两份计划，列出 tools/authority/sandbox 段引用与 secretTypes 的可比对差；
+ * 同时打印「无 permission_diff/secret_diff 运行期生成器」「无部署供给确认」的静态事实。
+ * 输出不含本机路径。
+ */
+const REPO = process.env.REPO_ROOT
+if (!REPO) throw new Error('REPO_ROOT 未设')
+const { compileProjection } = await import(`${REPO}/packages/core/src/prm/compile-projection.ts`)
+
+const allSegments = ['identity', 'authority', 'plan', 'tools', 'sandbox', 'approval', 'evidence', 'persona', 'validity']
+const base = {
+  companyId: 'company-probe',
+  workRef: 'work-1',
+  planRef: 'plan-old',
+  grantRefs: ['grant-a', 'grant-b'],
+  capabilityRefs: ['cap-a'],
+  host: { hostKind: 'dsh', version: '0.2.0-rc.2', bindingRef: 'BIND-DSH-01' },
+  secretTypes: ['per_task_shortlived'],
+  validityFrom: '2026-11-01T00:00:00Z',
+  validityUntil: '2026-12-01T00:00:00Z',
+  deployment: {
+    carriedSegments: allSegments,
+    sandbox: { mode: 'workspace-write', rootRef: 'sandbox-root-old' },
+    approvalTemplateRef: 'approval-template',
+    evidenceSinkRef: 'evidence-sink',
+    personaRefs: ['persona-a'],
+  },
+}
+const oldInput = base
+const newInput = {
+  ...base,
+  planRef: 'plan-new',
+  grantRefs: ['grant-a', 'grant-c'],
+  capabilityRefs: ['cap-a', 'cap-b'],
+  secretTypes: ['per_task_shortlived', 'platform_token'],
+  deployment: {
+    ...base.deployment,
+    sandbox: { mode: 'workspace-write', rootRef: 'sandbox-root-new' },
+  },
+}
+
+function compile(input) {
+  const r = compileProjection(input)
+  if (r.kind !== 'ok') throw new Error(`compileProjection err ${r.error.subcause}`)
+  return r.value
+}
+const oldP = compile(oldInput)
+const newP = compile(newInput)
+
+function pick(p, seg) {
+  return { enabled: p.segments[seg].enabled, sourceRefs: p.segments[seg].sourceRefs, note: p.segments[seg].note ?? null }
+}
+for (const seg of ['plan', 'tools', 'authority', 'sandbox', 'validity']) {
+  console.log(`== segment ${seg} ==`)
+  console.log(`old: ${JSON.stringify(pick(oldP, seg))}`)
+  console.log(`new: ${JSON.stringify(pick(newP, seg))}`)
+}
+const refs = (p, seg) => new Set(p.segments[seg].sourceRefs)
+for (const seg of ['tools', 'authority', 'sandbox', 'plan']) {
+  const a = refs(oldP, seg)
+  const b = refs(newP, seg)
+  const added = [...b].filter((x) => !a.has(x)).sort()
+  const removed = [...a].filter((x) => !b.has(x)).sort()
+  console.log(`diff ${seg}: added=${JSON.stringify(added)} removed=${JSON.stringify(removed)}`)
+}
+console.log(`digest old=${oldP.digest}`)
+console.log(`digest new=${newP.digest}`)
+console.log(`unsupportedSegments old=${JSON.stringify(oldP.unsupportedSegments)} new=${JSON.stringify(newP.unsupportedSegments)}`)
+console.log('static: permission_diff/secret_diff = contract record fields only（REC-CAP-ACTIVATE）; 运行期 diff 生成器未检索到')
+console.log('static: deployment supply confirmation = 无供给确认载体（探针不代证）')
+# ---- 脚本源结束 ----

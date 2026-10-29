@@ -1,0 +1,72 @@
+# PB-5 批次入口核对（MIG-04/06/07 产物；D12 只读打开/围栏）
+DATE=2026-10-29T07:00:34Z
+HEAD=af0621643b39fc72ad990243df36232170d77891
+$ git log --oneline -20
+af06216 fix(v2): 08-02 v0-doc-check 粘连解析/输出收口
+9a43b7b feat(v2): MIG-08-01/02/03 panel 六态+V0 文档自检+端口复扫
+5dc06b2 docs: MIG-07 包级 typecheck 改源码-only（制作人裁）
+7e59ca2 docs(v2): 07-12 catalog 头注补记
+cc0655e test(v2): 07-11 出站失败面补断言
+fbc3d33 feat(v2): MIG-07-12 凭据 catalog + matrix bot 密码
+772c5e8 feat(v2): MIG-07-11 出站闸/五出口扫描/三不入
+8df0354 test(v2): 07-09 ws-escape 32 case 接线补强
+4186585 fix(v2): 07-05 bindcard 测试压到 <600
+fcbf2f2 feat(v2): MIG-07-05 DSH 绑定档案/专属通用二分
+7b38e3c feat(v2): MIG-07-09/10 seatbelt 派发接线 + ctl 词族/署名
+f3e916c fix(v2): 07-06 root_delegation recordType 收紧 REC-AUTH-01
+97fe4fc test(v2): MIG-07-07/08 断言补丁（坏锚/seatbelt 17 case）
+e41d18a feat(v2): MIG-07-07 hot-reload 坏锚前置
+602e1d7 feat(v2): MIG-07-01..04/06/08 三平台绑定+PRM+gateway root+seatbelt
+dd3eb98 docs: MIG-06 NEG 103 后移 MIG-08（制作人裁）；装配欠账转 MIG-07 入口
+12ac904 docs: crash 9 点测试计数校正（crash 16＋store 3）
+7f50812 feat(v2): MIG-06 补 3 个记录面 crash 注入点（7/8/9）
+bdc8652 feat(v2): MIG-06-09 退役 external/invoke/notifier/旧入口
+089c5a1 feat(v2): MIG-06-03/04/06/07/08 收割域+facade/OPS+api 装配+16 端点
+EXIT=0
+$ git log --oneline --all --grep="MIG-04\|MIG-06\|MIG-07" | head -12
+5dc06b2 docs: MIG-07 包级 typecheck 改源码-only（制作人裁）
+fbc3d33 feat(v2): MIG-07-12 凭据 catalog + matrix bot 密码
+772c5e8 feat(v2): MIG-07-11 出站闸/五出口扫描/三不入
+fcbf2f2 feat(v2): MIG-07-05 DSH 绑定档案/专属通用二分
+7b38e3c feat(v2): MIG-07-09/10 seatbelt 派发接线 + ctl 词族/署名
+97fe4fc test(v2): MIG-07-07/08 断言补丁（坏锚/seatbelt 17 case）
+e41d18a feat(v2): MIG-07-07 hot-reload 坏锚前置
+602e1d7 feat(v2): MIG-07-01..04/06/08 三平台绑定+PRM+gateway root+seatbelt
+dd3eb98 docs: MIG-06 NEG 103 后移 MIG-08（制作人裁）；装配欠账转 MIG-07 入口
+7f50812 feat(v2): MIG-06 补 3 个记录面 crash 注入点（7/8/9）
+bdc8652 feat(v2): MIG-06-09 退役 external/invoke/notifier/旧入口
+089c5a1 feat(v2): MIG-06-03/04/06/07/08 收割域+facade/OPS+api 装配+16 端点
+EXIT=0
+$ grep -rn "openLedgerReadonly\|query_only\|WriterLease\|WriterLeasePort" packages apps --include=*.ts
+EXIT=0
+$ sed -n "505,520p" packages/store/src/ledger.ts
+  }
+}
+
+/** 错误消息文本化（内联用；与 rebuild.ts 同风格） */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+/** 打开（或创建）台账库：建库 → PRAGMA 对齐 → migrate()（幂等）→ 返回句柄 */
+export function openLedger(path: string): Ledger {
+  const db = openSqlite(path)
+  migrate(db)
+
+  const appendEvent = (record: unknown): AppendResult => {
+    assertValidEvent(record)
+    // 幂等规则：同 id 已存在 → 全列一致跳过，不一致抛错（F2-13 回填幂等；拟稿待批）
+EXIT=0
+$ grep -n "migrate(db)" packages/store/src/ledger.ts
+516:  migrate(db)
+EXIT=0
+$ grep -n "journal_mode\|busy_timeout" packages/store/src/driver.ts
+19: * PRAGMA 对齐（骨架 TODO「WAL、busy_timeout、PRAGMA 对齐」落地）：
+20: *   journal_mode=WAL（单写多读）｜ synchronous=NORMAL（WAL 常规搭档）｜
+21: *   foreign_keys=ON（v1 三表暂无 FK，先对齐开关不留暗默）｜ busy_timeout=5000ms。
+31:  db.exec('PRAGMA journal_mode = WAL')
+34:  db.exec('PRAGMA busy_timeout = 5000')
+EXIT=0
+$ grep -n "PB-5 平台与台账" docs/v2/17-验证矩阵与追溯.md
+562:| PB-5 平台与台账 | PRB-13/14/23 | **MIG-04**（D12 围栏/只读打开）＋**MIG-06**（API 面）＋**MIG-07**（平台三件套统一签名） | 写回执未知/两进程单写第二写被拒/读侧 Ok(unverified)＋原值逐字保留 | PRB-23 未过不得宣称平台读侧契约成立（v1·P-82-01 的 V2 化收口）；PRB-14 未过不得宣称台账单写 |
+EXIT=0

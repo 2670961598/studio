@@ -1,0 +1,24 @@
+# PB-3 探针环境（只读）
+DATE=2026-10-29T06:59:55Z
+HEAD=af0621643b39fc72ad990243df36232170d77891
+BRANCH=dev
+$ uname -srm
+Darwin 25.3.0 arm64
+EXIT=0
+$ sw_vers
+ProductName:		macOS
+ProductVersion:		26.3
+BuildVersion:		25D125
+EXIT=0
+$ mise exec -- node --version
+v24.21.0
+EXIT=0
+$ mise exec -- bun --version
+1.4.3
+EXIT=0
+$ dsh --version
+0.2.0-rc.2
+EXIT=0
+$ git status --porcelain
+?? docs/probe/pb-3/
+EXIT=0

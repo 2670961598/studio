@@ -1,0 +1,62 @@
+# PB-3 批次入口核对（MIG-05 产物 / PB-2 PRB-08 前置）
+DATE=2026-10-29T07:00:03Z
+HEAD=af0621643b39fc72ad990243df36232170d77891
+$ git log --oneline -8
+af06216 fix(v2): 08-02 v0-doc-check 粘连解析/输出收口
+9a43b7b feat(v2): MIG-08-01/02/03 panel 六态+V0 文档自检+端口复扫
+5dc06b2 docs: MIG-07 包级 typecheck 改源码-only（制作人裁）
+7e59ca2 docs(v2): 07-12 catalog 头注补记
+cc0655e test(v2): 07-11 出站失败面补断言
+fbc3d33 feat(v2): MIG-07-12 凭据 catalog + matrix bot 密码
+772c5e8 feat(v2): MIG-07-11 出站闸/五出口扫描/三不入
+8df0354 test(v2): 07-09 ws-escape 32 case 接线补强
+EXIT=0
+$ git show --stat --oneline -1 e95bdfc | head -20
+e95bdfc feat(v2): MIG-05 公司包与资产部 7 单
+ apps/daemon/src/cli/company.ts                     |  59 +++
+ apps/daemon/src/engine/company-commit/bypass.ts    | 155 ++++++
+ apps/daemon/src/engine/company-commit/errors.ts    |  47 ++
+ apps/daemon/src/engine/company-commit/git.ts       | 198 ++++++++
+ apps/daemon/src/engine/company-commit/index.ts     | 334 +++++++++++++
+ apps/daemon/src/engine/company-commit/order.ts     | 336 +++++++++++++
+ apps/daemon/src/engine/company-commit/types.ts     | 148 ++++++
+ apps/daemon/src/engine/company-commit/workspace.ts | 126 +++++
+ apps/daemon/test/v2/e2e/company-commit.e2e.test.ts | 409 +++++++++++++++
+ .../test/v2/e2e/fixtures/company-commit-repo.ts    | 205 ++++++++
+ ...272\272\345\206\263\347\255\226\345\214\205.md" |  13 +
+ docs/baselines/old-tests-ledger.md                 |  18 +
+ docs/baselines/split-plan-company.md               | 333 +++++++++++++
+ ...242\221\344\270\216\346\263\242\346\254\241.md" |   3 +-
+ ...252\214\346\224\266\347\255\226\347\225\245.md" |   4 +-
+ ...270\273\350\241\250\346\200\273\345\206\214.md" |   4 +-
+ ...230\265\344\270\216\350\277\275\346\272\257.md" |   1 +
+ packages/company/src/assets/defpkg.ts              | 553 +++++++++++++++++++++
+ packages/company/src/assets/hygiene.ts             | 218 ++++++++
+EXIT=0
+$ find docs/probe -maxdepth 2 -type f | sort
+docs/probe/pb-1/log-00-environment.txt
+docs/probe/pb-1/log-01-prb-01-host-surface.txt
+docs/probe/pb-1/log-02-prb-04-host-sandbox-config.txt
+docs/probe/pb-1/log-03-prb-05-read-domain-sandbox-exec.txt
+docs/probe/pb-1/log-04-prb-05-repo-negative-evidence.txt
+docs/probe/pb-1/log-05-prb-06-egress-posture.txt
+docs/probe/pb-1/log-06-prb-22-overlay-target.txt
+docs/probe/pb-1/log-07-git-clean.txt
+docs/probe/pb-1/report.md
+docs/probe/pb-3/log-00-environment.txt
+docs/probe/pb-3/log-01-entry-pb2.txt
+docs/probe/pb-5/log-00-environment.txt
+EXIT=0
+$ git log --all --oneline -- docs/probe/pb-2
+EXIT=0
+$ grep -n "PB-3 HCL\|PB-2 投影" docs/v2/17-验证矩阵与追溯.md
+559:| PB-2 投影与秘密 | PRB-07/08/09 | **MIG-07** 投影生成器＋秘密 catalog 产物（PRB-08/09 需投影；PRB-07 需 catalog） | fail-closed 拒载证据（篡改一字节→拒载＋不 spawn） | **PRB-08 是 PB-3 HCL-2 锚的前置**；未过不得称投影防线 |
+560:| PB-3 HCL 锚批 | PRB-17/18/19/20/21 | **MIG-05** 能力包装载面＋**PB-2**（PRB-08 前置） | HCL-0A/HCL-1/HCL-2×2/HCL-4 各≥1 executed（HCL 锚总表 12 §5.3） | **HCL-2 两差分（PRB-19/20）不得由其他探针代证**（12 §5.1 铁律）；未闭合不得宣称任何替换级闭合 |
+EXIT=0
+$ grep -n "PRB-08" docs/v2/12-技术细节-宿主平台与工作区绑定.md
+364:| PRB-08 | 投影摘要/签名校验 fail-closed | 篡改一字节 | 拒载+不 spawn | 过期清单一律拒（不降级宽权限） | §1.6 双重校验 | 未执行 |
+384:**HCL 锚总表**（每级≥一行；级别 ID＝09 §一-14）：HCL-0A→PRB-17；HCL-0B→PRB-01；HCL-1→PRB-18；HCL-2→PRB-19+20（+PRB-08 前置）；HCL-3→PRB-15；HCL-4→PRB-21。
+EXIT=0
+$ grep -rn "PRB-08 未执行\|PRB-08" packages/core/src/prm/compile-projection.ts
+packages/core/src/prm/compile-projection.ts:30: *     （SEC-SIG-04 通道未建，PRB-08 未执行）；
+EXIT=0

@@ -1,0 +1,119 @@
+# PB-5 / PRB-14 跨进程单写（两进程真实同写台账；SQLite 串行化 vs 框架围栏）
+DATE=2026-10-29T07:00:49Z
+HEAD=af0621643b39fc72ad990243df36232170d77891
+$ REPO_ROOT=<repo> mise exec -- node <tmp>/sn-probe/pb5-prb14.mjs
+--- child A exit=0 ---
+A> open ledger version=15 query_only=0 busy_timeout=5000
+A> BEGIN IMMEDIATE + kvSet(A) ok（持写锁）
+A> COMMIT ok
+A> kvGet="A"
+--- child B exit=0 ---
+B> open ledger version=15 query_only=0 busy_timeout=5000
+B> kvSet(B) ok elapsedMs=1584
+B> kvGet="B"
+EXIT=0
+$ grep -rn "openLedgerReadonly\|query_only\|WriterLease\|WriterLeasePort" packages apps --include=*.ts
+EXIT=0
+$ sed -n "513,517p" packages/store/src/ledger.ts
+/** 打开（或创建）台账库：建库 → PRAGMA 对齐 → migrate()（幂等）→ 返回句柄 */
+export function openLedger(path: string): Ledger {
+  const db = openSqlite(path)
+  migrate(db)
+
+EXIT=0
+$ grep -n "migrate(db)" packages/store/src/ledger.ts
+516:  migrate(db)
+EXIT=0
+
+# ---- 附：探针脚本源（仓外临时件；非原始输出；运行前设 REPO_ROOT=<repo>） ----
+/**
+ * PB-5 / PRB-14 跨进程两进程同写探针（只写系统临时目录）
+ * 用法：REPO_ROOT=<repo> node pb5-prb14.mjs
+ * 父进程起 A/B 两个真实子进程：A 持写事务 1.5s，B 同时写台账 daemon_kv。
+ * 输出不含本机路径。
+ */
+import { spawn } from 'node:child_process'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+
+const REPO = process.env.REPO_ROOT
+if (!REPO) throw new Error('REPO_ROOT 未设')
+
+if (process.argv[2] === 'child') {
+  const root = await import(`${REPO}/packages/store/src/index.ts`)
+  const role = process.argv[3]
+  const dbPath = process.argv[4]
+  const signalPath = process.argv[5]
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+  const ledger = root.openLedger(dbPath)
+  let queryOnly = '?'
+  let busyTimeout = '?'
+  try {
+    queryOnly = String(ledger.db.prepare('PRAGMA query_only').get().query_only)
+    busyTimeout = String(ledger.db.prepare('PRAGMA busy_timeout').get().timeout)
+  } catch (err) {
+    console.log(`${role}: pragma read err ${String(err)}`)
+  }
+  console.log(`${role}: open ledger version=${ledger.version()} query_only=${queryOnly} busy_timeout=${busyTimeout}`)
+
+  if (role === 'A') {
+    ledger.db.exec('BEGIN IMMEDIATE')
+    ledger.kvSet('prb-14:probe', 'A')
+    console.log('A: BEGIN IMMEDIATE + kvSet(A) ok（持写锁）')
+    await writeFile(signalPath, 'held')
+    await sleep(1500)
+    ledger.db.exec('COMMIT')
+    console.log('A: COMMIT ok')
+    console.log(`A: kvGet=${JSON.stringify(ledger.kvGet('prb-14:probe'))}`)
+    ledger.close()
+    process.exit(0)
+  }
+
+  // B：等 A 持锁信号后尝试写
+  for (let i = 0; i < 200; i += 1) {
+    try {
+      const fs = await import('node:fs')
+      if (fs.existsSync(signalPath)) break
+    } catch {}
+    await sleep(10)
+  }
+  const started = Date.now()
+  try {
+    ledger.kvSet('prb-14:probe', 'B')
+    console.log(`B: kvSet(B) ok elapsedMs=${Date.now() - started}`)
+  } catch (err) {
+    console.log(`B: kvSet(B) ERROR elapsedMs=${Date.now() - started} err=${String(err)}`)
+  }
+  console.log(`B: kvGet=${JSON.stringify(ledger.kvGet('prb-14:probe'))}`)
+  ledger.close()
+  process.exit(0)
+}
+
+const dir = await mkdtemp(path.join(tmpdir(), 'sn-pb5-14-'))
+const dbPath = path.join(dir, 'ledger.db')
+const signalPath = path.join(dir, 'a-held.flag')
+const self = process.argv[1]
+const spawnChild = (role) =>
+  spawn(process.execPath, [self, 'child', role, dbPath, signalPath], { stdio: ['ignore', 'pipe', 'pipe'] })
+
+const a = spawnChild('A')
+await new Promise((r) => setTimeout(r, 250))
+const b = spawnChild('B')
+
+const collect = (child, name) => {
+  let out = ''
+  child.stdout.on('data', (d) => { out += d.toString() })
+  child.stderr.on('data', (d) => { out += d.toString() })
+  return new Promise((resolve) => child.on('close', (code) => resolve({ name, code, out })))
+}
+const [ra, rb] = await Promise.all([collect(a, 'A'), collect(b, 'B')])
+const show = (r) => {
+  console.log(`--- child ${r.name} exit=${r.code} ---`)
+  for (const line of r.out.trim().split('\n')) if (line !== '') console.log(`${r.name}> ${line.replace(/^A: |^B: /, '')}`)
+}
+show(ra)
+show(rb)
+await rm(dir, { recursive: true, force: true })
+# ---- 脚本源结束 ----

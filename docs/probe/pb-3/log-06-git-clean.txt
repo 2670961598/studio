@@ -1,0 +1,40 @@
+# PB-3 / PB-5 落盘后 git 面（本单只新增 docs/probe/pb-3/**、docs/probe/pb-5/**）
+DATE=2026-10-29T07:04:33Z
+HEAD=af0621643b39fc72ad990243df36232170d77891
+$ git status --porcelain
+?? docs/plan/mig08-closeout.md
+?? docs/probe/pb-3/
+?? docs/probe/pb-5/
+EXIT=0
+$ git diff --stat
+EXIT=0
+$ git diff --stat -- packages apps scripts templates package.json
+EXIT=0
+$ git status --porcelain -- packages apps scripts templates package.json docs/v2 docs/plan docs/probe/pb-1
+?? docs/plan/mig08-closeout.md
+EXIT=0
+$ git status --porcelain -- docs/probe/pb-3 docs/probe/pb-5
+?? docs/probe/pb-3/
+?? docs/probe/pb-5/
+EXIT=0
+$ git ls-files --others --exclude-standard docs/probe/pb-3 docs/probe/pb-5
+docs/probe/pb-3/log-00-environment.txt
+docs/probe/pb-3/log-01-entry-pb2.txt
+docs/probe/pb-3/log-02-prb-17-install-landing.txt
+docs/probe/pb-3/log-03-prb-18-hot-reload.txt
+docs/probe/pb-3/log-04-prb-19-20-diff-recon.txt
+docs/probe/pb-3/log-05-prb-21-host-replace.txt
+docs/probe/pb-3/log-06-git-clean.txt
+docs/probe/pb-3/report.md
+docs/probe/pb-5/log-00-environment.txt
+docs/probe/pb-5/log-01-entry-and-d12.txt
+docs/probe/pb-5/log-02-prb-23-mapping.txt
+docs/probe/pb-5/log-03-prb-23-local-read.txt
+docs/probe/pb-5/log-04-prb-14-two-process.txt
+docs/probe/pb-5/log-05-prb-13-write-receipt.txt
+docs/probe/pb-5/log-06-git-clean.txt
+docs/probe/pb-5/report.md
+EXIT=0
+$ git status --porcelain | grep -v "^?? docs/probe/pb-[35]/" || true
+?? docs/plan/mig08-closeout.md
+EXIT=0

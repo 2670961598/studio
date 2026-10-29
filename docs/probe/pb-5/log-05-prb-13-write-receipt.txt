@@ -1,0 +1,38 @@
+# PB-5 / PRB-13 平台写回执与未知（未能执行：缺真实平台写路径/故障注入/回执写口/对账）
+DATE=2026-10-29T07:00:58Z
+HEAD=af0621643b39fc72ad990243df36232170d77891
+$ grep -rn "REC-RCP-01\|REC-EVT-03" apps packages --include=*.ts | grep -v "test/" | grep -v "packages/contract/src"
+packages/api/src/routes/subscriptions.ts:4: * 依据：docs/v2/14 §四（API-16：allowlist＋SSRF 拒＋退避＋死信（REC-EVT-03）＋重放窗）；
+packages/api/src/routes/subscriptions.ts:190:        // 投递策略随意图交给下游投递器（退避/死信 REC-EVT-03 归 daemon；本面不投递）
+packages/api/src/routes/subscriptions.ts:191:        delivery: { mode: 'at-least-once', deadLetter: 'REC-EVT-03' },
+EXIT=0
+$ grep -rn "reportFault" apps packages --include=*.ts | grep -v "test/" | grep -v "packages/contract/src"
+apps/daemon/src/assembly/api/inject.ts:16: *   - `obs`    ：PORT-OBS 的**只读子口**（snapshot/clock/newId/health）——`reportFault`
+apps/daemon/src/assembly/api/inject.ts:43:/** API 读面：PORT-OBS 只读子口（写槽 reportFault 不注入；无改事实方法槽） */
+apps/daemon/src/assembly/api/inject.ts:87:/** 只读子口方法名（wrapper 收窄清单；`reportFault` 不在内＝只读面在运行期也不可达） */
+apps/daemon/src/assembly/api/inject.ts:156: * 只读读面：四方法齐全才注入；wrapper 只转调这四槽（reportFault 在装配面不可达）。
+apps/daemon/src/assembly/api/inject.ts:173:        `obs 缺只读方法 ${method}（API 读面=${OBS_READ_METHODS.join('/')}；reportFault 等写槽不注入）`,
+apps/daemon/src/assembly/api/index.ts:56:    /** PORT-OBS 只读子口（snapshot/clock/newId/health；reportFault 不可达） */
+packages/api/src/app.ts:19: *   - 收窄并冻结注入句柄：obs 只留四只读方法（reportFault 不可达）、gate 只留 PORT-GATE
+packages/api/src/app.ts:88:/** obs 只读子口方法名（reportFault 等写槽不注入） */
+packages/api/src/types.ts:18: *     `ApiObservationReadFace` 是 PORT-OBS 的 Pick 收窄（reportFault 等写槽不注入），
+packages/api/src/types.ts:39:/** PORT-OBS 只读子口（snapshot/clock/newId/health；reportFault 等写槽不注入） */
+packages/store/src/obs.ts:13: * 读侧口径（本文件只读；写面归 IMPL-04-06 hist.ts 与 IMPL-06 PORT-OBS.reportFault，均不在本单领土）：
+packages/store/src/obs.ts:103:/** 投影侧故障观察（类别复用 ENU-59；**不落 REC-OBS-02**——写入面归 PORT-OBS.reportFault） */
+EXIT=0
+$ grep -n "无超时" packages/taiga/src/transport/http.ts
+14: *   - 无超时、无限流退避、无 5xx 重试（上层断路器职责）
+EXIT=0
+$ grep -n "PRB-13" packages/yt/src/binding.ts packages/taiga/src/binding.ts
+packages/yt/src/binding.ts:198:    description: '证据=fake 回放测试；零真实网络测试（PRB-13 写侧未执行），docs/03 只读探测不证明写路径可用',
+packages/yt/src/binding.ts:199:    cannotClaim: '不得称 YouTrack 写路径已在真实例验证（PRB-13 未过前不宣读写侧契约）',
+packages/yt/src/binding.ts:205:  { probeId: 'PRB-13', state: 'not-executed' },
+packages/taiga/src/binding.ts:202:  { probeId: 'PRB-13', state: 'not-executed' },
+EXIT=0
+$ env | cut -d= -f1 | grep -iE "youtrack|taiga|platform" || echo "(no youtrack/taiga/platform env names)"
+(no youtrack/taiga/platform env names)
+EXIT=0
+$ grep -n "createYouTrackPlatform\|createTaigaPlatform" apps/daemon/src/assembly/platform/wire.ts
+16:import { createTaigaPlatform, type TaigaAuth, type TaigaEntity } from '@studio-next/taiga'
+158:    return createTaigaPlatform({
+EXIT=0

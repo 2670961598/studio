@@ -1,0 +1,116 @@
+# PB-3 / PRB-18 HCL-1 配置可观察探针（组件级控制面：createHotReload + control/reload.*；两次热重载）
+DATE=2026-10-29T07:00:14Z
+HEAD=af0621643b39fc72ad990243df36232170d77891
+$ REPO_ROOT=<repo> mise exec -- node <tmp>/sn-probe/pb3-prb18.mjs
+log> [hot-reload] 信任锚不在场（<tmp>/company）：装配已显式声明无锚（pb3-probe）
+log> [hot-reload] 公司目录指纹基线：sha256:5865632b2d43…（10 文件）——变更自动重装载已接（docs/38-§2 L1；稳定窗 500ms；手动通道 <rootDir>/control/）
+baseline fingerprint = sha256:5865632b2d43213d52cffd9de54134c448da3ab226dec926c6562ba69a61ff40
+log> [hot-reload] 已重装载（trigger=manual）：指纹 sha256:5865632b2d43…→sha256:333d32d38242…；变更 1 项；jobs +0/-0；台账 SCHEMA_EVOLVE 01M62F9N01W3M85H543EY809N9
+check#1 kind=reloaded fingerprint=sha256:333d32d382424dd90d8053280126c70d0ed255fd8e8ec548bfa7594bf85d10fa changes="~charter.md"
+result#1 = {"id":"prb18-req-1","ok":true,"applied":true,"detail":"指纹→sha256:333d32d38242…；jobs +0/-0；people=2"}
+log> [hot-reload] 已重装载（trigger=manual）：指纹 sha256:333d32d38242…→sha256:8e86d201c496…；变更 1 项；jobs +0/-0；台账 SCHEMA_EVOLVE 01M62F9N02G6KJGSME2A9V4H9H
+check#2 kind=reloaded fingerprint=sha256:8e86d201c49652725a3f3d01cddf889a0ae099ff155594e26cf01448728f04bc changes="~prompts/company.md"
+result#2 = {"id":"prb18-req-2","ok":true,"applied":true,"detail":"指纹→sha256:8e86d201c496…；jobs +0/-0；people=2"}
+check#3 kind=null
+stats checks=3 reloads=2 manualRequests=2 lastFingerprint=sha256:8e86d201c49652725a3f3d01cddf889a0ae099ff155594e26cf01448728f04bc
+apply calls=2 snapshots=[{"slug":"example-corp","level":2,"people":2,"departments":1},{"slug":"example-corp","level":2,"people":2,"departments":1}]
+fp1!=fp2 = true
+ledger events=2 eventIds=["01M62F9N01W3M85H543EY809N9","01M62F9N02G6KJGSME2A9V4H9H"]
+event SCHEMA_EVOLVE: RELOAD;trigger=manual;company=example-corp;变更=[~charter.md];指纹=sha256:5865632b2d43→sha256:333d32d38242;jobs=+0/-0(keep 0);people=2;depts=1;anchor=absent-declared:pb3-probe;零进程重启（docs/38-§2 L1）
+event SCHEMA_EVOLVE: RELOAD;trigger=manual;company=example-corp;变更=[~prompts/company.md];指纹=sha256:333d32d38242→sha256:8e86d201c496;jobs=+0/-0(keep 0);people=2;depts=1;anchor=absent-declared:pb3-probe;零进程重启（docs/38-§2 L1）
+loadCompanyDirectory after reload: ok=true
+EXIT=0
+$ grep -rn "syncCompanyPlugins" apps --include=*.ts
+EXIT=0
+$ grep -rn "pluginSetFingerprint" apps --include=*.ts
+EXIT=0
+$ grep -n "createHotReload\|hotReload.check" apps/daemon/src/assembly/serve/runtime.ts apps/daemon/src/assembly/serve/run.ts
+apps/daemon/src/assembly/serve/runtime.ts:41:import { createHotReload, type HotReload, type HotReloadApplyReport } from '../../control/hot-reload.ts'
+apps/daemon/src/assembly/serve/runtime.ts:479:    hotReload = createHotReload({
+apps/daemon/src/assembly/serve/run.ts:193:      await hotReload.check()
+EXIT=0
+
+# ---- 附：探针脚本源（仓外临时件；非原始输出；运行前设 REPO_ROOT=<repo>） ----
+/**
+ * PB-3 / PRB-18 HCL-1 配置可观察探针（组件级控制面；只写系统临时目录）
+ * 复制 2 级公司模板到临时目录，起 createHotReload 控制面组件（不重启进程），
+ * 通过 control/reload.request.json 手动触发两次声明变更，观察回执+指纹+台账事件。
+ * 输出不含本机路径（log 回调内脱敏临时根）。
+ */
+import { cp, mkdtemp, readFile, rm, appendFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+
+const REPO = process.env.REPO_ROOT
+if (!REPO) throw new Error('REPO_ROOT 未设')
+const { createHotReload, writeReloadRequest } = await import(`${REPO}/apps/daemon/src/control/hot-reload.ts`)
+const { makeUlid } = await import(`${REPO}/apps/daemon/src/engine/tools/id.ts`)
+const { openLedger } = await import(`${REPO}/packages/store/src/index.ts`)
+const { loadCompanyDirectory, readDirectoryFiles } = await import(`${REPO}/packages/company/src/index.ts`)
+
+const root = await mkdtemp(path.join(tmpdir(), 'sn-pb3-18-'))
+const companyDir = path.join(root, 'company')
+const rootDir = path.join(root, 'daemon-root')
+await cp(`${REPO}/templates/company-2-level`, companyDir, { recursive: true })
+const redact = (line) => line.split(root).join('<tmp>')
+
+const clockStart = Date.parse('2026-10-29T00:00:00Z')
+let tick = 0
+const ledger = openLedger(path.join(root, 'ledger.db'))
+let applied = 0
+const applySnapshots = []
+
+try {
+  const hot = createHotReload({
+    companyDir,
+    rootDir,
+    ledger,
+    company: 'probe-company',
+    clock: () => clockStart + (tick += 1),
+    makeId: makeUlid,
+    log: (line) => console.log(`log> ${redact(line)}`),
+    apply: (snapshot) => {
+      applied += 1
+      applySnapshots.push({ slug: snapshot.slug, level: snapshot.level, people: snapshot.people.length, departments: snapshot.departments.length })
+      return { jobsSeeded: 0, jobsKept: 0, jobsRemoved: 0 }
+    },
+    deptFallback: '工程部',
+    watch: false,
+    anchorAbsence: { declaredBy: 'pb3-probe' },
+  })
+  console.log(`baseline fingerprint = ${hot.stats.lastFingerprint}`)
+
+  // 第一次声明变更：charter.md 追加一行
+  await appendFile(path.join(companyDir, 'charter.md'), '\n<!-- PRB-18 probe change #1 -->\n')
+  writeReloadRequest(rootDir, { id: 'prb18-req-1', company: null, requestedAt: Date.now() })
+  const r1 = await hot.check()
+  console.log(`check#1 kind=${r1?.kind ?? 'null'} fingerprint=${r1?.fingerprint ?? '-'} changes=${JSON.stringify(r1?.changes ?? '')}`)
+  const result1 = JSON.parse(await readFile(path.join(rootDir, 'control', 'reload.result.json'), 'utf8'))
+  console.log(`result#1 = ${JSON.stringify(result1)}`)
+
+  // 第二次声明变更：prompts/company.md 追加一行
+  await appendFile(path.join(companyDir, 'prompts', 'company.md'), '\n<!-- PRB-18 probe change #2 -->\n')
+  writeReloadRequest(rootDir, { id: 'prb18-req-2', company: null, requestedAt: Date.now() })
+  const r2 = await hot.check()
+  console.log(`check#2 kind=${r2?.kind ?? 'null'} fingerprint=${r2?.fingerprint ?? '-'} changes=${JSON.stringify(r2?.changes ?? '')}`)
+  const result2 = JSON.parse(await readFile(path.join(rootDir, 'control', 'reload.result.json'), 'utf8'))
+  console.log(`result#2 = ${JSON.stringify(result2)}`)
+
+  // 第三次无变更：控制面仍在，无动作
+  const r3 = await hot.check()
+  console.log(`check#3 kind=${r3?.kind ?? 'null'}`)
+
+  console.log(`stats checks=${hot.stats.checks} reloads=${hot.stats.reloads} manualRequests=${hot.stats.manualRequests} lastFingerprint=${hot.stats.lastFingerprint}`)
+  console.log(`apply calls=${applied} snapshots=${JSON.stringify(applySnapshots)}`)
+  console.log(`fp1!=fp2 = ${r1?.fingerprint !== r2?.fingerprint}`)
+  const events = ledger.queryEvents({ company: 'probe-company' })
+  console.log(`ledger events=${events.length} eventIds=${JSON.stringify(events.map((e) => e.id))}`)
+  for (const e of events) console.log(`event ${e.event}: ${redact(String(e.note)).slice(0, 200)}`)
+
+  const mounted = loadCompanyDirectory(await readDirectoryFiles(companyDir))
+  console.log(`loadCompanyDirectory after reload: ok=${mounted.ok}${mounted.ok ? '' : ` issues=${mounted.issues.length}`}`)
+} finally {
+  ledger.close()
+  await rm(root, { recursive: true, force: true })
+}
+# ---- 脚本源结束 ----
