@@ -35,6 +35,7 @@
  * 批示流，再同批改实现与测试。
  */
 import { statSync } from 'node:fs'
+import { resolve } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 import type {
   ClassifiedError,
@@ -114,10 +115,11 @@ function fail(
   return { kind: 'err', error }
 }
 
-/** 错误文本脱敏：docs/80 §5.8 错误不得含本机绝对路径；把入参路径替换为占位符 */
+/** 错误文本脱敏：docs/80 §5.8 错误不得含本机绝对路径；把入参路径及其绝对形态替换为占位符 */
 function sanitize(err: unknown, path: string): string {
   const message = err instanceof Error ? err.message : String(err)
-  return path === '' ? message : message.split(path).join('<ledger>')
+  if (path === '') return message
+  return message.split(path).join('<ledger>').split(resolve(path)).join('<ledger>')
 }
 
 /** ENOENT 判定（缺库≠不可读：前者 db-missing，后者 STALL/readonly-stat-failed） */
