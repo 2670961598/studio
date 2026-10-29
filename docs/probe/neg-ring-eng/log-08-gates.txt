@@ -1,0 +1,49 @@
+== 门禁复算（2026-10-29T10:04:39Z） ==
+
+$ mise exec -- bun run typecheck
+$ tsc --noEmit
+EXIT=0
+
+$ mise exec -- bun run typecheck:v2
+$ tsc --noEmit -p tsconfig.v2.json
+EXIT=0
+
+$ mise exec -- bun run test:v2 -- apps/daemon/test/v2/neg
+$ vitest run --config vitest.v2.config.ts "apps/daemon/test/v2/neg"
+
+ RUN  v3.2.7 /Volumes/BigDisk/StudioNext
+
+ ✓ apps/daemon/test/v2/neg/run-revocation.test.ts (4 tests) 30ms
+ ✓ apps/daemon/test/v2/neg/ring.test.ts (8 tests) 53ms
+ ✓ apps/daemon/test/v2/neg/harvest-neg.test.ts (7 tests) 66ms
+ ✓ apps/daemon/test/v2/neg/work-gates.test.ts (10 tests) 58ms
+
+ Test Files  4 passed (4)
+      Tests  29 passed (29)
+   Start at  18:05:17
+   Duration  2.58s (transform 1.50s, setup 0ms, collect 3.52s, tests 208ms, environment 1ms, prepare 886ms)
+
+EXIT=0
+
+$ mise exec -- bun run guard:boundaries
+$ node scripts/guards/boundaries.mjs
+边界门禁 PASS：扫描 900 文件（范围面代码件 758），0 违例（分层宪法 20-§十五）
+EXIT=0
+
+$ mise exec -- bun run verify:docs
+$ node scripts/verify/v0-doc-check.mjs
+[v0-doc-check] 注 检查一 粘连解析 3 处（中文数字与后文粘读，按实存章前缀解析；不计悬空）：docs/plan/01-现状基线与差距.md:73、docs/plan/03-里程碑与波次.md:184、docs/v2/14-技术细节-运行时·MCP·对外API接口.md:321
+[v0-doc-check] 注 检查一 前向引用 6 处（v2/90、v2/91 未成卷，GAP-V2-12/09 §四版本表登记，不计悬空）
+[v0-doc-check] 注 检查二 覆盖 58 个连字符族（v2/09 §一.1 定义卷；裸字母族 CL/G/D/V/F/B/N 归检查三；TR- 为 v1·82 自产键，按 v2/17 §二.2 排除）
+[v0-doc-check] 注 检查二 记录族简写按别名解析 4 处（EVD-NN→REC-EVD-NN、ASSET-NN→REC-ASSET-NN）
+[v0-doc-check] 注 检查二 族段范围端点跳过 719 处（.. 简写端点不单判）
+[v0-doc-check] 注 检查三 分类：C1 特许形 2635／C2 09 登记表 32／C3 审计表 90／C4 卷头注 4／C5 改号注记 73／C6 范围计数 8／C7 计划卷编号 5
+[v0-doc-check] 注 检查四 ENU 候选按「09 §二 表行内 ≥3 个反引号机器值」现行口径重算 122 条（v2/17 §二.8-三 的 113 为 2026-10-28 复扫时点值）
+[v0-doc-check] OK ① 检查一 悬空节号引用：27 件文档、引用 2742 处（唯一行 1855）；真悬空 0、粘连解析 3、前向引用 6
+[v0-doc-check] OK ② 检查二 跨卷 ID 存在性：58 个连字符族、token 5135 处；悬空 0、族段端点 719、记录族简写 4
+[v0-doc-check] OK ③ 检查三 裸字母 ID 族：token 2847 处；C1-C7 全分类，真待修 0
+[v0-doc-check] OK ④ 检查四 枚举字面量重述：诊断码定义 25 个全在 v2/10 §八（全库码形 token 107 处）；ENU 候选 122 条，跨卷表行重述 0
+[v0-doc-check] OK ⑤ 检查五 节号连续性：27 件、章 304 个、数值子节 315 个；问题 0
+[v0-doc-check] OK ⑥ 检查六 示例值自洽：VEC 10 条；正向复算 8/8、负向断言 2/2
+v0-doc-check PASS：V0 六项 6/6（docs/v2 18 卷＋docs/plan 9 卷；真悬空 0）
+EXIT=0

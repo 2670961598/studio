@@ -1,0 +1,63 @@
+== NEG-RING-05 变异验证（最终测试件内容；去守卫→红→还原） ==
+
+$ git diff packages/contract/src/records/chg.ts
+diff --git a/packages/contract/src/records/chg.ts b/packages/contract/src/records/chg.ts
+index 9f666d9..6227e21 100644
+--- a/packages/contract/src/records/chg.ts
++++ b/packages/contract/src/records/chg.ts
+@@ -237,7 +237,7 @@ export function validateChangeSegment(record: unknown, ctx: ChangeSegmentContext
+   if (payload.segment === 'controlled_effective' || payload.segment === 'post_review') {
+     const established = new Set(ctx.establishedSegments ?? [])
+     for (const required of CHANGE_GATE_SEGMENTS) {
+-      if (!established.has(required) && ctx.establishedSegments !== undefined) {
++      if (!established.has(required) && ctx.establishedSegments !== undefined && established.size < 0) { // MUTATION-RING05: 无验证生效守卫改为不可达（去守卫，验证后还原）
+         issues.push({ path: 'payload.segment', message: `无验证生效为零：须先有 ${required} 段（§八/§14.4-2）` })
+       }
+     }
+
+$ mise exec -- bun run test:v2 -- apps/daemon/test/v2/neg/ring.test.ts -t "NEG-RING-05"
+$ vitest run --config vitest.v2.config.ts "apps/daemon/test/v2/neg/ring.test.ts" -t "NEG-RING-05"
+
+ RUN  v3.2.7 /Volumes/BigDisk/StudioNext
+
+ ❯ apps/daemon/test/v2/neg/ring.test.ts (8 tests | 1 failed | 4 skipped) 21ms
+   ↓ NEG-RING-02 权责环·撤回结清：派生枚举＋凭据结清四判据缺一即未完成 > NEG-RING-02 判据一·后代清单：撤回不含后代枚举→拒；后代凭据仍可供给＝结清未发生
+   ↓ NEG-RING-02 权责环·撤回结清：派生枚举＋凭据结清四判据缺一即未完成 > NEG-RING-02 判据一·差异非空：漏项/目录外引用均拒；残留对账非空即判负输入
+   ↓ NEG-RING-02 权责环·撤回结清：派生枚举＋凭据结清四判据缺一即未完成 > NEG-RING-02 判据二/三·停用证据＋无后代确认：缺一不得记撤回完成
+   ↓ NEG-RING-02 权责环·撤回结清：派生枚举＋凭据结清四判据缺一即未完成 > NEG-RING-02 判据四·残留观察＋正例：对账差异为空＋供给路径不存在才可称撤回完成
+   ✓ NEG-RING-05 进化环·未批生效：未批准/未验证的变更生效即判负（I-13） > NEG-RING-05 未批准生效：跳过激活批准段直接受控生效→拒（段不可跳、三门不得互替） 9ms
+   × NEG-RING-05 进化环·未批生效：未批准/未验证的变更生效即判负（I-13） > NEG-RING-05 未验证生效：三门段未成立→拒（无验证生效为零）；三门齐＋已批准才放行 8ms
+     → expected true to be false // Object.is equality
+   ✓ NEG-RING-05 进化环·未批生效：未批准/未验证的变更生效即判负（I-13） > NEG-RING-05 三门合并：验证授权/独立验证/激活批准同一位置作出→拒（I-13 两道门不合并） 1ms
+   ✓ NEG-RING-05 进化环·未批生效：未批准/未验证的变更生效即判负（I-13） > NEG-RING-05 失败后修低判据：no_override=false 或判据变更覆盖原结论→拒（R-8） 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/daemon/test/v2/neg/ring.test.ts > NEG-RING-05 进化环·未批生效：未批准/未验证的变更生效即判负（I-13） > NEG-RING-05 未验证生效：三门段未成立→拒（无验证生效为零）；三门齐＋已批准才放行
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ reject apps/daemon/test/v2/neg/ring.test.ts:142:22
+    140| 
+    141| function reject(outcome: RecordValidationOutcome): readonly Issue[] {
+    142|   expect(outcome.ok).toBe(false)
+       |                      ^
+    143|   return outcome.ok ? [] : outcome.issues
+    144| }
+ ❯ apps/daemon/test/v2/neg/ring.test.ts:299:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 passed | 4 skipped (8)
+   Start at  18:07:36
+   Duration  1.40s (transform 265ms, setup 0ms, collect 489ms, tests 21ms, environment 0ms, prepare 238ms)
+
+error: script "test:v2" exited with code 1
+EXIT=1

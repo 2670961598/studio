@@ -1,0 +1,35 @@
+== NEG 最后一组（RING/ENG）采集环境（2026-10-29T10:05:46Z） ==
+
+$ git log --oneline -2; git branch --show-current
+c9e8540 fix(v2): a25324f 捕获的 EMP-09 临时变异还原（内部程序不得补位外部保留权）
+a25324f feat(v2): NEG-EMP-02/04/06/07/08/09 纯判定机制
+dev
+
+注：本波开工时 HEAD=a25324f（10:03:13Z）；采集期间并行 EMP 单提交 c9e8540（只改
+packages/contract/src/records/emp-neg.ts 与 test/v2/neg-emp2.test.ts，不触碰本波被测面），
+HEAD 前移属仓内并行施工，非本单提交。本波未 git add/commit。
+
+$ mise exec -- node --version; mise exec -- bun --version; uname -sm
+v24.21.0
+1.4.3
+Darwin arm64
+
+$ git status --short（本波落盘后；只有本波两处新增）
+?? apps/daemon/test/v2/neg/ring.test.ts
+?? docs/probe/neg-ring-eng/
+
+$ ls -l apps/daemon/test/v2/neg/ring.test.ts docs/probe/neg-ring-eng/
+-rw-------@ 1 xieqingxin  staff  20569 Oct 29 18:02 apps/daemon/test/v2/neg/ring.test.ts
+（docs/probe/neg-ring-eng/ 下有 log-00..log-08 与本报告，见报告 §九）
+
+$ wc -l apps/daemon/test/v2/neg/ring.test.ts
+     356 apps/daemon/test/v2/neg/ring.test.ts
+
+$ shasum -a 256 packages/gateway/src/catalog-entry.ts packages/contract/src/records/chg.ts
+64590a41d6e42e086a40a973b65ddd2ea48b9bf836699f2c09dac0cc45f6ba53  packages/gateway/src/catalog-entry.ts
+c44dfbda7bcbd524641f303dd6334cadc0a9559ee9b5869b6006e8bcfe070841  packages/contract/src/records/chg.ts
+
+（与变异前基线同值——log-06 的还原复核；HEAD 前移的提交 c9e8540 不含这两个文件。）
+
+注：本波只新增 ring.test.ts 与 docs/probe/neg-ring-eng/**；生产码仅作临时变异（log-04/05），
+已按 sha256 还原（log-06）；不改其它包、不改旧测试、不 git commit。

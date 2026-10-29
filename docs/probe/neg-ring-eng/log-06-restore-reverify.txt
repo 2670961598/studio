@@ -1,0 +1,21 @@
+$ shasum -a 256 packages/gateway/src/catalog-entry.ts packages/contract/src/records/chg.ts apps/daemon/test/v2/neg/ring.test.ts
+64590a41d6e42e086a40a973b65ddd2ea48b9bf836699f2c09dac0cc45f6ba53  packages/gateway/src/catalog-entry.ts
+c44dfbda7bcbd524641f303dd6334cadc0a9559ee9b5869b6006e8bcfe070841  packages/contract/src/records/chg.ts
+9d610a1068da96a2d8991a259efbf4931782bc3a35b9798bfe7d282254fdbcc0  apps/daemon/test/v2/neg/ring.test.ts
+
+$ git diff --stat -- packages/gateway/src/catalog-entry.ts packages/contract/src/records/chg.ts
+GIT_DIFF_EXIT=0
+
+$ mise exec -- bun run test:v2 -- apps/daemon/test/v2/neg/ring.test.ts
+$ vitest run --config vitest.v2.config.ts "apps/daemon/test/v2/neg/ring.test.ts"
+
+ RUN  v3.2.7 /Volumes/BigDisk/StudioNext
+
+ ✓ apps/daemon/test/v2/neg/ring.test.ts (8 tests) 35ms
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  18:03:45
+   Duration  1.27s (transform 187ms, setup 0ms, collect 330ms, tests 35ms, environment 0ms, prepare 260ms)
+
+EXIT=0

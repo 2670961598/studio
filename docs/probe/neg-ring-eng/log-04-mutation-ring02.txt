@@ -1,0 +1,82 @@
+== NEG-RING-02 变异验证（最终测试件内容；去守卫→红→还原） ==
+
+$ git diff packages/gateway/src/catalog-entry.ts
+diff --git a/packages/gateway/src/catalog-entry.ts b/packages/gateway/src/catalog-entry.ts
+index 6eda742..514cabb 100644
+--- a/packages/gateway/src/catalog-entry.ts
++++ b/packages/gateway/src/catalog-entry.ts
+@@ -549,7 +549,7 @@ export function readRevocationProof(proof: unknown, knownDescendants: readonly s
+     if (!declared.includes(id)) declared.push(id)
+   }
+   const missing = knownDescendants.filter((id) => !declared.includes(id))
+-  if (missing.length > 0) {
++  if (missing.length > knownDescendants.length) { // MUTATION-RING02: 守卫条件改为不可达（去守卫，验证后还原）
+     return {
+       ok: false,
+       error: failure(
+
+$ mise exec -- bun run test:v2 -- apps/daemon/test/v2/neg/ring.test.ts -t "NEG-RING-02"
+$ vitest run --config vitest.v2.config.ts "apps/daemon/test/v2/neg/ring.test.ts" -t "NEG-RING-02"
+
+ RUN  v3.2.7 /Volumes/BigDisk/StudioNext
+
+ ❯ apps/daemon/test/v2/neg/ring.test.ts (8 tests | 2 failed | 4 skipped) 30ms
+   × NEG-RING-02 权责环·撤回结清：派生枚举＋凭据结清四判据缺一即未完成 > NEG-RING-02 判据一·后代清单：撤回不含后代枚举→拒；后代凭据仍可供给＝结清未发生 13ms
+     → expected undefined to be 'catalog-descendants-incomplete' // Object.is equality
+   × NEG-RING-02 权责环·撤回结清：派生枚举＋凭据结清四判据缺一即未完成 > NEG-RING-02 判据一·差异非空：漏项/目录外引用均拒；残留对账非空即判负输入 3ms
+     → expected true to be false // Object.is equality
+   ✓ NEG-RING-02 权责环·撤回结清：派生枚举＋凭据结清四判据缺一即未完成 > NEG-RING-02 判据二/三·停用证据＋无后代确认：缺一不得记撤回完成 9ms
+   ✓ NEG-RING-02 权责环·撤回结清：派生枚举＋凭据结清四判据缺一即未完成 > NEG-RING-02 判据四·残留观察＋正例：对账差异为空＋供给路径不存在才可称撤回完成 3ms
+   ↓ NEG-RING-05 进化环·未批生效：未批准/未验证的变更生效即判负（I-13） > NEG-RING-05 未批准生效：跳过激活批准段直接受控生效→拒（段不可跳、三门不得互替）
+   ↓ NEG-RING-05 进化环·未批生效：未批准/未验证的变更生效即判负（I-13） > NEG-RING-05 未验证生效：三门段未成立→拒（无验证生效为零）；三门齐＋已批准才放行
+   ↓ NEG-RING-05 进化环·未批生效：未批准/未验证的变更生效即判负（I-13） > NEG-RING-05 三门合并：验证授权/独立验证/激活批准同一位置作出→拒（I-13 两道门不合并）
+   ↓ NEG-RING-05 进化环·未批生效：未批准/未验证的变更生效即判负（I-13） > NEG-RING-05 失败后修低判据：no_override=false 或判据变更覆盖原结论→拒（R-8）
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  apps/daemon/test/v2/neg/ring.test.ts > NEG-RING-02 权责环·撤回结清：派生枚举＋凭据结清四判据缺一即未完成 > NEG-RING-02 判据一·后代清单：撤回不含后代枚举→拒；后代凭据仍可供给＝结清未发生
+AssertionError: expected undefined to be 'catalog-descendants-incomplete' // Object.is equality
+
+- Expected: 
+"catalog-descendants-incomplete"
+
++ Received: 
+undefined
+
+ ❯ apps/daemon/test/v2/neg/ring.test.ts:176:107
+    174|     expect(subcauseOf(catalog.revoke('SEC-GW-SIGNING', proof({ descend…
+    175|     // ② 只枚举子代、漏孙代（派生执行体最易漏的一层）→ 拒
+    176|     expect(subcauseOf(catalog.revoke('SEC-GW-SIGNING', proof({ descend…
+       |                                                                                                           ^
+    177|     // ③ 凭据结清未发生：被拒后子/孙仍持可用凭据（供给路径存在，不是「已提醒」）
+    178|     expect(catalog.supply('SEC-MX-BOT-PASSWORD', { seconds: 60 }).kind…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  apps/daemon/test/v2/neg/ring.test.ts > NEG-RING-02 权责环·撤回结清：派生枚举＋凭据结清四判据缺一即未完成 > NEG-RING-02 判据一·差异非空：漏项/目录外引用均拒；残留对账非空即判负输入
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ apps/daemon/test/v2/neg/ring.test.ts:190:92
+    188|     // ① 纯判定器三态：缺项 / 目录外引用 / 无后代却无显式确认
+    189|     const known = ['SEC-MX-BOT-PASSWORD', 'SEC-MX-SUBAGENT']
+    190|     expect(readRevocationProof(proof({ descendants: ['SEC-MX-BOT-PASSW…
+       |                                                                                            ^
+    191|     expect(readRevocationProof(proof({ descendants: [...known, 'SEC-GW…
+    192|     expect(readRevocationProof(proof({ descendants: undefined }), []).…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 2 passed | 4 skipped (8)
+   Start at  18:07:31
+   Duration  1.34s (transform 229ms, setup 0ms, collect 414ms, tests 30ms, environment 0ms, prepare 247ms)
+
+error: script "test:v2" exited with code 1
+EXIT=1

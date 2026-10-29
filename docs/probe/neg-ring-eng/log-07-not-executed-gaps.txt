@@ -1,0 +1,43 @@
+== 缺能力五出口（RING-03）: grep 仓内实现面 ==
+apps/daemon/src/assembly/serve/runtime.ts:223:  //    不并树（异 slug 拒启动）；增量同步=扩编建目录/缩编归档不删（aiws.ts）+热重载增量。
+apps/daemon/src/assembly/channels/channels.ts:80: * 部门→新房；缩编→既有房保留不拆，DEV-20 §5.4 已存在不是错误）。不入 apply 事务面：
+packages/company/src/git-import.ts:442:  //     增量同步=扩编建目录/缩编归档不删。落点缺省=公司根目录（targetDir 同级），不进
+(命中行数=3)
+
+== 价值环六要素场景 harness（RING-01）: grep 场景/六要素 ==
+packages/contract/src/records/work-close.ts:17: *   2. REC-WORK-COMMIT-CHANGE 申请段六要素值集未登记 → 结构化槽承载（v2/04 §九 正文名）。
+packages/contract/src/records/work-close.ts:194:/** 申请段六要素（v2/04 §九；值集未登记——缺口 2） */
+(命中行数=2)
+
+== 组织环结构评价场景（RING-04）: OBJ-05/REC-EVAL-01 场景编排 ==
+packages/contract/test/v2/records/rec-rev-eval.test.ts:2: * rec-rev-eval.test.ts —— REV 复盘＋EVAL 结构评价「一族一正一负」
+packages/contract/test/v2/records/rec-rev-eval.test.ts:6: *   v2/11 §十（REV/EVAL 字段与不变量）｜v2/05 OBJ-04/OBJ-05｜v2/09 ENU-79｜v2/01 I-3/I-11/R-22。
+packages/contract/test/v2/records/rec-rev-eval.test.ts:65:  it('EVAL-01 结构评价：判据五面＋组织绩效输入＋决定去向 → 放行', () => {
+packages/contract/test/v2/records/rec-rev-eval.test.ts:70:describe('NEG-REC-09 复盘/结构评价拒绝条件（追认化/掩盖协调失败/未被接收）', () => {
+packages/contract/src/artifacts/generate.ts:153:  { area: 'EVAL', label: 'EVAL 结构评价族（1 类）', file: 'eval.schema.json', types: EVAL_RECORD_TYPES, schemas: EVAL_RECORD_SCHEMAS },
+packages/contract/src/records/eval.ts:2: * EVAL 结构评价族记录形状与判定件（REC-EVAL-01 一类）——MIG-03 / IMPL-03-02
+packages/contract/src/records/eval.ts:5: *   - v2/11 §十（结构评价字段/不变量）；§1.9 EVAL 族 1 类登记；§〇.7 证明边界（决定类）
+packages/contract/src/records/eval.ts:6: *   - v2/05 OBJ-05（结构评价对象本体）；v2/03 §2.4/表 D 行 19/20（结构存在理由、成本、空编、
+packages/contract/src/records/eval.ts:8: *   - v2/09 ENU-79 结构评价结论
+packages/contract/src/records/eval.ts:31:/** v2/11 §1.9 EVAL 结构评价族 1 类 */
+(命中行数=12)
+
+== ESM-only dist 面（ENG-01）: 构建产物 ==
+(dist 目录数=0)
+
+== YAML bomb 上限（ENG-02）: parse 选项 ==
+(maxAliasCount 命中=0)
+
+== Node 版本 fail-fast（ENG-04）: 入口版本校验 ==
+packages/store/test/v2/readonly-open.test.ts:474:    'bun' in process.versions
+packages/store/test/v2/snapshot-drill.test.ts:19: *   ⑤ 环境记录：`process.versions.node`／`process.versions.sqlite`、`SELECT sqlite_version()`、
+packages/store/test/v2/snapshot-drill.test.ts:98:  /** `process.versions.node`（运行时 Node 版本） */
+packages/store/test/v2/snapshot-drill.test.ts:100:  /** `process.versions.sqlite`（node:sqlite 内置 SQLite 版本；旧版 Node 无此键则空串） */
+packages/store/test/v2/snapshot-drill.test.ts:122:    node: process.versions.node,
+(process.versions.node 命中=3)
+
+== 证据通道受理（ENG-05）: eval/stdin 拒收件 ==
+packages/core/src/rule/decl.ts:133:      declError(diagnostics, `${location}/type`, 'rule/input-type', [String(rawType)])
+packages/store/test/v2/readonly-open.test.ts:472:  // vitest 当前由 node 跑；若直接以 bun 跑测试，则用 bun -e（不带 --input-type）
+packages/store/test/v2/readonly-open.test.ts:476:      : ['--no-warnings', '--input-type=module', '-e', script]
+(证据通道受理件命中=0)

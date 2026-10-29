@@ -1,0 +1,13 @@
+$ mise exec -- bun run test:v2 -- apps/daemon/test/v2/neg/ring.test.ts -t "NEG-RING-02"
+$ vitest run --config vitest.v2.config.ts "apps/daemon/test/v2/neg/ring.test.ts" -t "NEG-RING-02"
+
+ RUN  v3.2.7 /Volumes/BigDisk/StudioNext
+
+ ✓ apps/daemon/test/v2/neg/ring.test.ts (8 tests | 4 skipped) 25ms
+
+ Test Files  1 passed (1)
+      Tests  4 passed | 4 skipped (8)
+   Start at  18:07:23
+   Duration  2.33s (transform 347ms, setup 0ms, collect 588ms, tests 25ms, environment 0ms, prepare 497ms)
+
+EXIT=0
