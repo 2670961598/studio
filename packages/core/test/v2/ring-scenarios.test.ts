@@ -11,7 +11,8 @@
  * 断言面：NEG-RING-01（封闭面/正例/缺环乱序/四类失败出口：越界、无价值含负价值入账、不可验收含自检
  * 冒称与附条件、承诺不可持续含已声明处置不翻案）；NEG-RING-04（正例＋五面缺项/未接收/未分类/变更无据
  * 倒序/新增层级掩盖协调失败/整体透支不处置/证据缺）。每个负例断言**具名 code＋issue 路径**。零 IO。
- * 变异验证（2026-10-29 实测，脚本逐守卫短路→跑本文件→还原）：MUTATION_NOTE
+ * 变异验证（2026-10-29 实测，脚本逐守卫短路→跑本文件→还原）：20 个守卫逐一短路，本文件分别红
+ * 1–3 条（重复守卫首轮幸存——相邻重复不破序位，已补强测试后红）；还原后 SHA-256 回原值、46/46 绿。
  * 验证级诚实注：NEG-RING-01/04 主表为 V6·SCEN——本文件是 core 纯判定件的场景级证据；V1 契约
  * case／V6 全链场景（daemon 编排、记录落盘）不在本文件冒充（缺口随交付报告上呈）。
  */
@@ -212,10 +213,10 @@ describe('NEG-RING-01 · 缺环与有序转化断裂', () => {
     const paths = expectValueFailure(evaluateValueRing(valueInput({ steps: reordered })), 'ring-link-out-of-order')
     expect(paths).toContain('steps.1.element')
   })
-  it('要素重复 → ring-link-out-of-order（单向链重复即不成立）', () => {
-    const steps = [...SIX_STEPS, { element: 'intake', ref: 'rec/dup' }]
+  it('要素重复 → ring-link-out-of-order（相邻重复不破坏序位，须由重复守卫拦下）', () => {
+    const steps = [SIX_STEPS[0]!, SIX_STEPS[1]!, SIX_STEPS[2]!, SIX_STEPS[2]!, ...SIX_STEPS.slice(3)]
     const paths = expectValueFailure(evaluateValueRing(valueInput({ steps })), 'ring-link-out-of-order')
-    expect(paths).toContain('steps.6.element')
+    expect(paths).toContain('steps.3.element')
   })
 
   it('要素名未分类 → ring-declaration-unclassified', () => {
