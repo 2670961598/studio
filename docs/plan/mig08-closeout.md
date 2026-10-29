@@ -457,3 +457,12 @@ $ git status --porcelain
 - 仍缺 **18**：①无机制 target 9 条（EMP-02/04/06/07/08/09、ORG-02/05/08）；②RING-01..05（价值/权责/能力/组织/进化环，V6·SCEN/目标）＋ENG-01/02/04/05（跨版本探针/spike/纪律，波外目标）9 条。其中 RING-04、ENG-01、ENG-05 为 `not-executed`，不得写「119 已覆盖」。
 - 全 V2 门：**1328 tests** 全绿；`verify:docs` 6/6；`guard` 0 违例。
 - 结论：NEG 覆盖率显著提升，但 **MIG-08 的 119 终值仍未达**；剩余 9 条缺的是机制/场景/跨版本探针，不是测试写法。
+
+---
+
+## 十六、OPS 补形 A 与 NEG 104（2026-10-29，制作人决定后）
+
+- **OPS 补形 A 已落**：`EmergencyStopRequest`/`CircuitBreakRequest` 补齐 REC-WORK-18 全字段（`actionsTaken`/`notAuthorized`/`evidencePreserved`/`notified`/`review`，emergency 另有 `boundaryRecordRef`）；引用版本由调用方显式给出；`assembly/ops` 映射信封经 PORT-HIST 写入；`gaps` 中的「形状缺口」删除。v2/14 §1.8 与 docs/49 已登记。测试：`ops-contract` 7、`stop-channel-ops` 15、`ops-hist` 6、`ops-runtime` 3。
+- **NEG 补强至 104/119**：新增 NEG-ORG-02/05/08（表 A′ 归属、部门硬核、老板缺席）真实投影/守卫测试；全 V2 **1381 tests**。
+- **仍缺 15**：EMP-02/04/06/07/08/09（6 条无生产机制）＋RING-01..05＋ENG-01/02/04/05（9 条 target/not-executed）。这些需新记录字段/跨记录判据/场景探针，不是测试写法问题。
+- 结论：OPS 决定一（A）已执行；决定二（A）仍在推进，未到 119；不宣称定稿。
