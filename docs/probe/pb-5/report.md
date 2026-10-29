@@ -193,3 +193,14 @@ EXIT=0
 > **并发在途件说明**：`log-06-git-clean.txt` 的完整 `git status` 另见 `docs/plan/mig08-closeout.md`（IMPL-08-04 并行施工的未跟踪件，非本单）；本单自身 `git status --porcelain -- docs/probe/pb-3 docs/probe/pb-5` 只显示这两个新目录，`git ls-files --others --exclude-standard docs/probe/pb-3 docs/probe/pb-5` 恰 16 件（两报告＋十四日志），`git diff --stat` 为空，`packages/apps/scripts/templates/package.json` 零改动（日志逐字保留）。
 >
 > 脱敏说明：日志中的仓根与本机临时路径替换为 `<repo>`/`<tmp>`；其余字节（命令、标准输出、`EXIT=`）逐字保留。日志末尾的「附：探针脚本源」为仓外临时脚本源，不是原始命令输出，已单独标注。
+
+---
+
+## 附录 A（2026-10-29 后续施工）：D12 只读打开已落位
+
+> 本附录只更新「入口要件」事实，不改上文 PRB-13/14/23 的历史判定；PB-5 **仍不宣布通过**。
+
+- 新增 `packages/store/src/readonly.ts`：`openLedgerReadonly(path)`——SQLite `readonly:true` ＋ `PRAGMA query_only=ON`，不 migrate/不 DDL；缺库=`STALL/db-missing`，未迁移=`rejected_version/schema-behind`，schema-ahead 明确拒。
+- 证据：`packages/store/test/v2/readonly-open.test.ts` 8 tests（只读读、写拒、query_only=1、缺库/未迁移/超前拒、不建库、两真实子进程同读且写拒）。
+- 对 PRB-14 的意义：D12 入口要件已从「不满足」变为「已落位」；但「台账单写」仍需要 WriterLease/围栏与多进程写侧证据，**PRB-14 仍不得宣称通过**；PRB-23 仍 not-executed，平台读侧契约仍不成立。
+- 全 V2 门复跑：1275 tests 全绿（`verify:v2`）。
