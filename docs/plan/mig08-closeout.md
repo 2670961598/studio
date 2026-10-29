@@ -485,3 +485,13 @@ $ git status --porcelain
 - RING-01/04 场景判定件（`packages/core/src/ring/ring-scenarios.ts`，46 tests）已落；RING-03/ENG-02/04/05 机制件已落；全 V2 **96 files / 1546 tests**。
 - **NEG-ENG-01 负向失败**：Node 24.21 CJS 消费者 `require('@studio-next/contract')` 实测 **REQUIRE_OK exports=55**（`docs/probe/neg-ring-eng/log-10-eng01-cjs-require.txt`）。「ESM-only 要求 require 失败」在本运行时**不成立**；须改规范口径（接受 require(ESM)）或加 CJS 拒绝面（exports.require 抛错等）。**不得写 119 全通过。**
 - 其余：OPS 补形 A 已落；PB-3/PB-5 未过；F8 未签；P0 18/7/2。
+
+---
+
+## 十九、NEG-ENG-01 收口（CJS 拒绝面，2026-10-29）
+
+- 15 个 `packages/*` 的 `exports` 改为 `{ import: <原 src>, require: './require-reject.cjs' }`；CJS 消费者按包名 require 一律 `ERR_ESM_ONLY`；ESM import 照常。
+- `packages/contract/test/v2/cjs-reject.test.ts` 6 tests（15 包＋4 子路径＋ESM 正例＋边界登记）。
+- NEG 最终：**119/119 IDs executed-pass**；全 V2 **103 files / 1552 tests**。
+- 边界：只保证包名 exports 条件；绕过 exports 的绝对/相对文件路径不承诺（Node 24 require(ESM) 仍可）。v2/13 §1.6、docs/49 已登记。
+- F8/P0/DSF 仍未签；PB-3/PB-5 未过；V2 仍 draft。
