@@ -11,8 +11,9 @@
 //
 // 六项检查（任一真违例 → exit 1）：
 //   ① 悬空节号引用：docs/v2＋docs/plan 里每个 `v2/NN §X[.Y]` 指向的卷/章/节必须存在；
-//      前向卷（v2/90、v2/91 未成卷）按 GAP-V2-12 登记，粘连歧义（中文数字与后文粘读）
-//      单列登记、不计真悬空；其余为真悬空。
+//      前向卷（v2/90、v2/91 未成卷）按 GAP-V2-12 登记；中文数字与后文粘读
+//      （如 `§二六项`＝§二＋「六项」）按实存章前缀解析并登记为「粘连解析」，不计真悬空；
+//      其余为真悬空。
 //   ② 跨卷 ID 存在性：族 ID 必须能在 v2/09 §一.1 登记的定义卷（或 09 登记表）全文查到；
 //      排除诊断码族（E-/W-<AREA>-NNN，检查四专管）与 v1·82 的 TR- 自产键；
 //      计划卷的族段简写（`EVD-01..06` 形）与 REC- 记录族简写（EVD-NN→REC-EVD-NN、
@@ -116,13 +117,11 @@ export function cnToNumber(token) {
     if (tens === undefined || ones === undefined) return Number.NaN;
     return tens * 10 + ones;
   }
-  let n = 0;
-  for (const ch of token) {
-    const d = CN_DIGITS.get(ch);
-    if (d === undefined) return Number.NaN;
-    n = n * 10 + d;
-  }
-  return n;
+  // 无「十」的中文数字只允许单字（0-9）；`四零`/`一一`/`二六` 不是合法中文数字，
+  // 由调用方按「实存章前缀＋后文」作粘连解析。
+  if (token.length !== 1) return Number.NaN;
+  const d = CN_DIGITS.get(token);
+  return d === undefined ? Number.NaN : d;
 }
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -133,17 +132,20 @@ const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const V2_REF_RE = /v2\/(\d{1,2})(?:\s*§\s*([〇零一二三四五六七八九十]+|[0-9]+)((?:\.\d+)*))?/g;
 
-/** 中文数字多字 token 的粘连歧义判定：贪心数不存在，但更短前缀是实存章号，且后接汉字。 */
+/** 中文数字多字 token 的粘连解析：非法数字序列且后接汉字时，取实存章号前缀。 */
 function resolveChapter(token, chapters, after) {
   const direct = cnToNumber(token);
-  if (chapters.has(direct)) return { ok: true, n: direct };
+  if (Number.isFinite(direct)) {
+    return chapters.has(direct) ? { ok: true, n: direct } : { ok: false };
+  }
+  // 非法中文数字序列（`四零`/`一一`/`二六`）：只在后接汉字时按实存章前缀解析，
+  // 否则按真悬空处理（不猜）。
   const isChinese = /^[〇零一二三四五六七八九十]+$/.test(token);
   if (!isChinese || token.length < 2) return { ok: false };
-  const next = after.charAt(0);
-  if (!/[\u3400-\u9fff]/.test(next)) return { ok: false };
+  if (!/[\u3400-\u9fff]/.test(after.charAt(0))) return { ok: false };
   for (let len = token.length - 1; len >= 1; len--) {
     const n = cnToNumber(token.slice(0, len));
-    if (chapters.has(n)) return { ok: false, ambiguous: true, n };
+    if (Number.isFinite(n) && chapters.has(n)) return { ok: true, n, glued: true };
   }
   return { ok: false };
 }
@@ -152,7 +154,8 @@ function resolveChapter(token, chapters, after) {
 export function checkDanglingSections(root, docs, volumes) {
   const errors = [];
   const warnings = [];
-  const stats = { files: docs.length, refs: 0, lines: 0, dangling: 0, ambiguous: 0, forward: 0 };
+  const gluedSites = [];
+  const stats = { files: docs.length, refs: 0, lines: 0, dangling: 0, glued: 0, forward: 0 };
   const seenLines = new Set();
   for (const rel of docs) {
     const lines = stripQuotes(fs.readFileSync(path.join(root, rel), "utf8")).split("\n");
@@ -178,19 +181,16 @@ export function checkDanglingSections(root, docs, volumes) {
         const after = line.slice((m.index ?? 0) + m[0].length);
         const chapter = resolveChapter(chapterToken, vol.chapters, after);
         if (chapter.ok) {
+          if (chapter.glued === true) {
+            stats.glued += 1;
+            gluedSites.push(`${rel}:${i + 1}`);
+          }
           if (sub === "") continue;
           const key = `${chapter.n}${sub}`;
           if (!vol.sections.has(key)) {
             stats.dangling += 1;
             errors.push(`检查一 悬空：${rel}:${i + 1} 引用 ${m[0]}（v2/${m[1]} 无节 ${key}）`);
           }
-          continue;
-        }
-        if (chapter.ambiguous === true) {
-          stats.ambiguous += 1;
-          warnings.push(
-            `检查一 粘连歧义（登记不判负）：${rel}:${i + 1} 引用 ${m[0]}（贪心章号不存在，前缀 v2/${m[1]} §${chapter.n} 实存；建议加间隔）`,
-          );
           continue;
         }
         if (sub !== "") {
@@ -207,6 +207,11 @@ export function checkDanglingSections(root, docs, volumes) {
     }
   }
   stats.lines = seenLines.size;
+  if (stats.glued > 0) {
+    warnings.push(
+      `检查一 粘连解析 ${stats.glued} 处（中文数字与后文粘读，按实存章前缀解析；不计悬空）：${gluedSites.join("、")}`,
+    );
+  }
   if (stats.forward > 0) {
     warnings.push(
       `检查一 前向引用 ${stats.forward} 处（v2/90、v2/91 未成卷，GAP-V2-12/09 §四版本表登记，不计悬空）`,
@@ -539,6 +544,9 @@ export function checkEnumRestatement(root, docs, volumes) {
   // ② 值集级：09 §二 的 ≥3 值 ENU，非 09 卷表行成组复述且表块无唯一主表标注=重述。
   const enus = parseEnuCandidates(volumes);
   stats.enu = enus.length;
+  warnings.push(
+    `检查四 ENU 候选按「09 §二 表行内 ≥3 个反引号机器值」现行口径重算 ${enus.length} 条（v2/17 §二.8-三 的 113 为 2026-10-28 复扫时点值）`,
+  );
   for (const rel of docs) {
     if (rel.includes("docs/v2/09-")) continue;
     const lines = fs.readFileSync(path.join(root, rel), "utf8").split("\n");
@@ -832,7 +840,7 @@ function main() {
     return 1;
   }
   console.log(
-    `[v0-doc-check] OK ① 检查一 悬空节号引用：${stats.docs} 件文档、引用 ${stats.one.refs} 处（唯一行 ${stats.one.lines}）；真悬空 ${stats.one.dangling}、粘连歧义 ${stats.one.ambiguous}、前向引用 ${stats.one.forward}`,
+    `[v0-doc-check] OK ① 检查一 悬空节号引用：${stats.docs} 件文档、引用 ${stats.one.refs} 处（唯一行 ${stats.one.lines}）；真悬空 ${stats.one.dangling}、粘连解析 ${stats.one.glued}、前向引用 ${stats.one.forward}`,
   );
   console.log(
     `[v0-doc-check] OK ② 检查二 跨卷 ID 存在性：${stats.two.families} 个连字符族、token ${stats.two.tokens} 处；悬空 ${stats.two.dangling}、族段端点 ${stats.two.ranged}、记录族简写 ${stats.two.shorthand}`,
@@ -841,7 +849,7 @@ function main() {
     `[v0-doc-check] OK ③ 检查三 裸字母 ID 族：token ${stats.three.tokens} 处；C1-C7 全分类，真待修 ${stats.three.pending}`,
   );
   console.log(
-    `[v0-doc-check] OK ④ 检查四 枚举字面量重述：诊断码定义 ${stats.four.codes} 个全在 v2/10 §八（引用 ${stats.four.codeRefs} 处）；ENU 候选 ${stats.four.enu} 条，跨卷表行重述 ${stats.four.restated}`,
+    `[v0-doc-check] OK ④ 检查四 枚举字面量重述：诊断码定义 ${stats.four.codes} 个全在 v2/10 §八（全库码形 token ${stats.four.codeRefs} 处）；ENU 候选 ${stats.four.enu} 条，跨卷表行重述 ${stats.four.restated}`,
   );
   console.log(
     `[v0-doc-check] OK ⑤ 检查五 节号连续性：${stats.five.files} 件、章 ${stats.five.chapters} 个、数值子节 ${stats.five.numericSections} 个；问题 ${stats.five.problems}`,
