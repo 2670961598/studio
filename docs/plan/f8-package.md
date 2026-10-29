@@ -53,7 +53,7 @@
 | 批 | 状态 | 原因 |
 |---|---|---|
 | PB-3 | **未通过** | 入口缺 PB-2/PRB-08；PRB-17 负向；PRB-18/19/20/21 not-executed |
-| PB-5 | **未通过** | 入口曾缺 D12（现 `openLedgerReadonly` 已落）；PRB-14 正面（第二写者被围栏拒）仍不成立；PRB-23 not-executed → 平台读侧契约不成立 |
+| PB-5 | **未通过** | D12 只读打开＋WriterLease 已落；PRB-14 正面（第二写者被框架围栏拒）已可复测；**PRB-23 仍 not-executed** → 平台读侧契约不成立 |
 
 证据：`docs/probe/pb-3/report.md`、`docs/probe/pb-5/report.md`。
 

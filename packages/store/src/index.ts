@@ -155,6 +155,15 @@ export type { Migration } from './migrations.ts'
 export { openLedger } from './ledger.ts'
 export type { AppendResult, BudgetListQuery, BudgetScope, CompanySyncResult, DumpResult, EventQuery, InsertCandidateResult, Ledger, PersonnelTimelineEntry } from './ledger.ts'
 
+// WriterLease 跨进程写围栏（PB-5 / PRB-14 正面；daemon serve 写入路径）：
+// `<db>.writer.lock` 以 O_EXCL 排他创建并写入 pid/owner/at；持有者存活 → 拒绝开启
+// （STALL/writer-lease-held，含持有者信息、不覆盖）；持有者已死 → 清理一次后重试；
+// release 只删内容逐字一致的自己的锁。openLedgerWriter = 取 lease → openLedger，
+// 打开失败释放 lease，close 先关库再释放。**不是** docs/80 §8.2 的 WriterLeasePort
+// （TTL/fence 未实现）；只约束本函数的调用者，其它直接 openLedger 写点未纳围栏。
+export { acquireWriterLease, openLedgerWriter, writerLeasePath } from './writer-lease.ts'
+export type { WriterLease } from './writer-lease.ts'
+
 // D12 只读打开/围栏（PB-5 入口；docs/80 §8.2）：readOnly:true + query_only=ON，
 // 不迁移/不 DDL/不写 WAL；缺库→unavailable/STALL/db-missing，版本偏移→
 // rejected_version/EVOLVE_REJECT/schema-behind|ahead（见 src/readonly.ts 头注）

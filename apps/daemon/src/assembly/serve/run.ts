@@ -17,7 +17,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import type { InvokeSource } from '@studio-next/contract'
-import { openLedger, type Ledger } from '@studio-next/store'
+import { openLedgerWriter, type Ledger } from '@studio-next/store'
 import { answerReloadNoCompanyDir } from '../../control/hot-reload.ts'
 import { consumeStopRequest, readStopRequest, STOP_LAST_SEEN_KV_KEY, writeStopResult } from '../../control/stop-channel.ts'
 import { takeOverRunningWorkRecords } from '../../engine/harvest/inflight-takeover.ts'
@@ -80,7 +80,11 @@ export async function runServe(
   opts?: RunServeOpts,
 ): Promise<ServeResult> {
   const config = parseDaemonConfig(readFileSync(path.resolve(configPath), 'utf8'))
-  const ledger: Ledger = openLedger(path.resolve(config.db))
+  // 台账写者围栏（PB-5 / PRB-14 正面；store/src/writer-lease.ts）：daemon 启动即取
+  // `<db>.writer.lock`——另一 daemon 持锁且进程存活 ⇒ STALL/writer-lease-held 拒启
+  // （message 含持有者 pid/owner，不覆盖锁文件）；前命崩溃留下的死 pid 锁清理一次后接管。
+  // 停机由 runtime.stop → ledger.close 先关库再释放锁（顺序见 store openLedgerWriter）。
+  const ledger: Ledger = openLedgerWriter(path.resolve(config.db))
 
   // —— 在途接管（DEV-13 R-B，docs/38-§2）：serve 启动例行接管 work_records running ——
   //    前命孤儿（硬杀/优雅停留 running 同款）收口 interrupted；接管≠收割（四要件无据不

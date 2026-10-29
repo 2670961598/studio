@@ -204,3 +204,16 @@ EXIT=0
 - 证据：`packages/store/test/v2/readonly-open.test.ts` 8 tests（只读读、写拒、query_only=1、缺库/未迁移/超前拒、不建库、两真实子进程同读且写拒）。
 - 对 PRB-14 的意义：D12 入口要件已从「不满足」变为「已落位」；但「台账单写」仍需要 WriterLease/围栏与多进程写侧证据，**PRB-14 仍不得宣称通过**；PRB-23 仍 not-executed，平台读侧契约仍不成立。
 - 全 V2 门复跑：1275 tests 全绿（`verify:v2`）。
+
+---
+
+## 附录 B（2026-10-29 后续施工）：WriterLease 围栏已落位
+
+> 本附录更新 PRB-14 的「写侧围栏」事实；PB-5 **仍不宣布通过**（PRB-23 未执行）。
+
+- 新增 `packages/store/src/writer-lease.ts`：`acquireWriterLease(dbPath, owner)` 用 `<db>.writer.lock` 排他创建（`wx`, 0600），写 pid/owner/at；已存在且进程存活→`STALL/writer-lease-held`，不覆盖；死 pid 可清理重试；释放只删自己内容一致的锁。
+- `openLedgerWriter(path)`：先取 lease→`openLedger`；关闭先关库再释放；`runServe` 已改用该入口。
+- 证据：`packages/store/test/v2/writer-lease.test.ts` 9 tests——两真实子进程：A 持锁，B 被 `STALL/writer-lease-held` 拒；A 关闭后 B 可取并读写；死 pid 恢复；不误删他人锁。
+- 对 PRB-14 的意义：**写侧负向已从「无围栏」变为「框架围栏拒绝第二写者」**；PRB-14 正面可复测（附录 A 的「仍不得宣称」由本附录更新）。
+- PB-5 仍不通过：**PRB-23 仍 not-executed**（部署值表/消费方观察缺口写口缺位），PRB-13 未执行；平台读侧契约仍不成立。
+- 全 V2 门复跑：1561 tests 全绿（`verify:v2`）。

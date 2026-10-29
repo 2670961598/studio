@@ -495,3 +495,11 @@ $ git status --porcelain
 - NEG 最终：**119/119 IDs executed-pass**；全 V2 **103 files / 1552 tests**。
 - 边界：只保证包名 exports 条件；绕过 exports 的绝对/相对文件路径不承诺（Node 24 require(ESM) 仍可）。v2/13 §1.6、docs/49 已登记。
 - F8/P0/DSF 仍未签；PB-3/PB-5 未过；V2 仍 draft。
+
+---
+
+## 二十、PB-5 WriterLease 补记（2026-10-29）
+
+- `writer-lease.ts`＋`openLedgerWriter` 落位；`runServe` 改用 writer 入口；两真实子进程：第二写者被 `STALL/writer-lease-held` 拒，释放后可取。
+- PRB-14 正面可复测；**PB-5 仍不通过**（PRB-23 not-executed、PRB-13 not-executed）；平台读侧契约仍不成立。
+- 全 V2 门：**1561 tests**；PB-5 报告附录 B 已登记。
