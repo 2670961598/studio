@@ -89,6 +89,17 @@ export interface ParsedDepartment {
   parent?: string | null
   lanes?: readonly string[]
   functions?: readonly string[]
+  /**
+   * 部门硬核只读声明（部门章程/预算与资源上限/部门验收口径/部门审计；v2/03 §6.3）。
+   * 缺省=未声明（不猜）；声明则须有具名授权引用（hardCoreRef），否则视为部门自改硬核，
+   * 投影阻断（NEG-ORG-05）。本字段是**投影输入边界**，不改 YAML/SCH 契约、不新增记录类。
+   */
+  hardCore?: readonly string[]
+  /**
+   * 部门硬核授权引用（具名：`external-boss:`/`supreme-minister:`/`unit-head:`＋记录引用）。
+   * 缺省/null=未声明授权——硬核声明无此引用即「无外部/最高宰相授权引用」，判负。
+   */
+  hardCoreRef?: string | null
 }
 
 /** 已解析 departments/<部门>/config.yaml（legacy 逐文件契约面；镜像字段必须与索引一致）。 */
@@ -144,6 +155,39 @@ export interface ParsedVacancy {
   declaredAt?: string | null
 }
 
+/**
+ * 表 A′ 保留权力归属声明条目（NEG-ORG-02）：行号 → 归属引用。
+ * **不复制表 A′ 正文**（唯一主表 docs/v2/03 §2.3）；本输入只给行号与归属引用，归属解析在
+ * 投影输入边界的已声明对象表内完成（不另立副本、不改写归属）。
+ */
+export interface ParsedPowerOwner {
+  /** 表 A′ 行号（1..12；12 行逐行显式）。 */
+  row: number
+  /**
+   * 归属引用（闭式文法）：`external-boss`｜`supreme-minister`｜`unit:<unitId>`｜
+   * `department:<path>`｜`person:<id>`。空串/非字符串/未知形态=悬空或塞入可选容器，投影阻断。
+   */
+  ownerRef: string
+}
+
+/** 外部老板可达态（v2/03 §3.5；NEG-ORG-08）。闭式二值，不设第三态。 */
+export const BOSS_REACHABILITY_STATES = ['reachable', 'unreachable'] as const
+export type BossReachabilityState = (typeof BOSS_REACHABILITY_STATES)[number]
+
+/**
+ * 已解析老板可达性声明（v2/03 §3.5；NEG-ORG-08）。
+ * 不可达且无有效代行时**内核冻结·运行延续**（不是停摆/悬置）；不可达且仍推进硬核事项＝阻断
+ * （停摆待老板＋保全）。代行人不得是最高宰相（它就是内部老板）。
+ */
+export interface ParsedBossReachability {
+  /** 外部老板可达态（不可达=仅四类硬核动作依赖在场，其余照常）。 */
+  state: BossReachabilityState
+  /** 代行人引用（有效形态=`external-proxy:<具名记录>`；缺省/null=无有效代行）。 */
+  actingRef?: string | null
+  /** 老板不可达期间仍在推进的硬核事项（非空且无有效代行=阻断）。 */
+  hardCorePending?: readonly string[]
+}
+
 /** 已解析 org-config.yaml（legacy 只读面；本函数不解析 YAML）。 */
 export interface ParsedOrgConfig {
   company: ParsedCompany
@@ -154,6 +198,13 @@ export interface ParsedOrgConfig {
   units?: readonly ParsedUnit[]
   /** 空编登记声明（缺省=未登记，不发明）。 */
   vacancies?: readonly ParsedVacancy[]
+  /**
+   * 表 A′ 12 行归属声明（NEG-ORG-02；缺省=未声明，不猜 12 行，保持旧输入兼容）。
+   * 声明则须 12 行逐行显式、无空归属/可选容器/悬空；缺失或悬空→投影阻断。
+   */
+  powerOwners?: readonly ParsedPowerOwner[]
+  /** 外部老板可达性声明（NEG-ORG-08；缺省=未声明，不猜可达）。 */
+  bossReachability?: ParsedBossReachability
 }
 
 /** 新权威切片（定义包组织面已解析件；本周期只用于 O3-01 互斥复验）。 */
@@ -205,6 +256,10 @@ export interface ProjectedDepartmentNode {
   leaderRef: string | null
   /** 主管是否在 people 索引中（false=悬空，不静默）。 */
   leaderResolved: boolean
+  /** 部门硬核只读声明（原样投影；合法性见 blocking issue——v2/03 §6.3；缺省=[]）。 */
+  hardCore: readonly string[]
+  /** 部门硬核授权引用（null=未声明/未授权；具名引用见 hard-core 面）。 */
+  hardCoreRef: string | null
 }
 
 /** 组织树投影（deterministic：节点/根/前序均按 path 码点序，childPaths 同序）。 */
@@ -318,6 +373,54 @@ export interface ReservedPowerRefsProjection {
   rule: 'reference-only-no-copy'
 }
 
+/** 归属引用形态（闭式；unknown-form=不可解析，已阻断）。 */
+export type PowerOwnerKind = 'external-boss' | 'supreme-minister' | 'unit' | 'department' | 'person' | 'unknown-form'
+
+/** 表 A′ 单行归属投影（NEG-ORG-02；只含已声明行，行号为表 A′ 行号而非正文副本）。 */
+export interface ProjectedPowerOwner {
+  row: number
+  ownerRef: string
+  /** 归属引用能否解析到已声明对象（false=悬空；此时投影已 blocked）。 */
+  resolved: boolean
+  kind: PowerOwnerKind
+}
+
+/**
+ * 保留权力归属投影（NEG-ORG-02）。
+ * `source='undeclared'`＝旧输入未声明（不猜 12 行、不阻断，保持兼容）；`declared`＝显式声明，
+ * 12 行须逐行有归属、无空 owner、不塞可选容器、不悬空。表 A′ 正文/归属仍只在主表。
+ */
+export interface PowerOwnershipProjection {
+  tableRef: 'v2/03 §2.3'
+  source: 'undeclared' | 'declared'
+  /** 已声明行（按行号升序；未声明=[]）。 */
+  rows: readonly ProjectedPowerOwner[]
+  /** 声明纪律：逐行显式、禁止可选容器/空归属。 */
+  rule: 'explicit-per-row-no-optional-container'
+}
+
+/**
+ * 老板可达性投影（NEG-ORG-08）。冻结·运行延续语义在 bossAbsence（常量策略）；本投影给出
+ * **本输入声明**的可达态与处置结果，两者叠合判定（不可达且无有效代行=内核冻结·运行延续）。
+ */
+export interface BossReachabilityProjection {
+  source: 'undeclared' | 'declared'
+  /** 声明态；source='undeclared' 时 null（不把未声明猜成 reachable）。 */
+  state: BossReachabilityState | null
+  /** 代行人引用（原样；null=无代行）。 */
+  actingRef: string | null
+  /** 代行是否有效（仅具名外部代行有效；最高宰相/内部岗位=无效）。 */
+  actingValid: boolean
+  /** 老板不可达期间仍在推进的硬核事项（声明值；空=无在途硬核）。 */
+  hardCorePending: readonly string[]
+  /** 不可达且无有效代行=内核冻结·运行延续（v2/03 §3.5）；否则 active。 */
+  kernelState: 'active' | 'frozen-run-continues'
+  /** 不可达/冻结须登记并触发复审，不得无限期。 */
+  reviewRequired: boolean
+  /** 依赖外部老板在场的硬核动作唯一主表引用（不复制清单正文）。 */
+  dependentHardCoreRef: 'v2/03 §3.5'
+}
+
 /**
  * 老板缺席投影（NEG-ORG-07）：外部老板不是 CL 的一层，恒在组织树之外为根（v2/03 §2.1-3/
  * §3.5）。老板不可达且无有效代行＝**内核冻结·运行延续**，不得悬置（无主体悬置态不存在）。
@@ -344,7 +447,11 @@ export interface StructureProjection {
   facts: StructureFacts
   cl: ClCriteriaProjection
   reservedPowers: ReservedPowerRefsProjection
+  /** 表 A′ 12 行归属（NEG-ORG-02；缺省=未声明，声明则逐行校验）。 */
+  powerOwnership: PowerOwnershipProjection
   bossAbsence: BossAbsenceProjection
+  /** 外部老板可达性处置（NEG-ORG-08；冻结语义与 bossAbsence 叠合）。 */
+  bossReachability: BossReachabilityProjection
 }
 
 /** 纯投影最终产物（status='blocked' 时消费方不得采信 tree/structure 的未阻断部分）。 */

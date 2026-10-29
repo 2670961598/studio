@@ -1,7 +1,7 @@
 /**
  * 组织纯投影 · 结构面（MIG-05 / IMPL-05-03；docs/v2/06 §五）
  *
- * 输出五件（全部是「判据输入/引用」，不是业务裁决）：
+ * 输出（全部是「判据输入/引用」，不是业务裁决）：
  *   1. 一级单元 N 参数（N≥1，默认 1；三省=N=3 只是示例——代码不写死 3；GAP-V2-17 投影载形
  *      `unitId`/`domain`/`headRef`/`vacancyState`/`reviewAt`）；
  *   2. 空编投影（空编=记录事实：登记＋复审期限；缺复审期限=空编静默→阻断）；
@@ -9,13 +9,19 @@
  *      company.level 代替——NEG-ORG-06「只改 level 字段」无效）；
  *   4. 保留权力引用（只引用 v2/03 §2.3 表 A′ 行号；不复制正文/归属、不另立副本）；
  *   5. 老板缺席策略投影（NEG-ORG-07：依赖外部老板的硬核四类→内核冻结·运行延续；悬置禁止；
- *      代行者不得是最高宰相；冻结须登记复审——v2/03 §3.5）。
+ *      代行者不得是最高宰相；冻结须登记复审——v2/03 §3.5）；
+ *   6. 表 A′ 12 行归属（NEG-ORG-02：显式声明则逐行校验；缺失/悬空/可选容器→阻断）；
+ *   7. 部门硬核声明（NEG-ORG-05：只读声明须有具名上位授权引用；部门自改=阻断）；
+ *   8. 老板可达性处置（NEG-ORG-08：不可达无代行仍推进硬核→阻断；冻结·运行延续保留）。
  *
  * 零 IO：不读文件/不取时钟/不用随机数；reviewAt 只做形状校验，是否逾期由消费方按时钟判定
  * （投影不把「当前时刻」偷渡成事实）。
  */
 import { collectPersonIds } from './authority.ts'
+import { buildBossReachability } from './boss-reachability.ts'
+import { validateDeclaredHardCores } from './hard-core.ts'
 import { compareText, ISSUE_CODES, projectionIssue, sortProjectionIssues } from './issues.ts'
+import { buildPowerOwnership } from './power-owners.ts'
 import { IMPLICIT_UNIT_ID, ISO_8601_RE, isVacancyKind, mergeAuthorityFaces, reconcileUnits, reconcileVacancies, validateDomain } from './units.ts'
 import type { StructureAuthority } from './units.ts'
 export type { StructureAuthority } from './units.ts'
@@ -264,7 +270,10 @@ export function buildStructureProjection(input: OrganizationProjectionInput, tre
     }
   }
 
-  // ───────────────── 4. 事实与 CL 判据输入（NEG-ORG-06：claim 不作事实） ─────────────────
+  // ───────────────── 4. 部门硬核声明（NEG-ORG-05：自改硬核=无效，须具名上位授权） ─────
+  validateDeclaredHardCores(tree.tree.nodes, issues)
+
+  // ───────────────── 5. 事实与 CL 判据输入（NEG-ORG-06：claim 不作事实） ─────────────────
   const facts = collectFacts(input, tree, unitsProjection, projectedVacancies)
   const cl = buildClCriteria(input, facts)
   if (cl.claimStatus === 'unverified') {
@@ -279,6 +288,18 @@ export function buildStructureProjection(input: OrganizationProjectionInput, tre
     )
   }
 
+  // ───────────────── 6. 表 A′ 归属（NEG-ORG-02）与老板可达性（NEG-ORG-08） ─────────────────
+  const powerOwnership = buildPowerOwnership(
+    input,
+    {
+      unitIds: new Set(unitsProjection.units.map((unit) => unit.unitId)),
+      departmentPaths: new Set(tree.tree.nodes.map((node) => node.path)),
+      personIds,
+    },
+    issues,
+  )
+  const bossReachability = buildBossReachability(input, issues)
+
   return {
     structure: {
       units: unitsProjection,
@@ -286,7 +307,9 @@ export function buildStructureProjection(input: OrganizationProjectionInput, tre
       facts,
       cl,
       reservedPowers: reservedPowerRefs(),
+      powerOwnership,
       bossAbsence: bossAbsencePolicy(),
+      bossReachability,
     },
     authority: mergeAuthorityFaces(unitReconciliation.authority, vacancyReconciliation.authority),
     issues: sortProjectionIssues(issues),

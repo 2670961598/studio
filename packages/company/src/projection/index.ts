@@ -40,6 +40,9 @@ export * from './issues.ts'
 export * from './authority.ts'
 export * from './org-tree.ts'
 export * from './org-structure.ts'
+export * from './power-owners.ts'
+export * from './hard-core.ts'
+export * from './boss-reachability.ts'
 
 /** 投影契约标识（消费方用于断言「这是纯投影产物，不是台账/权威快照」）。 */
 export const ORG_PROJECTION_CONTRACT = {

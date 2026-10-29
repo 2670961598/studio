@@ -34,6 +34,8 @@ export interface CanonicalDepartment {
   parent: string | null
   leaderRef: string | null
   level: number | null
+  hardCore: readonly string[]
+  hardCoreRef: string | null
   contract: OrganizationContract
   authority: OrganizationAuthority
   declaredBy: readonly OrganizationDeclarationSource[]
@@ -178,6 +180,8 @@ function toCanonical(
     parent: declaration.parent ?? null,
     leaderRef: declaration.leader ?? null,
     level: declaration.level ?? null,
+    hardCore: declaration.hardCore ?? [],
+    hardCoreRef: declaration.hardCoreRef ?? null,
     contract,
     authority: contract === 'legacy' ? 'legacy-readonly' : 'definition',
     declaredBy,
@@ -193,6 +197,9 @@ function mirrorDrift(index: ParsedDepartment, file: ParsedDepartmentFile): reado
   if ((index.level ?? null) !== (file.level ?? null)) drift.push('level')
   if (!sameStringList(index.lanes, file.lanes)) drift.push('lanes')
   if (!sameStringList(index.functions, file.functions)) drift.push('functions')
+  // 部门硬核只读声明面（NEG-ORG-05）：两个镜像声明不得各自当权威
+  if (!sameStringList(index.hardCore, file.hardCore)) drift.push('hardCore')
+  if ((index.hardCoreRef ?? null) !== (file.hardCoreRef ?? null)) drift.push('hardCoreRef')
   return drift
 }
 

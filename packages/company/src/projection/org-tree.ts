@@ -140,6 +140,8 @@ export function buildOrgTree(input: OrganizationProjectionInput): OrgTreeBuild {
       declaredBy: node.declaredBy,
       leaderRef: node.leaderRef,
       leaderResolved: node.leaderRef !== null && personIds.has(node.leaderRef),
+      hardCore: node.hardCore,
+      hardCoreRef: node.hardCoreRef,
     })
   }
   nodes.sort((a, b) => compareText(a.path, b.path))

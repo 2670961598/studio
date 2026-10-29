@@ -31,6 +31,19 @@ export const ISSUE_CODES = {
   // —— 结构面：legacy 部门首长 ——
   legacyLeaderMissing: 'projection/legacy-leader-missing',
   danglingLeader: 'projection/dangling-leader',
+  // —— 结构面：部门硬核（NEG-ORG-05；部门自改硬核=无效判负）——
+  departmentHardCoreUnauthorized: 'projection/department-hard-core-unauthorized',
+  departmentHardCoreSelfAuthorized: 'projection/department-hard-core-self-authorized',
+  // —— 结构面：保留权力归属（NEG-ORG-02；表 A′ 12 行逐行显式）——
+  powerOwnersIncomplete: 'projection/power-owners-incomplete',
+  powerOwnerRowInvalid: 'projection/power-owner-row-invalid',
+  powerOwnerOptionalContainer: 'projection/power-owner-optional-container',
+  powerOwnerUnresolved: 'projection/power-owner-unresolved',
+  // —— 结构面：老板缺席处置（NEG-ORG-08；冻结·运行延续，代行者≠最高宰相）——
+  bossReachabilityShape: 'projection/boss-reachability-shape',
+  bossHardCoreWithoutProxy: 'projection/boss-hard-core-without-proxy',
+  bossProxyForbidden: 'projection/boss-proxy-forbidden',
+  bossProxyInvalid: 'projection/boss-proxy-invalid',
   // —— 结构面：CL 判据输入（NEG-ORG-06）——
   levelClaimUnverified: 'projection/level-claim-unverified',
 } as const

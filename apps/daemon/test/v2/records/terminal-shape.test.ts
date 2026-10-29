@@ -148,23 +148,29 @@ function opsContext(signature?: CallContext['signature']): CallContext {
   }
 }
 
-/** 紧急止损请求骨架（字段面见 v2/14 §1.8 EmergencyStopRequest） */
+/** 紧急止损请求骨架（字段面见 v2/14 §1.8 EmergencyStopRequest；OPS 补形 A：REC-WORK-18 全字段） */
 function emergencyRequest(overrides: Record<string, unknown> = {}): EmergencyStopRequest {
   return {
     authorization: { poweredBy: 'decision', decisionRef: 'REC-DEC-01' },
     reason: '现场最小止损：停止对外写入并保全现场',
     requiresPlatformWrite: false,
     triggerRef: 'REC-WORK-17',
-    boundary: { preset: true, boundaryRef: 'REC-AUTH-01', permittedActions: ['停止对外写入', '保全现场快照'] },
+    boundary: {
+      preset: true,
+      boundaryRef: 'REC-AUTH-01',
+      boundaryRecordRef: { refType: 'REC-AUTH-01', refId: 'REC-AUTH-01', refVersion: '1.0.0' },
+      permittedActions: ['停止对外写入', '保全现场快照'],
+    },
+    actionsTaken: ['停止对外写入', '保全现场快照'],
     notAuthorized: ['未进入禁止面', '未追认原动作'],
-    evidencePreserved: ['evidence-snapshot-1'],
-    notified: ['G9.internal-boss'],
+    evidencePreserved: [{ refId: 'evidence-snapshot-1', refVersion: '1.0.0' }],
+    notified: [{ refId: 'G9.internal-boss', refVersion: '1.0.0' }],
     review: { reviewerRef: 'audit-1', due: '2026-11-02T00:00:00.000Z' },
     ...overrides,
   } as unknown as EmergencyStopRequest
 }
 
-/** 止损围栏请求骨架（fence 声明见 v2/14 §1.8 CircuitBreakRequest） */
+/** 止损围栏请求骨架（fence 声明见 v2/14 §1.8 CircuitBreakRequest；OPS 补形 A：REC-WORK-18 全字段） */
 function breakRequest(overrides: Record<string, unknown> = {}): CircuitBreakRequest {
   return {
     authorization: { poweredBy: 'policy_verdict', commandRef: 'REC-AUTH-02', verdict: 'permitted' },
@@ -173,6 +179,11 @@ function breakRequest(overrides: Record<string, unknown> = {}): CircuitBreakRequ
     target: { kind: 'work', workRef: 'REC-WORK-03' },
     fence: { scope: ['executors'], stopInjection: true, revokeDerived: false, mechanismProven: false },
     triggerRef: 'REC-WORK-17',
+    actionsTaken: ['冻结旧写入者'],
+    notAuthorized: ['未撤销派生执行体'],
+    evidencePreserved: [{ refId: 'evidence-2', refVersion: '1.0.0' }],
+    notified: [{ refId: 'G9.internal-boss', refVersion: '1.0.0' }],
+    review: { reviewerRef: 'audit-2', due: '2026-11-02T00:00:00.000Z' },
     ...overrides,
   } as unknown as CircuitBreakRequest
 }
@@ -235,7 +246,7 @@ describe('G-PORT-OPS 落口：未授权 fail-closed（REC-WORK-18 记录/证据�
   it('REC-WORK-18 形状缺（not_authorized 空集／通知匿名／复核自审）→ rejected_precondition，零记录', () => {
     const invalid: EmergencyStopRequest[] = [
       emergencyRequest({ notAuthorized: [] }),
-      emergencyRequest({ notified: ['框架'] }),
+      emergencyRequest({ notified: [{ refId: '框架', refVersion: '1.0.0' }] }),
       // 复核者＝现场责任主体（caller AGENT-1）＝自审：独立复核不成立
       emergencyRequest({ review: { reviewerRef: 'AGENT-1', due: '2026-11-02T00:00:00.000Z' } }),
     ]
@@ -254,8 +265,13 @@ describe('G-PORT-OPS 落口：未授权 fail-closed（REC-WORK-18 记录/证据�
     const record = records[0]
     expect(record?.recordType).toBe('REC-WORK-18')
     expect(record?.kind).toBe('emergency_stop')
-    expect(record?.boundaryRef).toBe('REC-AUTH-01')
+    expect(record?.boundaryRef).toEqual({ refType: 'REC-AUTH-01', refId: 'REC-AUTH-01', refVersion: '1.0.0' })
+    // OPS 补形 A：实际处置动作与显式版本引用来自请求（非登记动作占位）
+    expect(record?.actionsTaken).toEqual(['停止对外写入', '保全现场快照'])
+    expect(record?.notified).toEqual([{ refId: 'G9.internal-boss', refVersion: '1.0.0' }])
+    expect(record?.evidencePreserved).toEqual([{ refId: 'evidence-snapshot-1', refVersion: '1.0.0' }])
     expect(record?.notAuthorized).toEqual(['未进入禁止面', '未追认原动作'])
+    expect(record?.gaps).toEqual([])
     expect(record?.effectOnOriginal).toEqual({ retroactiveApproval: false, equalsRecovery: false, normalizable: false })
     expect(record?.outcome).toBe('unknown')
     expect(record?.review?.position).toBe('audit-1')
@@ -293,10 +309,13 @@ describe('G-PORT-OPS 落口：未授权 fail-closed（REC-WORK-18 记录/证据�
     expect(records).toHaveLength(1)
     const record = records[0]
     expect(record?.kind).toBe('circuit_break')
-    // 请求形状无 notified/independent_review 槽位 → 显式缺口（不臆造具名位置）
-    expect(record?.notified).toEqual([])
-    expect(record?.review).toBeUndefined()
+    // OPS 补形 A：notified/independent_review 已入请求形状（不再以形状缺口占位）
+    expect(record?.notified).toEqual([{ refId: 'G9.internal-boss', refVersion: '1.0.0' }])
+    expect(record?.review?.position).toBe('audit-2')
+    expect(record?.actionsTaken).toEqual(['冻结旧写入者'])
+    // 真实未证项仍逐条列（围栏机制未证／无预设紧急边界）
     expect(record?.gaps.length).toBeGreaterThan(0)
+    expect(record?.gaps.join('｜')).not.toMatch(/槽位|请求形状/)
     // 机制未证不得宣称已冻结；未做清单非空（含围栏取反项）
     expect(record?.gaps.some((gap) => gap.includes('mechanismProven'))).toBe(true)
     expect(record?.notAuthorized).toContain('未撤销派生执行体（fence.revokeDerived=false）')

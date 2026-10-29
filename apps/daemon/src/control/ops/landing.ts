@@ -35,12 +35,6 @@ import type {
 
 // ————————————————————————— PORT-OPS 落口（IMPL-06-04 / G-PORT-OPS） —————————————————————————
 //
-// 依据：docs/plan/05 IMPL-06-04（emergencyStop/circuitBreak 落口=REC-WORK-18 记录/证据面）；
-// docs/v2/14 §1.8（PORT-OPS；供能链 PORT-AUTH→PORT-OPS 单向，自身不新增权源；OPS 补形 A
-// 请求形状）；docs/v2/11 §六 REC-WORK-18（trigger/boundary_ref/actions_taken/not_authorized/
-// evidence_preserved/notified/independent_review/effect_on_original）；docs/v2/15 §二
-// SEC-SIG-01（署名三值）；docs/49「OPS 补形 A」。
-//
 // 定位：本件是 PORT-OPS 在控制面的**记录/证据面落口**——把止损/围栏请求落成 REC-WORK-18
 // 记录草案并回执；不执行进程终止、不裁决权源、不私设台账（记录写口经 appendRecord 注入，
 // 生产侧接 assembly/ops → PORT-HIST 写口）。真实动作面（停注入/杀树/吊销）与其回执归后续单：
@@ -332,7 +326,6 @@ function circuitNotAuthorized(fence: FenceDeclaration, declared: readonly [strin
   const derived: string[] = ['未追认原动作（围栏声明不构成对原动作的追认）']
   if (!fence.stopInjection) derived.push('未停止注入（fence.stopInjection=false）')
   if (!fence.revokeDerived) derived.push('未撤销派生执行体（fence.revokeDerived=false）')
-  if (!fence.mechanismProven) derived.push('围栏机制未证（mechanismProven=false）——不得宣称旧写入者已被冻结')
   for (const item of derived) if (!items.includes(item)) items.push(item)
   return items
 }
