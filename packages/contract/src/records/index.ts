@@ -18,6 +18,8 @@
  *   - evd.ts：EVD-01..05＋EVD-RVK（6 类）
  *   - acc.ts：ACC-01/02｜chg.ts：CHG-01｜cap.ts：CAP-01/02/RECEIPT/ACTIVATE（4 类）
  *   - rev.ts：REV-01｜eval.ts：EVAL-01｜asset.ts：ASSET-01/02｜obs.ts：OBS-01..04｜mem.ts：MEM-01..04
+ *   - emp-neg.ts：NEG-EMP-02/04/06/07/08/09 纯判定件（**不新增记录类/不改冻结字段**——74 类计数不变，
+ *     输入面＝已解析记录面声明；依据 v2/17 §4.1 与 v2/02 §一/§3.4/§五/§六/§七/§九）
  *
  * 计数（不改文档、不新增记录类）：16＋11＋1＋21＋6＋2＋1＋4＋1＋1＋2＋4＋4＝74。
  */
@@ -51,6 +53,7 @@ export * from './eval.ts'
 export * from './asset.ts'
 export * from './obs.ts'
 export * from './mem.ts'
+export * from './emp-neg.ts'
 
 /** §一 74 类全登记（序：§一 表序；13 AREA 各自封闭） */
 export const ALL_RECORD_TYPES = [
