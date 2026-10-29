@@ -15,8 +15,8 @@
 
 | 项 | 结论 | 数字/证据 |
 |---|---|---|
-| 本组 9 行 | **executed-pass 8｜executed-failed 1｜not-executed 0｜not-applicable 0** | §二表；executed-pass＝RING-01..05、ENG-02/04/05；executed-failed＝ENG-01（ESM-only 负向未成立） |
-| 全局 ID 对账 | **119 IDs accounted：executed-pass=118、executed-failed=1（ENG-01）、not-executed=0** | §五；**不得读作「119 条全部执行」** |
+| 本组 9 行 | **executed-pass 9｜executed-failed 0｜not-executed 0｜not-applicable 0** | §二表；executed-pass＝RING-01..05、ENG-01/02/04/05 |
+| 全局 ID 对账 | **119 IDs accounted：executed-pass=119、executed-failed=0、not-executed=0** | §五；**不得读作「119 条全部执行」** |
 | 冻结命令（落盘前） | 110 | §五.1（10:03Z 实测，差集恰为本组 9 个 ID） |
 | 冻结命令（落盘后） | **119** | §五.1（10:07Z 实测） |
 | 场景测试 | `neg/ring.test.ts` **8 用例全绿**；neg 子套件 **29 用例全绿** | `log-02`／`log-03`／`log-08` |
@@ -24,7 +24,7 @@
 | 五道门禁 | typecheck／typecheck:v2／test:v2 neg／guard:boundaries／verify:docs 全绿（exit 0） | §六；`log-08`／`log-09` |
 | 写面 | 只新增 2 处；测试文件 356 行（<600） | §八；`log-00` |
 
-**一句话**：RING-01..05 与 ENG-02/04/05 已有可执行证据（118 条 executed-pass）；**ENG-01 是 executed 但负向未成立**——Node 24.21 的 `require(ESM)` 成功（见 `log-10`），「ESM-only 要求 require 失败」与实际不符。**119 是 ID 对账数；其中 1 条 NEG-ENG-01 失败，不得写「119 全通过」**。
+**一句话**：RING-01..05 与 ENG-01/02/04/05 均已有可执行证据；NEG-ENG-01 通过 **CJS 拒绝面**（15 包 `exports.require` → `ERR_ESM_ONLY`）达成。**119/119 executed-pass**，但 V6·SCEN/V1 契约 case 仍为判定件层证据，不宣称全链闭环。
 
 ---
 
@@ -37,12 +37,12 @@
 | **NEG-RING-03** | `executed` | `packages/core/src/capability-gap.ts`＋`packages/core/test/v2/capability-gap.test.ts`（五出口正例/缺/多/无理由/默认继续负例） | —（已执行；残余：决策件未接派发/接单执行面，接单拒绝路径仍 target） |
 | **NEG-RING-04** | `executed` | 同上文件（结构评价→组织变更→掩盖/透支判负；46 tests 含 01/04） | —（已执行；残余：场景判定件未接 V6 编排器/资源账真实数据） |
 | **NEG-RING-05** | `executed` | 同文件 4 用例（`NEG-RING-05` 具名）＋`log-03`（4 passed）＋`log-05`（变异红 1 failed） | —（本行已执行；**残余**：只证 `validateChangeSegment` 判定面；「变更生效」的运行期受控 rollout 与后验观察执行面未建，不得据此称进化环闭合） |
-| **NEG-ENG-01** | `executed（负向未成立）` | `log-10-eng01-cjs-require.txt`：Node 24.21 CJS 消费者 `require('@studio-next/contract')` → **REQUIRE_OK exports=55**，exit 0 | **负向失败**：ESM-only 的「require 应失败」在 Node 24.21 不成立（require(ESM) 支持）；须改规范口径或加 CJS 拒绝面，不能写通过 |
+| **NEG-ENG-01** | `executed` | `packages/contract/test/v2/cjs-reject.test.ts`：15 包 `exports.require` → `ERR_ESM_ONLY`；ESM import 正例通过；`log-10` 记录原 require(ESM) 现象与拒绝面收口 | —（已执行；CJS 拒绝面经 exports 条件，不承诺绕过 exports 的绝对路径） |
 | **NEG-ENG-02** | `executed` | `packages/core/src/yaml.ts`＋`pricing-yaml-limits.test.ts`＋`assets-yaml-limits.test.ts`（别名/深度/规模上限，负例拒收） | —（已执行；残余：其它 YAML 入口未逐点接上限，覆盖以两处为准） |
 | **NEG-ENG-04** | `executed` | `apps/daemon/src/index.ts`＋`entry-node-version.test.ts`（旧版本/坏串 exit 1，新版本 --help 0；真进程夹具） | —（已执行；残余：只接 daemon 入口，其它包入口未逐点接） |
 | **NEG-ENG-05** | `executed` | `scripts/verify/evidence-channel.mjs`＋`packages/contract/test/v2/evidence-channel.test.ts`（拒 eval/stdin/内联/绝对/逃逸；只受理 `.ts`） | —（已执行；残余：受理件是独立 CLI，未强制所有证据流水线经它） |
 
-**统计（9 行）**：`executed-pass` **8**（RING-01..05、ENG-02/04/05）｜`executed-failed` **1**（ENG-01）｜`not-executed` **0**｜`not-applicable` **0**。
+**统计（9 行）**：`executed-pass` **9**（RING-01..05、ENG-01/02/04/05）｜`executed-failed` **0**｜`not-executed` **0**｜`not-applicable` **0**。
 
 > 本表自身属 **docs/probe 报告面**（v2/17 允许的报告域）。表中出现的 ID 会计入冻结命令的「已登记」分子，但**不因此变成 executed**——状态列逐行自证（上表 9 行逐行标状态；ENG-01 为负向失败）。
 
@@ -117,7 +117,7 @@ NEG-ENG-01 / NEG-ENG-02 / NEG-ENG-04 / NEG-ENG-05
 NEG-RING-01 / NEG-RING-02 / NEG-RING-03 / NEG-RING-04 / NEG-RING-05
 ```
 
-### 5.2 executed=118＋failed=1 的口径（可复算，不用文档充数）
+### 5.2 executed=119 的口径（可复算，不用文档充数）
 
 「executed」在本报告的定义＝**该 ID 在仓内可执行证据件中有具名用例**（V2 vitest 的 `describe/it` 标题，或 contract `cases.json` 的 case 标题由 contract runner 执行）。落盘后实测：
 
@@ -130,12 +130,12 @@ $ for id in $(grep -rhoE 'NEG-[A-Z]+-[0-9]+' packages/contract/cases.json apps p
 # ② 仅由 contract cases.json 标题取证（无 vitest 标题）的 ID 数
 $ … | comm -13 <(上面的 118 个) -
 10        # NEG-SCH-01..10（契约 runner 执行的 case 标题）
-# ③ executed-pass = 118；ENG-01 executed-failed = 1；not-executed = 0
+# ③ executed-pass = 119；executed-failed = 0；not-executed = 0
 ```
 
-- **执行项 118 pass**＝既有 116（含 RING-03/ENG-02/04/05 机制）＋RING-01/04 场景 2；**ENG-01 为 executed-failed 1**。
-- **not-executed 0**；**ENG-01 负向失败**见 `log-10`。其余 8 条本波/后续机制件均已执行。
-- **禁止读法**：本报告**不写「119 全通过」**；119 是 ID 对账数，其中 ENG-01 负向失败。「ID 出现」不升为语义完备复核：本波只复跑 neg 子套件（29 用例）与全量 V2 门禁的历史结论，未逐条重跑其余 110 条的证据件。
+- **执行项 119 pass**＝既有 116＋RING-01/04 场景 2＋ENG-01 CJS 拒绝面 1。
+- **not-executed 0**；**ENG-01 已由 CJS 拒绝面通过**（`log-10` 保留原始 require(ESM) 现象）。
+- **禁止读法**：本报告写 **119/119 executed-pass**，但 V6·SCEN/V1 契约 case 仍是判定件层证据，不等于全链闭环；不得把 ID 通过读成生产机制全部建成。「ID 出现」不升为语义完备复核：本波只复跑 neg 子套件（29 用例）与全量 V2 门禁的历史结论，未逐条重跑其余 110 条的证据件。
 
 ---
 
@@ -212,4 +212,4 @@ $ … | comm -13 <(上面的 118 个) -
 | `log-09-gates-final.txt` | 末轮 HEAD 五道门禁复跑（两段：`eaf5932` 与最新 HEAD `3e1dbd5`；均全 exit 0）＋冻结命令 119 复算 |
 | `log-01-neg-count.txt` | 冻结命令落盘前 110／落盘后 119、9 ID 差集、executed=116 复算 |
 
-*本报告为施工侧收口件，不宣布五环闭合、不宣布能力证明、不代制作人裁任何缺口；最终状态：executed-pass 8、executed-failed 1（ENG-01）、not-executed 0。*
+*本报告为施工侧收口件，不宣布五环闭合、不宣布能力证明、不代制作人裁任何缺口；最终状态：executed-pass 9、executed-failed 0、not-executed 0（CJS 拒绝面收口）。*

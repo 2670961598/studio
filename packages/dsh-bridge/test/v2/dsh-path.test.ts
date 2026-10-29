@@ -36,11 +36,17 @@ const BRIDGE_DIR = 'dsh-bridge'
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url))
 const PKG_ROOT = join(REPO_ROOT, 'packages', BRIDGE_DIR)
 
+/** exports 子路径条件对象（NEG-ENG-01：import 指源码、require 指拒绝 stub） */
+interface ExportCondition {
+  readonly import?: string
+  readonly require?: string
+}
+
 /** 本包真实清单（数据面声明位＝被测事实源；只读不写） */
 interface BridgeManifest {
   readonly name?: string
   readonly main?: string
-  readonly exports?: Record<string, string>
+  readonly exports?: Record<string, string | ExportCondition>
   readonly dsh?: Record<string, unknown>
   readonly dependencies?: Record<string, string>
   readonly devDependencies?: Record<string, string>
@@ -68,7 +74,10 @@ describe('数据面正例（选择①：入口路径写进 package.json#dsh，�
     expect(resolution.entryRel).toBe('src/index.ts')
     // 声明一致性：三处同指一个文件（entry 不是另立的第二事实源）
     expect(MANIFEST.main).toBe(resolution.entryRel)
-    expect(`./${resolution.entryRel}`).toBe(MANIFEST.exports?.['.'])
+    const rootExport = MANIFEST.exports?.['.']
+    expect(typeof rootExport === 'string' ? rootExport : rootExport?.import).toBe(
+      `./${resolution.entryRel}`,
+    )
     expect(existsSync(resolve(PKG_ROOT, resolution.entryRel))).toBe(true)
   })
 

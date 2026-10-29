@@ -6,7 +6,10 @@
   "description": "Studio Next 核心逻辑：状态机/主循环/收割/闸门/预算/断路（纯逻辑，零 IO）",
   "main": "src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "import": "./src/index.ts",
+      "require": "./require-reject.cjs"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",

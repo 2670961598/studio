@@ -6,8 +6,14 @@
   "description": "Studio Next 内部 MCP server（studio-tools）：工具集=网关白名单的机器化——六工具与 GATEWAY_ACTIONS 一一对应，wkey 初始化注入 fail-closed，typed schema 拒坏输入（docs/24-§二、docs/25-§4.1）",
   "main": "src/index.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./stdio": "./src/stdio.ts"
+    ".": {
+      "import": "./src/index.ts",
+      "require": "./require-reject.cjs"
+    },
+    "./stdio": {
+      "import": "./src/stdio.ts",
+      "require": "./require-reject.cjs"
+    }
   },
   "bin": {
     "studio-tools": "./src/stdio.ts"

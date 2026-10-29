@@ -6,7 +6,10 @@
   "description": "Studio Next Matrix 集成：@唤醒 InvokeSource + Notifier 通知出口（薄网络层，零 npm 依赖）",
   "main": "src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "import": "./src/index.ts",
+      "require": "./require-reject.cjs"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",

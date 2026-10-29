@@ -6,7 +6,10 @@
   "description": "Studio Next 公司目录：schema 校验 / 挂载 / 报表聚合 / 定时岗调度源",
   "main": "src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "import": "./src/index.ts",
+      "require": "./require-reject.cjs"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",

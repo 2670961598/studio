@@ -6,7 +6,10 @@
   "description": "Studio Next YouTrack 适配器：FlowPlatform 端口的参考实现（fetch 可注入薄客户端 + zod 校验 + 字段映射）",
   "main": "src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "import": "./src/index.ts",
+      "require": "./require-reject.cjs"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",

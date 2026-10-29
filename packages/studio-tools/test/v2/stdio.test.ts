@@ -423,14 +423,23 @@ describe('库/stdio 结果面一致（L3P-09/10）', () => {
   })
 })
 
+interface ExportCondition {
+  readonly import?: string
+  readonly require?: string
+}
+
 describe('bin / exports 声明', () => {
   it('package.json#bin 与 exports["./stdio"] 指向本入口，既有 "." 出口不变', () => {
     const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as {
       readonly bin?: Record<string, string>
-      readonly exports?: Record<string, string>
+      readonly exports?: Record<string, string | ExportCondition>
     }
     expect(pkg.bin?.['studio-tools']).toBe('./src/stdio.ts')
-    expect(pkg.exports?.['./stdio']).toBe('./src/stdio.ts')
-    expect(pkg.exports?.['.']).toBe('./src/index.ts')
+    const stdioExport = pkg.exports?.['./stdio']
+    const rootExport = pkg.exports?.['.']
+    expect(typeof stdioExport === 'string' ? stdioExport : stdioExport?.import).toBe(
+      './src/stdio.ts',
+    )
+    expect(typeof rootExport === 'string' ? rootExport : rootExport?.import).toBe('./src/index.ts')
   })
 })

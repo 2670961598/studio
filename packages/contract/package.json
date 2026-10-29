@@ -6,7 +6,10 @@
   "description": "Studio Next 契约包：cases.json + JSON Schema + runner（规格测试的唯一标尺）",
   "main": "src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "import": "./src/index.ts",
+      "require": "./require-reject.cjs"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",

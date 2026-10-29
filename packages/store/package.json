@@ -6,7 +6,10 @@
   "description": "Studio Next 台账存储：node:sqlite（WAL / 薄 migration / 快照 / 重建）",
   "main": "src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "import": "./src/index.ts",
+      "require": "./require-reject.cjs"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",

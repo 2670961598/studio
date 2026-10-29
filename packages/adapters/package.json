@@ -6,7 +6,10 @@
   "description": "Studio Next executor 适配器：dsh（默认）/ claude / codex / kimi，四原语实现",
   "main": "src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "import": "./src/index.ts",
+      "require": "./require-reject.cjs"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",

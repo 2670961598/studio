@@ -6,7 +6,10 @@
   "description": "Studio Next Taiga 适配器：FlowPlatform 端口的第三实现（原生 fetch 薄客户端 + JWT auth/refresh + history 逐实体活动流；真机事实依据 docs/32）",
   "main": "src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "import": "./src/index.ts",
+      "require": "./require-reject.cjs"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
