@@ -1,5 +1,5 @@
 {
-  // 包级类型门禁（继承仓根 tsconfig.base.json；test 纳入门禁，同 adapters 先例）
+  // 包级源码类型门禁（继承仓根 tsconfig.base.json；test 不入本门，旧测试由 vitest/台账管）
   "extends": "../../tsconfig.base.json",
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts"]
 }
