@@ -111,8 +111,9 @@ class PayloadTooLargeError extends Error {
   }
 }
 
-/** 是否受响应闸面覆盖的 JSON 响应（SSE 等流式面直通） */
+/** 是否受响应闸面覆盖的 JSON 响应（SSE 等流式面与 204/304 无体响应直通） */
 function isGuardedJson(response: Response): boolean {
+  if (response.status === 204 || response.status === 304) return false
   const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
   return contentType.includes('application/json') || contentType.includes('+json')
 }
@@ -227,6 +228,8 @@ export async function startApiServer(app: ApiApp, options: ApiServerOptions): Pr
           res.destroy()
           return
         }
+        // 客户端已断（断连取消路径）：不向销毁的响应写兜底体
+        if (res.destroyed || res.writableEnded) return
         const tooLarge = err instanceof PayloadTooLargeError
         const body = Buffer.from(tooLarge ? PAYLOAD_TOO_LARGE_BODY : TRANSPORT_ERROR_BODY, 'utf8')
         res.writeHead(tooLarge ? 413 : 500, {

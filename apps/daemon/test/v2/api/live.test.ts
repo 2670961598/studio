@@ -211,6 +211,8 @@ describe('startApiServer：真 HTTP ephemeral（环回；零外部依赖）', ()
     expect(line).toContain('只读面=company/org/people/projects')
     expect(line).toContain('finance(')
     expect(line).toContain('503 不补 0')
+    // 第 5 出口：生产路径已接出站闸 wrapper（不是只备 wrapper）
+    expect(line).toContain('响应面出站闸=已接 guardApiResponse')
     // 幂等：重复 start 返回同一句柄（不重复监听）
     const again = await runtime.api.start()
     expect(again.port).toBe(server.port)
@@ -393,6 +395,41 @@ describe('API 响应面出站闸（第 5 出口 wrapper；fail-closed）', () =>
       expect(res.text).not.toContain(SNAPSHOT.name)
     } finally {
       await blocked.close()
+    }
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 三·补、第 5 出口·生产路径（runtime.api.start 起的 server 真过出站闸）
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('第 5 出口·生产路径（buildServeRuntime → guardApiResponse 真生效）', () => {
+  it('API 响应含 40 位长 token 形状 → 出站闸脱敏（原值不出站；非仅 wrapper 可用）', async () => {
+    const root = await makeRoot()
+    await mkdir(path.join(root, 'var'), { recursive: true })
+    const config = parseDaemonConfig(daemonYaml(root))
+    const ledger = openLedger(path.resolve(config.db))
+    const token = 'A'.repeat(40)
+    const snapshot: CompanySnapshot = { ...SNAPSHOT, name: `Demo ${token}` }
+    const runtime = buildServeRuntime(config, ledger, snapshot, {
+      log: (): void => {},
+      clock: (): number => NOW_MS,
+    })
+    const server = await runtime.api.start()
+    try {
+      const res = await fetchJson(`${server.url}/v1/company`)
+      expect(res.status).toBe(200)
+      const company = res.body['company'] as { name: string }
+      // 出站闸形状兜底命中（长随机串）→ 只出长度标记，原值不出站
+      expect(company.name).not.toContain(token)
+      expect(company.name).toContain('<redacted:')
+    } finally {
+      await runtime.stop()
+      try {
+        ledger.close()
+      } catch {
+        /* already closed */
+      }
     }
   })
 })

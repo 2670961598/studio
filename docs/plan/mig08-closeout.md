@@ -431,7 +431,7 @@ $ git status --porcelain
 
 ---
 
-## 十二、补记（2026-10-29，父级合入 API 第 5 出口）
+## 十三、补记（2026-10-29，父级合入 API 第 5 出口）
 
 - **API 响应出口已闭**：`runServe` → `wireServeApi`（`assembleApi` + `createApiApp` + `readers/auth` + `node:http` ephemeral/`apiPort`）→ `guardApiResponse`；`MIG-06` 装配欠账中的「API 装配未接线／readers/auth 未供给」两条关闭。
 - **证据**：`apps/daemon/test/v2/api/live.test.ts` 12 tests（HTTP 200/403/503、触发 401、root 403、停机 close）；`test:v2 -- apps/daemon/test/v2/api` 21 tests；全 V2 **1266 tests**；`outbound-gate/exits.ts` 的 `api-response` 由 gap 翻 wired，security 78 tests 复跑绿。
