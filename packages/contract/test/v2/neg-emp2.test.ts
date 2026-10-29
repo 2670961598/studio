@@ -485,16 +485,16 @@ describe('NEG-EMP-09 · 外部保留权（未授权行使保留权/最终承诺�
 
 /*
  * 变异台账（实测：逐条临时去守卫→红→还原→绿；变异前/还原后 emp-neg.ts sha256 一致）：
- *   EMP-02｜emp-neg.ts L194 `check.conflictFree && groupConflicts.length > 0` 前置 `false &&`
+ *   EMP-02｜emp-neg.ts L191 `check.conflictFree && groupConflicts.length > 0` 前置 `false &&`
  *          → 红「兼任拆成两个身份…→拒」1 failed/37 passed；还原 38 passed。
- *   EMP-04｜L285 `capability.degraded && verdict==='accepted' && claimedAsCompleted` 前置 `false &&`
+ *   EMP-04｜L282 `capability.degraded && verdict==='accepted' && claimedAsCompleted` 前置 `false &&`
  *          → 红「能力退化后降口径仍以 accepted 宣称完成→拒」1 failed/37 passed；还原 38 passed。
- *   EMP-06｜L359 `changesPosition = effect !== undefined && (…)` 改 `false`（程序闸整段失效）
+ *   EMP-06｜L356 `changesPosition = effect !== undefined && (…)` 改 `false`（程序闸整段失效）
  *          → 红 3 条（无程序引用/自我兑换/证据弱）3 failed/35 passed；还原 38 passed。
- *   EMP-07｜L428 `handover.completeness !== 'complete'` 前置 `false &&`
+ *   EMP-07｜L425 `handover.completeness !== 'complete'` 前置 `false &&`
  *          → 红「交接未完成（partial）…→拒」1 failed/37 passed；还原 38 passed。
- *   EMP-08｜L486 `!isUsableRef(input.ruleRef)` 前置 `false &&`
+ *   EMP-08｜L483 `!isUsableRef(input.ruleRef)` 前置 `false &&`
  *          → 红「集体任职无 v2/03 集体规则→拒」1 failed/37 passed；还原 38 passed。
- *   EMP-09｜L574 `INTERNAL_PROCEDURE_RECORD_TYPES.includes(authorization.refType)` 改 `false`
+ *   EMP-09｜L571 `INTERNAL_PROCEDURE_RECORD_TYPES.includes(authorization.refType)` 改 `false`
  *          → 红「以内部决定记录充当外部保留权授权→拒」1 failed/37 passed；还原 38 passed。
  */

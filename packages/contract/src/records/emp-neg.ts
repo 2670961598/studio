@@ -568,7 +568,7 @@ export function validateExternalReservedPower(input: ReservedPowerExerciseInput)
   const authorization = input.authorizationRef
   if (!isUsableRef(authorization)) {
     checks.push(recordReject('authorizationRef', '保留权/最终承诺须显式授权引用（外部身份本身不产生保留权或最终责任——02 §一/E-9）'))
-  } else if (false) {
+  } else if ((INTERNAL_PROCEDURE_RECORD_TYPES as readonly string[]).includes(authorization.refType)) {
     checks.push(recordReject('authorizationRef.refType', `内部程序不得补位外部保留权（实得 ${authorization.refType}）：须外部授予/设立记录/root_delegation（E-9）`))
   }
   if (input.internalProcedureRef !== undefined) {
