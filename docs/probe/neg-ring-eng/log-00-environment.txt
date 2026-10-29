@@ -5,9 +5,11 @@ c9e8540 fix(v2): a25324f 捕获的 EMP-09 临时变异还原（内部程序不�
 a25324f feat(v2): NEG-EMP-02/04/06/07/08/09 纯判定机制
 dev
 
-注：本波开工时 HEAD=a25324f（10:03:13Z）；采集期间并行 EMP 单提交 c9e8540（只改
-packages/contract/src/records/emp-neg.ts 与 test/v2/neg-emp2.test.ts，不触碰本波被测面），
-HEAD 前移属仓内并行施工，非本单提交。本波未 git add/commit。
+注：本波开工时 HEAD=a25324f（10:03:13Z）；采集期间 HEAD 两次前移：并行 EMP 单提交 c9e8540
+（只改 packages/contract/src/records/emp-neg.ts 与 test/v2/neg-emp2.test.ts）与集成侧提交
+eaf5932（test(v2): NEG-RING-02/05 场景+119 ID 对账报告，扫入本波 10 件测试/报告/日志）。
+两次前移均为仓内并行施工，非本单提交；本单自身未 git add/commit。log-01/log-09 在 eaf5932
+之后落盘，交接时仍为未跟踪新增。
 
 $ mise exec -- node --version; mise exec -- bun --version; uname -sm
 v24.21.0
