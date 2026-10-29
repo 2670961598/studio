@@ -22,7 +22,7 @@ import { describe, expect, it } from 'vitest'
 import { ISSUE_CODES, projectOrganization } from '../../src/projection/index.ts'
 import type { OrganizationProjectionInput, ParsedDepartment, ParsedPerson, ParsedVacancy } from '../../src/projection/index.ts'
 
-// ───────────────────────── 夹具（最小合法组织：两级部门＋在编首长） ─────────────────────────
+// ───────────────────────── 夹具（最小合法组织：两个部门＋在编首长） ─────────────────────────
 
 const PEOPLE: readonly ParsedPerson[] = [
   { id: 'AGENT-1', name: '部门首长甲', level: 3, status: 'active' },
