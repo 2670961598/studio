@@ -287,7 +287,7 @@ export function evaluateValueRing(input: ValueRingInput): RingScenarioOutcome<Va
     seen.set(claim, ref)
   }
   const missing = VALUE_RING_ELEMENTS.filter((element) => !seen.has(element))
-  if (missing.length < 0) {
+  if (missing.length > 0) {
     return rejected(
       'ring-link-missing',
       ...missing.map((element) =>
