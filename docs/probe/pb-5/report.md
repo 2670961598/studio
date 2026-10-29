@@ -200,7 +200,7 @@ EXIT=0
 
 > 本附录只更新「入口要件」事实，不改上文 PRB-13/14/23 的历史判定；PB-5 **仍不宣布通过**。
 
-- 新增 `packages/store/src/readonly.ts`：`openLedgerReadonly(path)`——SQLite `readonly:true` ＋ `PRAGMA query_only=ON`，不 migrate/不 DDL；缺库=`STALL/db-missing`，未迁移=`rejected_version/schema-behind`，schema-ahead 明确拒。
+- 新增 `packages/store/src/readonly.ts`：`openLedgerReadonly(path)`——SQLite `readOnly:true` ＋ `PRAGMA query_only=ON`，不 migrate/不 DDL；缺库=`STALL/db-missing`，未迁移=`rejected_version/schema-behind`，schema-ahead 明确拒。
 - 证据：`packages/store/test/v2/readonly-open.test.ts` 8 tests（只读读、写拒、query_only=1、缺库/未迁移/超前拒、不建库、两真实子进程同读且写拒）。
 - 对 PRB-14 的意义：D12 入口要件已从「不满足」变为「已落位」；但「台账单写」仍需要 WriterLease/围栏与多进程写侧证据，**PRB-14 仍不得宣称通过**；PRB-23 仍 not-executed，平台读侧契约仍不成立。
 - 全 V2 门复跑：1275 tests 全绿（`verify:v2`）。
