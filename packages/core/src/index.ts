@@ -118,6 +118,10 @@ export * from './work-readiness.ts'
 // 缺能力/退化/成本失控的五出口决策（NEG-RING-03；02 §五：缩/换/外援/拒绝/停止必答）
 // ——capability-gap.ts
 export * from './capability-gap.ts'
+// 五环场景判定件（NEG-RING-01 价值环六要素／NEG-RING-04 组织环结构评价掩盖；V6·SCEN）：
+// 六要素链＋强制失败出口／OBJ-05 五面＋组织变更时序——ring/ring-scenarios.ts
+// （子域落位：core/src 根平面已满 25 件阈，BC-S1 要求切子域）
+export * from './ring/ring-scenarios.ts'
 
 /** 包名常量 */
 export const PACKAGE_NAME = '@studio-next/core'
