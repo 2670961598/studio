@@ -1,37 +1,19 @@
 /**
- * overview views —— :8789 公司概览面的纯函数层（v0.7 首刀：读面）
+ * overview views —— :8789 公司概览面的纯函数层（v0.7 首刀读面；零 IO、零 Hono）
  *
- * 依据：docs/16-§四 v0.7（公司面：:8789/<slug>/ 可看组织/人事/财务/进度——本刀只做读面，
- * 编辑中心归后续刀）、docs/04-§七（概览路由按公司目录名：/<slug>/... 直达、未知名 404、
- * 根路径列公司清单）、docs/17-§8（:8789 端面：tab=概览/组织/人事/财务/项目/报表/编辑中心——
- * 本刀落前五读面中的概览/组织/人事/进度/财务；项目/报表 tab 与编辑中心归后续刀，不臆造）。
- * DEV-36 增量：财务页加「月报（reports 表）」段（store v6 reports type='monthly' 行 +
- * json_ref 快照 headline——04-§三 {node}/{date}-{type} 渲染约定的读面落点；报表 tab 整面
- * 归后续刀，此处只落月报最小闭环）。
+ * 依据：docs/16-§四 v0.7（概览/组织/人事/进度/财务读面；项目/报表 tab 与编辑中心归后续刀）、
+ * docs/04-§七（/<slug>/ 路由、未知名 404、根路径列公司清单）、docs/17-§8（:8789 端面）；
+ * 六态：v2/08 §4.1/§4.4、v2/17 NEG-MON-01、L3P-01。
  *
- * 分层纪律（与 :8787 views.ts 同款）：本文件零 IO、零 Hono 依赖——
- *   - 组织数据吃 CompanySnapshot（公司目录快照——组织事实源是公司 git 目录，docs/17-§1）；
- *   - 运营数据吃 Ledger 读面吐出的行（ticket_mirror / budgets / events——SQLite 台账是
- *     可重建投影，docs/17-§3），server.ts 负责取数；
- *   - 档案正文吃注入的 md 原文（people/<工号>.md，01-C2-04）——渲染为 pre 块零前端依赖。
- *
- * 口径声明：
- *   - 财务三口径分列对齐 :8787 成本卡（docs/26 C1）：reserve=estimated 求和、settle=actual
- *     求和、refusal=estimated 求和，净额=reserve−settle；不相加当总额。预算行按「本司 scope
- *     集」过滤：company scope=本司 slug ∪ issue scope=本司镜像单号 ∪ person scope=本司花名册
- *     （快照 people）——与 :8787 全量口径的区别就是公司维过滤。
- *   - LLM 成本按日：event='LLM' 的 cost_usd 按 UTC 日聚合（dayKeyOf 与 :8787 同口径）；
- *     v0 只列有事件的日（稀疏），零填充趋势窗归后续需要时加。
- *   - 组织树：parent 链嵌套；悬空 parent（父不在部门集）与成环链（互相为父不可达）的部门
- *     **提升为根节点渲染**（不静默消失——组织数据缺口如实可见，处置归目录侧）。
- *
- * HTML 纪律：全部服务端渲染、零前端依赖（无 JS 无 fetch 轮询——读面静态即可）；复用 :8787
- * 极简暗色风格；一切动态文本经 escapeHtml（档案 md 原文进 pre 块前同样转义——网页内容按
- * 不可信输入对待，docs/17-§5/§11 的读面同款纪律）。
+ * 分层：组织吃 CompanySnapshot（公司 git 目录＝组织事实源）；运营吃 Ledger 读面行
+ * （ticket_mirror/budgets/events——SQLite 台账是可重建投影；server.ts 取数）；档案正文吃
+ * 注入的 md 原文。财务三口径分列对齐 :8787 成本卡（docs/26 C1，不相加），按本司 scope 集
+ * 过滤；LLM 成本按 UTC 日聚合（v0 稀疏）；组织树把悬空 parent 与成环部门提升为根（不静默
+ * 消失）。HTML 全部服务端渲染、零前端依赖，动态文本一律 escapeHtml（网页内容按不可信输入）。
  */
-import type { CompanySnapshot, DeptNode, EventRecord, PersonRef } from '@studio-next/contract'
+import type { CompanySnapshot, DeptNode, EventRecord, PersonRef, ProjectionState } from '@studio-next/contract'
 import type { BudgetRecord, ReportRecord, TicketMirrorRecord } from '@studio-next/store'
-import { dayKeyOf } from '../views.ts'
+import { PROJECTION_STATE_LABELS, dayKeyOf } from '../views.ts'
 
 // —— HTML 基元 ——
 
@@ -56,6 +38,11 @@ export function escapeHtml(value: string): string {
 /** 金额显示层取整到 4 位小数（台账存原始 double——models 冻结口径：显示层自取整） */
 function fmtUsd(value: number): string {
   return String(Math.round(value * 10000) / 10000)
+}
+
+/** 概览六态状态行：来源/数据有效窗/新鲜度如实标注——未知或未判定不得显示为绿（v2/08 §4.1；L3P-01） */
+function stateLine(state: ProjectionState, detail: string): string {
+  return `<div class="caliber">投影状态 <span class="tag">${escapeHtml(`${PROJECTION_STATE_LABELS[state]}（${state}）`)}</span> · ${escapeHtml(detail)}</div>`
 }
 
 /** URL 路径段转义（工号/slug 进 href 前；slug 形状闸在路由侧，此处防御性兜底） */
@@ -558,11 +545,14 @@ export function renderProgressPage(slug: string, snapshot: CompanySnapshot, prog
     progress === undefined
       ? `<section>
   <h2>单据进度</h2>
+  ${stateLine('unknown', '原因：ledger-not-mounted——未接台账不是「0 单」，不补 0/空/绿')}
   <p class="empty">无台账数据（本司未接 ledger——挂载时给 --db 即可呈现；docs/17-§3 台账是运营数据的唯一来源）。</p>
 </section>`
       : `<section>
   <h2>单据进度 <span class="caliber">共 ${String(progress.total)} 单</span></h2>
+  ${stateLine('derived', '来源：ticket_mirror 台账镜像；数据有效窗：未声明；新鲜度未判定（无事前新鲜度策略——不得显示为绿）')}
   <div class="caliber">${escapeHtml(progress.note)}</div>
+  ${progress.total === 0 ? '<p class="empty">0 是已推导计数（本司镜像无行），不等于无单据：平台未同步/范围外均可能——不补绿。</p>' : ''}
   <table><thead><tr><th>状态</th><th>单数</th></tr></thead>
   <tbody>
 ${progress.byState.map((s) => `<tr><td>${escapeHtml(s.state)}</td><td>${String(s.count)}</td></tr>`).join('\n')}
@@ -583,10 +573,12 @@ export function renderFinancePage(slug: string, snapshot: CompanySnapshot, finan
     finance === undefined
       ? `<section>
   <h2>财务</h2>
+  ${stateLine('unknown', '原因：ledger-not-mounted——未接台账不是「0 元」，不补 0/空/绿')}
   <p class="empty">无台账数据（本司未接 ledger——挂载时给 --db 即可呈现；docs/17-§3 台账是运营数据的唯一来源）。</p>
 </section>`
       : `<section>
   <h2>预算三口径 <span class="caliber">分列不相加（docs/26 C1）</span></h2>
+  ${stateLine('derived', '来源：budgets/events 台账；数据有效窗：未声明；新鲜度未判定（无事前新鲜度策略——不得显示为绿）')}
   <div class="caliber">${escapeHtml(finance.note)}</div>
   <table><thead><tr><th>口径</th><th>笔数</th><th>金额 USD</th></tr></thead>
   <tbody>
