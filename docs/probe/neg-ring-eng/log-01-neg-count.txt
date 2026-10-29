@@ -42,5 +42,5 @@ NEG-RING-04
 
 == 结论（逐字） ==
 119 IDs accounted，其中 executed=112、not-executed=7。
-本报告不写「119 executed」：119 是 ID 全部登记进冻结命令证据域的对账数，
+本报告不写「119 条全部执行」：119 是 ID 全部登记进冻结命令证据域的对账数，
 其中 7 条（RING-01/RING-03/RING-04/ENG-01/ENG-02/ENG-04/ENG-05）明确 not-executed。

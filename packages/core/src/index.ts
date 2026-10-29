@@ -115,6 +115,9 @@ export * from './rule-engine.ts'
 export * from './authority.ts'
 // 开工五门纯判定与三值结论（ENU-12；缺门=不可开工）——work-readiness.ts
 export * from './work-readiness.ts'
+// 缺能力/退化/成本失控的五出口决策（NEG-RING-03；02 §五：缩/换/外援/拒绝/停止必答）
+// ——capability-gap.ts
+export * from './capability-gap.ts'
 
 /** 包名常量 */
 export const PACKAGE_NAME = '@studio-next/core'

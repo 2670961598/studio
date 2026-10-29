@@ -49,3 +49,44 @@ $ wc -l apps/daemon/test/v2/neg/ring.test.ts docs/probe/neg-ring-eng/report.md
      356 apps/daemon/test/v2/neg/ring.test.ts
      213 docs/probe/neg-ring-eng/report.md
      569 total
+
+== 末轮复跑（2026-10-29T10:19:50Z，HEAD=3e1dbd5） ==
+说明：自 log-09 首段落盘后，仓内并行提交追加 docs/plan/f8-package.md 等文档（不属本单）；
+      这里在最新 HEAD 上把五道门禁原样再跑一遍，避免「门禁只在旧 HEAD 绿」。
+
+$ mise exec -- bun run typecheck
+$ tsc --noEmit
+EXIT=0
+
+$ mise exec -- bun run typecheck:v2
+$ tsc --noEmit -p tsconfig.v2.json
+EXIT=0
+
+$ mise exec -- bun run test:v2 -- apps/daemon/test/v2/neg
+ RUN  v3.2.7 <repo>
+
+ ✓ apps/daemon/test/v2/neg/run-revocation.test.ts (4 tests) 38ms
+ ✓ apps/daemon/test/v2/neg/ring.test.ts (8 tests) 46ms
+ ✓ apps/daemon/test/v2/neg/harvest-neg.test.ts (7 tests) 66ms
+ ✓ apps/daemon/test/v2/neg/work-gates.test.ts (10 tests) 52ms
+
+ Test Files  4 passed (4)
+      Tests  29 passed (29)
+   Start at  18:20:28
+   Duration  2.87s (transform 1.75s, setup 0ms, collect 4.01s, tests 201ms, environment 1ms, prepare 1.34s)
+
+EXIT=0
+
+$ mise exec -- bun run guard:boundaries
+$ node scripts/guards/boundaries.mjs
+边界门禁 PASS：扫描 900 文件（范围面代码件 758），0 违例（分层宪法 20-§十五）
+EXIT=0
+
+$ mise exec -- bun run verify:docs
+[v0-doc-check] OK ⑤ 检查五 节号连续性：28 件、章 315 个、数值子节 315 个；问题 0
+[v0-doc-check] OK ⑥ 检查六 示例值自洽：VEC 10 条；正向复算 8/8、负向断言 2/2
+v0-doc-check PASS：V0 六项 6/6（docs/v2 18 卷＋docs/plan 10 卷；真悬空 0）
+EXIT=0
+
+$ grep -rhoE 'NEG-[A-Z]+-[0-9]+' packages/contract/cases.json apps packages scripts docs/probe 2>/dev/null | sort -u | wc -l
+     119

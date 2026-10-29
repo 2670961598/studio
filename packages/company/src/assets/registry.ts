@@ -22,7 +22,7 @@ import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { parse as parseYaml } from 'yaml'
+import { isAlias, isMap, isNode, isSeq, parseDocument } from 'yaml'
 import { z } from 'zod'
 import { configInvalid } from '@studio-next/contract'
 import {
@@ -107,8 +107,118 @@ function preflightClosedValues(raw: unknown): { closedValues: string[]; unsafeId
   return { closedValues, unsafeIds }
 }
 
+// ---------------------------------------------------------------------------
+// YAML 资源上限（NEG-ENG-02；docs/v2/13 §2.3「别名/锚点与规模上限须自建」＋§八-5）
+//
+// 与 core/src/yaml.ts 同一防线（源规模→AST 深度/节点数/别名数→toJS 显式 maxAliasCount），
+// 差别只在错误通道（assets/yaml-limit）。**不 import core**：company→core 无冻结包间边
+// （scripts/guards/boundary-rules.mjs allowedPackageEdges），故本地复制同值常量与小函数
+// （沿 models.ts「本地复制避免跨包依赖」先例）；四类上限值与 core 侧 YAML_LIMITS 一致，
+// 改动＝判据类修订，两处同步（走提案流）。
+// ---------------------------------------------------------------------------
+
+const YAML_LIMITS = {
+  maxSourceChars: 1_000_000,
+  maxNodes: 10_000,
+  maxDepth: 32,
+  maxAliasCount: 64,
+} as const
+
+interface YamlLimitHit {
+  readonly kind: 'source-chars' | 'nodes' | 'depth' | 'alias'
+  readonly limit: number
+  readonly actual?: number | undefined
+}
+
+/** 超限文案（与 core yaml.ts describeYamlLimit 同口径；数值逐字给出便于对账） */
+function yamlLimitMessage(hit: YamlLimitHit): string {
+  const shown = hit.actual === undefined ? `>${hit.limit}` : String(hit.actual)
+  if (hit.kind === 'source-chars') return `YAML 源文本 ${shown} 字符 > 上限 ${hit.limit}（规模上限）`
+  if (hit.kind === 'nodes') return `YAML AST 节点数 ${shown} > 上限 ${hit.limit}（规模上限）`
+  if (hit.kind === 'depth') return `YAML 嵌套深度 ${shown} > 上限 ${hit.limit}（深度上限）`
+  return hit.actual === undefined
+    ? `YAML 别名展开计数 > 上限 ${hit.limit}（toJS maxAliasCount——YAML bomb）`
+    : `YAML 别名节点数 ${shown} > 上限 ${hit.limit}（别名上限）`
+}
+
+/** AST 早停遍历：深度/节点数/别名节点数（不展开别名；显式栈，不为深嵌套吃调用栈） */
+function inspectYamlAst(root: unknown): YamlLimitHit | undefined {
+  if (root === null || root === undefined) return undefined
+  const stack: Array<{ readonly node: unknown; readonly depth: number }> = [{ node: root, depth: 1 }]
+  let nodes = 0
+  let aliases = 0
+  while (stack.length > 0) {
+    const frame = stack.pop()
+    if (frame === undefined) break // 循环条件已保证非空（防御）
+    nodes += 1
+    if (nodes > YAML_LIMITS.maxNodes) return { kind: 'nodes', limit: YAML_LIMITS.maxNodes, actual: nodes }
+    if (frame.depth > YAML_LIMITS.maxDepth) return { kind: 'depth', limit: YAML_LIMITS.maxDepth, actual: frame.depth }
+    if (isAlias(frame.node)) {
+      aliases += 1
+      if (aliases > YAML_LIMITS.maxAliasCount) {
+        return { kind: 'alias', limit: YAML_LIMITS.maxAliasCount, actual: aliases }
+      }
+      continue
+    }
+    const childDepth = frame.depth + 1
+    if (isMap(frame.node)) {
+      for (const pair of frame.node.items) {
+        if (isNode(pair.key)) stack.push({ node: pair.key, depth: childDepth })
+        if (isNode(pair.value)) stack.push({ node: pair.value, depth: childDepth })
+      }
+      continue
+    }
+    if (isSeq(frame.node)) {
+      for (const item of frame.node.items) {
+        if (isNode(item)) stack.push({ node: item, depth: childDepth })
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * YAML 读取（本文件唯一解析入口）：源规模 → 语法 → AST 上限 → toJS（显式 maxAliasCount）。
+ * 超限＝CONFIG_INVALID/`assets/yaml-limit`（NEG-ENG-02：明确拒收——不截断、不静默降级）；
+ * `toJS` 的其它报错（典型：别名指向未定义锚点）按语法错拒收，不让 ReferenceError 裸奔。
+ */
+function readYamlWithinLimits(src: string): unknown {
+  if (src.length > YAML_LIMITS.maxSourceChars) {
+    configInvalid(
+      'assets/yaml-limit',
+      `assets.yaml 超 YAML 资源上限：${yamlLimitMessage({ kind: 'source-chars', limit: YAML_LIMITS.maxSourceChars, actual: src.length })}（NEG-ENG-02；docs/v2/13 §八-5——拒收不截断）`,
+    )
+  }
+  const doc = parseDocument(src)
+  const firstError = doc.errors[0]
+  if (firstError !== undefined) {
+    configInvalid('assets/manifest-invalid', `assets.yaml YAML 语法错误：${firstError.message}`)
+  }
+  const hit = inspectYamlAst(doc.contents)
+  if (hit !== undefined) {
+    configInvalid(
+      'assets/yaml-limit',
+      `assets.yaml 超 YAML 资源上限：${yamlLimitMessage(hit)}（NEG-ENG-02；docs/v2/13 §八-5——拒收不截断）`,
+    )
+  }
+  try {
+    return doc.toJS({ maxAliasCount: YAML_LIMITS.maxAliasCount })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    if (err instanceof ReferenceError && message.includes('Excessive alias count')) {
+      configInvalid(
+        'assets/yaml-limit',
+        `assets.yaml 超 YAML 资源上限：${yamlLimitMessage({ kind: 'alias', limit: YAML_LIMITS.maxAliasCount })}（NEG-ENG-02；docs/v2/13 §八-5——拒收不截断）`,
+      )
+    }
+    configInvalid('assets/manifest-invalid', `assets.yaml YAML 语法错误：${message}`)
+  }
+}
+
 /**
  * 解析 assets.yaml（纯函数）：
+ *   - YAML 资源超限（源规模/AST 深度/节点数/别名数/展开计数）→ assets/yaml-limit
+ *     （NEG-ENG-02：明确拒收，不截断不静默降级；上限值与 core/src/yaml.ts 同值）；
  *   - 未知顶层键/形状错误 → assets/manifest-invalid；
  *   - assetId 非 dotid（绝对路径/.. 逃逸）→ assets/invalid-id；
  *   - 未知资产类型/封闭枚举值 → assets/unknown-type（E-SCH-001，逐条指名）；
@@ -117,12 +227,7 @@ function preflightClosedValues(raw: unknown): { closedValues: string[]; unsafeId
  *     或 generic 带 targetExecutor → 形状拒收（不静默改判）。
  */
 export function parseAssetManifest(src: string): AssetManifestParseResult {
-  let raw: unknown
-  try {
-    raw = parseYaml(src)
-  } catch (err) {
-    configInvalid('assets/manifest-invalid', `assets.yaml YAML 语法错误：${err instanceof Error ? err.message : String(err)}`)
-  }
+  const raw: unknown = readYamlWithinLimits(src)
   const root = asRecord(raw)
   if (root === null) configInvalid('assets/manifest-invalid', 'assets.yaml 顶层须为对象（SCH-ASSET-01 清单）')
   if (root['schema'] !== ASSET_MANIFEST_SCHEMA) {

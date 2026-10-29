@@ -19,6 +19,9 @@
  *     cached）；BILLING_TRACKS=['api','coding_plan'] 预设词表（本刀消费落位：coding_plan
  *     ⇒ planMonthlyUsd 必填=摊销轨锚——制作人 2026-10-22 补充令「包月 plan 摊销口径
  *     双轨入定价面」）。
+ *   - docs/v2/13 §2.3/§八-5＋docs/v2/17 §4.4 NEG-ENG-02（YAML bomb 防线）：解析入口先过
+ *     yaml.ts 上限件（源规模→AST 深度/节点数/别名数→toJS 显式 maxAliasCount）；超限＝
+ *     CONFIG_INVALID/`pricing/yaml-limit:<kind>` 明确拒收，不截断不静默降级。
  *
  * 词表源位：PRICE_SLOT_VALUES（peak/offpeak——峰谷档，132-§6.2 DeepSeek 四维价）本模块
  * 冻结为唯一源；store/src/pricing.ts 复制+一致性测试钉死（CANDIDATE_STATUS_VALUES
@@ -29,6 +32,13 @@
 import { LineCounter, parseDocument } from 'yaml'
 import { z } from 'zod'
 import { configInvalid, BILLING_TRACKS, type ClassifiedError, type ModelTier, type TokenCounts } from '@studio-next/contract'
+import {
+  checkYamlDocument,
+  checkYamlSource,
+  describeYamlLimit,
+  toJsWithinLimits,
+  type YamlLimitViolation,
+} from './yaml.ts'
 
 /** 峰谷档值域（132-§6.2 slot 键；缺省 peak 保守——非峰时段用峰价=高估不低估） */
 export const PRICE_SLOT_VALUES = ['peak', 'offpeak'] as const
@@ -198,13 +208,29 @@ function failPricing(subcause: string, issues: PricingIssue[]): never {
 // 解析与校验
 // ---------------------------------------------------------------------------
 
+/** 上限违规 → 行号化 issue（行号取违规节点 range；源文本超限无节点可指=line 1） */
+function yamlLimitIssue(lc: LineCounter | undefined, violation: YamlLimitViolation): PricingIssue {
+  const offset = violation.offset
+  return {
+    line: lc !== undefined && offset !== undefined ? lc.linePos(offset).line : 1,
+    rule: `pricing/yaml-limit:${violation.kind}`,
+    fix: `${describeYamlLimit(violation)}——NEG-ENG-02 上限拒收（docs/v2/13 §八-5；不截断、不静默降级）`,
+  }
+}
+
 /**
  * 解析定价更新单附件文本 → PricingTable。
- * 两道闸：yaml 语法（行号）→ zod strict 形状（行号回爬+交叉规则：重复模型/重复 slot/
- * 双轨互斥/真日历日）。坏件抛 CONFIG_INVALID（'pricing/parse'）——daemon 消费面转
- * DAILY_ALARM（发布失败不静默）。
+ * 三道闸：yaml 资源上限（yaml.ts——源规模/AST 深度/节点数/别名数/展开计数）→ yaml 语法
+ * （行号）→ zod strict 形状（行号回爬+交叉规则：重复模型/重复 slot/双轨互斥/真日历日）。
+ * 坏件抛 CONFIG_INVALID（'pricing/parse'）；超上限抛 CONFIG_INVALID（'pricing/yaml-limit'，
+ * NEG-ENG-02——明确拒收，不截断不静默降级）——daemon 消费面转 DAILY_ALARM（发布失败不静默）。
  */
 export function parsePricingTable(text: string): PricingTable {
+  // 上限①源文本规模：parse 之前拒（不为超长输入分配 AST）
+  const sourceViolation = checkYamlSource(text)
+  if (sourceViolation !== undefined) {
+    failPricing('pricing/yaml-limit', [yamlLimitIssue(undefined, sourceViolation)])
+  }
   const lc = new LineCounter()
   const doc = parseDocument(text, { lineCounter: lc })
   if (doc.errors.length > 0) {
@@ -214,7 +240,18 @@ export function parsePricingTable(text: string): PricingTable {
       fix: e.message,
     })))
   }
-  const checked = PricingTableSchema.safeParse(doc.toJS())
+  // 上限②AST 深度/节点数/别名节点数：toJS 之前拒（不展开别名）
+  const documentViolation = checkYamlDocument(doc.contents)
+  if (documentViolation !== undefined) {
+    failPricing('pricing/yaml-limit', [yamlLimitIssue(lc, documentViolation)])
+  }
+  // 上限③别名展开计数（库计 maxAliasCount）；库的其它 toJS 报错归语法错（不裸奔）
+  const read = toJsWithinLimits(doc)
+  if (!read.ok) {
+    if (read.reason === 'alias-limit') failPricing('pricing/yaml-limit', [yamlLimitIssue(lc, read.violation)])
+    failPricing('pricing/yaml-syntax', [{ line: 1, rule: 'pricing/yaml-syntax', fix: read.message }])
+  }
+  const checked = PricingTableSchema.safeParse(read.value)
   if (!checked.success) {
     failPricing('pricing/parse', zodIssuesToPricingIssues(doc, lc, checked.error.issues))
   }
