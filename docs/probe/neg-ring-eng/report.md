@@ -2,7 +2,7 @@
 
 > **头注**
 > - 日期：2026-10-29（采集 10:02Z–10:08Z UTC / 18:02–18:08 CST）
-> - git HEAD：开工 `a25324f`（分支 `dev`）；采集期间并行 EMP 单提交 `c9e8540`（只改 `records/emp-neg.ts` 与 `test/v2/neg-emp2.test.ts`，不触碰本波被测面），本波全部证据命令以实跑时点为序记录；本波**未 git add/commit**
+> - git HEAD：开工 `a25324f`（分支 `dev`）；采集期间 HEAD 两次前移——并行 EMP 单 `c9e8540`（只改 `records/emp-neg.ts` 与 `test/v2/neg-emp2.test.ts`）与集成侧提交 `eaf5932`（把本波 10 件测试/报告/日志扫入版本库，**非本单提交**）；本波全部证据命令以实跑时点为序记录；本单自身**未 git add/commit**
 > - 工具链：node **v24.21.0**（`mise exec --`）/ bun **1.4.3**｜Darwin arm64
 > - 执行者：DeepSeek-V41-Flash（StudioNext 施工代理；NEG 最后一组）
 > - 性质：**只新增** `apps/daemon/test/v2/neg/ring.test.ts` 与本目录 `docs/probe/neg-ring-eng/**`；不改生产码（仅临时变异验证，已按 sha256 还原）、不改其它包/旧测试、不写公司目录、不发出站请求、不 commit
@@ -190,7 +190,7 @@ $ … | comm -13 <(上面的 102 个) -
    - RING-02：`packages/gateway/src/catalog-entry.ts` 的「后代枚举缺项即拒」条件临时改不可达 → 红 2 用例 → 还原（`log-04`）；
    - RING-05：`packages/contract/src/records/chg.ts` 的「无验证生效为零」守卫临时改不可达 → 红 1 用例 → 还原（`log-05`）。
    - 还原复核：两文件 sha256 与变异前基线**逐字节同值**（`catalog-entry.ts`＝`64590a41…`；`chg.ts`＝`c44dfbda…`），`git diff` 为空；并行提交 `c9e8540` 不含这两文件（`log-06`／`log-00`）。
-3. **HEAD 前移**：开工 `a25324f` → 采集期间并行 EMP 单提交 `c9e8540`（只动 `records/emp-neg.ts` 与 `test/v2/neg-emp2.test.ts`）。本波与它无交集；报告不把它算作本波提交。
+3. **HEAD 前移（两次，均非本单提交）**：开工 `a25324f` → 并行 EMP 单提交 `c9e8540`（只动 `records/emp-neg.ts` 与 `test/v2/neg-emp2.test.ts`）→ 集成侧提交 `eaf5932`（`test(v2): NEG-RING-02/05 场景+119 ID 对账报告`，把本波 10 件：`ring.test.ts`＋本报告＋`log-00/02/03/04/05/06/07/08` 扫入版本库）。本波与 EMP 单无交集；`eaf5932` 是集成侧动作、不是本单提交。`log-01`／`log-09` 在 `eaf5932` 之后落盘，交接时仍为未跟踪新增（若需入库由集成侧随下次提交带上）。
 4. **计数免责**：本报告正文出现的 `NEG-*` 字符串会计入冻结命令的登记域（这是任务允许的报告面），但**状态列逐行自证**；不得以报告文字冒充执行证据。
 
 ---
