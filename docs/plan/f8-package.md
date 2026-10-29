@@ -16,7 +16,7 @@
 
 | 门 | 命令 | 结果 |
 |---|---|---|
-| 全 V2 | `mise exec -- bun run verify:v2` | **103 files / 1552 tests**；连续 3 次 exit 0（79s/79s/81s，CJS 拒绝面后） |
+| 全 V2 | `mise exec -- bun run verify:v2` | **103 files / 1561 tests**；连续 3 次 exit 0（114s/168s/100s，WriterLease 后） |
 | 文档 | `mise exec -- bun run verify:docs` | PASS 6/6，真悬空 0 |
 | 边界 | `mise exec -- bun run guard:boundaries` | PASS，900 文件扫描，0 违例 |
 | 秘密扫描 | `mise exec -- node scripts/scan-repo-secrets.mjs` | exit 0，新命中 0；存量基线 20 显式登记 |

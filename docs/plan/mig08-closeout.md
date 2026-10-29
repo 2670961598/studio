@@ -502,4 +502,4 @@ $ git status --porcelain
 
 - `writer-lease.ts`＋`openLedgerWriter` 落位；`runServe` 改用 writer 入口；两真实子进程：第二写者被 `STALL/writer-lease-held` 拒，释放后可取。
 - PRB-14 正面可复测；**PB-5 仍不通过**（PRB-23 not-executed、PRB-13 not-executed）；平台读侧契约仍不成立。
-- 全 V2 门：**1561 tests**；PB-5 报告附录 B 已登记。
+- 全 V2 门：**1561 tests**；连续 3 次 exit 0；PB-5 报告附录 B 已登记。
