@@ -56,7 +56,11 @@ export function openSqliteReadonly(path: string): DatabaseSync {
       throw new Error('PRAGMA query_only 未生效（拒绝外发可写句柄）')
     }
   } catch (err) {
-    db.close()
+    try {
+      db.close()
+    } catch {
+      // 关闭失败不覆盖原始错误（连接随进程退出回收）
+    }
     throw err
   }
   return db
