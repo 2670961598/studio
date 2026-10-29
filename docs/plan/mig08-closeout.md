@@ -476,3 +476,12 @@ $ git status --porcelain
 - 全 V2 门：**96 files / 1427 tests**；连续 3 次 `verify:v2` exit 0（78s/78s/78s）；`verify:docs` 6/6；`scan-repo-secrets` 新 0。
 - OPS 补形 A 已落（前节 §十六）。
 - **F8/P0 完整验收包尚未落盘**：下一步整理 P0 施工列、GAP 终版、NEG 状态、PB-3/PB-5 未过项、旧测试存废清单，交制作人/DSF；F8 签认仍只能外部。
+
+---
+
+## 十八、NEG 最终对账（2026-10-29，决定二=A 收尾）
+
+- 冻结命令：**119/119 IDs accounted**；**executed-pass 118、executed-failed 1（NEG-ENG-01）、not-executed 0**。
+- RING-01/04 场景判定件（`packages/core/src/ring/ring-scenarios.ts`，46 tests）已落；RING-03/ENG-02/04/05 机制件已落；全 V2 **96 files / 1546 tests**。
+- **NEG-ENG-01 负向失败**：Node 24.21 CJS 消费者 `require('@studio-next/contract')` 实测 **REQUIRE_OK exports=55**（`docs/probe/neg-ring-eng/log-10-eng01-cjs-require.txt`）。「ESM-only 要求 require 失败」在本运行时**不成立**；须改规范口径（接受 require(ESM)）或加 CJS 拒绝面（exports.require 抛错等）。**不得写 119 全通过。**
+- 其余：OPS 补形 A 已落；PB-3/PB-5 未过；F8 未签；P0 18/7/2。

@@ -16,7 +16,7 @@
 
 | 门 | 命令 | 结果 |
 |---|---|---|
-| 全 V2 | `mise exec -- bun run verify:v2` | **96 files / 1427 tests**；连续 3 次 exit 0（78s/78s/78s） |
+| 全 V2 | `mise exec -- bun run verify:v2` | **96 files / 1546 tests**；本轮单次 exit 0（NEG 收尾后） |
 | 文档 | `mise exec -- bun run verify:docs` | PASS 6/6，真悬空 0 |
 | 边界 | `mise exec -- bun run guard:boundaries` | PASS，900 文件扫描，0 违例 |
 | 秘密扫描 | `mise exec -- node scripts/scan-repo-secrets.mjs` | exit 0，新命中 0；存量基线 20 显式登记 |
@@ -37,10 +37,10 @@
 
 ## 四、NEG 状态（冻结命令）
 
-- **119/119 IDs accounted**；**executed 112 / not-executed 7 / not-applicable 0**。
-- not-executed：RING-01（价值环六要素 harness 未建）、RING-03（缺能力五出口未建）、RING-04（V6·SCEN 组织环未建）、ENG-01（dist/CJS 切换 spike 未立）、ENG-02（YAML bomb 上限未落）、ENG-04（入口 Node 版本 fail-fast 未落）、ENG-05（证据通道受理件未落）。
+- **119/119 IDs accounted**；**executed-pass 118 / executed-failed 1（NEG-ENG-01）/ not-executed 0**。
+- **NEG-ENG-01 failed**：Node 24.21 CJS `require('@studio-next/contract')` 成功（55 exports），ESM-only 的「require 应失败」不成立；须改规范或加 CJS 拒绝面。
 - 证据：`docs/probe/neg-ring-eng/report.md`；**不得读作 119 executed**。
-- 已执行新增：EMP-02/04/06/07/08/09（contract 纯判定，38 tests）、RING-02/05（场景，8 tests）、ORG-02/05/08（投影，22 tests）、WRK/EVD/RUN（16 tests）。
+- 已执行新增：EMP-02/04/06/07/08/09（contract 纯判定）、RING-01..05（场景/决策）、ORG-02/05/08（投影）、ENG-02/04/05（YAML 上限/版本 fail-fast/证据通道）、WRK/EVD/RUN（16 tests）。
 
 ## 五、GAP-V2-01..18
 
@@ -69,7 +69,7 @@ v2/17 §七：F2/F3/F6 通过；F1/F4/F5/F7 条件通过；**F8 未过**。F8 �
 
 ## 九、F8 前必须由外部/制作人确认的事项
 
-1. **7 条 NEG not-executed** 是否接受为 target/后续波，还是要求建机制/场景后再签。
+1. **NEG-ENG-01 failed**：是否接受 Node 24 require(ESM) 并改规范口径，或加 CJS 拒绝面后重测。
 2. **PB-3/PB-5 未过** 是否阻断 F8，还是接受为“目标（未证）”并登记。
 3. **GAP-V2-01/05/13/18** 是否允许以 open 状态进入 V2 定稿。
 4. **P0 partial 7/open 2** 的 DSF 核验列逐项结论。
