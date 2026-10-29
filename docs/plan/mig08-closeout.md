@@ -466,3 +466,13 @@ $ git status --porcelain
 - **NEG 补强至 104/119**：新增 NEG-ORG-02/05/08（表 A′ 归属、部门硬核、老板缺席）真实投影/守卫测试；全 V2 **1381 tests**。
 - **仍缺 15**：EMP-02/04/06/07/08/09（6 条无生产机制）＋RING-01..05＋ENG-01/02/04/05（9 条 target/not-executed）。这些需新记录字段/跨记录判据/场景探针，不是测试写法问题。
 - 结论：OPS 决定一（A）已执行；决定二（A）仍在推进，未到 119；不宣称定稿。
+
+---
+
+## 十七、NEG 119 对账（2026-10-29，决定二=A 收口）
+
+- 冻结命令：**119/119 IDs accounted**；其中 **executed 112、not-executed 7**（RING-01/03/04、ENG-01/02/04/05）。`docs/probe/neg-ring-eng/report.md` 逐行登记，**不得读作「119 executed」**。
+- 新增：EMP-02/04/06/07/08/09 六个纯判定件（38 tests）、RING-02/05 场景（8 tests）；ORG-02/05/08 已在前节。NEG 测试共 29（neg 子套件）。
+- 全 V2 门：**96 files / 1427 tests**；连续 3 次 `verify:v2` exit 0（78s/78s/78s）；`verify:docs` 6/6；`scan-repo-secrets` 新 0。
+- OPS 补形 A 已落（前节 §十六）。
+- **F8/P0 完整验收包尚未落盘**：下一步整理 P0 施工列、GAP 终版、NEG 状态、PB-3/PB-5 未过项、旧测试存废清单，交制作人/DSF；F8 签认仍只能外部。
