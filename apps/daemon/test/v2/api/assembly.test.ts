@@ -46,6 +46,7 @@ import type {
   ReadContext,
   ViewId,
 } from '@studio-next/contract'
+import type { ApiIntakeAuthResult, ApiReadSources } from '@studio-next/api'
 import { createFakePlatform } from '../../../src/engine/fakes.ts'
 import {
   API_ASSEMBLY_MODE,
@@ -217,9 +218,28 @@ function makeFakeGate(): FakeGateFace {
   }
 }
 
+/** fake 只读投影读取器（八件齐；返回空投影——注入面装配断言不验业务读数） */
+function makeFakeReaders(): ApiReadSources {
+  return {
+    company: () => undefined,
+    org: () => undefined,
+    people: () => undefined,
+    projects: () => undefined,
+    issues: () => undefined,
+    finance: () => undefined,
+    reports: () => undefined,
+    agentCard: () => undefined,
+  }
+}
+
+/** fake 触发面认证器（fail-closed：与本仓 auth.ts 同向——恒拒，不匿名放行） */
+function makeFakeAuth(): (input: { readonly method: string }) => ApiIntakeAuthResult {
+  return () => ({ ok: false, status: 401, subcause: 'credential-missing' })
+}
+
 /** 合法注入面（正例基线） */
 function baseInjection(): ApiInjection {
-  return { company: COMPANY, obs: makeFakeObs(), gate: makeFakeGate() }
+  return { company: COMPANY, obs: makeFakeObs(), gate: makeFakeGate(), readers: makeFakeReaders(), auth: makeFakeAuth() }
 }
 
 /** 模拟 JS 调用面（类型闸之外的运行期入参；装配仍须 fail-closed） */
@@ -243,7 +263,14 @@ describe('注入装配正例（fake 栈：只读端口＋gated 入口）', () =>
     }
     const logs: string[] = []
 
-    const assembly = assembleApi({ company: COMPANY, obs, gate, log: (line: string): void => void logs.push(line) })
+    const assembly = assembleApi({
+      company: COMPANY,
+      obs,
+      gate,
+      readers: makeFakeReaders(),
+      auth: makeFakeAuth(),
+      log: (line: string): void => void logs.push(line),
+    })
 
     expect(assembly.mode).toBe(API_ASSEMBLY_MODE)
     expect(assembly.mode).toBe('in-process')
@@ -280,17 +307,22 @@ describe('注入装配正例（fake 栈：只读端口＋gated 入口）', () =>
     expect(Object.values(assembly)).not.toContain(runtime.engine)
     expect(Object.values(assembly)).not.toContain(runtime.ledger)
     expect(Object.values(assembly)).not.toContain(runtime.platform)
-    expect(Object.keys(assembly).sort()).toEqual(['company', 'mode', 'ports'])
+    expect(Object.keys(assembly).sort()).toEqual(['app', 'company', 'mode', 'ports'])
+    // 装配面含 Hono app（端点族序列化唯一源＝packages/api；本件只交装配序）
+    expect(typeof assembly.app.fetch).toBe('function')
     const assemblyRecord = assembly as unknown as Record<string, unknown>
     expect(['engine', 'ledger', 'platform', 'tick', 'ingest'].filter((key) => key in assemblyRecord)).toEqual([])
 
-    // 装配序证据：同进程装配行（含 gated/零直写口径）
-    expect(logs).toHaveLength(1)
-    expect(logs[0]).toContain('[api] 注入式装配完成')
-    expect(logs[0]).toContain('company=demo')
-    expect(logs[0]).toContain('gate=PORT-GATE(gated-only')
-    expect(logs[0]).toContain('零主循环')
-    expect(logs[0]).toContain('零台账直写')
+    // 装配序证据：同进程装配行（含 gated/零直写口径）＋app 装配行（端点族）
+    expect(logs).toHaveLength(2)
+    expect(logs[0]).toContain('[api] app 装配完成')
+    expect(logs[1]).toContain('[api] 注入式装配完成')
+    expect(logs[1]).toContain('company=demo')
+    expect(logs[1]).toContain('gate=PORT-GATE(gated-only')
+    expect(logs[1]).toContain('readers=8')
+    expect(logs[1]).toContain('auth=fail-closed')
+    expect(logs[1]).toContain('零主循环')
+    expect(logs[1]).toContain('零台账直写')
 
     // 注入面校验函数本身可独立调用（返回收窄后的冻结面）
     const checked = assertApiInjection(baseInjection())
@@ -338,13 +370,19 @@ describe('拒启面（裸 platform／缺注入／直写槽）', () => {
     expect(() => assembleApi(injection)).toThrow(/gated-only/)
   })
 
-  it('缺 obs／缺 gate／空注入／null 注入＝拒启（半面启动不许当降级）', () => {
+  it('缺 obs／缺 gate／缺 readers／缺 auth／空注入／null 注入＝拒启（半面启动不许当降级）', () => {
     expect(() => assembleApi(asInjected({ company: COMPANY, gate: makeFakeGate() }))).toThrow(
       /CONFIG_INVALID\/api\/assembly:missing-obs/,
     )
     expect(() => assembleApi(asInjected({ company: COMPANY, obs: makeFakeObs() }))).toThrow(
       /CONFIG_INVALID\/api\/assembly:missing-gate/,
     )
+    expect(() =>
+      assembleApi(asInjected({ company: COMPANY, obs: makeFakeObs(), gate: makeFakeGate(), auth: makeFakeAuth() })),
+    ).toThrow(/CONFIG_INVALID\/api\/assembly:missing-readers/)
+    expect(() =>
+      assembleApi(asInjected({ company: COMPANY, obs: makeFakeObs(), gate: makeFakeGate(), readers: makeFakeReaders() })),
+    ).toThrow(/CONFIG_INVALID\/api\/assembly:missing-auth/)
     expect(() => assembleApi(asInjected({}))).toThrow(/CONFIG_INVALID\/api\/assembly:company-missing/)
     expect(() => assembleApi(null as unknown as ApiInjection)).toThrow(
       /CONFIG_INVALID\/api\/assembly:injection-shape/,

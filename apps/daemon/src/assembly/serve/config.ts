@@ -53,6 +53,13 @@ export interface ServeConfig extends HrServeConfig {
    */
   rootDir: string
   /**
+   * 对外 API 监听端口（MIG-06 装配欠账收口；docs/v2/14 §四）：
+   * **缺省 0＝ephemeral**（不抢 :8788；测试/多实例同机不撞端口）；生产在 daemon.yaml
+   * 显式指定 8788。绑定地址恒 127.0.0.1（v2/14 §四默认环回 fail-closed——LAN 暴露需
+   * 显式旗标，当前未落位＝缺口，不默认监听 0.0.0.0）。
+   */
+  apiPort?: number
+  /**
    * .AIWS 员工工作区树根（DEV-28，docs/43-§五+§十9）：缺省推导=显式本键 >
    * dirname(companyDir)/.AIWS（公司根，生产形态——与公司 git 目录/var 平级）>
    * `<rootDir>/.AIWS`（demo 无公司目录）。per-company 不并树：根归属标记异 slug 拒启动。
@@ -264,6 +271,8 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   platform: 'fake',
   company: 'demo',
   rootDir: './var',
+  // 对外 API 缺省 ephemeral（不抢 8788；生产 daemon.yaml 显式指定——MIG-06 装配收口）
+  apiPort: 0,
   tickMs: 1000,
   maxActionsPerTick: ENGINE_CONFIG_DEFAULTS.limits.maxActionsPerTick,
   maxInflight: ENGINE_CONFIG_DEFAULTS.limits.maxInflight,
@@ -348,6 +357,15 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       }
       case 'company': cfg.company = str(value, key); break
       case 'rootDir': cfg.rootDir = str(value, key); break
+      case 'apiPort': {
+        // 对外 API 端口（MIG-06）：0=ephemeral；1..65535=显式端口——非整数/越界明报不猜
+        const v = num(value, key)
+        if (!Number.isInteger(v) || v > 65_535) {
+          throw new Error(`daemon.yaml：apiPort 须为 0..65535 的整数（0=ephemeral；实得 ${v}）`)
+        }
+        cfg.apiPort = v
+        break
+      }
       case 'aiwsRoot': cfg.aiwsRoot = str(value, key); break
       case 'companyDir': cfg.companyDir = str(value, key); break
       case 'models': cfg.models = str(value, key); break

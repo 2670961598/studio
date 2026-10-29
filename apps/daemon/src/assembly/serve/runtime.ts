@@ -65,6 +65,7 @@ import { reEnsureChannels, startChannelSupply, wireRoomFace } from '../channels/
 import { seedJobs, removeMissingJobs } from '../jobs-seed/jobs-seed.ts'
 import { daemonIdentity, type ServeConfig } from './config.ts'
 import { wireExecutorFace } from './executor-face.ts'
+import { wireServeApi, type ServeApiWiring } from '../api/serve-face.ts'
 import type { WorkerKeyDeps } from '../../engine/worker-key.ts'
 
 /** serve 运行栈（engine + 唤起源注册表 + 统一停机面；runServe 与测试共用装配） */
@@ -97,9 +98,11 @@ export interface ServeRuntime {
    * 只读消费）。永不抛（软失败=日志+计量 failed 数，面板仍第一落点——刀B-6）。
    */
   notifyRelay?: (events: readonly EventRecord[]) => Promise<void>
+  /** 对外 API 同进程装配面（MIG-06 收口；v2/14 §四）：runServe 在源启动前 await start()，停机先 close() */
+  api: ServeApiWiring
   /**
-   * 优雅停：先 stopAll 唤起源（不再进新意图）→ 在途 drain → 关台账
-   * （SIGINT/SIGTERM 同一收口；可重入）。队列中未消费意图停机即弃（at-most-once，
+   * 优雅停：先关 API 入口（不再接新请求）→ stopAll 唤起源（不再进新意图）→ 在途 drain
+   * → 关台账（SIGINT/SIGTERM 同一收口；可重入）。队列中未消费意图停机即弃（at-most-once，
    * 与调度器 markRan 已提交而 ingest 未消费的既有边界同语义——engine.ts 头注）。
    */
   stop(): Promise<void>
@@ -568,10 +571,15 @@ export function buildServeRuntime(
     ...(opts?.evolveSelfCheck ?? {}),
   })
 
+  // —— 对外 API 同进程装配（MIG-06 欠账收口；v2/14 §四；装配体=assembly/api/serve-face.ts）——
+  //    app 在装配期构造（同步），监听由 runServe await api.start()（apiPort 缺省 0=ephemeral）
+  const api = wireServeApi({ company: { companyId: config.company, slug: config.company }, readSnapshot: () => companyState.snapshot, port: config.apiPort ?? 0, clock, log, guardResponse: outbound.guardApiResponse })
+
   return {
     engine,
     scheduler,
     sources,
+    api,
     evolveSelfCheck,
     ...(hotReload !== undefined ? { hotReload } : {}),
     // 129-E（184）：续命意图推送面露头（resume: true 时；调用面归 B4 CLI resume——另批）
@@ -579,7 +587,8 @@ export function buildServeRuntime(
     // 105-刀B（219）：拍边界事件中继露头（notifyBroadcast 注入时；runServe 主循环接线）
     ...(wiredNotify !== undefined ? { notifyRelay: wiredNotify.relayEvents } : {}),
     async stop(): Promise<void> {
-      // 先停源（不再进新意图）→ 再停引擎（在途 drain）→ 关台账（SIGINT 停机顺序，22-§三.3）
+      // 先关 API 入口（不再接新请求）→ 停源（不再进新意图）→ 引擎 drain → 关台账（22-§三.3）
+      await api.close()
       sources.stopAll()
       await engine.dispose()
       ledger.close()

@@ -130,7 +130,7 @@ export async function runServe(
     }
   }
 
-  const { engine, sources, stop, hotReload, notifyRelay } = buildServeRuntime(config, ledger, snapshot, {
+  const { engine, sources, stop, hotReload, notifyRelay, api } = buildServeRuntime(config, ledger, snapshot, {
     ...(opts?.matrixSource !== undefined ? { matrixSource: opts.matrixSource } : {}),
     ...(opts?.matrixRoomFace !== undefined ? { matrixRoomFace: opts.matrixRoomFace } : {}),
     ...(opts?.notifyBroadcast !== undefined ? { notifyBroadcast: opts.notifyBroadcast } : {}),
@@ -160,6 +160,16 @@ export async function runServe(
   const execMode = config.agentYaml !== undefined ? `真 executor（agent.yaml=${config.agentYaml}）` : 'fake executor（demo）'
   const gateMode = realGateMode(config) ? '真验收闸门（冻结验收命令真执行）' : '占位闸门（exit0 模拟）'
   console.log(`[serve] 栈形态：${stackMode} + ${execMode} + ${gateMode}（边界见 src/assembly/serve.ts 头注）`)
+  // —— 对外 API 起监听（MIG-06 欠账收口；v2/14 §四）：同进程装配已在 buildServeRuntime 完成，
+  //    此处只起 node:http 壳（apiPort 缺省 0=ephemeral）——失败=CONFIG_INVALID 拒启，不静默半面。
+  try {
+    await api.start()
+  } catch (err) {
+    await stop()
+    throw new Error(
+      `CONFIG_INVALID：对外 API 监听失败（apiPort=${String(config.apiPort ?? 0)}）：${err instanceof Error ? err.message : String(err)}`,
+    )
+  }
   // 唤起源统一启动（22-§一）：各源 start(emit)——emit 统一进引擎 ingest 队列，
   // 下一拍 state-diff 前消费；单源启动异常由注册表隔离（捕获+计数+继续，src/engine/sources.ts）
   sources.startAll((intent) => {

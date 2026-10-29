@@ -18,6 +18,10 @@
  *   - `gate`   ：PORT-GATE（receiveIntent/receipt/notify）——**gated-only**：外部意图唯一
  *                入口，只落单不派工；裸 FlowPlatform（issues/comments/fields/… 七能力）
  *                在结构上不满足 GatePort，注入即拒。
+ *   - `readers`：`ApiReadSources` 只读投影读取器八件（MIG-06 欠账②；公司快照投影，
+ *                零库零平台句柄）。缺一＝半面启动，拒启（不回落空读源）。
+ *   - `auth`   ：`ApiIntakeAuthenticator` 触发面认证器（fail-closed；partner/signed 未实现
+ *                ＝拒，root 一律拒）。缺＝触发面无认证闸，拒启。
  *   - `log?`   ：装配日志出口（缺省 no-op；与 serve 装配同惯例，只作装配序证据）。
  *
  * 禁止槽（出现即装配错误，不静默忽略——半面启动不许当降级）：
@@ -39,12 +43,25 @@
 import { SLUG_RE } from '@studio-next/company'
 import { configInvalid } from '@studio-next/contract'
 import type { CompanyRef, GatePort, ObservationPort } from '@studio-next/contract'
+import type { ApiIntakeAuthenticator, ApiReadSources } from '@studio-next/api'
 
 /** API 读面：PORT-OBS 只读子口（写槽 reportFault 不注入；无改事实方法槽） */
 export type ApiObservationReadFace = Pick<ObservationPort, 'snapshot' | 'clock' | 'newId' | 'health'>
 
-/** 允许的注入槽（固定三件＋日志出口；其余一律拒——含拼错槽名） */
-export const API_INJECTION_SLOTS = ['company', 'obs', 'gate', 'log'] as const
+/** 允许的注入槽（固定五件＋日志出口；其余一律拒——含拼错槽名） */
+export const API_INJECTION_SLOTS = ['company', 'obs', 'gate', 'readers', 'auth', 'log'] as const
+
+/** 只读投影读取器唯一合法方法名（八件；未知键＝拼错/夹带，拒启） */
+export const API_READER_SLOTS = [
+  'company',
+  'org',
+  'people',
+  'projects',
+  'issues',
+  'finance',
+  'reports',
+  'agentCard',
+] as const
 
 /** 平台类禁止槽（SEC-FC-07：裸 platform 注入＝装配错误） */
 export const API_FORBIDDEN_PLATFORM_SLOTS = ['platform', 'gatedPlatform', 'flowPlatform'] as const
@@ -80,6 +97,10 @@ export interface ApiInjection {
   readonly obs: ApiObservationReadFace
   /** PORT-GATE gated 入口（API 写面唯一入口；裸 FlowPlatform 不可注入） */
   readonly gate: GatePort
+  /** 只读投影读取器八件（API-01..07/09 读源；零库零平台句柄） */
+  readonly readers: ApiReadSources
+  /** 触发面认证器（partner/signed；失败 fail-closed——本件不做匿名兜底） */
+  readonly auth: ApiIntakeAuthenticator
   /** 装配日志出口（缺省 no-op；只作装配序证据，不影响装配结果） */
   readonly log?: (line: string) => void
 }
@@ -222,6 +243,64 @@ function assertGateFace(value: unknown): GatePort {
 }
 
 /**
+ * 只读投影读取器：八件齐全才注入；未知键拒启（拼错/夹带不静默忽略）。
+ * 返回冻结 wrapper——装配面不把调用方对象原样交给路由。
+ */
+function assertReaders(value: unknown): ApiReadSources {
+  if (value === undefined) {
+    configInvalid(
+      'api/assembly:missing-readers',
+      `缺 readers 只读投影读取器（八件：${API_READER_SLOTS.join('/')}）——API 读面唯一读源；开而不注入＝半面启动，拒启（不回落空读源）`,
+    )
+  }
+  if (!isRecord(value)) {
+    configInvalid('api/assembly:readers-shape', `readers 须为八件读取器对象（实得 ${typeof value}）`)
+  }
+  for (const key of Object.keys(value)) {
+    if (!(API_READER_SLOTS as readonly string[]).includes(key)) {
+      configInvalid(
+        'api/assembly:readers-unknown',
+        `readers 未知读取器 ${key}（合法=${API_READER_SLOTS.join('/')}）——拼错键名＝装配错误，不静默忽略`,
+      )
+    }
+  }
+  for (const key of API_READER_SLOTS) {
+    if (typeof value[key] !== 'function') {
+      configInvalid('api/assembly:readers-shape', `readers 缺读取器 ${key}（八件缺一＝半面启动，拒启）`)
+    }
+  }
+  const source = value as unknown as ApiReadSources
+  const face: ApiReadSources = {
+    company: (rc) => source.company(rc),
+    org: (rc) => source.org(rc),
+    people: (rc) => source.people(rc),
+    projects: (rc) => source.projects(rc),
+    issues: (query, rc) => source.issues(query, rc),
+    finance: (rc) => source.finance(rc),
+    reports: (rc) => source.reports(rc),
+    agentCard: (rc) => source.agentCard(rc),
+  }
+  return Object.freeze(face)
+}
+
+/**
+ * 触发面认证器：函数形态才注入（fail-closed 判定归认证器自身；装配面不放匿名兜底）。
+ * 认证结论形状（401/403/ok）由 `packages/api` 路由层二次收口——此处只验可调用性。
+ */
+function assertAuthFace(value: unknown): ApiIntakeAuthenticator {
+  if (value === undefined) {
+    configInvalid(
+      'api/assembly:missing-auth',
+      '缺 auth 触发面认证器（partner/signed；失败 fail-closed）——开而不注入＝触发面无认证闸，拒启（不静默匿名放行）',
+    )
+  }
+  if (typeof value !== 'function') {
+    configInvalid('api/assembly:auth-shape', `auth 须为 (input) => ApiIntakeAuthResult 函数（实得 ${typeof value}）`)
+  }
+  return value as ApiIntakeAuthenticator
+}
+
+/**
  * 注入面校验（唯一入口；`assembleApi` 与测试共用）。
  * 入参是 unknown：类型面之外（JS 调用/配置拼装/未来调用方）同一套 fail-closed 复检，
  * 不因「类型上过了」而免检。校验通过后返回**收窄+冻结**的注入面（gate/obs 为 wrapper）。
@@ -240,6 +319,8 @@ export function assertApiInjection(input: unknown): ApiInjection {
   const company = assertCompany(input['company'])
   const obs = assertObservationFace(input['obs'])
   const gate = assertGateFace(input['gate'])
+  const readers = assertReaders(input['readers'])
+  const auth = assertAuthFace(input['auth'])
   const log = input['log']
   if (log !== undefined && typeof log !== 'function') {
     configInvalid('api/assembly:log-shape', `log 须为 (line: string) => void（实得 ${typeof log}；缺省不注入=no-op）`)
@@ -248,6 +329,8 @@ export function assertApiInjection(input: unknown): ApiInjection {
     company,
     obs,
     gate,
+    readers,
+    auth,
     ...(log !== undefined ? { log: log as (line: string) => void } : {}),
   })
 }
