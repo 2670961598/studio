@@ -1,0 +1,7 @@
+# NEG-ENG-01 ESM-only 负向实测（2026-10-29）
+# 环境：node v24.21.0 / CJS 消费者；@studio-next/contract 以 symlink 放入临时 node_modules
+# 命令：node require-probe.cjs（临时目录）；本机路径已脱敏
+# 预期（v2/17）：require('@studio-next/…') 失败形态
+# 实测：REQUIRE_OK exports=55
+# exit=0
+# 结论：Node 24.21 的 require(ESM) 成功（55 exports），NEG-ENG-01「ESM-only 要求 require 失败」负向未成立。

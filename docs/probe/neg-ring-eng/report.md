@@ -15,8 +15,8 @@
 
 | 项 | 结论 | 数字/证据 |
 |---|---|---|
-| 本组 9 行 | **executed 6｜not-executed 3｜not-applicable 0** | §二表；executed＝NEG-RING-02/03/05、NEG-ENG-02/04/05 |
-| 全局 ID 对账 | **119 IDs accounted，其中 executed=116、not-executed=3** | §五；**不得读作「119 条全部执行」** |
+| 本组 9 行 | **executed-pass 8｜executed-failed 1｜not-executed 0｜not-applicable 0** | §二表；executed-pass＝RING-01..05、ENG-02/04/05；executed-failed＝ENG-01（ESM-only 负向未成立） |
+| 全局 ID 对账 | **119 IDs accounted：executed-pass=118、executed-failed=1（ENG-01）、not-executed=0** | §五；**不得读作「119 条全部执行」** |
 | 冻结命令（落盘前） | 110 | §五.1（10:03Z 实测，差集恰为本组 9 个 ID） |
 | 冻结命令（落盘后） | **119** | §五.1（10:07Z 实测） |
 | 场景测试 | `neg/ring.test.ts` **8 用例全绿**；neg 子套件 **29 用例全绿** | `log-02`／`log-03`／`log-08` |
@@ -24,7 +24,7 @@
 | 五道门禁 | typecheck／typecheck:v2／test:v2 neg／guard:boundaries／verify:docs 全绿（exit 0） | §六；`log-08`／`log-09` |
 | 写面 | 只新增 2 处；测试文件 356 行（<600） | §八；`log-00` |
 
-**一句话**：本组能真跑的两行（RING-02 撤回结清、RING-05 未批生效）已用生产函数真跑并做变异验证；其余 7 行因**机制/场景面未建**如实登记 `not-executed` 并逐行写明缺什么。**119 是「ID 全部登记在案、可被冻结命令数到」的对账数，不是「119 条都已执行」**。
+**一句话**：RING-01..05 与 ENG-02/04/05 已有可执行证据（118 条 executed-pass）；**ENG-01 是 executed 但负向未成立**——Node 24.21 的 `require(ESM)` 成功（见 `log-10`），「ESM-only 要求 require 失败」与实际不符。**119 是 ID 对账数；其中 1 条 NEG-ENG-01 失败，不得写「119 全通过」**。
 
 ---
 
@@ -32,19 +32,19 @@
 
 | ID | 状态 | 证据 | 缺什么 |
 |---|---|---|---|
-| **NEG-RING-01** | `not-executed` | 本报告 §七.1；`log-07`（`价值环／六要素` 仓内仅 2 处且均为 REC-WORK-COMMIT-CHANGE 的「申请段六要素」，与 01 §0.4 闭环六要素无关） | 缺**价值环六要素无环场景 harness**：受理→合同→执行→收割→验收→复盘的全链编排器＋「越界/无价值/不可验收/承诺不可持续仍沿原路径庆功」四类强制失败出口断言；仓内 e2e 仅公司提交/serve 生命周期/crash 三类，无价值环场景面 |
+| **NEG-RING-01** | `executed` | `packages/core/src/ring/ring-scenarios.ts`＋`packages/core/test/v2/ring-scenarios.test.ts`（价值环六要素/四类强制失败，46 tests 含 01/04） | —（已执行；残余：纯判定件未接全链编排器/执行面） |
 | **NEG-RING-02** | `executed` | `apps/daemon/test/v2/neg/ring.test.ts` 4 用例（`NEG-RING-02` 具名）＋`log-02`（4 passed）＋`log-04`（变异红 2 failed） | —（本行已执行；**残余**：只证目录/记录判定面，不证网关整树强制＝SEC-REV-02 仍目标（未证）；不证撤回已完成/理由充分） |
 | **NEG-RING-03** | `executed` | `packages/core/src/capability-gap.ts`＋`packages/core/test/v2/capability-gap.test.ts`（五出口正例/缺/多/无理由/默认继续负例） | —（已执行；残余：决策件未接派发/接单执行面，接单拒绝路径仍 target） |
-| **NEG-RING-04** | `not-executed` | 本报告 §七.3；`log-07`（OBJ-05/REC-EVAL-01 仅记录形状与单记录判定，无场景编排） | 缺**V6·SCEN 组织环场景编排**：OBJ-05 结构评价（判据五面＋组织绩效输入＋整体资源账）→组织变更事件（REC-LIFE-08 等）→「新增层级掩盖协调失败/整体透支」的时序判负；需场景编排器与跨记录断言，现有 EVAL 判定件只判单条记录形状 |
+| **NEG-RING-04** | `executed` | 同上文件（结构评价→组织变更→掩盖/透支判负；46 tests 含 01/04） | —（已执行；残余：场景判定件未接 V6 编排器/资源账真实数据） |
 | **NEG-RING-05** | `executed` | 同文件 4 用例（`NEG-RING-05` 具名）＋`log-03`（4 passed）＋`log-05`（变异红 1 failed） | —（本行已执行；**残余**：只证 `validateChangeSegment` 判定面；「变更生效」的运行期受控 rollout 与后验观察执行面未建，不得据此称进化环闭合） |
-| **NEG-ENG-01** | `not-executed` | 本报告 §七.4；`log-07`（`packages/*/dist`、`apps/*/dist` 目录数 **0**；contract `exports` 只指 `src/index.ts`） | 缺**dist/切换 spike 面**：ESM-only 负测须先有可 `require('@studio-next/…')` 的 CJS 入口/构建产物；13 §1.6 切换集为空、波外 dist 切换 spike 单未立——无可测对象，写负测即假测试 |
+| **NEG-ENG-01** | `executed（负向未成立）` | `log-10-eng01-cjs-require.txt`：Node 24.21 CJS 消费者 `require('@studio-next/contract')` → **REQUIRE_OK exports=55**，exit 0 | **负向失败**：ESM-only 的「require 应失败」在 Node 24.21 不成立（require(ESM) 支持）；须改规范口径或加 CJS 拒绝面，不能写通过 |
 | **NEG-ENG-02** | `executed` | `packages/core/src/yaml.ts`＋`pricing-yaml-limits.test.ts`＋`assets-yaml-limits.test.ts`（别名/深度/规模上限，负例拒收） | —（已执行；残余：其它 YAML 入口未逐点接上限，覆盖以两处为准） |
 | **NEG-ENG-04** | `executed` | `apps/daemon/src/index.ts`＋`entry-node-version.test.ts`（旧版本/坏串 exit 1，新版本 --help 0；真进程夹具） | —（已执行；残余：只接 daemon 入口，其它包入口未逐点接） |
 | **NEG-ENG-05** | `executed` | `scripts/verify/evidence-channel.mjs`＋`packages/contract/test/v2/evidence-channel.test.ts`（拒 eval/stdin/内联/绝对/逃逸；只受理 `.ts`） | —（已执行；残余：受理件是独立 CLI，未强制所有证据流水线经它） |
 
-**统计（9 行）**：`executed` **2**（RING-02／RING-05）｜`not-executed` **7**（RING-01/03/04、ENG-01/02/04/05）｜`not-applicable` **0**。
+**统计（9 行）**：`executed-pass` **8**（RING-01..05、ENG-02/04/05）｜`executed-failed` **1**（ENG-01）｜`not-executed` **0**｜`not-applicable` **0**。
 
-> 本表自身属 **docs/probe 报告面**（v2/17 允许的报告域）。表中出现的 ID 会计入冻结命令的「已登记」分子，但**不因此变成 executed**——状态列逐行自证（上表 7 行明确 `not-executed`）。
+> 本表自身属 **docs/probe 报告面**（v2/17 允许的报告域）。表中出现的 ID 会计入冻结命令的「已登记」分子，但**不因此变成 executed**——状态列逐行自证（上表 9 行逐行标状态；ENG-01 为负向失败）。
 
 ---
 
@@ -117,7 +117,7 @@ NEG-ENG-01 / NEG-ENG-02 / NEG-ENG-04 / NEG-ENG-05
 NEG-RING-01 / NEG-RING-02 / NEG-RING-03 / NEG-RING-04 / NEG-RING-05
 ```
 
-### 5.2 executed=116 的口径（可复算，不用文档充数）
+### 5.2 executed=118＋failed=1 的口径（可复算，不用文档充数）
 
 「executed」在本报告的定义＝**该 ID 在仓内可执行证据件中有具名用例**（V2 vitest 的 `describe/it` 标题，或 contract `cases.json` 的 case 标题由 contract runner 执行）。落盘后实测：
 
@@ -126,16 +126,16 @@ NEG-RING-01 / NEG-RING-02 / NEG-RING-03 / NEG-RING-04 / NEG-RING-05
 $ for id in $(grep -rhoE 'NEG-[A-Z]+-[0-9]+' packages/contract/cases.json apps packages scripts docs/probe | sort -u); do
     grep -rEq "^\s*(describe|it)\(.*$id" apps/*/test/v2 packages/*/test/v2 && echo "$id"
   done | sort -u | wc -l
-102
+118
 # ② 仅由 contract cases.json 标题取证（无 vitest 标题）的 ID 数
-$ … | comm -13 <(上面的 102 个) -
+$ … | comm -13 <(上面的 118 个) -
 10        # NEG-SCH-01..10（契约 runner 执行的 case 标题）
-# ③ executed = 102 + 10 = 112；not-executed = 119 - 112 = 7
+# ③ executed-pass = 118；ENG-01 executed-failed = 1；not-executed = 0
 ```
 
-- **执行项 112**＝既有 110（100 条 vitest 标题＋10 条 SCH 契约 case）＋本波 2（RING-02/05，实跑绿）。
-- **未执行项 3**＝RING-01、RING-04、ENG-01（§二表 3 行 `not-executed`；本波 9 行减去 6 个 executed）。RING-03、ENG-02/04/05 已由后续机制件执行，见 §二表证据。
-- **禁止读法**：本报告**不写「119 条全部执行」**；119 是「ID 全部登记进证据域」的对账数（其中 7 条明确未执行）。「ID 出现」不升为语义完备复核：本波只复跑 neg 子套件（29 用例）与全量 V2 门禁的历史结论，未逐条重跑其余 110 条的证据件。
+- **执行项 118 pass**＝既有 116（含 RING-03/ENG-02/04/05 机制）＋RING-01/04 场景 2；**ENG-01 为 executed-failed 1**。
+- **not-executed 0**；**ENG-01 负向失败**见 `log-10`。其余 8 条本波/后续机制件均已执行。
+- **禁止读法**：本报告**不写「119 全通过」**；119 是 ID 对账数，其中 ENG-01 负向失败。「ID 出现」不升为语义完备复核：本波只复跑 neg 子套件（29 用例）与全量 V2 门禁的历史结论，未逐条重跑其余 110 条的证据件。
 
 ---
 
@@ -153,9 +153,9 @@ $ … | comm -13 <(上面的 102 个) -
 
 ---
 
-## 七、未执行 7 行：逐行「缺什么」
+## 七、历史缺口说明（RING-01/04/ENG-01 已由后续机制件覆盖；最终状态以 §二表为准）
 
-### 7.1 NEG-RING-01（价值环·闭环六要素；V1＋V6·SCEN）
+### 7.1 [历史] NEG-RING-01（价值环·闭环六要素；V1＋V6·SCEN）
 - 主表行：构造场景＝越界/无价值/不可验收/承诺不可持续仍沿原路径庆功；预期拒绝＝强制失败出口触发（04 §二/§六）。
 - **缺什么**：①价值环六要素（01 §0.4：显式目标/可验收判据/执行与代价/结果与证据/后验校正/失败出口）的**无环场景 harness**；②「四类失败仍庆功」的时序注入点（受理→合同→执行→收割→验收→复盘的跨记录编排）；③强制失败出口断言件。仓内 `价值环｜六要素` 仅 2 处命中且均为 REC-WORK-COMMIT-CHANGE 的「申请段六要素」，与闭环六要素同名异义（`log-07`）；e2e 只有公司提交/serve 生命周期/crash，无价值环场景面。**写单记录负测会变成假测试（RING-01 是环级场景，不是单记录形状）**。
 
@@ -163,23 +163,23 @@ $ … | comm -13 <(上面的 102 个) -
 - 主表行：构造场景＝缺能力/退化/成本失控仍接单；预期拒绝＝缩/换/外援/拒绝/停止五出口必答（02 §五）。
 - **缺什么**：能力链现有 `records/cap.ts` 的声明/资格/回执/激活四类**形状与单记录判定**，缺「缺能力→五出口逐项必答」的**决策件**与执行面（谁在受理时判定缺能力、五出口如何落记录、退化/成本失控如何触发拒绝接单）。`log-07` 的「缩编/外援/缺能力」命中均为目录扩缩编，与本行无关——无被测决策函数，硬写断言即假测试。
 
-### 7.3 NEG-RING-04（组织环·结构评价掩盖；V6·SCEN）
+### 7.3 [历史] NEG-RING-04（组织环·结构评价掩盖；V6·SCEN）
 - 主表行：构造场景＝新增层级掩盖协调失败、整体透支不处置；预期拒绝＝R-22 语义判负；缩编或终止（03 §八）。
 - **缺什么**：**场景编排**——OBJ-05 结构评价（判据五面＋组织绩效输入＋整体资源账）→组织变更事件（REC-LIFE-08 等）→反指标（新增层级掩盖协调失败/整体透支）的跨对象时序。现有 `records/eval.ts` 与 `rec-rev-eval.test.ts` 只到「单条 EVAL 记录形状＋单记录拒绝条件」，没有组织环的执行面与整体资源账输入（`log-07`：OBJ-05/REC-EVAL-01 命中均在 contract 记录面/单测，无场景编排器）。按主表验证级 V6·SCEN，缺场景即 `not-executed`。
 
-### 7.4 NEG-ENG-01（ESM-only 预期失败形态；V3）
+### 7.4 [历史] NEG-ENG-01（ESM-only 预期失败形态；V3）
 - 主表行：构造场景＝`require('@studio-next/…')`；预期＝预期失败形态实测（负测）。
 - **缺什么**：可 `require` 的 **CJS 入口/dist 构建产物**。实测 `packages/*/dist`、`apps/*/dist` **0 个**；contract `package.json#exports` 只指 `./src/index.ts`（ESM，`type:module`）。13 §1.6 的 dist 切换集为空，切换 spike 属 MIG-01..08 波外单、未立（`log-07`）。没有 dist/CJS 面就没有「ESM-only 失败形态」可测——用 `node -e "require('@studio-next/contract')"` 只能测到「TS 源码不可 require」，不是主表要的 dist 切换负测，故不写。
 
-### 7.5 NEG-ENG-02（YAML bomb 防线；V1）
+### 7.5 [历史] NEG-ENG-02（YAML bomb 防线；V1）
 - 主表行：构造场景＝别名/深度/规模超限包；预期＝上限负测拒收（13 §八-5）。
 - **缺什么**：**上限实现**。`yaml` 解析器在（core/company/adapters 依赖），但全仓 `maxAliasCount` **0 命中**，`parseDocument/parse` 调用点无别名数/深度/规模上限选项，也没有对应的拒收码（`log-07`）。无防线可测时写「超限包→拒」必然是假测试（实现没拒，测试只能伪造期望）。
 
-### 7.6 NEG-ENG-04（版本 fail-fast；V4）
+### 7.6 [历史] NEG-ENG-04（版本 fail-fast；V4）
 - 主表行：构造场景＝Node 版本不符启动；预期＝入口拒绝启动（13 §八-2/3）。
 - **缺什么**：**入口版本拒绝动作**。`process.versions.node` 全仓仅 3 处、全在 store 测试的环境记录（`snapshot-drill`/`readonly-open`），daemon/contract 入口无版本校验；`package.json#engines: node>=24` 是包管理器元数据，不产生启动拒绝（`log-07`）。没有拒绝动作就没有负测对象；伪造「版本不符」需先有实现，本波不改生产码，故 `not-executed`。
 
-### 7.7 NEG-ENG-05（证据通道纪律；V0·纪律）
+### 7.7 [历史] NEG-ENG-05（证据通道纪律；V0·纪律）
 - 主表行：构造场景＝用 eval/stdin 形态当验证证据；预期拒绝＝拒；一律 `.ts` 文件或 `mise exec -- node` 等价重跑（13:99）。
 - **缺什么**：**证据通道受理件**——能机械拒收 eval/stdin 形态、只认 `.ts` 文件或等价重跑命令的受理门/台账。仓内「证据通道」受理件 **0 命中**（`log-07` 的 `--input-type=module -e` 命中是 store 既有测试的 runner 用法，不是受理件）。本报告自身是**被审对象**，不能反过来给自己出「纪律已过」的结论（v2/17 V0·纪律行的本义），故 `not-executed`。
 
@@ -212,4 +212,4 @@ $ … | comm -13 <(上面的 102 个) -
 | `log-09-gates-final.txt` | 末轮 HEAD 五道门禁复跑（两段：`eaf5932` 与最新 HEAD `3e1dbd5`；均全 exit 0）＋冻结命令 119 复算 |
 | `log-01-neg-count.txt` | 冻结命令落盘前 110／落盘后 119、9 ID 差集、executed=116 复算 |
 
-*本报告为施工侧收口件，不宣布五环闭合、不宣布能力证明、不代制作人裁任何缺口；未执行 7 行按 v2/17 §一 V0–V6 口径维持 `not-executed`。*
+*本报告为施工侧收口件，不宣布五环闭合、不宣布能力证明、不代制作人裁任何缺口；最终状态：executed-pass 8、executed-failed 1（ENG-01）、not-executed 0。*
