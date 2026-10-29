@@ -11,7 +11,7 @@ EXIT=0
 $ mise exec -- bun run test:v2 -- apps/daemon/test/v2/neg
 $ vitest run --config vitest.v2.config.ts "apps/daemon/test/v2/neg"
 
- RUN  v3.2.7 /Volumes/BigDisk/StudioNext
+ RUN  v3.2.7 <repo>
 
  ✓ apps/daemon/test/v2/neg/run-revocation.test.ts (4 tests) 30ms
  ✓ apps/daemon/test/v2/neg/ring.test.ts (8 tests) 53ms

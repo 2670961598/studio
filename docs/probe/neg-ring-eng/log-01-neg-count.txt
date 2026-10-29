@@ -1,0 +1,46 @@
+== NEG 冻结命令与 119/112/7 对账（最终落盘后，HEAD=c9e8540） ==
+
+# 命令逐字取自 docs/plan/04 §三「覆盖核对命令（冻结；仓根执行）」
+$ grep -rhoE 'NEG-[A-Z]+-[0-9]+' packages/contract/cases.json apps packages scripts docs/probe 2>/dev/null | sort -u | wc -l
+     119
+
+# 等价复现「落盘前」口径：剔除本波两处新增（ring.test.ts 与 neg-ring-eng/）
+$ grep -rhoE ... --exclude=ring.test.ts --exclude-dir=neg-ring-eng ... | sort -u | wc -l
+     110
+（另：本波落盘前 10:03Z 首次实测同为 110；两次一致。）
+
+# 新增 ID（后减前）——应为 9 个，且恰为本组 9 行
+$ comm -13 /tmp/neg-before.txt /tmp/neg-final.txt
+NEG-ENG-01
+NEG-ENG-02
+NEG-ENG-04
+NEG-ENG-05
+NEG-RING-01
+NEG-RING-02
+NEG-RING-03
+NEG-RING-04
+NEG-RING-05
+
+# executed 口径：ID 具名出现于 V2 vitest 的 describe/it 标题
+$ for id in $(cat /tmp/neg-final.txt); do grep -rEq "^\\s*(describe|it)\\(.*$id" apps/*/test/v2 packages/*/test/v2 && echo "$id"; done | sort -u | wc -l
+     102
+
+# 仅由 contract cases.json case 标题取证（无 vitest 标题）的 ID
+      10
+NEG-SCH-01 NEG-SCH-02 NEG-SCH-03 NEG-SCH-04 NEG-SCH-05 NEG-SCH-06 NEG-SCH-07 NEG-SCH-08 NEG-SCH-09 NEG-SCH-10 
+
+# executed = 102（vitest 标题）＋10（契约 case 标题）＝112
+# 无任何可执行证据件的 ID（应为 7；＝119-112）
+NEG-ENG-01
+NEG-ENG-02
+NEG-ENG-04
+NEG-ENG-05
+NEG-RING-01
+NEG-RING-03
+NEG-RING-04
+未执行数=7
+
+== 结论（逐字） ==
+119 IDs accounted，其中 executed=112、not-executed=7。
+本报告不写「119 executed」：119 是 ID 全部登记进冻结命令证据域的对账数，
+其中 7 条（RING-01/RING-03/RING-04/ENG-01/ENG-02/ENG-04/ENG-05）明确 not-executed。

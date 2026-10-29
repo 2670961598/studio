@@ -1,0 +1,51 @@
+== 最终 HEAD 五道门禁复跑＋冻结命令复算（2026-10-29T10:08:02Z） ==
+$ git rev-parse HEAD; git status --short
+eaf59326cae55e84be92c6bf367843b0d43a351f
+ M docs/probe/neg-ring-eng/log-06-restore-reverify.txt
+?? docs/probe/neg-ring-eng/log-01-neg-count.txt
+?? docs/probe/neg-ring-eng/log-09-gates-final.txt
+
+$ mise exec -- bun run typecheck
+$ tsc --noEmit
+EXIT=0
+
+$ mise exec -- bun run typecheck:v2
+$ tsc --noEmit -p tsconfig.v2.json
+EXIT=0
+
+$ mise exec -- bun run test:v2 -- apps/daemon/test/v2/neg
+$ vitest run --config vitest.v2.config.ts "apps/daemon/test/v2/neg"
+
+ RUN  v3.2.7 <repo>
+
+ ✓ apps/daemon/test/v2/neg/run-revocation.test.ts (4 tests) 31ms
+ ✓ apps/daemon/test/v2/neg/ring.test.ts (8 tests) 46ms
+ ✓ apps/daemon/test/v2/neg/harvest-neg.test.ts (7 tests) 60ms
+ ✓ apps/daemon/test/v2/neg/work-gates.test.ts (10 tests) 56ms
+
+ Test Files  4 passed (4)
+      Tests  29 passed (29)
+   Start at  18:09:23
+   Duration  2.51s (transform 1.62s, setup 0ms, collect 3.54s, tests 193ms, environment 1ms, prepare 1.08s)
+
+EXIT=0
+
+$ mise exec -- bun run guard:boundaries
+$ node scripts/guards/boundaries.mjs
+边界门禁 PASS：扫描 900 文件（范围面代码件 758），0 违例（分层宪法 20-§十五）
+EXIT=0
+
+$ mise exec -- bun run verify:docs
+[v0-doc-check] OK ④ 检查四 枚举字面量重述：诊断码定义 25 个全在 v2/10 §八（全库码形 token 107 处）；ENU 候选 122 条，跨卷表行重述 0
+[v0-doc-check] OK ⑤ 检查五 节号连续性：27 件、章 304 个、数值子节 315 个；问题 0
+[v0-doc-check] OK ⑥ 检查六 示例值自洽：VEC 10 条；正向复算 8/8、负向断言 2/2
+v0-doc-check PASS：V0 六项 6/6（docs/v2 18 卷＋docs/plan 9 卷；真悬空 0）
+EXIT=0
+
+$ grep -rhoE 'NEG-[A-Z]+-[0-9]+' packages/contract/cases.json apps packages scripts docs/probe 2>/dev/null | sort -u | wc -l
+     119
+
+$ wc -l apps/daemon/test/v2/neg/ring.test.ts docs/probe/neg-ring-eng/report.md
+     356 apps/daemon/test/v2/neg/ring.test.ts
+     213 docs/probe/neg-ring-eng/report.md
+     569 total

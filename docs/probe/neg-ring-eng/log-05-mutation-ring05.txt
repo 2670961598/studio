@@ -18,7 +18,7 @@ index 9f666d9..6227e21 100644
 $ mise exec -- bun run test:v2 -- apps/daemon/test/v2/neg/ring.test.ts -t "NEG-RING-05"
 $ vitest run --config vitest.v2.config.ts "apps/daemon/test/v2/neg/ring.test.ts" -t "NEG-RING-05"
 
- RUN  v3.2.7 /Volumes/BigDisk/StudioNext
+ RUN  v3.2.7 <repo>
 
  ❯ apps/daemon/test/v2/neg/ring.test.ts (8 tests | 1 failed | 4 skipped) 21ms
    ↓ NEG-RING-02 权责环·撤回结清：派生枚举＋凭据结清四判据缺一即未完成 > NEG-RING-02 判据一·后代清单：撤回不含后代枚举→拒；后代凭据仍可供给＝结清未发生
