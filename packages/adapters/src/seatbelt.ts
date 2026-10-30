@@ -289,8 +289,17 @@ export function buildWorkerSeatbeltProfile(params: SeatbeltProfileParams): strin
   for (const ep of rpc) {
     lines.push(`(allow network-outbound (remote tcp ${sbEndpoint(ep)}))`)
   }
+  // 远程出口（host='*'）：过滤式 remote 对非回环目的地在本机不生效——darwin 25.3 真机实录
+  // （2026-10-31 studio-dev-269 att17 复现：curl 域名=Could not resolve host；*:443/*:53 过滤
+  // 全无效；裸放行=通）——远程出口唯一可表达形=裸放行（端口语义失效；域名收口归单B 本地代理，
+  // 落地后收回）。回环端点保留过滤式（字面量真机有效）。
+  const wildcardEgress = egress.some((ep) => ep.host === '*')
   for (const ep of egress) {
+    if (ep.host === '*') continue
     lines.push(`(allow network-outbound (remote tcp ${sbEndpoint(ep)}))`)
+  }
+  if (wildcardEgress) {
+    lines.push('(allow network-outbound) ;; 通配出口过渡面：过滤式 remote 对非回环不生效（darwin 25.3 真机）——裸放行=全端口；授权/收回面=daemon.yaml seatbeltAuthorization')
   }
   return `${lines.join('\n')}\n`
 }
