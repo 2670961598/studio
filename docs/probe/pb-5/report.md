@@ -339,7 +339,7 @@ EXIT=0
 |---|---|---|
 | 类型门（根） | `bun run typecheck` | exit 0（`tsc --noEmit`） |
 | 类型门（V2） | `bun run typecheck:v2` | exit 0（`tsc --noEmit -p tsconfig.v2.json`） |
-| 目标测试门 | `bun run test:v2 -- packages/store apps/daemon/test/v2` | **40 files / 386 tests passed**（含本单 6 tests；同命令 11:27 与 11:45 两次复跑均全绿） |
+| 目标测试门 | `bun run test:v2 -- packages/store apps/daemon/test/v2` | **40 files / 386 tests passed**（含本单 6 tests；11:27 与 11:50 两次复跑均全绿） |
 | 全 V2（复跑） | `bun run test:v2` | **105 files / 1567 tests passed，exit 0**。**首跑（11:33）1 failed**（伴 1 条 runner 级 unhandled error：`[vitest-worker]: Timeout calling "onTaskUpdate"`；因输出经 `tail` 截断，失败用例名未留档）——判负载面 flake |
 | 分层宪法 | `bun run guard:boundaries` | PASS：929 文件，0 违例 |
 | 文档门 | `bun run verify:docs` | PASS：V0 六项 6/6，真悬空 0 |
@@ -348,7 +348,7 @@ EXIT=0
 | 相关旧测试（诊断复跑 60s） | `node node_modules/vitest/vitest.mjs run --testTimeout=60000 <同上路径>` | **4 failed files / 5 failed / 225 passed**；5 条全命中旧台账既有断言红（`drill`/`rebuild` 硬编码 v13→现 v15：§七；`create` AIWS 工位 1→2：§八；`help-face` `external` 已退役：§十），另 1 条 runner 级 `onTaskUpdate` 超时（负载面）。本单触及面（jobs/gray/cutover/postmortem/sandbox CLI 与 store rebuild/drill 的 v2 面）无新红 |
 
 - 旧测试红均按 `plan/04 §1.8.2`「修旧测试不立项」处置：**观察位、非门**，V2 门不以此判；本单未改任何旧测试/夹具。
-- **负载面红/绿如实登记**：目标门另有一次实跑红（2026-10-30 11:41：`writer-lease-cli` 的 `jobs catchup`/`ledger rebuild` 2 tests 60s timeout；同机 load average 16.7、collect 513s），判**负载 starvation**——同一命令 11:27/11:45 两次复跑均 40/386 全绿，断言未变。**不以调大 `testTimeout` 刷绿**（`vitest.v2.config.ts` 头注纪律）；夹具内 holder 的子进程兜底/就绪/关闭超时（120s/60s/30s）只是**进程守护余量**，不参与断言、不放宽被测命令的时限。
+- **负载面红/绿如实登记**：目标门另有一次实跑红（2026-10-30 11:41：`writer-lease-cli` 的 `jobs catchup`/`ledger rebuild` 2 tests 60s timeout；同机 load average 16.7、collect 513s），判**负载 starvation**——同一命令 11:27/11:50 两次复跑均 40/386 全绿，断言未变。**不以调大 `testTimeout` 刷绿**（`vitest.v2.config.ts` 头注纪律；本测试未设 describe/单测超时覆盖）：夹具内 holder 的子进程兜底/就绪/关闭超时（120s/60s/30s）只是**进程守护余量**，不参与断言、不放宽被测命令的时限。
 
 #### B.6.5 仍不覆盖 / 缺口（不得据本单外推）
 
