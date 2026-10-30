@@ -101,11 +101,9 @@ export interface ServeRuntime extends ServeOpsFace {
   notifyRelay?: (events: readonly EventRecord[]) => Promise<void>
   /** 对外 API 同进程装配面（MIG-06 收口；v2/14 §四）：runServe 在源启动前 await start()，停机先 close() */
   api: ServeApiWiring
-  /**
-   * 优雅停：先关 API 入口（不再接新请求）→ stopAll 唤起源（不再进新意图）→ 在途 drain
-   * → 关台账（SIGINT/SIGTERM 同一收口；可重入）。队列中未消费意图停机即弃（at-most-once，
-   * 与调度器 markRan 已提交而 ingest 未消费的既有边界同语义——engine.ts 头注）。
-   */
+  /** daemon.yaml seatbelt 解析产物（IMPL-07-09 配置通道；与 EngineDeps.dispatchSeatbelt 同引用，undefined=read-only 缺省） */
+  dispatchSeatbelt: ServeConfig['seatbelt']
+  /** 优雅停：先关 API→stopAll 唤起源→在途 drain→关台账（SIGINT/SIGTERM 同一收口，可重入；未消费意图停机即弃，at-most-once——engine.ts 头注）。 */
   stop(): Promise<void>
 }
 
@@ -115,7 +113,6 @@ const MATRIX_MANIFEST: SourceManifest = {
   kind: 'mention',
   configSchema: '注入工厂（装配单元供 createMentionSource 产物；daemon.yaml matrix 开关）',
 }
-
 
 /**
  * worker 级 wkey 接线（17-§7「按单签发→随派发注入→关单吊销」；src/engine/worker-key.ts）。
@@ -368,6 +365,7 @@ export function buildServeRuntime(
     ...(hrDigester !== undefined ? { hrSync: hrDigester } : {}),
     ...(roomFace !== undefined ? { rooms: roomFace } : {}),
     ledger, // 已在装配序开头过三不入·库闸（appendEvent 写前扫描）
+    ...(config.seatbelt !== undefined ? { dispatchSeatbelt: config.seatbelt } : {}), // IMPL-07-09 配置通道（缺省不注入=read-only）
     registry,
     ...(judgeHook !== undefined ? { judge: judgeHook } : {}), // 160-B 两址精序（缺省不注入=规则缺省档）
     assembler: makeAssembler(),
@@ -581,6 +579,7 @@ export function buildServeRuntime(
     scheduler,
     sources,
     api,
+    dispatchSeatbelt: config.seatbelt,
     ...opsFace,
     evolveSelfCheck,
     ...(hotReload !== undefined ? { hotReload } : {}),

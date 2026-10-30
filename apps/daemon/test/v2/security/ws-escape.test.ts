@@ -554,12 +554,12 @@ describe('接线面·真引擎：executeDispatch 前置 gate（SEC-FC-05 后半�
 })
 
 describe('接线面·装配：注册面走派发域唯一调用点（源侧锚，防回退「不传圈定」）', () => {
-  it('executor-face 用 dispatchAdapterResolver()，旧组合 judgeAwareResolver(tierAwareResolver()) 不存在', () => {
+  it('executor-face 用 dispatchAdapterResolver(config.seatbelt)，旧组合 judgeAwareResolver(tierAwareResolver()) 不存在', () => {
     const faceSrc = readFileSync(
       fileURLToPath(new URL('../../../src/assembly/serve/executor-face.ts', import.meta.url)),
       'utf8',
     )
-    expect(faceSrc).toContain('dispatchAdapterResolver()')
+    expect(faceSrc).toContain('dispatchAdapterResolver(config.seatbelt)')
     expect(faceSrc).not.toContain('judgeAwareResolver(tierAwareResolver())')
   })
 

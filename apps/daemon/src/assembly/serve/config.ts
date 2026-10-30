@@ -13,7 +13,9 @@
  *     泛化，而是「该键已被规范删除」的显式拒绝）；
  *   - 平台/人事/matrix/频道交叉校验（CONFIG_INVALID 明报，校验顺序不变）；
  *   - 由配置派生的启动身份 daemonIdentity（**签根只从秘密源注入** → 署名上下文/工号）；
- *   - SEC-WD-02 绑定一致性：org-config `company.platform` 与 daemon.yaml `platform` 不一致＝拒启。
+ *   - SEC-WD-02 绑定一致性：org-config `company.platform` 与 daemon.yaml `platform` 不一致＝拒启；
+ *   - seatbelt 配置通道（IMPL-07-09 随动）：三键 → `ServeConfig.seatbelt`（缺省不写＝read-only；
+ *     workspace-write 须显式 tier＋绝对路径 roots＋authorization，fail-closed 不静默放宽）。
  *
  * 签根供给（plan/05 IMPL-07-06；v2/15 SEC-FC-02）：
  *   - daemon.yaml **不再承载任何网关密钥值**（键删除，出现即拒）；值只从部署秘密源注入——
@@ -27,12 +29,13 @@
  * demo 随机源（可注入）。只收配置校验件（serveconfig/coerce、hrsync/config、channels/channels）
  * 与引擎缺省常量。runtime.ts / run.ts / executor-face.ts 从这里取同一份配置契约。
  */
+import type { SeatbeltGrant } from '@studio-next/adapters'
 import { ENGINE_CONFIG_DEFAULTS } from '../../engine/engine.ts'
 import { parseWhitelistSpec } from '../../engine/directive/index.ts'
 import { parseJudgeSites } from '../../engine/judge/sites129.ts'
 import { parseModelTierTickets } from '../../engine/tier/model-tier.ts'
 import { parsePersonInflightOverrides } from '../../engine/todoqueue/queue.ts'
-import { bool, num, rejectRemovedGatewayKey, str } from '../serveconfig/coerce.ts'
+import { bool, coerceSeatbeltGrant, num, rejectRemovedGatewayKey, str, type SeatbeltConfigRaw } from '../serveconfig/coerce.ts'
 import { coerceHrServeKey, HR_SERVE_DEFAULTS, validateHrServeCross, type HrServeConfig } from '../hrsync/config.ts'
 import { crossValidateMatrixChannels } from '../channels/channels.ts'
 
@@ -227,6 +230,14 @@ export interface ServeConfig extends HrServeConfig {
    * 已删）。保留此位只为把「恒定开」写成类型事实（runtime.ts 的旧分支成为静态死分支）。
    */
   gateway: true
+  /**
+   * 派发 seatbelt 配置通道（IMPL-07-09 随动；v2/15 §一 SEC-FC-05）：daemon.yaml 三键
+   * `seatbeltTier`/`seatbeltWriteRoots`/`seatbeltAuthorization` 的解析产物。
+   * **缺省 undefined＝read-only 最严**（不注入 grant）；workspace-write 只在三键齐备时成立；
+   * 解析/校验在 serveconfig/coerce.ts（fail-closed，不静默放宽）——本字段是唯一装配事实源，
+   * resolver 与 `EngineDeps.dispatchSeatbelt` 同取此一处。
+   */
+  seatbelt?: SeatbeltGrant
   /** LocalFile 平台根（platform: localfile 时生效；缺省 <rootDir>/platform） */
   platformDir?: string
   /** Taiga 实例根（platform: taiga 时必配；如 http://localhost:9000——/api/v1 由客户端拼接，尾斜杠自动剥） */
@@ -333,6 +344,12 @@ export function parseDaemonConfig(text: string): ServeConfig {
       throw new Error(`daemon.yaml 第 ${i + 1} 行 value 为空（v0 不收嵌套/空值）：${line}`)
     }
     if (/^[\[{]|^\s*-/.test(valueRaw)) {
+      if (key === 'seatbeltWriteRoots') {
+        throw new Error(
+          `daemon.yaml 第 ${i + 1} 行 seatbeltWriteRoots 须为引号包裹的 JSON 数组字符串（如 '["/abs/root"]'）——` +
+            `扁平 YAML 不收裸列表：${line}`,
+        )
+      }
       throw new Error(`daemon.yaml 第 ${i + 1} 行是嵌套/列表值（v0 只收扁平标量）：${line}`)
     }
     out[key] = parseScalar(valueRaw.split(' #')[0] ?? valueRaw)
@@ -342,6 +359,8 @@ export function parseDaemonConfig(text: string): ServeConfig {
 
 function coerceServeConfig(raw: Record<string, string | number | boolean>): ServeConfig {
   const cfg: ServeConfig = { ...DEFAULT_SERVE_CONFIG }
+  // seatbelt 三键原文（键间交叉校验在循环后一次性收口——read-only 给 roots/auth 即拒）
+  const seatbeltRaw: SeatbeltConfigRaw = {}
   for (const [key, value] of Object.entries(raw)) {
     switch (key) {
       case 'db': cfg.db = str(value, key); break
@@ -465,6 +484,10 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         coerceHrServeKey(cfg, key, value, { str, num, bool })
         break
       case 'reloadWatch': cfg.reloadWatch = bool(value, key); break
+      // —— seatbelt 配置通道（IMPL-07-09 随动；缺省不写=read-only；三键交叉校验在循环后）——
+      case 'seatbeltTier': seatbeltRaw.tier = value; break
+      case 'seatbeltWriteRoots': seatbeltRaw.writeRoots = value; break
+      case 'seatbeltAuthorization': seatbeltRaw.authorization = value; break
       // —— SEC-FC-01/02（v2/15 §一）：网关开关键与密钥键**已从生产配置面删除** ——
       //    不是「未知键」的泛化拒绝：明报「该键已删除 + 替代供给面」，防旧配置静默漂移。
       case 'gateway':
@@ -497,6 +520,10 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         throw new Error(`daemon.yaml：未知配置键 ${key}（v0 最小面，见 serve.ts 头注）`)
     }
   }
+  // —— seatbelt 三键交叉校验（IMPL-07-09）：缺省不写＝undefined（read-only 最严）；任何
+  //    read-only 携带放宽键/workspace-write 缺键或根非法＝CONFIG_INVALID 拒启（不静默放宽）
+  const seatbelt = coerceSeatbeltGrant(seatbeltRaw)
+  if (seatbelt !== undefined) cfg.seatbelt = seatbelt
   // —— taiga 必配键交叉校验（fail-fast：parse 面一次收口；直接构造 ServeConfig 的测试面
   //    由 wirePlatform/createTaigaPlatform validateOptions 二道兜底）——
   if (cfg.platform === 'taiga') {

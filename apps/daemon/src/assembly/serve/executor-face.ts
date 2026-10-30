@@ -84,9 +84,10 @@ export function wireExecutorFace(config: ServeConfig, deps: ExecutorFaceDeps): E
     // 对两形态都 unknown-executor——judge 位从未真正可装配的潜伏缺口随本单一并闭合）。
     // seatbelt 圈定（IMPL-07-09 / SEC-FC-05 后半）：组合走派发域唯一调用点
     // （dispatch-seatbelt.ts；07-08 两参签名随动），省略 grant＝read-only 最严——「不传=
-    // 不圈定」路径不存在。显式放宽的配置来源（daemon.yaml 键）未立单，故此处只绑缺省档；
-    // 放宽入口=该单的 dispatchAdapterResolver(grant) 一处（不在此另开第二写面）。
-    wireRegistry(registry, agentConf, dispatchAdapterResolver())
+    // 不圈定」路径不存在。显式放宽只经 daemon.yaml 配置通道（serve/config.ts → 同 config
+    // 的 seatbelt 字段；runServe/buildServeRuntime 同一份），本处与 EngineDeps.dispatchSeatbelt
+    // 同取该 grant；未写三键＝undefined＝read-only。
+    wireRegistry(registry, agentConf, dispatchAdapterResolver(config.seatbelt))
     log(
       `[serve] executor 注册（agent.yaml=${config.agentYaml}）：${registry.list().map((e) => `${e.name}${e.default ? '(default)' : ''}`).join('、')}`,
     )

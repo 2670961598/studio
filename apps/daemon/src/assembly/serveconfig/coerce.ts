@@ -13,12 +13,16 @@
  *   ② 已删除键的显式拒绝 rejectRemovedGatewayKey（`gateway`/`gatewaySecret`——不是「未知键」泛化）；
  *   ③ 签根解析 resolveGatewaySecret（env `STUDIO_GATEWAY_SECRET` ＞ 无公司目录 demo 临时随机；否则拒）；
  *   ④ SEC-WD-02 绑定比对 assertPlatformBinding（org-config company.platform vs daemon.yaml platform）；
- *   ⑤ daemonIdentity（签根＋快照 → 网关署名上下文/工号）——serve/runtime.ts 经 serve/config.ts 同源取用。
+ *   ⑤ daemonIdentity（签根＋快照 → 网关署名上下文/工号）——serve/runtime.ts 经 serve/config.ts 同源取用；
+ *   ⑥ seatbelt 配置通道 coerceSeatbeltGrant（daemon.yaml 三键 → SeatbeltGrant；缺省不写=read-only，
+ *      workspace-write 须显式 tier＋绝对路径根＋授权留痕——IMPL-07-09 随动）。
  *
  * 边界：本文件零业务 IO；唯一进程面＝env 秘密读取（只报键名不报值）与 demo 随机源（可注入求确定性）。
  */
 
 import { randomBytes } from 'node:crypto'
+import { isAbsolute } from 'node:path'
+import { DEFAULT_SEATBELT_TIER, resolveSeatbeltGrant, SEATBELT_TIERS, type SeatbeltGrant } from '@studio-next/adapters'
 import { configInvalid } from '@studio-next/contract'
 import type { CompanySnapshot } from '@studio-next/contract'
 import type { SignatureContext } from '@studio-next/gateway'
@@ -41,6 +45,79 @@ export function num(v: unknown, key: string): number {
 export function bool(v: unknown, key: string): boolean {
   if (typeof v !== 'boolean') throw new Error(`daemon.yaml：${key} 须为 true/false`)
   return v
+}
+
+// ---------------------------------------------------------------------------
+// seatbelt 配置通道（IMPL-07-09 随动；daemon.yaml 三键 → SeatbeltGrant）
+// ---------------------------------------------------------------------------
+
+/** seatbelt 三键原文（serve/config.ts 扁平解析后交接；键缺省不写＝undefined） */
+export interface SeatbeltConfigRaw {
+  tier?: string | number | boolean
+  writeRoots?: string | number | boolean
+  authorization?: string | number | boolean
+}
+
+/**
+ * daemon.yaml seatbelt 三键 → 派工圈定授权（**缺省不写＝undefined＝read-only 最严**）。
+ * fail-closed 校验（不静默放宽、不静默补全）：
+ *   - tier 值域封闭（read-only|workspace-write；'off' 一类「关掉即裸」拒）；
+ *   - read-only（含未写 tier 的缺省档）给 roots/authorization → 拒（read-only 无放宽面）；
+ *   - workspace-write 缺 roots/authorization、roots 非 JSON 数组/空数组/非字符串项/相对路径 → 拒；
+ *   - 档位语义二道守门＝resolveSeatbeltGrant（本文件不复制规则，只做 YAML 形态收窄）。
+ */
+export function coerceSeatbeltGrant(raw: SeatbeltConfigRaw): SeatbeltGrant | undefined {
+  if (raw.tier === undefined && raw.writeRoots === undefined && raw.authorization === undefined) return undefined
+  const tier = raw.tier === undefined ? DEFAULT_SEATBELT_TIER : str(raw.tier, 'seatbeltTier')
+  if (!SEATBELT_TIERS.some((allowed) => allowed === tier)) {
+    throw new Error(
+      `daemon.yaml：seatbeltTier 须为 ${SEATBELT_TIERS.join('|')}（实得 ${tier}）——'off' 一类「关掉即裸」不是档位`,
+    )
+  }
+  if (tier === 'read-only') {
+    if (raw.writeRoots !== undefined) {
+      throw new Error(
+        'daemon.yaml：read-only 档（含未声明 seatbeltTier 的缺省档）不得给 seatbeltWriteRoots（放宽须显式 tier: workspace-write）',
+      )
+    }
+    if (raw.authorization !== undefined) {
+      throw new Error(
+        'daemon.yaml：read-only 档（含未声明 seatbeltTier 的缺省档）不得给 seatbeltAuthorization（read-only 无放宽面）',
+      )
+    }
+    return { tier: 'read-only' }
+  }
+  if (raw.writeRoots === undefined) {
+    throw new Error('daemon.yaml：seatbeltTier: workspace-write 须配 seatbeltWriteRoots（JSON 数组字符串，绝对路径）')
+  }
+  if (raw.authorization === undefined) {
+    throw new Error('daemon.yaml：seatbeltTier: workspace-write 须配 seatbeltAuthorization（谁/何单/何策略）')
+  }
+  const writeRoots = parseSeatbeltWriteRoots(str(raw.writeRoots, 'seatbeltWriteRoots'))
+  const authorization = str(raw.authorization, 'seatbeltAuthorization').trim()
+  if (authorization === '') throw new Error('daemon.yaml：seatbeltAuthorization 须非空白（谁/何单/何策略）')
+  resolveSeatbeltGrant({ tier: 'workspace-write', writeRoots, authorization }) // 二道守门（空数组/相对路径/档位语义）
+  return { tier: 'workspace-write', writeRoots, authorization }
+}
+
+/** JSON 数组字符串 → 绝对路径根列表（非 JSON/非数组/空数组/非字符串项/相对路径一律拒） */
+function parseSeatbeltWriteRoots(raw: string): string[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new Error(`daemon.yaml：seatbeltWriteRoots 须为 JSON 数组字符串（如 '["/abs/root"]'；实得 ${JSON.stringify(raw)}）`)
+  }
+  if (!Array.isArray(parsed)) throw new Error('daemon.yaml：seatbeltWriteRoots 须为 JSON 数组（收到非数组 JSON）')
+  if (parsed.length === 0) throw new Error('daemon.yaml：seatbeltWriteRoots 不得为空数组——workspace-write 须显式点名写域根')
+  return parsed.map((root): string => {
+    if (typeof root !== 'string' || root === '' || !isAbsolute(root)) {
+      throw new Error(
+        `daemon.yaml：seatbeltWriteRoots 每项须为绝对路径字符串（收到 ${JSON.stringify(root)}）——相对路径根在内核面按 cwd 解析＝隐式放宽`,
+      )
+    }
+    return root
+  })
 }
 
 /** 网关签根 env-ref 名（`SEC-GW-SIGNING` 的 v0 env 通道；键名可露面，值永不入日志/台账） */
