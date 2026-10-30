@@ -629,7 +629,7 @@ describe('detect（launch 前必跑；不达标明报，绝不静默降级）', 
     expect(r.ok).toBe(true)
     expect(r.version).toMatch(/^\d+\.\d+/)
     expect(r.gaps.length).toBe(1)
-    expect(r.gaps[0]).toMatch(/^dsh-version-unlocked:expected 0\.2\.0-rc\.2,got /)
+    expect(r.gaps[0]).toMatch(/^dsh-version-unlocked:expected 0\.2\.1-rc\.5,got /)
   })
 })
 

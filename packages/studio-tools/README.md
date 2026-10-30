@@ -67,7 +67,7 @@ cd packages/studio-tools && bun run typecheck && bun run test
 
 ## CLI 挂载样例（【拟稿待核】——形态按 docs/27 探针清单 P 系列口径真机核实前不得当实锤）
 
-### dsh 插件（【拟稿待核】dsh 0.2.0-rc.2 的插件/mcp 配置形态未见文档实锤）
+### dsh 插件（【拟稿待核】dsh 0.2.1-rc.5 的插件/mcp 配置形态未见文档实锤）
 
 ```jsonc
 // 拟稿：dsh mcp 插件配置（挂载键名与位置待 dsh 真机核实后回改）

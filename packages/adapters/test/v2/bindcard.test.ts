@@ -84,7 +84,7 @@ describe('BIND-DSH-01 卡：必答行集与事实口径', () => {
   it('卡可查：标识/版本/宿主钉住/摘要未计算/ownerRef 非空；卡内不变量通过', () => {
     const card = okOf(loadBindingCard('BIND-DSH-01'))
     expect([card.cardId, card.cardVersion, card.family]).toEqual(['BIND-DSH-01', 'v2.0', 'dsh'])
-    expect([card.host.version, card.host.license]).toEqual(['0.2.0-rc.2', 'MIT'])
+    expect([card.host.version, card.host.license]).toEqual(['0.2.1-rc.5', 'MIT'])
     expect(card.digest.computed).toBe(false)
     expect(card.digest.note).toContain('未计算')
     expect(card.ownerRef.trim()).not.toBe('')
@@ -152,7 +152,7 @@ describe('BIND-DSH-01 卡：必答行集与事实口径', () => {
 
   it('版本不符＝弃用（换宿主＝新档案，不静默降级）', () => {
     expectErr(loadBindingCard('BIND-DSH-01', '0.2.0'), 'bindcard/host-mismatch', '弃用')
-    expectErr(loadBindingCard('BIND-CLI-CODEX-01', '0.2.0-rc.2'), 'bindcard/host-mismatch')
+    expectErr(loadBindingCard('BIND-CLI-CODEX-01', '0.2.1-rc.5'), 'bindcard/host-mismatch')
     expect(okOf(loadBindingCard('BIND-DSH-01', DSH_HOST_VERSION)).cardId).toBe('BIND-DSH-01')
   })
 
@@ -289,7 +289,7 @@ describe('能力包引用：只携引用、不自封权威、缺目标执行器�
     const loaded = okOf(
       loadCapabilityPacks([
         claim({ binding: 'generic' }),
-        { assetId: 'pack.dsh-plugin', kind: 'plugin', binding: 'exclusive', targetExecutor: 'dsh', contentDigest: DIGEST_B, required: true, compatibility: ['dsh@0.2.0-rc.2'] },
+        { assetId: 'pack.dsh-plugin', kind: 'plugin', binding: 'exclusive', targetExecutor: 'dsh', contentDigest: DIGEST_B, required: true, compatibility: ['dsh@0.2.1-rc.5'] },
       ]),
     )
     expect([loaded.refs.length, loaded.warnings.length]).toEqual([2, 0])

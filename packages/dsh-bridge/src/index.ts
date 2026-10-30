@@ -46,7 +46,8 @@
  *      `exports["."]` 同步改指 dist 产物，消费方零改动。
  *   4. `dsh` 段本就是 dsh 宿主清单命名空间（既有 `dsh.bundle.patch` 在此）；宿主只读
  *      `dsh.bundle`/`dsh.profile`、不校验未知键（装机源码 dsh-plugin-manager 0.2.0-rc.2
- *      唯一读点 `manifest.dsh?.bundle?.patch`）——`entry` 是同段新键，不改宿主语义。
+ *      唯一读点 `manifest.dsh?.bundle?.patch`；2026-10-30 dsh 升 0.2.1-rc.5 后 dump-config
+ *      合成面复核不变）——`entry` 是同段新键，不改宿主语义。
  *
  * 失败面（对齐 v2/11-§0.4-6 通道）：缺 `dsh` 段/缺 `entry`＝`bridge/entry-missing`；
  * 顶层或段/键坏形（非对象/非字符串/空白/绝对路径/盘符/`..`/`.` 段/空段/反斜杠）＝
