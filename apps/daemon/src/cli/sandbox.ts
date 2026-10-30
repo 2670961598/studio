@@ -1,7 +1,7 @@
 // ✦ DEV-45 结构刀（studio-dev-78）：本文件自 apps/daemon/src/bin.ts L742-L812 逐字节拆出（纯移动零功能变更；核验=对 git 历史旧路径对应行区间字节一致，仅增本行头注、import 头与 export 关键字）。
 import { existsSync } from 'node:fs'
 import path from 'node:path'
-import { openLedger } from '@studio-next/store'
+import { openLedgerWriter } from '@studio-next/store'
 import { renderSandboxLines, runCandidateSandbox } from '../evolve/sandbox.ts'
 import { CONCISE, SECTION } from './usage.ts'
 import { helpOk, usageFail, wantsHelp } from './help.ts'
@@ -38,7 +38,9 @@ export async function cmdSandbox(argv: string[]): Promise<number> {
     return 1
   }
   try {
-    const ledger = openLedger(resolvedDb)
+    // 写面（候选状态迁移 + verification 快照）：取 writer 租约（daemon 持锁时
+    // STALL/writer-lease-held 拒，PB-5 围栏覆盖）
+    const ledger = openLedgerWriter(resolvedDb, 'cli:sandbox')
     try {
       const row = ledger.getCandidate(candidateId)
       if (row === undefined) {

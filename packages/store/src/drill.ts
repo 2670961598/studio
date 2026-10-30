@@ -25,6 +25,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { configInvalid, type EventRecord } from '@studio-next/contract'
 import { openLedger } from './ledger.ts'
+import { openLedgerWriter } from './writer-lease.ts'
 import { rebuild } from './rebuild.ts'
 import {
   backupCostDaily,
@@ -221,10 +222,13 @@ export async function runLedgerDrill(dbPath: string): Promise<DrillReport> {
   const tmp = await mkdtemp(path.join(tmpdir(), 'studio-next-drill-'))
   try {
     // ① 自建语料写入（events＋钱账样本）→ 快照（重建前基准）→ dump JSONL（tmp）＋钱账备份（库同址）
+    //    写临时库=写面：取 writer 租约（PB-5 围栏覆盖；与 daemon/其它写者同规则，目标库有
+    //    活写者持锁即 STALL/writer-lease-held 拒——演习也不并发双写）。③ rebuild 内部再取一次
+    //    （本条已 close 释放）；④ 验收读面走 openLedger（读命令不纳围栏）。
     const jsonl = path.join(tmp, 'drill.jsonl')
     const corpus = drillCorpus()
     const costRows = costDailyCorpus()
-    const ledger = openLedger(dbPath)
+    const ledger = openLedgerWriter(dbPath, 'store:drill')
     for (const e of corpus) ledger.appendEvent(e)
     for (const row of costRows) ledger.appendCostDaily(row)
     const before = ledger.queryEvents()

@@ -1,7 +1,7 @@
 // ✦ DEV-45 结构刀（studio-dev-78）：本文件自 apps/daemon/src/bin.ts L900-L990 逐字节拆出（纯移动零功能变更；核验=对 git 历史旧路径对应行区间字节一致，仅增本行头注、import 头与 export 关键字）。
 import { existsSync } from 'node:fs'
 import path from 'node:path'
-import { openLedger } from '@studio-next/store'
+import { openLedger, openLedgerWriter } from '@studio-next/store'
 import { renderGrayCheckLines, renderGrayStatusLines, checkGrayWindow, closeGrayWindow, readGrayWindow } from '../evolve/gray.ts'
 import { CONCISE, SECTION } from './usage.ts'
 import { helpOk, usageFail, wantsHelp } from './help.ts'
@@ -33,8 +33,12 @@ export async function cmdGray(argv: string[]): Promise<number> {
     return 1
   }
   const assetRoot = parsed.flags.root ?? '.'
+  // 写面分派（PB-5 围栏覆盖）：--check（kv/事件/生产文件）与 --close（kv）是写面 → 取
+  // writer 租约（daemon 持锁时 STALL/writer-lease-held 拒）；缺省查窗只读，保持 openLedger
+  // ——读命令不进围栏（读写面分离，见 packages/store/src/writer-lease.ts 头注边界）。
+  const writeAction = parsed.booleans.has('check') || parsed.booleans.has('close')
   try {
-    const ledger = openLedger(resolvedDb)
+    const ledger = writeAction ? openLedgerWriter(resolvedDb, 'cli:gray') : openLedger(resolvedDb)
     try {
       // 备份锚点派生（cutover ⑥ 定名约定：--root + assetPath + .bak-<候选id>——回滚物理基础）
       const deriveBackup = (assetPath: string): string => path.resolve(assetRoot, `${assetPath}.bak-${candidateId}`)

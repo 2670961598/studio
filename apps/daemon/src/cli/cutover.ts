@@ -1,7 +1,7 @@
 // ✦ DEV-45 结构刀（studio-dev-78）：本文件自 apps/daemon/src/bin.ts L813-L899 逐字节拆出（纯移动零功能变更；核验=对 git 历史旧路径对应行区间字节一致，仅增本行头注、import 头与 export 关键字）。
 import { existsSync } from 'node:fs'
 import path from 'node:path'
-import { openLedger } from '@studio-next/store'
+import { openLedgerWriter } from '@studio-next/store'
 import { renderCutoverLines, runCutover } from '../evolve/cutover.ts'
 import { CONCISE, SECTION } from './usage.ts'
 import { helpOk, usageFail, wantsHelp } from './help.ts'
@@ -46,7 +46,9 @@ export async function cmdCutover(argv: string[]): Promise<number> {
     return 1
   }
   try {
-    const ledger = openLedger(resolvedDb)
+    // 写面（事件/候选状态/生产文件/灰度窗）+ 迁移都要独占：取 writer 租约（daemon 持锁时
+    // STALL/writer-lease-held 拒，PB-5 围栏覆盖）
+    const ledger = openLedgerWriter(resolvedDb, 'cli:cutover')
     try {
       const result = runCutover(ledger, candidateId, {
         newFilePath: filePath,

@@ -17,7 +17,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { configInvalid } from '@studio-next/contract'
-import { openLedger } from './ledger.ts'
+import { openLedgerWriter } from './writer-lease.ts'
 import { EXCLUDED_DOMAINS, excludedDomainRefs, renderExcludedDomainsSection } from './backup.ts'
 
 // 排除域规范常量单点定义在 backup.ts（DOM-04 模块）；rebuild 固定入口 re-export 便于消费方
@@ -35,11 +35,14 @@ export interface RebuildResult {
 /**
  * JSONL → 新库逐条 appendEvent（事务原子）。
  * 返回前 close 目标句柄（rebuild 自管生命周期；演习后由调用方重新 openLedger 验收）。
+ * 打开走 `openLedgerWriter`（PB-5 围栏覆盖）：重建是写面（建库/migrate/重放），目标库上
+ * 另有写者（如 daemon）持租约时 `STALL/writer-lease-held` 拒，不并发双写；失败路径同样经
+ * `close()` 释放租约（不把锁留给下一个写者）。
  */
 export function rebuild(source: string, target: string): RebuildResult {
   const text = readFileSync(source, 'utf8')
   const lines = text.split('\n')
-  const ledger = openLedger(target)
+  const ledger = openLedgerWriter(target, 'store:rebuild')
   const db = ledger.db
   let count = 0
   db.exec('BEGIN')

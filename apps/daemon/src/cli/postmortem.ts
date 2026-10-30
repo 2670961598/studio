@@ -1,7 +1,7 @@
 // ✦ DEV-45 结构刀（studio-dev-78）：本文件自 apps/daemon/src/bin.ts L991-L1083 逐字节拆出（纯移动零功能变更；核验=对 git 历史旧路径对应行区间字节一致，仅增本行头注、import 头与 export 关键字）。
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { openLedger } from '@studio-next/store'
+import { openLedgerWriter } from '@studio-next/store'
 import { parsePostmortemInput, renderPostmortemLines, runPostmortemChain } from '../evolve/postmortem.ts'
 import { CONCISE, SECTION } from './usage.ts'
 import { helpOk, usageFail, wantsHelp } from './help.ts'
@@ -65,7 +65,9 @@ export async function cmdPostmortem(argv: string[]): Promise<number> {
     return 1
   }
   try {
-    const ledger = openLedger(resolvedDb)
+    // 写面（POSTMORTEM 事件落账 + 案例条目落盘）：取 writer 租约（daemon 持锁时
+    // STALL/writer-lease-held 拒，PB-5 围栏覆盖）
+    const ledger = openLedgerWriter(resolvedDb, 'cli:postmortem')
     try {
       const result = runPostmortemChain(ledger, {
         input: parsedInput,

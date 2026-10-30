@@ -273,14 +273,22 @@ EXIT=0
 - **正面判据（v2/12 §5.3「第二个被拒或串行化」）在 `openLedgerWriter` 路径上已取到**：第二写者为真独立进程，被框架围栏以 `STALL/writer-lease-held` 拒绝（detail 含持有者 pid/owner，不覆盖）；`release` 后第二写者可取并读写。**可复测**（`writer-lease.test.ts`＋`log-07` 探针）。
 - **不自行改判主表**：§二 PRB-14 行仍是 2026-10-29 采样时的 `executed（负向）` 历史登记；是否把「框架围栏拒绝第二写者」升为该行正面结论、以及是否重跑 PRB-14 探针并更新主表，归 v2/12 §5.3 唯一主表的探针收口方复核。本附录**不写「PRB-14 通过」**。
 - **PB-5 仍不通过**：PRB-23 仍 `not-executed`（部署值表/消费方观察缺口写口缺位；平台读侧契约不成立）；PRB-13 仍 `not-executed`。本附录不宣布 PB-5 通过。
-- **不宣布「台账单写」整体成立**：围栏只覆盖 `openLedgerWriter` 调用者（本单=`runServe`）；本仓 CLI/panel/rebuild/drill 等仍直接 `openLedger`，可绕过围栏；多机/容器/NFS/路径别名未验证。
+- **不宣布「台账单写」整体成立**：围栏已覆盖 `runServe`＋写命令（`gray` 写分支/`cutover`/`postmortem`/`company` seed/`jobs catchup`/`sandbox`/`rebuild`/`drill`）；**读命令/panel 读面仍 `openLedger`**（未迁只读面），多机/容器/NFS/路径别名未验证。
 - **不是 docs/80 §8.2/§8.5 的 `WriterLeasePort`**：无 TTL/续期/`LeaseGrant`/单调 `FenceToken`；pid 复用按存活 fail-closed；O_EXCL 后内容落盘前崩溃留空锁需人工清理（`writer-lease-unreadable` 拒启，不自动删无法证明死亡的锁）。
 
 ### B.5 缺口（下一步）
 
-1. **其它写者未纳围栏**：CLI/panel/rebuild/drill 的 `openLedger` 调用点需迁 `openLedgerWriter`（写命令）或 `openLedgerReadonly`（读命令）；迁移完成前不得称台账唯一写入者由机制保证。
+1. **剩余未纳围栏**：read-only 命令与 panel 读面的 `openLedger` 调用点需迁 `openLedgerReadonly`（face 不兼容 Ledger，需适配）；迁移完成前不得称台账唯一写入者由机制保证。
 2. **WriterLeasePort 语义仍缺**：TTL/renew、单调 fence、`REC-AUTH-05/06` 记录形状与跨进程交接协议（docs/80 §8.2/§8.5）未实现。
 3. **PRB-14 探针复核**：按 v2/12 §5.3 由收口方复测/登记（正负同验、原始日志留档）；PRB-23/PRB-13 的未执行项不受影响。
 4. **跨环境互斥未验证**：容器 pid 命名空间、NFS/overlay 的 `O_EXCL` 语义、符号链接/绑定点路径别名——本件只承诺同机同文件系统同规范路径。
 5. **崩溃窗口**：取锁后内容落盘前崩溃留空锁（需人工清理）；pid 复用会误判存活（fail-closed）。无自动 stale 清理，避免误删活锁。
 
+
+
+### B.6 写命令覆盖扩展（2026-10-29，后续施工）
+
+- 已迁 `openLedgerWriter`：`runServe`、`gray`（写分支/--check/--close）、`cutover`、`postmortem`、`company create` seed、`jobs catchup`、`sandbox`、`store rebuild`、`store drill`。
+- 未迁：`ledger dump`/`jobs list`/`candidates`/`gray` 只读查窗、panel `openLedger`（readonly face 与 Ledger 不兼容，另单适配）。
+- 证据：`packages/store/test/v2/writer-lease-cli.test.ts` 6 tests（持锁拒/释放后可执行/读命令不纳围栏/rebuild 坏行不残留锁）；全 V2 **1567 tests**。
+- 仍不宣布 PB-5 通过（PRB-23/PRB-13 not-executed）。

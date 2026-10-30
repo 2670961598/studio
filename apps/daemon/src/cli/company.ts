@@ -8,7 +8,7 @@ import { RepoInputError } from '@studio-next/company'
 import { CREATE_PLATFORMS, companyCreate } from '@studio-next/company'
 import type { CreatePlatform } from '@studio-next/company'
 import { createLocalPlatform } from '@studio-next/localplatform'
-import { openLedger } from '@studio-next/store'
+import { openLedgerWriter } from '@studio-next/store'
 import type { FlowPlatform } from '@studio-next/contract'
 import { applyOrgChangeOrder, inspectSoleWriter, parseOrgChangeOrderJson, renderSoleWriterAudit } from '../engine/company-commit/index.ts'
 import { seedJobs } from '../assembly/serve.ts'
@@ -152,7 +152,9 @@ export async function cmdCompanyCreate(argv: string[]): Promise<number> {
         // S3/E15② 配套：裸 create（未声明 --platform → 无 provision 相位建 var/）时库目录
         // 无人先行创建——建库即建目录（缺省即建库的承诺对裸命令同样成立）
         mkdirSync(path.dirname(dbPath), { recursive: true })
-        const ledger = openLedger(dbPath)
+        // 写面（jobs 表播种）：取 writer 租约（daemon 持锁时 STALL/writer-lease-held 拒，
+        // PB-5 围栏覆盖）；--dry-run 不触本回调（create 的 P4 planned 分支），零落盘不破
+        const ledger = openLedgerWriter(dbPath, 'cli:company-create')
         try {
           return seedJobs(ledger, jobs, now)
         } finally {

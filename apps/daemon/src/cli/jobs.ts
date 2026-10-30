@@ -6,11 +6,12 @@
  *     物化岗单）。**只挪槽不派工**：到点意图仍走既有 jobs 源 tick 面（零新轮子）；
  *     停跑根因不在此治（freshness 哨兵事件分诊，§4.3——JOB_STALE 的处置指针即本命令）。
  * 写面纪律：写 ledger.sqlite（jobs 表 next_run_at 一列语义）；库必须已存在（写面不代建库）；
- * 同库并发=SQLite 锁串行（CLI 短事务，与 daemon 拍面无竞态窗——upsert 是单语句原子）。
+ * catchup 是写命令 → 取 writer 租约（daemon 持锁即 STALL/writer-lease-held 拒，PB-5 围栏）；
+ * list 只读 → openLedger（不纳围栏；读写面分离，见 store writer-lease.ts 头注边界）。
  */
 import { existsSync } from 'node:fs'
 import path from 'node:path'
-import { openLedger } from '@studio-next/store'
+import { openLedger, openLedgerWriter } from '@studio-next/store'
 import { CONCISE, SECTION } from './usage.ts'
 import { errText, parseArgv } from './argv.ts'
 import { helpOk, missingSub, unknownSub, usageFail, wantsHelp } from './help.ts'
@@ -81,7 +82,9 @@ export async function cmdJobs(argv: string[]): Promise<number> {
     return usageFail('jobs catchup', '缺少 --job <job_id>', CONCISE.jobs)
   }
   try {
-    const ledger = openLedger(resolved)
+    // 写面（jobs.next_run_at 挪槽）：取 writer 租约（daemon 持锁时 STALL/writer-lease-held 拒，
+    // PB-5 围栏覆盖）；jobs list 是只读面，仍走 openLedger（不纳围栏，读写面分离）
+    const ledger = openLedgerWriter(resolved, 'cli:jobs-catchup')
     try {
       const job = ledger.getJob(jobId)
       if (job === undefined) {
