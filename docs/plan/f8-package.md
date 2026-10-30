@@ -9,16 +9,16 @@
 | 项 | 决定 |
 |---|---|
 | 决定一 OPS | **A：按 v2/14 提案补形**，补齐 REC-WORK-18 字段并接 PORT-HIST |
-| 决定二 NEG | **A：冲 119**（已实现 112 条 executed；7 条 not-executed，见 §四） |
+| 决定二 NEG | **A：冲 119**（决定时点 112 executed/7 not；终态见 §四：119 IDs accounted，判定件层 executed-pass，V4/V5/V6 全链未证） |
 | 决定三 F8/P0 | **A：走完整验收**（本包即施工侧呈报；F8 仍由外部/DSF 签认） |
 
 ## 二、施工侧证据（可复算）
 
 | 门 | 命令 | 结果 |
 |---|---|---|
-| 全 V2 | `mise exec -- bun run verify:v2` | **103 files / 1561 tests**；连续 3 次 exit 0（114s/168s/100s，WriterLease 后） |
+| 全 V2 | `mise exec -- bun run verify:v2` | **105 files / 1567 tests**；@ `204a6c3` 连续 3 次 exit 0（177s/121s/117s） |
 | 文档 | `mise exec -- bun run verify:docs` | PASS 6/6，真悬空 0 |
-| 边界 | `mise exec -- bun run guard:boundaries` | PASS，900 文件扫描，0 违例 |
+| 边界 | `mise exec -- bun run guard:boundaries` | PASS，929 文件扫描，0 违例（2026-10-30 实测） |
 | 秘密扫描 | `mise exec -- node scripts/scan-repo-secrets.mjs` | exit 0，新命中 0；存量基线 20 显式登记 |
 | 包级源码类型 | 7 包 `bun run typecheck` | 7/7 exit 0（源码-only，docs/49 裁） |
 | F5 端口映射 | `mise exec -- node scripts/verify/port-map-rescan.mjs` | PASS 6/6（13 PORT ↔ 20 文件） |
@@ -37,7 +37,7 @@
 
 ## 四、NEG 状态（冻结命令）
 
-- **119/119 IDs executed-pass**（NEG-ENG-01 已由 CJS 拒绝面通过）；not-executed 0。
+- **119/119 IDs accounted**；判定件层 executed-pass；**V4/V5/V6 全链覆盖未证**（DSF B3）。NEG-ENG-01 已由 CJS 拒绝面通过；not-executed 0。
 - **NEG-ENG-01 已收口**：15 包 `exports.require` → `ERR_ESM_ONLY`；ESM import 正例；CJS 包名 require 全拒。
 - 证据：`docs/probe/neg-ring-eng/report.md`；**不得读作 119 executed**。
 - 已执行新增：EMP-02/04/06/07/08/09（contract 纯判定）、RING-01..05（场景/决策）、ORG-02/05/08（投影）、ENG-02/04/05（YAML 上限/版本 fail-fast/证据通道）、WRK/EVD/RUN（16 tests）。
@@ -53,7 +53,7 @@
 | 批 | 状态 | 原因 |
 |---|---|---|
 | PB-3 | **未通过** | 入口缺 PB-2/PRB-08；PRB-17 负向；PRB-18/19/20/21 not-executed |
-| PB-5 | **未通过** | D12 只读打开＋WriterLease 已落；PRB-14 正面（第二写者被框架围栏拒）已可复测；**PRB-23 仍 not-executed** → 平台读侧契约不成立 |
+| PB-5 | **未通过** | D12 只读打开＋WriterLease 已落到 runServe/CLI 写命令/rebuild/drill；PRB-14 正面可复测；**PRB-23/PRB-13 仍 not-executed** → 平台读侧契约不成立 |
 
 证据：`docs/probe/pb-3/report.md`、`docs/probe/pb-5/report.md`。
 
