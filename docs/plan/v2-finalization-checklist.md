@@ -8,13 +8,13 @@
 |---|---|---|
 | 1 | DSF F8 复查通过 | **已过**：DSF-REVIEW-02，27/27 核验列；tag `v2-f8-passed` |
 | 2 | seatbelt 增量 DSF 复查 | **已过**：DSF-REVIEW-03（`f8-dsf-delta-review-seatbelt.md`）；106 files / 1583 tests ×3；SB-1/SB-2 已整改 |
-| 3 | 制作人明示 final | **待明示**；`v2/17` 版本轴仍 draft |
+| 3 | 制作人明示 final | **已签认**：2026-10-30，制作人授权 DSF 侧代签（`docs/49`「V2 定稿签认」）；18 卷已转 `final` |
 | 4 | P0 施工列/DSF 列 | DSF 27/27 已填；施工列 19/8/0（partial 不阻断 F8，但定稿说明须保留） |
 | 5 | PB-3/PB-5 | 未通过；F8 已接受为未证面，定稿须保留“未通过”登记 |
 | 6 | 旧测试存废 | 未裁；13 红文件/20 红用例，定稿前须给处置或“保留观察”结论 |
 | 7 | V2 全门 | `verify:v2` **106 files / 1583 tests** 全绿（×3）；`verify:docs` 6/6；边界 930 文件 0 违例 |
 
-## 二、执行顺序（DSF delta 通过后）
+## 二、执行顺序（已执行，2026-10-30）
 
 1. 记录 DSF 增量结论（`docs/plan/f8-dsf-delta-seatbelt.md` 追加或新件）。
 2. 制作人在 `docs/49` 明示 V2 final。
@@ -31,6 +31,6 @@
 - NEG 119 是 ID accounted + 判定件层；V4/V5/V6 全链未证。
 - 旧测试红不属 V2 门，但 final 说明须给“保留观察/退役/重写”结论。
 
-## 四、结论
+## 四、结论（2026-10-30 收口）
 
-F8 已过，但 **V2 final 还差 DSF 增量复查＋制作人明示**；本检查单不代替签认。
+**V2 已定稿**：F8 通过（DSF-REVIEW-02）＋seatbelt 增量通过（DSF-REVIEW-03）＋制作人签认（授权代签，`docs/49`）；全 18 卷 `final`，`verify:v2` 106 files / 1583 tests、`verify:docs` 6/6。保留项按 §三 原样登记，**不因定稿而清零**。

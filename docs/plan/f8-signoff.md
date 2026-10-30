@@ -24,7 +24,7 @@
 | PB-3 | 未通过（缺 PB-2/PRB-08） |
 | PB-5 | 未通过（PRB-23/PRB-13 not-executed；WriterLease 覆盖 runServe＋CLI 写命令/rebuild/drill，读面未迁） |
 | 旧测试存废 | 未裁 |
-| V2 版本轴 | 不因本记录自动改 `final`；v2/17 §六.1 仍要求 DSF 复查列填满 |
+| V2 版本轴 | **已于 2026-10-30 转 `final`**（v2/17 §六.2 核验列 27/27 已填；制作人签认见 `docs/49`） |
 
 ## 三、效力
 
