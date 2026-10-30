@@ -119,9 +119,20 @@ describe('buildWorkerSeatbeltProfile（纯函数，随派发参数化）', () =>
     ).toContain('(allow network-outbound (remote tcp "localhost:13800"))')
     const closed = buildWorkerSeatbeltProfile({ writeRoots: ['/w'], localRpcEndpoints: [] })
     expect(closed).not.toContain('network-outbound')
+    // 通配出口（host='*'）=裸放行过渡面（darwin 25.3 真机：过滤式 remote 对非回环不生效——
+    // studio-dev-269 att17 复现；回环端点保留过滤式）
     expect(
       buildWorkerSeatbeltProfile({ writeRoots: ['/w'], outboundTcp: [{ host: '*', port: 443 }] }),
-    ).toContain('(allow network-outbound (remote tcp "*:443"))')
+    ).toContain('(allow network-outbound) ;; 通配出口过渡面')
+    expect(
+      buildWorkerSeatbeltProfile({
+        writeRoots: ['/w'],
+        outboundTcp: [
+          { host: '*', port: 443 },
+          { host: 'localhost', port: 8443 },
+        ],
+      }),
+    ).toContain('(allow network-outbound (remote tcp "localhost:8443"))')
   })
 
   it('网域 fail-closed：按域名/IP 收口出口在 macOS remote 过滤器不可表达——生成期显式拒绝（不静默放宽成 * 通配）', () => {
