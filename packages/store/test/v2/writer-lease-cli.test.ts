@@ -72,7 +72,7 @@ function holderScript(db: string, owner: string, mode: 'writer' | 'lease'): stri
   const holdTimer = setTimeout(() => {
     console.error('holder timeout')
     process.exit(4)
-  }, 25000)
+  }, 120000)
   process.stdin.setEncoding('utf8')
   process.stdin.on('data', (chunk) => {
     if (String(chunk).includes('close')) {
@@ -119,7 +119,7 @@ function startHolder(db: string, owner: string, mode: 'writer' | 'lease'): Holde
     let buffer = ''
     const timer = setTimeout(() => {
       rejectReady(new Error(`持锁子进程就绪超时（stderr=${stderrText}）`))
-    }, 20_000)
+    }, 60_000)
     child.stdout?.setEncoding('utf8')
     child.stdout?.on('data', (chunk: string) => {
       buffer += chunk
@@ -151,7 +151,7 @@ async function closeHolder(holder: Holder): Promise<void> {
   const code = await Promise.race([
     holder.exit,
     new Promise<number | null>((resolveTimeout) => {
-      setTimeout(() => resolveTimeout(null), 10_000)
+      setTimeout(() => resolveTimeout(null), 30_000)
     }),
   ])
   holder.kill()

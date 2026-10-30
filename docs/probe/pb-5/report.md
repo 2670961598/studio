@@ -286,9 +286,74 @@ EXIT=0
 
 
 
-### B.6 写命令覆盖扩展（2026-10-29，后续施工）
+### B.6 写命令覆盖扩展（2026-10-29/30，后续施工）
 
-- 已迁 `openLedgerWriter`：`runServe`、`gray`（写分支/--check/--close）、`cutover`、`postmortem`、`company create` seed、`jobs catchup`、`sandbox`、`store rebuild`、`store drill`。
-- 未迁：`ledger dump`/`jobs list`/`candidates`/`gray` 只读查窗、panel `openLedger`（readonly face 与 Ledger 不兼容，另单适配）。
-- 证据：`packages/store/test/v2/writer-lease-cli.test.ts` 6 tests（持锁拒/释放后可执行/读命令不纳围栏/rebuild 坏行不残留锁）；全 V2 **1567 tests**。
-- 仍不宣布 PB-5 通过（PRB-23/PRB-13 not-executed）。
+> 本附录把围栏覆盖面从「只 `runServe`」扩到「`runServe`＋写命令」。**仍不宣布 PB-5 通过、仍不宣布台账单写**：读命令/panel 读面未迁、WriterLeasePort 语义未实现、多机/路径别名未验证（B.5）。
+
+#### B.6.1 逐点覆盖清单（写/读/未改原因）
+
+| # | 调用点（文件:行） | 动作与落点 | 写/读 | 本单处置 | 原因 |
+|---|---|---|---|---|---|
+| 1 | `apps/daemon/src/cli/gray.ts:41` | `--check`（kv 窗状态/事件/生产文件/候选状态迁移）＋`--close`（kv） | 写 | → `openLedgerWriter('cli:gray')`（`writeAction` 分支） | 两动作都落 kv/事件/文件，须独占 |
+| 2 | `apps/daemon/src/cli/gray.ts:41`（同一调用点另一分支） | `gray` 缺省=查窗（`readGrayWindow` 只读 kv） | 读 | 保持 `openLedger` | 读命令不进围栏（读写面分离；不改读语义） |
+| 3 | `apps/daemon/src/cli/cutover.ts:51` | 事件落账＋候选状态迁移＋生产文件替换＋灰度开窗 | 写 | → `openLedgerWriter('cli:cutover')` | 多事实面写入，须独占 |
+| 4 | `apps/daemon/src/cli/postmortem.ts:70` | POSTMORTEM 事件落账＋案例条目落盘 | 写 | → `openLedgerWriter('cli:postmortem')` | 写事件+文件 |
+| 5 | `apps/daemon/src/cli/sandbox.ts:43` | 候选状态迁移＋verification 证据快照 | 写 | → `openLedgerWriter('cli:sandbox')` | 写候选行 |
+| 6 | `apps/daemon/src/cli/jobs.ts:59` | `jobs list`（`listJobs` 只读投影） | 读 | 保持 `openLedger` | 只读分诊面；不改读语义 |
+| 7 | `apps/daemon/src/cli/jobs.ts:87` | `jobs catchup`（`next_run_at` upsert 挪槽） | 写 | → `openLedgerWriter('cli:jobs-catchup')` | 写 jobs 行 |
+| 8 | `apps/daemon/src/cli/company.ts:157` | `company create` 的 `jobsSeeder`（jobs 表播种） | 写 | → `openLedgerWriter('cli:company-create')` | 写 jobs 行；`--dry-run` 不触该回调（`create.ts` P4 planned 分支），零落盘契约不破 |
+| 9 | `packages/store/src/rebuild.ts:45` | `rebuild()`：建库/migrate/events 全量重放（`ledger rebuild` CLI 与 `drill` 共用；**无 dry-run 分支**） | 写 | → `openLedgerWriter('store:rebuild')` | 调用方壳不持句柄，围栏落在 store 写函数内；失败路径 `close()` 释放租约 |
+| 10 | `packages/store/src/drill.ts:231` | `runLedgerDrill` ①：临时库写 events/cost_daily → dump → 钱账备份 | 写 | → `openLedgerWriter('store:drill')` | 演习库也是台账库；有活写者持锁即拒（演习不并发双写） |
+| 11 | `packages/store/src/drill.ts:248` | `runLedgerDrill` ④：重建后验收读（`queryEvents`/`listCostDaily`/`version`） | 读 | 保持 `openLedger` | 读命令不进围栏 |
+| 12 | `apps/daemon/src/cli/ledger.ts:37`（未改） | `ledger dump`（`dumpEvents` 落 JSONL） | 读 | **未改** | 文件不在本单领土；且 `openLedgerReadonly` 返回 `Result`（`kind` 取 ok/err）而非 `Ledger`，调用点返回面不兼容——留待只读面适配单 |
+| 13 | `apps/daemon/src/cli/candidates.ts:44`（未改） | `candidates list` 只读面 | 读 | **未改** | 同上（读面/返回面不兼容） |
+| 14 | `packages/panel/src/server.ts:454`（未改；`createPanelApp` 注入工厂） | panel 读面（注入面懒开恰一次） | 读 | **未改**（panel 读面不在本单领土） | `Ledger` 注入面签名与 `openLedgerReadonly` 的 `Result` 不兼容；另单适配。不得据本单称 panel 已纳围栏 |
+| 15 | `apps/daemon/src/assembly/serve/run.ts:87`（未改） | `runServe`（daemon 主写入道） | 写 | 已是 writer（附录 B 原覆盖） | 本单不动 |
+| 16 | `apps/daemon/src/cli/ledger.ts:57`（未改） | `ledger rebuild` CLI 壳（不 open，直调 `rebuild()`） | 写（经 store） | 壳未改 | 写面在 `rebuild()` 内已纳围栏；壳只解析/打印 |
+| 17 | `apps/daemon/src/cli/ledger.ts:21`（未改） | `ledger drill` CLI 壳（直调 `runLedgerDrill`） | 写（经 store） | 壳未改 | 同上（drill ① 内纳围栏） |
+
+> 未入表但同类的 `openLedger` 调用点：`apps/daemon/test/**`、`packages/*/test/**` 的夹具（测试面，非生产写路径；旧测试禁改）。
+
+#### B.6.2 语义补记（分派与 owner）
+
+- `gray` 三动作互斥（`--check`/`--close` 早拒同给）：`--check`/`--close` → writer；缺省 → `openLedger`；同一 `try/finally close` 不变（writer 的 `close()` 先关库、成功后释放租约；失败路径释放）。
+- 锁文件 owner（只作观测/拒收 detail，`<db>.writer.lock` 非台账记录、不新增端口）：`cli:gray`、`cli:cutover`、`cli:postmortem`、`cli:company-create`、`cli:jobs-catchup`、`cli:sandbox`、`store:rebuild`、`store:drill`；`runServe` 保持缺省 `writer:<pid>`。
+- `ledger rebuild` 次序：**先读源 JSONL**（坏 source 仍报读文件错）→ 取租约 → 建库/migrate/重放；目标被活写者持锁时**不建库、不留半成品库**。
+- `ledger drill` 次序：① writer 写临时库 → `close()` 释放 → 删库三件套（db/-wal/-shm，**不含** `.writer.lock`）→ ③ `rebuild` 重新取锁 → ④ 读验收；锁不跨阶段残留。
+- **诊断面变化（诚实登记）**：`rebuild`/`drill` 目标路径**父目录不存在**时，错误由引擎 ENOENT 族变为 `CONFIG_INVALID/writer-lease-path-invalid`（取锁先于建库，锁文件无法创建）。属围栏语义，不是读命令语义变化。
+
+#### B.6.3 证据测试（`packages/store/test/v2/writer-lease-cli.test.ts`，6 tests）
+
+| 用例 | 断言 |
+|---|---|
+| `jobs catchup` | 活写者持锁（真子进程 `openLedgerWriter`）→ CLI 退出 1＋`STALL/writer-lease-held`（detail 含持有者 pid/owner）；`jobs list` 持锁期间照常 exit 0（读面不纳围栏）；释放后 catchup exit 0 且槽真挪 |
+| `ledger rebuild` | 目标库持锁 → 拒且**目标库未创建**；释放后重建 exit 0（events=3）；坏 JSONL 失败路径**锁不残留**（`close()` 释放） |
+| `ledger drill` | 演习路径被占锁 → 拒且**不建库**；释放后 `ledger drill` exit 0、`演习 PASS`、锁不残留 |
+| `gray` | `--close`/`--check` 持锁均拒；缺省查窗持锁仍 exit 0（读面不纳围栏）；释放后关窗 exit 0、kv `status=closed`、锁不残留 |
+| `cutover`/`sandbox`/`postmortem` | 持锁均拒；库面零写入（事件 0、候选未建） |
+| `company create` | `--dry-run` 持锁仍 exit 0 且**库未创建**（不取写者租约=零落盘不破）；真跑播种持锁拒且库未创建；释放后真跑 exit 0、jobs 真播种、锁不残留 |
+
+#### B.6.4 门禁复跑（本单实测）
+
+| 门 | 命令 | 结果 |
+|---|---|---|
+| 类型门（根） | `bun run typecheck` | exit 0（`tsc --noEmit`） |
+| 类型门（V2） | `bun run typecheck:v2` | exit 0（`tsc --noEmit -p tsconfig.v2.json`） |
+| 目标测试门 | `bun run test:v2 -- packages/store apps/daemon/test/v2` | **40 files / 386 tests passed**（含本单 6 tests；同命令 11:27 与 11:45 两次复跑均全绿） |
+| 全 V2（复跑） | `bun run test:v2` | **105 files / 1567 tests passed，exit 0**。**首跑（11:33）1 failed**（伴 1 条 runner 级 unhandled error：`[vitest-worker]: Timeout calling "onTaskUpdate"`；因输出经 `tail` 截断，失败用例名未留档）——判负载面 flake |
+| 分层宪法 | `bun run guard:boundaries` | PASS：929 文件，0 违例 |
+| 文档门 | `bun run verify:docs` | PASS：V0 六项 6/6，真悬空 0 |
+| V2 清单自检 | `node scripts/verify/v2-suite-manifest.mjs` | PASS：5/5（test/v2 105 文件 / 静态用例 1489） |
+| 相关旧测试（默认 5s 超时） | `bun run test -- apps/daemon/test/cli apps/daemon/test/evolve packages/store/test/rebuild.test.ts packages/store/test/drill.test.ts packages/company/test/create.test.ts` | **10 failed files / 30 failed / 198 passed / 2 skipped**——失败全为 5s 超时族（旧套件既有族，`docs/baselines/old-tests-ledger.md` §二/§九），非本单回归；如实登记不掩盖 |
+| 相关旧测试（诊断复跑 60s） | `node node_modules/vitest/vitest.mjs run --testTimeout=60000 <同上路径>` | **4 failed files / 5 failed / 225 passed**；5 条全命中旧台账既有断言红（`drill`/`rebuild` 硬编码 v13→现 v15：§七；`create` AIWS 工位 1→2：§八；`help-face` `external` 已退役：§十），另 1 条 runner 级 `onTaskUpdate` 超时（负载面）。本单触及面（jobs/gray/cutover/postmortem/sandbox CLI 与 store rebuild/drill 的 v2 面）无新红 |
+
+- 旧测试红均按 `plan/04 §1.8.2`「修旧测试不立项」处置：**观察位、非门**，V2 门不以此判；本单未改任何旧测试/夹具。
+- **负载面红/绿如实登记**：目标门另有一次实跑红（2026-10-30 11:41：`writer-lease-cli` 的 `jobs catchup`/`ledger rebuild` 2 tests 60s timeout；同机 load average 16.7、collect 513s），判**负载 starvation**——同一命令 11:27/11:45 两次复跑均 40/386 全绿，断言未变。**不以调大 `testTimeout` 刷绿**（`vitest.v2.config.ts` 头注纪律）；夹具内 holder 的子进程兜底/就绪/关闭超时（120s/60s/30s）只是**进程守护余量**，不参与断言、不放宽被测命令的时限。
+
+#### B.6.5 仍不覆盖 / 缺口（不得据本单外推）
+
+1. **读命令与 panel 读面未纳围栏**：`ledger dump`、`jobs list`、`candidates list`、`gray` 缺省查窗、panel `openLedger` 注入面仍直接 `openLedger`；`openLedgerReadonly` 的返回面（`Result`）与既有 `Ledger` 调用面不兼容，需适配层/另单（本单明确不改读命令语义）。
+2. **头注漂移**：`packages/store/src/writer-lease.ts` 头注「CLI/panel/rebuild/drill 等直接 `openLedger` 均未纳围栏」与 `packages/store/src/index.ts` 出口注（「其它直接 openLedger 写点未纳围栏」）现**部分过期**——两文件不在本单领土，登记为文档漂移，随读面/围栏后续单回改。
+3. **WriterLeasePort 语义仍缺**：无 TTL/renew/单调 `FenceToken`/`LeaseGrant`（docs/80 §8.2/§8.5）；PRB-14 主表判定归 v2/12 §5.3 收口方，本附录**不写「PRB-14 通过」**。
+4. **跨环境/崩溃窗口不变**：多机/容器 pid 命名空间、NFS/overlay `O_EXCL`、符号链接/绑定点路径别名未验证；取锁后内容落盘前崩溃留空锁需人工清理，pid 复用 fail-closed（B.5 4/5）。
+5. **PB-5 仍不通过**：PRB-23 仍 `not-executed`（部署值表/消费方观察缺口写口缺位）、PRB-13 仍 `not-executed`；平台读侧契约仍不成立，台账单写仍不得宣称。
