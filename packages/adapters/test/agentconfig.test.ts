@@ -72,7 +72,7 @@ function captureConfigInvalid(fn: () => unknown): Error & ClassifiedError {
 const legalYaml = `executors:
   dsh:
     default: true
-    version: "0.2.0-rc.2"
+    version: "0.2.1-rc.5"
     cmd: [dsh, --profile, headless, --json]
     capabilities:
       budget_cap: false
@@ -98,7 +98,7 @@ describe('loadAgentConfig：四态与边界', () => {
 
     const dsh = config.executors[0]
     expect(dsh?.default).toBe(true)
-    expect(dsh?.version).toBe('0.2.0-rc.2')
+    expect(dsh?.version).toBe('0.2.1-rc.5')
     expect(dsh?.cmd).toStrictEqual(['dsh', '--profile', 'headless', '--json'])
     expect(dsh?.capabilities).toStrictEqual({
       budget_cap: false,

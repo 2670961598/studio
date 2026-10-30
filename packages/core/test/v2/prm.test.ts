@@ -47,7 +47,7 @@ function baseInput(overrides: Partial<CompileProjectionInput> = {}): CompileProj
     planRef: 'plan-1',
     grantRefs: ['grant-1', 'grant-2'],
     capabilityRefs: ['cap-1', 'cap-2'],
-    host: { hostKind: 'dsh', version: '0.2.0-rc.2', bindingRef: 'BIND-DSH-01' },
+    host: { hostKind: 'dsh', version: '0.2.1-rc.5', bindingRef: 'BIND-DSH-01' },
     secretTypes: ['per_task_shortlived'],
     validityFrom: '2026-11-01T00:00:00Z',
     validityUntil: '2026-12-01T00:00:00Z',
@@ -271,7 +271,7 @@ describe('PRM-G2 幂等：同输入同清单同 digest', () => {
       baseInput({ grantRefs: ['grant-1'] }),
       baseInput({ capabilityRefs: ['cap-1'] }),
       baseInput({ secretTypes: ['long_lived'] }),
-      baseInput({ host: { hostKind: 'dsh', version: '0.2.0-rc.2', bindingRef: 'BIND-DSH-02' } }),
+      baseInput({ host: { hostKind: 'dsh', version: '0.2.1-rc.5', bindingRef: 'BIND-DSH-02' } }),
       baseInput({ validityFrom: '2026-11-02T00:00:00Z' }),
       withoutValidityUntil(),
       baseInput({ deployment: fullDeployment({ personaRefs: ['persona-2'] }) }),
@@ -378,7 +378,7 @@ describe('PRM-G4 段绑定：九段全键、一段一来源集、不跨段借引
 
   it('清单与目标宿主/绑定档案绑定（身份段注记），换宿主即不可复用摘要', () => {
     const projection = okProjection(baseInput())
-    expect(projection.segments.identity.note).toBe('host:dsh@0.2.0-rc.2;binding:BIND-DSH-01')
+    expect(projection.segments.identity.note).toBe('host:dsh@0.2.1-rc.5;binding:BIND-DSH-01')
     const other = okProjection(
       baseInput({ host: { hostKind: 'claude', version: '1.0.0', bindingRef: 'BIND-CLI-CLAUDE-01' } }),
     )
@@ -432,7 +432,7 @@ describe('PRM-G6 不猜不填：输入缺字段拒绝生成，不补默认值', 
       ['grantRefs 为空（authority 无来源）', mutate(baseInput(), { grantRefs: [] }), 'projection-input-incomplete'],
       ['capabilityRefs 缺失', mutate(baseInput(), { capabilityRefs: undefined }), 'projection-input-incomplete'],
       ['secretTypes 含空串', mutate(baseInput(), { secretTypes: [''] }), 'projection-input-incomplete'],
-      ['host 缺 bindingRef', mutate(baseInput(), { host: { hostKind: 'dsh', version: '0.2.0-rc.2' } }), 'projection-input-incomplete'],
+      ['host 缺 bindingRef', mutate(baseInput(), { host: { hostKind: 'dsh', version: '0.2.1-rc.5' } }), 'projection-input-incomplete'],
       ['host.version 写 current', mutate(baseInput(), { host: { hostKind: 'dsh', version: 'current', bindingRef: 'BIND-DSH-01' } }), 'projection-input-incomplete'],
       ['validityFrom 非瞬时', mutate(baseInput(), { validityFrom: '2026-11-01' }), 'projection-input-incomplete'],
       ['validityUntil 早于 from', mutate(baseInput(), { validityUntil: '2026-10-01T00:00:00Z' }), 'projection-validity-empty'],

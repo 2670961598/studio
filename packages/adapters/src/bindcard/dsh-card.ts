@@ -1,5 +1,5 @@
 /**
- * bindcard/dsh-card —— BIND-DSH-01（DSH 主绑定档案卡，v2.0 随宿主 0.2.0-rc.2 钉住）
+ * bindcard/dsh-card —— BIND-DSH-01（DSH 主绑定档案卡，v2.0 随宿主 0.2.1-rc.5 钉住）
  *
  * 依据：v2/12 §一 BIND-DSH-01 全卡——§1.1 卡面（标识/ownerRef/宿主/覆盖/不支持/映射/供给/
  * 授权与生效/证据/损失/导出迁移退出/探针/现状）、§1.2 版本锁与宿主三形态面表、§1.4 载体映射
@@ -8,7 +8,8 @@
  *
  * 换宿主纪律（卡的本体规则，不在别处重述）：
  *   - 宿主升级＝**新档案**（ID 版本+版本锁重钉+全量重探），旧卡作废不加载——本卡版本锁
- *     0.2.0-rc.2；`loadBindingCard(id, hostVersion)` 版本不符即拒（弃用，不静默降级）。
+ *     0.2.1-rc.5（2026-10-30 升级，P-05 复验 PASS）；`loadBindingCard(id, hostVersion)`
+ *     版本不符即拒（弃用，不静默降级）。
  *   - 换宿主不换任职（v2/12 §1.6）：卡只管宿主承载，人事/授权面在 v2/02–04。
  *   - 卡上的「覆盖/不支持」是**语义二分**，不是能力保证：DSH 专属能力面（§1.5）独占
  *     `DSH_EXCLUSIVE_FACES`，通用必达面（§2.1 契约①）在 `GENERIC_HOST_REQUIREMENTS`——
@@ -30,7 +31,7 @@ export const DSH_BINDING_ID = 'BIND-DSH-01'
 export const DSH_CARD_VERSION = 'v2.0'
 
 /** 版本锁（v2/12 §1.2：detect 版本比对不符即报诊断不派；rc 版插件 API 可变，升级＝新档案+全量重探） */
-export const DSH_HOST_VERSION = '0.2.0-rc.2'
+export const DSH_HOST_VERSION = '0.2.1-rc.5'
 
 /** 宿主名与许可（§1.1 宿主行：MIT；PATH 上的外部 CLI；依赖条目 v2/13） */
 export const DSH_HOST_NAME = 'DSH'
@@ -318,7 +319,7 @@ const PROBES: readonly CardProbeRow[] = deepFreeze(
 /** 现状面表（v2/12 §1.2 面表＋§1.1 现状行；每面恰一值，禁「部分已有」混写） */
 const FACES: readonly CardFaceRow[] = [
   { face: '命令形态（CLI shell-out）', status: '已有', anchor: 'dsh.ts DSH_DEFAULT_CMD（--profile headless --json）' },
-  { face: '版本锁', status: '已有', anchor: 'dsh.ts LOCKED_VERSION（0.2.0-rc.2）' },
+  { face: '版本锁', status: '已有', anchor: 'dsh.ts LOCKED_VERSION（0.2.1-rc.5）' },
   { face: '遥测红线', status: '已有', anchor: 'dsh.ts 头注（DSH_TELEMETRY_MODE=DISABLED 全拉起注入）' },
   { face: '终态判定', status: '已有', anchor: 'dsh.ts 头注（只认 turn_end.reason.kind）' },
   { face: '成本（无金额）', status: '已有', anchor: 'dsh.ts capabilities.cost_native=false（价目表折算）' },

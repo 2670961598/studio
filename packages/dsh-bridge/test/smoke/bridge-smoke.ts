@@ -1,7 +1,7 @@
 /**
  * studio-next-bridge 真机冒烟脚本（套外手动跑，不进 vitest、不进门禁 include——tsconfig 只含 src/test）。
  *
- * 用法（真机：dsh 0.2.0-rc.2 + deepseek 凭据已就位于 ~/.dsh/.env 的 DEEPSEEK_API_KEY——
+ * 用法（真机：dsh 0.2.1-rc.5 + deepseek 凭据已就位于 ~/.dsh/.env 的 DEEPSEEK_API_KEY——
  * .env 是实例启动时加载，本脚本零接触凭据值）：
  *   node packages/dsh-bridge/test/smoke/bridge-smoke.ts
  * 可覆盖：DSH_BIN（缺省 /opt/homebrew/bin/dsh）

@@ -8,7 +8,7 @@
  *   - docs/17-§6 dsh 行：launch=`dsh --profile headless --json`（锁版本）；流=NDJSON；
  *     tokens 有、成本无价目表折算（cost_native=false）；SIGTERM 可杀
  *   - docs/18-§一：ExecutorAdapter 六原语；detect 不达标明报，绝不静默降级
- *   - docs/16-§二：子进程用 execa；executor=dsh 默认锁 0.2.0-rc.2（锁版本升级走回归）
+ *   - docs/16-§二：子进程用 execa；executor=dsh 默认锁 0.2.1-rc.5（锁版本升级走回归）
  *   - docs/25-§二（v1.4）：TaskBrief.credentials 短命按单凭据——launch env 透传进
  *     子进程（docs/43-附录A-1 起键域收封闭枚举闸：枚举外键结构拒收 CONFIG_INVALID）；
  *     其值不记录不打印（红名单），流/日志/账面文本永不含凭据。dsh 侧凭证优先级
@@ -106,8 +106,8 @@ import type { SeatbeltEndpoint } from './seatbelt.ts'
 /** 缺省命令（docs/17-§6 dsh 行）：`dsh --profile headless --json` */
 export const DSH_DEFAULT_CMD: readonly string[] = ['dsh', '--profile', 'headless', '--json']
 
-/** 锁定版本（docs/16-§二：dsh 锁 0.2.0-rc.2，锁版本升级走回归） */
-const LOCKED_VERSION = '0.2.0-rc.2'
+/** 锁定版本（docs/16-§二：锁版本升级走回归——2026-10-30 升 0.2.1-rc.5，P-05 四断言复验 PASS） */
+const LOCKED_VERSION = '0.2.1-rc.5'
 
 /** detect() 版本探测超时（毫秒）：挂死的 CLI 不许挡调度 */
 const DETECT_TIMEOUT_MS = 5_000
