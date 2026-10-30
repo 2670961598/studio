@@ -16,7 +16,7 @@
 
 | 门 | 命令 | 结果 |
 |---|---|---|
-| 全 V2 | `mise exec -- bun run verify:v2` | **105 files / 1567 tests**；@ `204a6c3` 连续 3 次 exit 0（177s/121s/117s） |
+| 全 V2 | `mise exec -- bun run verify:v2` | **105 files / 1567 tests**；@ tag `v2-dsf-review-02`（285d474）连续 3 次 exit 0（119s/139s/121s） |
 | 文档 | `mise exec -- bun run verify:docs` | PASS 6/6，真悬空 0 |
 | 边界 | `mise exec -- bun run guard:boundaries` | PASS，929 文件扫描，0 违例（2026-10-30 实测） |
 | 秘密扫描 | `mise exec -- node scripts/scan-repo-secrets.mjs` | exit 0，新命中 0；存量基线 20 显式登记 |
@@ -72,7 +72,7 @@ v2/17 §七：F2/F3/F6 通过；F1/F4/F5/F7 条件通过；**F8 未过**。F8 �
 1. ~~NEG-ENG-01 failed~~ 已由 CJS 拒绝面收口，119/119 passed；F8 不再以此项阻断。
 2. **PB-3/PB-5 未过** 是否阻断 F8，还是接受为“目标（未证）”并登记。
 3. **GAP-V2-01/05/13/18** 是否允许以 open 状态进入 V2 定稿。
-4. **P0 partial 7/open 2** 的 DSF 核验列逐项结论。
+4. **P0 partial 8/open 0** 的 DSF 核验列逐项结论（施工侧 2026-10-30 重算）。
 5. **旧测试存废**逐项裁决。
 6. F8 签认人/日期/适用范围。
 

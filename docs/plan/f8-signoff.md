@@ -7,7 +7,7 @@
 制作人于 2026-10-29 在会话中确认 **F8 签认**。施工侧呈报件与证据：
 
 - [f8-package.md](f8-package.md)（F8/P0/DSF 完整验收包，v1）
-- `verify:v2` **105 files / 1567 tests**，@ `204a6c3` 连续 3 次 exit 0（177s/121s/117s）
+- `verify:v2` **105 files / 1567 tests**，@ tag `v2-dsf-review-02`（285d474）连续 3 次 exit 0（119s/139s/121s）
 - NEG **119/119 IDs accounted**（判定件层 executed-pass；V4/V5/V6 全链未证）
 - OPS 补形 A：REC-WORK-18 全字段经 PORT-HIST
 - API 第 5 出口：runServe 装配 createApiApp/readers/auth/node:http
