@@ -1,14 +1,14 @@
 # F8 · DSF-REVIEW-01 施工侧整改回复
 
 > 日期：2026-10-30｜对象：[f8-dsf-review.md](f8-dsf-review.md)（DSF-REVIEW-01，基线 `8ca3005`）｜性质：**整改回复，不是 F8 新签认**
-> 证据基线：tag `v2-dsf-review-02`（285d474）；最终 3 次 verify:v2 为 119s/139s/121s
+> 证据基线：tag `v2-dsf-review-02`（9b8651d）；最终 3 次 verify:v2 为 119s/139s/121s
 
 ## 一、B1 冻门不可复算
 
-- 已在新基线 tag `v2-dsf-review-02`（285d474）连续 3 次 `verify:v2` exit 0：**105 files / 1567 tests**（119s/139s/121s）。
+- 已在新基线 tag `v2-dsf-review-02`（9b8651d）连续 3 次 `verify:v2` exit 0：**105 files / 1567 tests**（119s/139s/121s）。
 - 失败根因处理：`verify-docs` 的 `beforeAll` 显式 `60_000` 钩子上限；`writer-lease-cli` 的 holder 子进程守护窗 120s/60s/30s；**未调 `vitest.v2.config.ts` 的 60s testTimeout**、未加 retry/describe 超时覆盖。
 - 仍如实登记：11:33/11:41 在旧基线有负载面红；新基线 3 次绿是重取证，不是「旧红改判绿」。
-- 待办：以 `v2-dsf-review-02` tag 重跑 3 次并记录。
+- 复跑已由 DSF 侧独立完成：3 次 exit 0、均 105 files / 1567 tests（见 `docs/plan/f8-dsf-review.md` §10.2）。
 
 ## 二、B2 P0 施工列重算
 

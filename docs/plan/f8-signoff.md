@@ -7,7 +7,7 @@
 制作人于 2026-10-29 在会话中确认 **F8 签认**。施工侧呈报件与证据：
 
 - [f8-package.md](f8-package.md)（F8/P0/DSF 完整验收包，v1）
-- `verify:v2` **105 files / 1567 tests**，@ tag `v2-dsf-review-02`（285d474）连续 3 次 exit 0（119s/139s/121s）
+- `verify:v2` **105 files / 1567 tests**，@ tag `v2-dsf-review-02`（9b8651d）连续 3 次 exit 0（119s/139s/121s）
 - NEG **119/119 IDs accounted**（判定件层 executed-pass；V4/V5/V6 全链未证）
 - OPS 补形 A：REC-WORK-18 全字段经 PORT-HIST
 - API 第 5 出口：runServe 装配 createApiApp/readers/auth/node:http
@@ -19,10 +19,10 @@
 | 项 | 状态 |
 |---|---|
 | F8 制作人签认 | **已确认（2026-10-29）** |
-| DSF 复查核验列（v2/17 §六.2） | **仍空待填**；本记录不代填 |
+| DSF 复查核验列（v2/17 §六.2） | **2026-10-30 已由 DSF 侧填写**（DSF-REVIEW-02）；本记录不代填，只登记事实 |
 | P0 清零 | 施工列 2026-10-30 重算 closed 19/partial 8/open 0；未宣布清零 |
 | PB-3 | 未通过（缺 PB-2/PRB-08） |
-| PB-5 | 未通过（PRB-23/PRB-13 not-executed；WriterLease 仅 runServe） |
+| PB-5 | 未通过（PRB-23/PRB-13 not-executed；WriterLease 覆盖 runServe＋CLI 写命令/rebuild/drill，读面未迁） |
 | 旧测试存废 | 未裁 |
 | V2 版本轴 | 不因本记录自动改 `final`；v2/17 §六.1 仍要求 DSF 复查列填满 |
 
