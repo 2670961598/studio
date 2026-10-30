@@ -484,10 +484,11 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         coerceHrServeKey(cfg, key, value, { str, num, bool })
         break
       case 'reloadWatch': cfg.reloadWatch = bool(value, key); break
-      // —— seatbelt 配置通道（IMPL-07-09 随动；缺省不写=read-only；三键交叉校验在循环后）——
+      // —— seatbelt 配置通道（IMPL-07-09 随动；缺省不写=read-only；交叉校验在循环后）——
       case 'seatbeltTier': seatbeltRaw.tier = value; break
       case 'seatbeltWriteRoots': seatbeltRaw.writeRoots = value; break
       case 'seatbeltAuthorization': seatbeltRaw.authorization = value; break
+      case 'seatbeltOutboundTcp': seatbeltRaw.outboundTcp = value; break
       // —— SEC-FC-01/02（v2/15 §一）：网关开关键与密钥键**已从生产配置面删除** ——
       //    不是「未知键」的泛化拒绝：明报「该键已删除 + 替代供给面」，防旧配置静默漂移。
       case 'gateway':

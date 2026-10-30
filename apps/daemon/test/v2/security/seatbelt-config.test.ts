@@ -129,6 +129,51 @@ describe('daemon.yaml seatbelt 三键：缺省不写＝read-only（不注入 gra
   })
 })
 
+// —— 一b、出口键 outboundTcp（模型 API 出口过渡面，2026-10-31 studio-dev-269 att9-11 收口）——
+
+describe('daemon.yaml seatbeltOutboundTcp：host 值域 {*,localhost}、port 1-65535、fail-closed', () => {
+  it('workspace-write 四键齐备 → grant 携带端点列表（resolveSeatbeltGrant 同源过闸）', () => {
+    const root = newRoot('egress-ok')
+    const cfg = parseDaemonConfig(
+      [...wideningLines(root), `seatbeltOutboundTcp: '${JSON.stringify([{ host: '*', port: 443 }, { host: 'localhost', port: 8443 }])}'`].join('\n'),
+    )
+    expect(cfg.seatbelt?.outboundTcp).toEqual([
+      { host: '*', port: 443 },
+      { host: 'localhost', port: 8443 },
+    ])
+    expect(resolveSeatbeltGrant(cfg.seatbelt!).outboundTcp).toEqual([
+      { host: '*', port: 443 },
+      { host: 'localhost', port: 8443 },
+    ])
+  })
+
+  it('不写 outboundTcp → 恒 undefined（无隐式出口——网域缺省只留回环宿主 RPC）', () => {
+    const root = newRoot('egress-absent')
+    const cfg = parseDaemonConfig([...wideningLines(root)].join('\n'))
+    expect(cfg.seatbelt?.outboundTcp).toBeUndefined()
+  })
+
+  it('read-only（含缺省档）给 outboundTcp → 拒（read-only 无放宽面）', () => {
+    expect(
+      catchError(() => parseDaemonConfig(`${BASE_YAML}\nseatbeltOutboundTcp: '${JSON.stringify([{ host: '*', port: 443 }])}'`)),
+    ).toMatch(/read-only 档（含未声明 seatbeltTier 的缺省档）不得给 seatbeltOutboundTcp/)
+  })
+
+  it('坏值全拒：非 JSON／非数组／空数组／host 值域外（域名）／port 越界或非整数', () => {
+    const root = newRoot('egress-bad')
+    const lines = (tcp: string) => [...wideningLines(root), `seatbeltOutboundTcp: '${tcp}'`].join('\n')
+    expect(catchError(() => parseDaemonConfig(lines('not-json')))).toMatch(/seatbeltOutboundTcp.*非 JSON/)
+    expect(catchError(() => parseDaemonConfig(lines('{"host":"*","port":443}')))).toMatch(/非空 JSON 数组/)
+    expect(catchError(() => parseDaemonConfig(lines('[]')))).toMatch(/非空 JSON 数组/)
+    expect(catchError(() => parseDaemonConfig(lines(JSON.stringify([{ host: 'api.example.com', port: 443 }]))))).toMatch(
+      /host 值域为 '\*'\|'localhost'/,
+    )
+    expect(catchError(() => parseDaemonConfig(lines(JSON.stringify([{ host: '*', port: 0 }]))))).toMatch(/port 须为 1-65535/)
+    expect(catchError(() => parseDaemonConfig(lines(JSON.stringify([{ host: '*', port: 443.5 }]))))).toMatch(/port 须为 1-65535/)
+    expect(catchError(() => parseDaemonConfig(lines(JSON.stringify([{ host: '*', port: '443' }]))))).toMatch(/port 须为 1-65535/)
+  })
+})
+
 // —— 二、解析负例：值域封闭＋read-only 禁放宽键＋workspace-write 缺键/坏根拒 ——
 
 describe('daemon.yaml seatbelt 负例：不静默放宽、不静默补全', () => {
