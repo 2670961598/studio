@@ -16,7 +16,7 @@
    seatbeltWriteRoots: '["/abs/ticket-root","/abs/dsh-home"]'
    seatbeltAuthorization: '谁/何单/何策略'
    ```
-   必须绝对路径＋授权留痕；缺一项拒启。
+   必须绝对路径＋授权留痕；缺一项拒启。写根不得为 `/`、不得含控制字符；authorization 避免 ` #`（会被 YAML 行内注释截断）。
 
 ## 二、启动
 

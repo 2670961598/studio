@@ -40,8 +40,10 @@
 
 ## 五、施工侧复跑证据
 
-- `verify:v2` 在增量树连续 3 次 exit 0：**105 files / 1581 tests**（118s/115s/114s）。
+- `verify:v2` 在增量树连续 3 次 exit 0：**106 files / 1581 tests**（118s/115s/114s）。
 - `verify:docs` 6/6；`guard:boundaries` 930 文件 0 违例。
+
+> 2026-10-30 追加：文件数经 DSF/独立审计实测为 **106**（基线 105＋本增量新增 1 个测试文件）；本增量另有 2 条加固测试（控制字符/根 `/`/resolver 行为），最终为 **1583 tests**。
 
 ## 六、封版建议
 
@@ -49,3 +51,15 @@ DSF 若认可增量，建议：
 - 以 `fbe634f`（或含本文件的 tag）为 V2 final 候选；
 - 不把本增量回写成 F8 已审范围；在 DSF 记录中单列「seatbelt delta 通过」；
 - V2 final 标记仍由制作人明示后执行。
+
+
+## 七、DSF 条件整改（2026-10-30 追加）
+
+- SB-1：证据行 105→**106 files**；新增测试后全 V2 **1583 tests**。
+- SB-2：`seatbeltWriteRoots` 增加控制字符（`\n\r\t\0` 等）拒绝；并拒绝根目录 `/`（显式全盘写域）与 `..` 归一后根。
+- C3：`seatbelt-config.test.ts` 16 tests；补 resolver 行为面（agentYaml `claude` + workspace-write 装配期 `agentconfig/seatbelt-unenforceable`），删除空转断言（改为 `resolveSeatbeltGrant` 真调用）。
+- C2 边界追加登记：
+  1. 本增量只证「配置通道/装配/计划/留痕」；**PRB-04 未执行**，不证内核实际拦截。
+  2. profile 写域=授权面全宽、**无逐 attempt 收窄**；配置通道**无 `dshHomeRedirect`**；生产 workspace-write 需部署侧把 `$DSH_HOME` 安排在授权根内，不能把「挂 dsh 家族」当充分条件。
+  3. authorization 含 ` #` 会被 YAML 行内注释规则静默截断（授权留痕非逐字节）；部署文档提示避免。
+  4. 根 `/` 已由本增量拒绝；系统目录最小化仍未做（后续单）。

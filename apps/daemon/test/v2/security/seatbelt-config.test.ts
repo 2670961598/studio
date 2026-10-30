@@ -24,7 +24,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { createRegistry } from '@studio-next/adapters'
+import { createRegistry, resolveSeatbeltGrant } from '@studio-next/adapters'
 import type { SeatbeltGrant } from '@studio-next/adapters'
 import { createLocalPlatform } from '@studio-next/localplatform'
 import { openLedger } from '@studio-next/store'
@@ -36,6 +36,7 @@ import { createEngine, ENGINE_CONFIG_DEFAULTS } from '../../../src/engine/engine
 import { createFakeAdapter, createFakePlatform } from '../../../src/engine/fakes.ts'
 import { createDefaultGateRunner } from '../../../src/engine/gate.ts'
 import { createDefaultAssembler } from '../../../src/engine/prompt-assembly.ts'
+import { dispatchAdapterResolver } from '../../../src/engine/work/dispatch-seatbelt.ts'
 
 const T0 = Date.parse('2026-11-02T00:00:00.000Z')
 const SECRET_ENV = 'STUDIO_GATEWAY_SECRET'
@@ -99,7 +100,15 @@ describe('daemon.yaml seatbelt 三键：缺省不写＝read-only（不注入 gra
       authorization: AUTHORIZATION,
     })
     // 与 07-08 守门同源：解析产物可被 resolveSeatbeltGrant 直接接受（非法档/无授权不可能走到装配面）
-    expect(cfg.seatbelt?.tier).toBe('workspace-write')
+    expect(resolveSeatbeltGrant(cfg.seatbelt)).toEqual({
+      tier: 'workspace-write',
+      writeRoots: [path.join(root, 'var')],
+      authorization: AUTHORIZATION,
+      dshHomeRedirect: undefined,
+      profileDir: undefined,
+      rpcEndpoints: undefined,
+      outboundTcp: undefined,
+    })
   })
 
   it('多个绝对根逐条保留（逐条显式，不去重不补全）', () => {
@@ -177,6 +186,30 @@ describe('daemon.yaml seatbelt 负例：不静默放宽、不静默补全', () =
       )
       expect(message).toMatch(pattern)
     }
+  })
+
+  it('roots 含控制字符 / 根目录 / → 拒（profile 断行与显式全盘两风险）', () => {
+    const cases: readonly [string, RegExp][] = [
+      ["'[\"/abs/root\\n\"]'", /不得含控制字符/],
+      ["'[\"/\"]'", /不得为根目录/],
+      ["'[\"/tmp/../\"]'", /不得为根目录/],
+    ]
+    for (const [roots, pattern] of cases) {
+      const message = catchError(() =>
+        parseDaemonConfig(
+          `${BASE_YAML}\nseatbeltTier: workspace-write\nseatbeltWriteRoots: ${roots}\nseatbeltAuthorization: ${AUTHORIZATION}`,
+        ),
+      )
+      expect(message).toMatch(pattern)
+    }
+  })
+
+  it('resolver 行为面：workspace-write + claude 内置工厂 → 装配期 CONFIG_INVALID/seatbelt-unenforceable', () => {
+    const root = newRoot('resolver-claude')
+    const grant: SeatbeltGrant = { tier: 'workspace-write', writeRoots: [path.join(root, 'var')], authorization: AUTHORIZATION }
+    const factory = dispatchAdapterResolver(grant)('claude')
+    expect(factory).toBeDefined()
+    expect(catchError(() => factory?.(undefined))).toMatch(/CONFIG_INVALID\/agentconfig\/seatbelt-unenforceable/)
   })
 
   it('roots 未加引号（裸 YAML 列表）→ 明报须引号包裹的 JSON 数组字符串（不猜）', () => {

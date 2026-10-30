@@ -48,10 +48,9 @@
  *   - 逐 attempt 收窄需适配器新增 per-launch 写域面（当前 `DshSeatbeltOptions` 在构造期
  *     固定，dsh.ts）；本件给的是「本 attempt 写域 ⊆ 授权面」的校验与留痕，profile 实际
  *     白名单=授权面（与注册面同源）——收窄腿归 LANE-X 后续单（本单不扩 adapters）。
- *   - 引擎派发相位（`engine.ts executeDispatch`）的接线不在本单领土（本单领土＝
- *     `engine/work/**`）：本件已提供可直接消费的三面 API（含「先留痕后 spawn」顺序），
- *     接线随派发域后续单；此前生产派工走「注册面缺省 read-only」（07-08 已翻转的缺省，
- *     「不圈定」路径已不存在），但「校验失败不启」的闸尚未接到主循环——缺口如实上报。
+ *   - 引擎派发相位（`engine.ts executeDispatch`）**已接线**：`engine.ts` 在派发前调用
+ *     `resolveWorkerDispatchSeatbelt`（F8 基线 `7b38e3c`）；本件提供三面 API 与「先留痕后
+ *     spawn」顺序，接线面由 `ws-escape.test.ts`「接线面·真引擎」覆盖。
  *
  * 纪律：零 IO（除 realpath/lstat 只读查询）、零时钟读取、不持引擎状态；调用方注入 spawn
  * 与留痕 sink；判定不复制 core/adapters 的既有规则（档位语义唯一守门＝resolveSeatbeltGrant）。

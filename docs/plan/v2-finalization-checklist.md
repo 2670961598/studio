@@ -7,12 +7,12 @@
 | # | 条件 | 现状 |
 |---|---|---|
 | 1 | DSF F8 复查通过 | **已过**：DSF-REVIEW-02，27/27 核验列；tag `v2-f8-passed` |
-| 2 | seatbelt 增量 DSF 复查 | **待审**：tag `v2-seatbelt-delta`，申请件 `f8-dsf-delta-seatbelt.md` |
+| 2 | seatbelt 增量 DSF 复查 | **已过**：DSF-REVIEW-03（`f8-dsf-delta-review-seatbelt.md`）；106 files / 1583 tests ×3；SB-1/SB-2 已整改 |
 | 3 | 制作人明示 final | **待明示**；`v2/17` 版本轴仍 draft |
 | 4 | P0 施工列/DSF 列 | DSF 27/27 已填；施工列 19/8/0（partial 不阻断 F8，但定稿说明须保留） |
 | 5 | PB-3/PB-5 | 未通过；F8 已接受为未证面，定稿须保留“未通过”登记 |
 | 6 | 旧测试存废 | 未裁；13 红文件/20 红用例，定稿前须给处置或“保留观察”结论 |
-| 7 | V2 全门 | `verify:v2` 1581 tests 全绿；`verify:docs` 6/6 |
+| 7 | V2 全门 | `verify:v2` **106 files / 1583 tests** 全绿（×3）；`verify:docs` 6/6；边界 930 文件 0 违例 |
 
 ## 二、执行顺序（DSF delta 通过后）
 

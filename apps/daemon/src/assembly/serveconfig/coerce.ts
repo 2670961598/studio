@@ -21,7 +21,7 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import { isAbsolute } from 'node:path'
+import { isAbsolute, resolve } from 'node:path'
 import { DEFAULT_SEATBELT_TIER, resolveSeatbeltGrant, SEATBELT_TIERS, type SeatbeltGrant } from '@studio-next/adapters'
 import { configInvalid } from '@studio-next/contract'
 import type { CompanySnapshot } from '@studio-next/contract'
@@ -116,7 +116,16 @@ function parseSeatbeltWriteRoots(raw: string): string[] {
         `daemon.yaml：seatbeltWriteRoots 每项须为绝对路径字符串（收到 ${JSON.stringify(root)}）——相对路径根在内核面按 cwd 解析＝隐式放宽`,
       )
     }
-    return root
+    if (/[\u0000-\u001f\u007f]/.test(root)) {
+      throw new Error(
+        `daemon.yaml：seatbeltWriteRoots 不得含控制字符（收到 ${JSON.stringify(root)}）——profile 文法按行渲染，换行/制表会断行或注入`,
+      )
+    }
+    const normalized = resolve(root)
+    if (normalized === '/') {
+      throw new Error('daemon.yaml：seatbeltWriteRoots 不得为根目录 /（显式全盘写域；请点名具体写根，不做根最小化）')
+    }
+    return normalized
   })
 }
 
