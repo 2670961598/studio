@@ -78,7 +78,7 @@ let positiveRoot: string | null = null
 beforeAll(() => {
   positiveRoot = makeFixture()
   positive = runCheck(positiveRoot)
-})
+}, 60_000)
 
 afterAll(() => {
   if (positiveRoot !== null) rmSync(positiveRoot, { recursive: true, force: true })

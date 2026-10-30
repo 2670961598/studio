@@ -20,7 +20,7 @@
 |---|---|
 | F8 制作人签认 | **已确认（2026-10-29）** |
 | DSF 复查核验列（v2/17 §六.2） | **仍空待填**；本记录不代填 |
-| P0 清零 | 施工列 closed 18/partial 7/open 2；未宣布清零 |
+| P0 清零 | 施工列 2026-10-30 重算 closed 19/partial 8/open 0；未宣布清零 |
 | PB-3 | 未通过（缺 PB-2/PRB-08） |
 | PB-5 | 未通过（PRB-23/PRB-13 not-executed；WriterLease 仅 runServe） |
 | 旧测试存废 | 未裁 |

@@ -14,7 +14,7 @@
 |---|---|---|
 | MIG-01..08 波门 | 施工侧可交收口件；**遗留项如实登记**（§十）；不宣布 P0 清零 | `verify:v2` 连续 3 次 exit 0（§七） |
 | GAP-V2-01..18 | **closed 5／open 4／target-not-proven 9**（共 18 条） | §二；逐条证据与缺口 |
-| P0 清零判定表 | **closed 18／partial 7／open 2**（27 行；施工列本件回写） | §三；DSF 核验列仍空 |
+| P0 清零判定表 | **closed 19／partial 8／open 0**（2026-10-30 DSF 整改重算；27 行） | §三；DSF 核验列仍空 |
 | NEG 覆盖终值 | **76/119（冻结命令实测）**；缺 43 条，按族列出；**不得写 119 已覆盖** | §四 |
 | MIG-07 波门 | 12/12 单落位；包级源码 typecheck **7/7 exit 0**；secret 扫描 **新 0**；`verify:v2` 记录 **1225 tests**（本报告复算当前 1254＝1225＋29） | §五 |
 | MIG-06 装配欠账 | API 装配未接线（**API 响应=第 5 出口 gap**）＋**OPS `appendRecord` 未接**＋prompt `redactKnown` **已接线**（07-11 腿闭）；06-10/11 有消费侧缺口 | §六 |
@@ -96,33 +96,33 @@ mise exec -- node --input-type=module -e "import{CRASH_POINTS}from'./apps/daemon
 ## 三、P0 清零判定表 · 施工列（DSF 核验列仍空；宣布权归制作人）
 
 > 表源＝`docs/v2/17` §六.2（27 行：GLM K1-K11＋DSF P0-1..12＋O3-01..04）。本件**只新增「施工侧状态/证据」两列**，「DSF 复查核验」列逐行**留空**（v2/17 §六.1-2：填满且全「过」＝F8 达成登记要件）。
-> 状态计数：**closed 18｜partial 7｜open 2**。
+> 状态计数（2026-10-30 DSF 整改重算）：**closed 19｜partial 8｜open 0**。
 
 | 根因 | 规范面状态（v2/17 原文） | 施工侧状态 | 施工侧证据（含缺口） | DSF 复查核验（待填） |
 |---|---|---|---|---|
 | GLM K1 问责/救济三层无载体 | 已解（规范面） | **closed** | REC-ACC-01/02 形状（contract `records/acc.ts`）＋NEG-REC-06 已覆盖（`rec-acc.test.ts`） | |
 | GLM K2 任职六状态无状态机承载 | 已解（规范面；闸门=GAP-V2-06） | **closed** | REC-LIFE 族形状＋`v14-records` DDL＋NEG-REC-02 已覆盖（contract/daemon 双落点） | |
 | GLM K3 绩效/结构评价无形状 | 已解（规范面） | **closed** | REC-PERF-01／REC-EVAL-01 形状＋NEG-REC-03/09 已覆盖 | |
-| GLM K4 维持性验收无载体 | 已解（规范面） | **open** | 未见 NEG-WRK-07 落位（§四 WRK 缺项）；维持性验收 case 未接线 | |
+| GLM K4 维持性验收无载体 | 已解（规范面） | **closed** | NEG-WRK-07 已落（`apps/daemon/test/v2/neg/work-gates.test.ts`，调用 `validateMaintenanceAcceptance`）；载体 `REC-WORK-ACCEPT-MAINT` 已冻结（`contract/artifacts/records/work.schema.json`） | |
 | GLM K5 验证锚/文件落点双事实源 | 已解（F5） | **closed** | `port-map-rescan` **PASS 6/6** exit 0（13 PORT ↔ 20 文件；0 冲突）；contract 伴测 4 用例 | |
-| GLM K6 元治理独立性逃生口 | 已解（规范面） | **partial** | NEG-ORG-15（自审自称独立）已覆盖；**NEG-EVD-02/03 未覆盖**（审计分离/外部锚面） | |
-| GLM K7 迟到副作用观察悬空 | 已解（规范面） | **open** | NEG-WRK-14 未覆盖（§四）；观察面活性无施工证据 | |
+| GLM K6 元治理独立性逃生口 | 已解（规范面） | **partial** | NEG-ORG-15、NEG-EVD-02/03 已覆盖（`harvest-neg.test.ts`）；残余：公司层外部锚=GAP-V2-03（target） | |
+| GLM K7 迟到副作用观察悬空 | 已解（规范面） | **closed** | NEG-WRK-14 已落（`harvest-neg.test.ts`：观察闭环/连续观察/窗口次序）；观察面活性有判定件证据 | |
 | GLM K8 76/77 规范自反矛盾 | 已解（本卷复算证） | **closed** | `verify:docs` 检查⑥：VEC 10 条、正向 8/8、负向 2/2；`packages/core/test/v2/enc-digest.test.ts`（20 处 VEC 引用） | |
 | GLM K9 枚举双字面量无唯一主表 | 已解（复扫证） | **closed** | contract artifacts 落位（`packages/contract/src/artifacts/cli.ts`）；**本报告未重跑 `contract:check`（不冒充）**；值集重述=0 由 `verify:docs` 检查④实测 | |
 | GLM K10 82 自设检查未对自己执行 | 已解（本卷） | **closed** | `scripts/verify/v0-doc-check.mjs` **6/6 PASS** exit 0（落盘时 26 件、真悬空 0、裸字母真待修 0、节号 0 问题、VEC 8/8；本件落盘后复跑 27 件仍 PASS，见 §11.2） | |
 | GLM K11 裸字母 ID 重号 | 已解（复扫证） | **closed** | `verify:docs` 检查③：token 2753 处、C1-C7 全分类、**真待修 0**；v2/17 §二.8-二 | |
-| DSF P0-1 同一对象四层两套现行 | 已解（规范面；实现待 MIG） | **closed** | 实现腿：`apps/daemon/src/engine/engine.ts` **1988 行**（基线 2337，净降 349）＋api 端点 16＋`guard:boundaries` PASS（869 文件/0 违例）；`test/v2/api/assembly.test.ts` | |
+| DSF P0-1 同一对象四层两套现行 | 已解（规范面；实现待 MIG） | **partial** | 规范面已解（v2/05 §三 DOM-01..07）；实现证据只到 engine 拆分/api 装配，**未给出逐域权威表**——行数下降不证明单一权威；残余：分域权威表 + 冲突负测 | |
 | DSF P0-2 cost_daily 不在重建路径 | 方向已定（对账未决） | **closed**（重建限域实现） | rebuild 排除域段＋备份快照＋NEG-MIG-01/02 已覆盖（`cost-frozen`/`backup`/`rebuild-exclusion`）；**对账规则本身＝GAP-V2-01（open，不代裁）** | |
 | DSF P0-3 强制位置坐在可选容器 | 已解（规范面） | **closed** | 结构负例 NEG-ORG-06/07 已覆盖（`packages/company/test/v2/org-structure.test.ts`）；表 A/A′/D 承接 v2/03/05 | |
 | DSF P0-4 parent_grant 可空/冷启动无序（含根交接证明） | 部分解（内部顺序已解；外部 root 交接证明待 49·R1） | **partial** | 内部腿：`packages/gateway/src/root-delegation.ts`（指纹/期限/范围 preflight）＋NEG-ORG-09/10/11/12 已覆盖（`root-delegation.test.ts`、`org-root.test.ts`）；缺口：外部交接证明（49·R1）未落——保持 v2/17 的「部分解」 | |
-| DSF P0-5 独立性无供给；审计分离规则 | 已解（规范面；公司层外部锚=GAP-V2-03） | **partial** | 审计矩阵已落卷（v2/03 §4.2/§4.3）＋NEG-ORG-15 已覆盖；缺口：NEG-EVD-02/03 未覆盖；公司层外部锚=GAP-V2-03（target） | |
-| DSF P0-6 「完成」缩窄到终态、八要素自供 | 已解（规范面） | **partial** | EVD-ELM/ANC 形状＋NEG-EVD-01 已覆盖（X2/X3/X4 分级）；缺口：NEG-EVD-02/03/04/06 未覆盖（§四） | |
+| DSF P0-5 独立性无供给；审计分离规则 | 已解（规范面；公司层外部锚=GAP-V2-03） | **partial** | 审计矩阵落卷＋NEG-ORG-15/EVD-02/EVD-03 已覆盖；残余：公司层外部锚=GAP-V2-03（target），审计程序未接生产 | |
+| DSF P0-6 「完成」缩窄到终态、八要素自供 | 已解（规范面） | **closed** | NEG-EVD-01/02/03/04/06 已覆盖（`harvest-neg.test.ts`）；终态/自述与独立来源两分有判定件证据 | |
 | DSF P0-7 D8/D10 被替换未废止 | 已解（规范面） | **closed** | 规范面关闭（01 §六硬核/软外围）；无代码面需求 | |
 | DSF P0-8 T09 必被拒写/状态族拒收核心对象 | 已解（规范面；工件=MIG-03） | **closed** | REC 74 类形状落 contract 12 族；NEG-REC-01..09/11..13 **12/12 已覆盖**；`v14-records` 落表 | |
-| DSF P0-9 失败分支 fail-open（gateway/坏锚/events/seatbelt） | 方向已定（机制目标；文档项已立） | **closed** | FC-01/02（gateway 无 secret 拒启）＋FC-03（坏锚拒应用/拒启）＋FC-04（events 触发器）＋FC-05（seatbelt 缺省最严）＋NEG-SEC-01/03/04 已覆盖；`packages/gateway/test/v2/fail-closed-secret.test.ts`、`test/v2/security/trust-anchor.test.ts` | |
-| DSF P0-10 出站扫描无承担者/E2 同信任域/读面知悉 | 方向已定（机制目标） | **partial** | 出站闸五出口目录（`apps/daemon/src/assembly/outbound-gate/exits.ts`）：platform-write/notify/log **wired**，evidence-export/api-response **gap**；三不入（库/提示词/日志）wired；NEG-SEC-07 已覆盖；缺口：**2 个出口无生产通道**（`evidence-export:no-export-channel`、`api-response:api-assembly-not-wired`）——见 §六 | |
+| DSF P0-9 失败分支 fail-open（gateway/坏锚/events/seatbelt） | 方向已定（机制目标；文档项已立） | **partial** | FC-01/02/03/04 负测已有；FC-05 仅到缺省/构造期（PRB-04 实际拦截 not-executed）；NEG-SEC-01/03/04 已覆盖；不得按「全链已封」计 | |
+| DSF P0-10 出站扫描无承担者/E2 同信任域/读面知悉 | 方向已定（机制目标） | **partial** | 出站闸五出口：platform-write/notify/log/api-response **wired**（api-response 经 runServe+guardApiResponse）；**evidence-export 仍 gap**；三不入 wired；NEG-SEC-07 已覆盖；残余：证据导出无生产通道、读面知悉未全 | |
 | DSF P0-11 现行效力与过审门禁不可判定（元阻塞） | 方向已定（表已立；生效待制作人签认＋DSF 复查填列） | **closed**（施工侧） | v2/17 §六.1 版本效力规则＋§六.2 本表；本报告回写施工列；缺口：**宣布权归制作人（本表不宣布）**；DSF 列空，生效未达 | |
-| DSF P0-12 撤回不枚举后代凭据 | 已解（规范面；网关强制=目标） | **partial** | SEC-REV-01 面＋NEG-SEC-08 已覆盖（`test/v2/security/`）；缺口：NEG-RUN-03（撤回后代枚举链）未覆盖（§四 RUN 缺项） | |
+| DSF P0-12 撤回不枚举后代凭据 | 已解（规范面；网关强制=目标） | **partial** | NEG-SEC-08、NEG-RUN-03 已覆盖（catalog revoke/四判据/记录面）；残余：网关整树撤回强制 SEC-REV-02 仍 target | |
 | O3-01 组织对象与权威三契约互斥（v1） | 方向已定（V2 已消解；随 MIG-05 复验） | **closed** | 纯投影下沉＋只读兼容：`packages/company/src/projection/`＋`test/v2/org-projection.test.ts`；NEG-ORG-06/07 已覆盖；复验记录 `docs/baselines/split-plan-company.md` §五/§七 | |
 | O3-02 台账可重建在钱维已破（v1） | 方向已定（同 P0-2） | **closed**（限域实现） | 同 P0-2 证据；缺口：对账规则＝GAP-V2-01（open） | |
 | O3-03 权责主体被写成可选项（v1） | 已解（规范面） | **closed** | 03 表 D/05 表 C＋NEG-ORG-13/14/15 已覆盖（N 单元/域重叠/自审） | |
