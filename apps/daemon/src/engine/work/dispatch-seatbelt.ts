@@ -401,10 +401,16 @@ function lstatOrUndefined(target: string): ReturnType<typeof lstatSync> | undefi
 /**
  * 本 attempt 的 seatbelt profile 文本（SBPL）：写域取派发计划的有效根（read-only＝零条）。
  * 只做机械渲染（生成器=07-08 的 buildWorkerSeatbeltProfile）；档位语义不在渲染器里。
+ *
+ * 模型 API 出口（2026-10-31 收口前过渡面）：worker 的 dsh 直连模型 API（非走 13800 宿主
+ * RPC），网域无出口＝`turn_end.error=Connection error.`（studio-dev-269 att9-11 真机实录）。
+ * seatbelt 域名收口不可表达（seatbelt.ts 头注 ③），单B 本地代理未接线——过渡=通配 `*:443`
+ * 显式自担（授权留痕=daemon.yaml seatbeltAuthorization；代理落地后按域名收口收回通配）。
  */
 export function dispatchSeatbeltProfile(seatbelt: WorkerDispatchSeatbelt, label?: string): string {
   return buildWorkerSeatbeltProfile({
     writeRoots: seatbelt.writeRoots,
+    outboundTcp: [{ host: '*', port: 443 }],
     ...(label !== undefined ? { label } : {}),
   })
 }

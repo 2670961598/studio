@@ -192,6 +192,8 @@ describe('显式放宽：workspace-write 须授权原文，本 attempt 写域逐
     expect(seatbelt.trail?.executor).toBe('dsh')
     // profile 逐条白名单本 attempt 写域（root 路径为 realpath 归一后的绝对路径）
     expect(dispatchSeatbeltProfile(seatbelt)).toContain(`(allow file-write* (subpath "${realpathSync(workspace)}"))`)
+    // 模型 API 出口过渡面（2026-10-31）：通配 *:443 显式落 profile（studio-dev-269 att9-11 实录收口）
+    expect(dispatchSeatbeltProfile(seatbelt)).toContain('(allow network-outbound (remote tcp "*:443"))')
   })
 
   it('授权面内的追加产出位（跨目录产出位）逐条落计划；越出授权面即逃逸（见 NEG-RUN-04）', () => {
