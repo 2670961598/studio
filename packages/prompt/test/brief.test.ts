@@ -37,6 +37,10 @@ describe('首版模板（17-§5：单号/验收命令/文档章节引用/AGENTS.
     expect(r.text).toContain('AGENTS.md 用户级通道：`/Users/w/.dsh/AGENTS.md`')
     expect(r.text).toContain('workspace：`/lanes/main/.worktrees/STUDIO-110`')
     expect(r.text).toContain('任务书落盘：`/lanes/main/.worktrees/STUDIO-110/BRIEF.md`')
+    // 开工自检段（2026-11-01 轨1 R1——269/320 教训固化：绝对路径+工具自检+如实申报）
+    expect(r.text).toContain('## 开工自检（首步必做')
+    expect(r.text).toContain('相对路径先换算绝对再访问')
+    expect(r.text).toContain('禁止按错误假设默默干完再交差')
   })
 
   it('首版不含前情摘要节', () => {
