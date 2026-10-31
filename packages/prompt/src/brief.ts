@@ -126,6 +126,9 @@ export function renderTaskBrief(kind: BriefKind, ctx: BriefContext): BriefRender
     '## 工位',
     `- workspace：\`${ctx.workspace}\``,
     `- 任务书落盘：\`${ctx.briefPath}\`（本文件即任务书）`,
+    '## 开工自检（首步必做——studio-dev-269/320 实证教训固化）',
+    '- 对象路径：任务描述给出的路径一律按**绝对路径**使用（相对路径先换算绝对再访问——工位 cwd ≠ 仓根，按相对路径探测=269 式环境审计空转）',
+    '- 自检三问（结果写进 REPORT「环境」首段）：①任务对象（文件/目录）逐项可达？②bash/glob/grep 等工具可用？③不可达/不可用项=如实申报+降级续作或如实空转申报——禁止按错误假设默默干完再交差',
   )
 
   if (ctx.budgetCapUsd !== undefined) {
