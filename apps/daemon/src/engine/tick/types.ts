@@ -221,6 +221,14 @@ export interface EngineConfig {
    */
   pinnedTickets?: readonly string[]
   /**
+   * 自动派工分配器开关（轨2 R1 登记项①，studio-dev-345；缺省关=行为零变）：true 时
+   * 无 assignee 新单按部门自动选人（在途最小/同级轮转/并发帽——core pickAssignee），
+   * 选人在派发执行点写回平台 assignee；失败 fail-closed 顺延不回退 defaultPersonId
+   * （错人比不派更糟）。daemon.yaml `autoAssign: true`；游标持久位 daemon_kv
+   * `assign.cursor.v1:<dept>`（部门一键）。
+   */
+  autoAssign?: boolean
+  /**
    * 队列排序器注入位（129-§6.2-R1 升级位）：缺省不注入=core rankQueue 规则缺省档
    * （冻结公式）；160-B 小模型档接线时注入（接口面已冻结，本单不实现）。
    */
