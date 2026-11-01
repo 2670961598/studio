@@ -68,6 +68,8 @@ export interface ServeConfig extends HrServeConfig {
    * `<rootDir>/.AIWS`（demo 无公司目录）。per-company 不并树：根归属标记异 slug 拒启动。
    */
   aiwsRoot?: string
+  /** 自动派工分配器开关（studio-dev-345；缺省关=行为零变） */
+  autoAssign?: boolean
   /** 拍间隔 ms */
   tickMs: number
   /** 并发三闸 */
@@ -439,6 +441,7 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'breakerThreshold': cfg.breakerThreshold = num(value, key); break
       case 'breakerCooldownMs': cfg.breakerCooldownMs = num(value, key); break
       case 'mirrorRescanEveryTicks': cfg.mirrorRescanEveryTicks = num(value, key); break
+      case 'autoAssign': cfg.autoAssign = bool(value, key); break
       case 'autoApprove': cfg.autoApprove = bool(value, key); break
       case 'directiveProducer': cfg.directiveProducer = str(value, key); break
       case 'directiveWhitelist': {
