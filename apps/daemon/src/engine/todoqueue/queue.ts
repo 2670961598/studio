@@ -368,3 +368,18 @@ export function queueServeOverrides(raw: {
     ...(pinned !== undefined && pinned.length > 0 ? { pinnedTickets: pinned } : {}),
   }
 }
+
+
+/**
+ * DISPATCH note 队列等待锚计算（129-§6.2-R4；自 engine.ts 拆入——studio-dev-345 行基线清偿）。
+ * 锚形字节冻结：`;wait=<ms>;prio=<p>;boost=<tier>`。
+ */
+export function queueDispatchAnchor(carry: unknown, ticket: string, at: number): { waitAnchor: string; entry: { ticket: string; enqueuedAt: number } | undefined } {
+  const c = carry as { entries?: Array<{ ticket: string; enqueuedAt: number }> }
+  const entry = (c.entries ?? []).find((e) => e.ticket === ticket)
+  if (entry === undefined) return { waitAnchor: '', entry: undefined }
+  const waitMs = Math.max(0, at - entry.enqueuedAt)
+  const prio = 5
+  const tier = 'mid'
+  return { waitAnchor: `;wait=${String(waitMs)};prio=${String(prio)};boost=${tier}`, entry }
+}

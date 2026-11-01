@@ -181,6 +181,7 @@ import { createLaneRegistry } from './lanes/registry.ts'
 import { foldHarvestCost, writeThroughHarvestUsage } from './cost-guard/harvest.ts'
 import { personDayGateInput } from './cost-guard/fold.ts'
 import { crashHook } from './crash-points.ts'
+import { autoAssignPickOf, personOf, resolveDispatchPerson, type AssignRuntime, type AutoAssignCarry } from './assign/auto-assign.ts'
 // 意图分类学消费件（mention=105-刀A ｜ webhook｜data-change=129-A studio-dev-166 拆出，
 // 20-§十五 尺寸门「先拆再增」）：契约面/指纹/路由解析/落单渲染+消费工厂；noteSafe 同源
 // （各消费路径共用，零漂移）。公面经本文件 re-export（组合根守护测试钉「源侧产物↔契约」
@@ -258,6 +259,7 @@ import { closeRoomDuty, dispatchRoomDuty, type RoomDuty } from './rooms/room-dut
 // 派发 note wait 锚/相位 7 尾投影重投）。
 import {
   dropQueueCarry,
+  queueDispatchAnchor,
   orderCandidates,
   projectTodoQueue,
   queueCandidateMeta,
@@ -270,7 +272,6 @@ import {
   type QueueMemberSource,
   DEFAULT_QUEUE_AGE_STEP_MS,
 } from './todoqueue/queue.ts'
-import { ageBoostTier } from '@studio-next/core'
 import { consumePricingPublish, runPricingStaleCheck, type PricingStaleTickReport } from './pricing/pricing.ts'
 import { costCloseDeps, runCostCloseTick } from './cost-close/close.ts'
 import type { TickActionResult, TickDecisionEntry, TickPhaseDispatchBudget, TickPhaseHarvest, TickReport } from './tick-report/types.ts'
@@ -566,6 +567,7 @@ export function createEngine(deps: EngineDeps): Engine {
   const personOverrides = config.personInflightOverrides ?? {}
   /** 人闸帽与人闸快照（129-§6.2-R3 第四闸）：抽件 sentinel/shape.ts（显式参数版） */
   const personLimits = { overrides: personOverrides, defaultLimit: config.limits.maxInflightPerPerson ?? 1 }
+  const assignRuntime = (): AssignRuntime => ({ people: () => people, config, personLimits, inflight, ledger, platform }) // 轨2 R1① 分配器运行面（people 热替换经 getter 随换）
   // 投影写缓存（canonical JSON——diff 才写；todo_queue 是可重建投影，写面节流观测项）
   let lastProjectedTodoQueue: string | undefined
 
@@ -650,14 +652,8 @@ export function createEngine(deps: EngineDeps): Engine {
     })
   }
 
-  /** 泳道租约状态（过期=死主视同无主——decide laneFree 同语义；过期判定归 decide 入参时钟） */
-  function resolvePerson(issue: { assignee?: string }): PersonRef | undefined {
-    return (
-      (issue.assignee !== undefined ? people.find((p) => p.id === issue.assignee) : undefined) ??
-      people.find((p) => p.id === config.defaultPersonId) ??
-      people[0]
-    )
-  }
+  /** 派工对象解析链（assignee→defaultPersonId→people[0]；体拆入 assign/auto-assign.ts——轨2 R1① 归域+行基线清偿，热替换经 getter 取活值，语义与原闭包逐字节一致） */
+  function resolvePerson(issue: { assignee?: string }): PersonRef | undefined { return personOf(() => people, () => config.defaultPersonId, issue) }
 
   /** 定流（DEV-43 解析序与 decide 步2 同函数：T:<type> 优先→L:<level> 回退，永不漂移） */
   function flowOf(issue: { type?: string; level?: number }) {
@@ -688,6 +684,8 @@ export function createEngine(deps: EngineDeps): Engine {
     tickEvents: EventRecord[],
     budget: TickPhaseDispatchBudget,
     resumePlan?: ResumeDispatchPlan,
+    autoAssign?: AutoAssignCarry,
+    dispatchPersons?: ReadonlyMap<TicketId, string>,
   ): Promise<TickActionResult> {
     const ticket = action.ticket
     // state-diff 排队时已占泳道（决策即占用）——任何失败路径都必须归还，不留死锁
@@ -698,8 +696,11 @@ export function createEngine(deps: EngineDeps): Engine {
     }
     if (inflight.has(ticket)) return fail('该单已有在途工位（幂等跳过，不双写）')
     const fresh = await platform.issues.get(ticket)
-    const person = resolvePerson(fresh)
-    if (person === undefined) return fail('人员索引为空（people 未注入）——不派工')
+    // 派工对象解析（轨2 R1①，studio-dev-345）：面开且无 assignee→分配器选人+写回平台
+    // （在途最小/同级轮转/并发帽；失败 fail-closed 顺延不回退缺省人）；体=assign/auto-assign.ts
+    const resolved = await resolveDispatchPerson(assignRuntime(), { ticket, fresh, ...(autoAssign !== undefined ? { carried: autoAssign } : {}), ...(dispatchPersons !== undefined ? { dispatchPersons } : {}) })
+    if (!resolved.ok) return fail(resolved.detail)
+    const person = resolved.person
     // 模型档选位（studio-dev-196）：单>岗>角色三级解析（model-tier.ts）；面关（models.yaml
     // 未装载）=tierFace undefined，选位与现行为逐字节一致。档面在 resume 面前：resume 不可
     // 续的 fallback=档位适配器（降级新派不降档——接力同档）。
@@ -883,27 +884,20 @@ export function createEngine(deps: EngineDeps): Engine {
         ...(instructionsPath !== undefined ? { instructionsPath } : {}),
       })
       syncMirror(transitioned)
-      // 队列等待锚（129-§6.2-R4，studio-dev-167 单B）：DISPATCH note 尾携 wait/prio/boost
-      // ——面板 scheduleToStart 观测面（store.recentDispatchWaitsMs 按此锚解析，正则
-      // `wait=(\d+)`）；队列外直派（携带无条目——rescan 前的极端面）不携锚不误报。
-      const queueEntryAtDispatch = queueCarry.get(ticket)
-      const queueWaitMs =
-        queueEntryAtDispatch !== undefined ? Math.max(0, at - queueEntryAtDispatch.firstSeenAt) : undefined
-      const queueAnchor =
-        queueEntryAtDispatch !== undefined
-          ? `;wait=${queueWaitMs};prio=${queueEntryAtDispatch.priority};boost=${ageBoostTier(queueWaitMs ?? 0, queueAgeStepMs)}`
-          : ''
+      // 队列等待锚（129-§6.2-R4）：DISPATCH note 尾携 wait/prio/boost（锚形冻结；
+      // 计算体拆入 todoqueue/queue.ts queueDispatchAnchor——轨2 R1① 本单「先拆再增」行基线清偿）
+      const queueAnchorInfo = queueDispatchAnchor(queueCarry, ticket, at)
       // resume 观测锚（129-E，F1-15「续跑派发不静默」）：note 尾锚+causation_id=上次工时单 id
       //（两形都带——因果链不因降级断；锚形见 faces 件 resumeDispatchFace 头注）
       makeEvent('DISPATCH', transitioned, attempt, tickEvents, {
         size: Buffer.byteLength(assembled.agentsMd.text, 'utf8'),
         payload_hash: `sha256:${createHash('sha256').update(assembled.agentsMd.text, 'utf8').digest('hex')}`,
         ...(resumeFace !== undefined ? { causation_id: resumeFace.causationId } : {}),
-        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version}${tierFace?.noteAnchor ?? ''};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${minted !== undefined ? `;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=${minted.nonce}` : ''}${action.breakerProbe === true ? `;breaker=half-open-probe（冷却窗过——单次试探：成功即复位，失败回全开续冷却，DEV-46）` : ''};${seatbeltNote(seatbelt)}${queueAnchor}${resumeFace?.noteAnchor ?? ''}`,
+        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version}${tierFace?.noteAnchor ?? ''};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${minted !== undefined ? `;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=${minted.nonce}` : ''}${action.breakerProbe === true ? `;breaker=half-open-probe（冷却窗过——单次试探：成功即复位，失败回全开续冷却，DEV-46）` : ''};${seatbeltNote(seatbelt)}${resolved.autoAssignNote ?? ''}${queueAnchorInfo.waitAnchor}${resumeFace?.noteAnchor ?? ''}`,
       })
       // 派发成功即出队（129-§6.2）：携带条删——GATE_FAIL 回滚再入队走 touchQueueCarry
       // 新钟（attempt 轮次可区分，队列等待观测口径=每誓一钟，不跨轮累计）。
-      if (queueEntryAtDispatch !== undefined) dropQueueCarry(queueCarry, [ticket])
+      if (queueAnchorInfo.entry !== undefined) dropQueueCarry(queueCarry, [ticket])
       // 单据房间供给（130-P3/DEV-20 P9）：ensureTicketRoom；失败 ESCALATE 不阻派发（幂等重跑收敛）
       if (rooms !== undefined) await dispatchRoomDuty(rooms, { ticket, title: fresh.title, dept: fresh.dept ?? person.dept, assignee: person.id }, (note) => makeEvent('ESCALATE', transitioned, attempt, tickEvents, { note }))
       return {
@@ -1396,7 +1390,7 @@ export function createEngine(deps: EngineDeps): Engine {
     mutations += dLayer?.mutations ?? 0
 
     // —— 相位 2 state-diff：受影响单逐个 decide（每单至多一动作；provisionalActions 供三闸） ——
-    const dispatchQ: Array<{ action: Extract<Action, { type: 'dispatch' }>; intentKey: string; resumePlan?: ResumeDispatchPlan }> = [] // resumePlan=129-E 拍作用域续跑计划携带面
+    const dispatchQ: Array<{ action: Extract<Action, { type: 'dispatch' }>; intentKey: string; resumePlan?: ResumeDispatchPlan; autoAssign?: AutoAssignCarry }> = [] // resumePlan=129-E 续跑携带；autoAssign=轨2 R1① 选人携带（决策位→执行位同源）
     const approvalQ: Array<Extract<Action, { type: 'submit_approval' }>> = []
     const collectQ: Array<Extract<Action, { type: 'collect' }>> = []
     const mergeQ: Array<Extract<Action, { type: 'merge' }>> = []
@@ -1549,6 +1543,7 @@ export function createEngine(deps: EngineDeps): Engine {
     // 本拍已排队派发的人位占用（两段式先决后执——人闸快照折算面，dispatch 即记入）；
     // 必须声明在开工门宿主之前（宿主 personGateOf 闭包引用本表）
     const dispatchPersons = new Map<TicketId, string>()
+    let lastAutoAssign: AutoAssignCarry | undefined // 轨2 R1① 决策携带（personIdOf 顺序单值覆写，dispatch 决策读取；决策循环顺序执行无并发面）
     // —— 开工门快照宿主（IMPL-06-02 抽件 work/intake.ts：入参装配在彼，判定仍在 core）——
     // 人闸快照（129-§6.2-R3 第四闸——decide passGates 序冻结：断路>泳道>人>每拍>在途）：
     // 在工计数=内存 Inflight+本拍已排队派发（两段式先决后执拍内即时生效）；人不可解析=
@@ -1562,7 +1557,10 @@ export function createEngine(deps: EngineDeps): Engine {
       fetchIssue: (ticket) => platform.issues.get(ticket).catch(() => undefined),
       flowOf,
       laneLeaseOf: (lane) => lanes.state(lane),
-      personIdOf: (issue) => resolvePerson(issue)?.id,
+      personIdOf: (issue) => {
+        lastAutoAssign = autoAssignPickOf(assignRuntime(), issue, dispatchPersons)
+        return lastAutoAssign !== undefined ? lastAutoAssign.personId : resolvePerson(issue)?.id
+      },
       personGateOf: (personId) => personGateSnapshot(personId, dispatchPersons, inflight, personLimits),
       verbNowOf: (ticket) => directiveVerbNow.get(ticket) ?? index.directiveStandingOf(ticket),
       approvedNow: (verbNow) => config.autoApprove || verbNow === '批准',
@@ -1605,7 +1603,7 @@ export function createEngine(deps: EngineDeps): Engine {
           // resume 面（129-E）：本拍 resume 意图消费登记的续跑计划随派发携带（拍作用域
           //——decide 未出 dispatch 即失效，重发意图即重试）
           const resumePlan = relayResume.planOf(ticket)
-          dispatchQ.push(resumePlan !== undefined ? { action, intentKey, resumePlan } : { action, intentKey })
+          dispatchQ.push({ action, intentKey, ...(resumePlan !== undefined ? { resumePlan } : {}), ...(lastAutoAssign !== undefined ? { autoAssign: lastAutoAssign } : {}) })
           provisionalActions += 1
           // 人位占用记账（同拍后续候选的人闸快照须看到——泳道占用同款决策即生效；
           // 执行失败时 executeDispatch fail() 不清 dispatchPersons——dispatchQ 派发循环
@@ -1679,8 +1677,8 @@ export function createEngine(deps: EngineDeps): Engine {
     const approvals = await runApprovalTransitions(workPhaseHost, approvalQ)
     let dispatched = 0
     const budget: TickPhaseDispatchBudget = { budgetReserved: 0, budgetRefused: 0 }
-    for (const { action, intentKey, resumePlan } of dispatchQ) {
-      const result = await executeDispatch(action, intentKey, index, tickEvents, budget, resumePlan)
+    for (const { action, intentKey, resumePlan, autoAssign } of dispatchQ) {
+      const result = await executeDispatch(action, intentKey, index, tickEvents, budget, resumePlan, autoAssign, dispatchPersons)
       actionResults.push(result)
       if (result.ok) {
         dispatched += 1
