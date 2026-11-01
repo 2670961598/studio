@@ -41,3 +41,15 @@ sbpl subpath 需真路径 `/private/var/folders/...`（daemon.yaml 已改+沙箱
 MCP 大重构的 worker 侧缺口实证。
 **遗留**：活动流派发饿死（343-350 八单待派——feed 读洞致 activitySince 全量通过罕见；
 调度器路径正常）——与认证振荡同源，继续围猎。
+
+## 2026-11-01 R3（12:00 班——bash 工具链深修战报）
+
+**进展链**：mkdtemp 符号链接修复后，bash 换死法→`sandbox_apply: Operation not permitted`
+（**嵌套沙箱**：dsh-bash-sandbox 给子进程套内层沙箱，外层工位 seatbelt 已圈禁——macOS
+内核拒嵌套 apply，与 profile 无关，seatbelt.ts 头注先例）。`mode: danger-full-access`
+配置后工具恢复在场但执行时探 backend 仍拒（"no sandbox backend usable…ensure
+sandbox-exec is usable"）——backend 探测本身要起 sandbox-exec（嵌套）。
+**正解**：bash-local 执行器（无内层沙箱，隔离全责外层）——但 insertAfter 补丁只进
+config 树不激活插件，工具不发布；**需 bundle/includes 级激活**（dsh 组合机制知识缺口，
+修复路径已明确）。当前态：bash 工具在场+诚实拒（优于隐性坏）；glob/grep 待同路复验。
+**候补**：外层 seatbelt 白名单放行 sandbox-exec 嵌套=内核级不可能，排除。
