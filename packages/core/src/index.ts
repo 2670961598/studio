@@ -123,6 +123,10 @@ export * from './capability-gap.ts'
 // （子域落位：core/src 根平面已满 25 件阈，BC-S1 要求切子域）
 export * from './ring/ring-scenarios.ts'
 
+// 自动派工分配器纯函数（轨2 R1 登记项①，studio-dev-345）：部门内 active 在帽下——
+// 在途最小者优先/同级轮转/并发帽；失败闭集四码 fail-closed，永不选在帽人。
+export * from './assign/assign.ts'
+
 /** 包名常量 */
 export const PACKAGE_NAME = '@studio-next/core'
 
