@@ -1,69 +1,118 @@
 # Studio Next
 
-Studio Next 是一个 **AI 公司框架**：把「一家公司」建模成代码外部的一个 git 目录，由框架负责唤起
-执行体（executor）、组装上下文、收口流程写入、收割证据与账目，让 agent 组成的公司按单据自转。
+**把「一家公司」建模成代码外部的一个 git 目录。** 框架负责唤起执行体（executor）、组装
+上下文、收口流程写入、收割证据与账目——组织、人事、章程、报表都在公司目录里，是资产
+而非配置；agent 组成的公司按单据自转。
 
-- **公司 = 目录**：组织/人事/章程/报表/提示词片段全部在公司的 git 目录内，加一家公司 = 加一个目录，零改码
-- **框架 = 周边设施**：唤起、配置托管、上下文准备、流程流转、证据收割、台账与监控；执行体内部是黑盒
-- **事实源三条**：流程与工作知识在 YouTrack｜组织人事在公司 git 目录｜台账是可重建的 SQLite 投影
-- **规矩写在文档里**：设计文档库（`docs/`）是施工依据，代码沿「文档章节号」回溯
+> 状态：v0.5 开发中（dogfooding 首家公司 studio-dev 真实运转中：立单→派发→执行→收割→
+> 验收→合并全链每日跑通；V2 全量重构方案见 docs/v2/）。
 
-## 目录结构
+---
+
+## 设计哲学
+
+### 一、Agent 不是工具，是赛博打工人
+
+我们对 agent 的态度不是「工具」，而是**赛博打工人**——我们以人作为原型来思考整个架构。
+
+工具只能辅助人：再强的工具，仍然等待人握着它。而打工人是组织里的成员：有岗位、有上级、
+有职责边界、有考核、有任免与问责。正因为把 agent 当人看待，我们才能设想出「公司」这个
+架构——部门、等级、任免、审计、账本——而不是又一个 agent 编排器。
+
+**公司与「超级 agent」的区别就是分野**：单体超级 agent（无论主 agent 先理解再分解派发，
+还是 Router/Worker 两层让下面自己分解）终究只有两层，且必须有人持续对接最上层、不断喂
+新东西。公司不是两层：方向从公司最上面发出，高层做高层抽象的理解，再层层下发到技术
+执行；产出最终还要通过**产品验收**与**测试验证**。流程必须存在——除非 agent 是 100%
+可靠的，否则永远需要验证环节，而没有谁是 100% 的。
+
+### 二、正确性靠流程保证，不靠「不犯错」
+
+人会犯错，AI 也会犯错。**犯错并不可怕，可怕的是错误不被流程捕获。**
+
+我们的整套流程——批示链、断路器、复验、证据四要件、分层审计——都是为了保证：**只要
+通过了测试与验证，无论这件事是人做的还是 AI 做的，都是可以信赖的。** 信任建立在流程
+与证据上，不建立在「谁做的」上。这也是我们对 AI 产出的根本态度：验收看证据，不看作者。
+
+### 三、权责体系：组织的骨架
+
+公司有宪法级的权责体系：权力自上而下授予、证据自下而上收割、审计分层、账本唯一、
+写入者唯一。执行器（CLI agent）是可替换的劳动力，组织才是持久的资产。
+（体系细节见 docs/v2/03-组织册，此不展开。）
+
+---
+
+## 它长什么样
 
 ```
-.
-├── apps/daemon/            # 唯一常驻进程（Node 24 LTS）
-├── packages/
-│   ├── contract/           # 契约包：cases.json + JSON Schema + runner（规格测试）
-│   ├── core/               # 状态机/主循环/收割/闸门/预算/断路（纯逻辑，零 IO）
-│   ├── store/              # node:sqlite + drizzle：台账、migration、快照
-│   ├── yt/                 # YouTrack 客户端（活动流游标/网关凭据/护栏）
-│   ├── adapters/           # executor 适配器：dsh（默认）/ claude / codex / kimi
-│   ├── company/            # 公司目录：schema 校验、挂载、报表聚合、定时岗调度源
-│   ├── prompt/             # L0-L5 提示词组装器 → AGENTS.md + 任务书 + 分层指纹
-│   ├── panel/              # Hono 面板：:8791 监控 / :8789 公司概览（<slug> 路由）
-│   └── api/                # :8788 对外 API（只落单不派工，默认局域网）
-├── templates/company-2-level/   # 2 级公司目录模板（studio-next init 的脚手架）
-└── docs/                   # 设计文档库（施工依据）
+┌─────────────────────── 一家公司（一个 git 目录）───────────────────────┐
+│  org-config.yaml   组织：部门/岗位/等级/定时岗/类型流                     │
+│  charter.md        章程与红线                                            │
+│  departments/      部门与人事档案（people/*.md 六节档案）                 │
+│  reports/          各部门产出物（报表/巡逻/审计）                          │
+│  .AIWS/            员工工作区（每单一个工位，家保留原位归档）              │
+└────────────────────────────────────────────────────────────────────────┘
+        ▲ 挂载/指纹监听                 ▼ 事件/收割/账目
+┌────────────────────────── daemon（唯一常驻进程）────────────────────────┐
+│  主循环七相位：采集 → state-diff → 派发 → 收割 → 合并 → 回收 → 落账       │
+│  三条事实源：协作平台（经网关）｜公司 git 目录（daemon 唯一写入）｜SQLite 台账 │
+│  治理面：断路器/泳道租约/人闸/意图幂等/验收闸门（冻结验收命令真执行）        │
+└────────────────────────────────────────────────────────────────────────┘
+        ▼ 派发（任务书=目标+冻结验收+文档引用+开工自检）
+┌────────────────────────── 执行体（可替换劳动力）────────────────────────┐
+│  dsh（主力，DeepSeek Harness）/ claude / codex / kimi —— 四原语适配        │
+│  工位沙箱（seatbelt 写域/网域圈定）· 会话续跑 · 证据四要件                 │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Quickstart
+**一次真实交付的路径**：立单（三字段：类型/部门/等级）→ daemon 评估（意图幂等+四闸）→
+工位沙箱派发（任务书+AGENTS 注入+持久指令通道抗压缩）→ worker 执行（开工自检→实作→
+REPORT）→ 真验收闸门（冻结命令真跑）→ 复验 → 验收位批示（批准/打回重做）→ 合并交付 →
+台账落账。全链证据落盘，失败如实分类上报——**伪造证据是事故**。
 
-以下命令在仓内均可直接跑通（现状即所得；未接线面的诚实清单见 `apps/daemon/src/assembly/serve.ts` 头注）。
+## 快速开始
 
 ```bash
-# 1. 安装依赖（bun workspaces；daemon 跑 Node 24 LTS——原生 type-stripping 直跑 .ts）
-bun install
+bun install                                # bun workspaces
+bun run daemon                             # 起主循环
+bun run test                               # guard:boundaries + vitest 全量
+bun run typecheck                          # strict TS（只写可擦除语法）
 
-# 2. 类型门禁（合同要求：CI 必跑）
-bun run typecheck
-
-# 3. 测试（边界门禁 + 单测 + 契约测试）
-bun run test
-
-# 4. CLI 命令面（全命令清单；单命令 -h/--help 看分面；--version 看版本）
-bun apps/daemon/src/cli/main.ts --help
-
-# 5. 从模板生成一家公司（<slug>=小写字母/数字/连字符，如 my-company；--template 收模板
-#    目录路径，缺省仓根 templates/company-2-level——不是模板名）
-bun apps/daemon/src/cli/main.ts init my-company
-
-# 6. 一条命令创建并接线一家公司（init→provision→建号→jobs→插件→报告→daemon.yaml 骨架，
-#    幂等；studio-dev-103 S4A）
-bun apps/daemon/src/cli/main.ts company create my-company
-
-# 7. 起常驻主循环（七相位引擎；配置样例内嵌于 serve --help——company create 已顺产骨架）
-bun apps/daemon/src/cli/main.ts serve --config var/daemon.yaml
+# 开一家公司
+node apps/daemon/src/cli/main.ts init my-company --template templates/company-3-level
+node apps/daemon/src/cli/main.ts company create my-company   # 建号/建库/播种定时岗
+node apps/daemon/src/cli/main.ts serve --config my-company/var/daemon.yaml
 ```
 
-> 注：`bun run daemon` 仍是骨架占位（横幅即退）——常驻进程走上面第 7 步的 `serve`；
-> CLI 入口 `apps/daemon/src/cli/main.ts` 亦即 package.json bin `studio-next` 的落点。
+端口约定：8791 监控 ｜ 8788 对外 API（只落单不派工）｜ 8789 公司概览。
 
-## 文档
+## 仓库结构
 
-设计文档库在 `docs/`，开工顺序与依据链以 `docs/20-工程总规程.md` 为准：
-**抽象 → 文档 → 过审 → 代码 → 测试**，倒序或跳级视为废件。
+```
+apps/daemon/        唯一常驻进程：engine（引擎核）/control/evolve/cli（一命令一模块）
+packages/contract/  契约包：cases.json + JSON Schema + runner（规格唯一标尺）
+packages/core/      纯逻辑：状态机/主循环决策/收割/闸门/预算/断路（零 IO）
+packages/store/     node:sqlite + drizzle：schema/迁移/快照/重建
+packages/taiga/     协作平台客户端：活动流游标/字段映射/网关凭据
+packages/adapters/  执行器适配：dsh（默认）/claude/codex/kimi 四原语
+packages/company/   公司目录：schema 校验/挂载/报表聚合/定时岗调度源
+packages/prompt/    L0-L5 组装器 → AGENTS.md + 任务书 + 分层指纹
+packages/panel/     Hono 面板：:8791 监控 / :8789 公司概览
+packages/api/       Hono 对外 API（gated-only，默认局域网）
+templates/          公司目录模板（2-9 级 + 行业模板：互联网/游戏）
+docs/               设计文档库（施工依据）+ docs/v2/（V2 全量重构方案 18 卷）
+                    + docs/plan/（施工方案 8 卷）+ docs/optimizer/（自优化守护轨道）
+```
 
-## 许可
+## 文档地图
 
-MIT，见 `LICENSE`。
+| 想了解 | 看 |
+|---|---|
+| 设计哲学与竞争定位 | docs/49-制作人决策包.md（「代理权网状」doctrine） |
+| V2 全量重构方案 | docs/v2/（18 卷）＋ docs/plan/（施工方案 8 卷） |
+| 工程总规程/分层宪法 | docs/20-工程总规程.md（§十五 分层宪法与门禁） |
+| 自主存活架构 | docs/90-自主存活架构.md（最小守护核/自修复阶梯） |
+| 自优化守护程序 | docs/88/89（八轨轮值：提示词/组织/前沿/插件/工作面/多公司/GUI） |
+
+## License
+
+MIT
