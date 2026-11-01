@@ -114,7 +114,15 @@ async function toPlatformActivity(ctx: TaigaContext, m: MergedEntry): Promise<Pl
 async function collect(ctx: TaigaContext, entities: EntityRaw[]): Promise<MergedEntry[]> {
   const merged: MergedEntry[] = []
   for (const raw of entities) {
-    for (const entry of await fetchHistory(ctx, raw.id)) {
+    // 容错（2026-11-01 应急修——认证振荡下单张历史拉取 401 不再炸整轮；跳过失败单，
+    // 下轮重试——cursor 由成功单推进，失败单在下一个 tick 由「边界不可达→全量重放」兜底）
+    let entries
+    try {
+      entries = await fetchHistory(ctx, raw.id)
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
       if (entry.hidden || entry.snapshot) continue
       merged.push({ entry, issue: ctx.ticketId(raw.ref) })
     }
