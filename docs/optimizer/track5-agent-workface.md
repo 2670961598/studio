@@ -29,3 +29,15 @@
    incident-20261031-taiga-history.md
 
 **成本记账**：本轮审计≈35k token（台账抽样+2 工位实证+复盘）。
+
+## 2026-11-01 R2（08:00 班）
+
+**双杀修复**：①worker bash 工具链复活——`mkdtemp` EPERM 根因=/var/folders 系符号链接、
+sbpl subpath 需真路径 `/private/var/folders/...`（daemon.yaml 已改+沙箱实测 ✓，首个
+受益者=342 运维首报如实申报了此故障——开工自检段+诚实降级的实战首验，模板投资回本）；
+②岗位物化堵点（OPS-1 等无 Taiga 账号）——邀请 membership+Django 壳建号三件套入项目，
+岗单 338/341/342 恢复流转。
+**发现**：342 报告自报 studio-tools MCP 未挂载（wkey 在 env 但 MCP 工具面缺席）——84 号
+MCP 大重构的 worker 侧缺口实证。
+**遗留**：活动流派发饿死（343-350 八单待派——feed 读洞致 activitySince 全量通过罕见；
+调度器路径正常）——与认证振荡同源，继续围猎。
