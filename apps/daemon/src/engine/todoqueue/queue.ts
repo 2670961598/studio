@@ -376,7 +376,8 @@ export function queueServeOverrides(raw: {
  */
 export function queueDispatchAnchor(carry: unknown, ticket: string, at: number): { waitAnchor: string; entry: { ticket: string; enqueuedAt: number } | undefined } {
   const c = carry as { entries?: Array<{ ticket: string; enqueuedAt: number }> }
-  const entry = (c.entries ?? []).find((e) => e.ticket === ticket)
+  const entries = Array.isArray(c.entries) ? c.entries : []
+    const entry = entries.find((e) => e.ticket === ticket)
   if (entry === undefined) return { waitAnchor: '', entry: undefined }
   const waitMs = Math.max(0, at - entry.enqueuedAt)
   const prio = 5
