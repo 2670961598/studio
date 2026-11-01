@@ -161,31 +161,26 @@ export class TaigaContext {
 
   /** memberships API 按需加载成员（修复 2026-11-01：by_slug 内嵌数组是纯 ID，无 username） */
   private async ensureMembers(): Promise<void> {
+    // v2（2026-11-01）：memberships user_name=显示名≠登录名→改从 users API 拿真 username
     const projectId = await this.project()
-    const res = await this.client.request({
-      method: 'GET',
-      path: '/memberships',
-      query: { project: String(projectId) },
-    })
-    const raw = asArray(res.json, 'memberships')
-    const parsed: MemberInfo[] = []
-    for (const v of raw) {
+    const [mres, ures] = await Promise.all([
+      this.client.request({ method: 'GET', path: '/memberships', query: { project: String(projectId) } }),
+      this.client.request({ method: 'GET', path: '/users' }),
+    ])
+    const memberIds = new Set<number>()
+    for (const v of asArray(mres.json, 'memberships')) {
       const o = asObject(v, 'membership')
       const uid = optNumberNull(o, 'user')
-      if (uid === undefined || uid === null) continue // 邀请中成员（无 user）跳过
-      // membership 不直接带 username——从 user_full_name 不可靠，用 extra 兜底
-      const uname = optString(o, 'user_email')?.split('@')[0] ?? String(uid)
-      // 尝试从 extra 里取 username（Taiga 某些版本带 user_extra）
-      const extra = o['user_extra']
-      if (extra !== undefined && typeof extra === 'object' && extra !== null) {
-        const e = extra as Record<string, unknown>
-        const eun = optString(e, 'username')
-        if (eun !== undefined) { parsed.push({ id: uid, username: eun }); continue }
+      if (uid !== undefined && uid !== null) memberIds.add(uid)
+    }
+    const parsed: MemberInfo[] = []
+    for (const v of asArray(ures.json, 'users')) {
+      const o = asObject(v, 'user')
+      const uid = optNumberNull(o, 'id')
+      const uname = optString(o, 'username')
+      if (uid !== undefined && uid !== null && uname !== undefined && uname !== '' && memberIds.has(uid)) {
+        parsed.push({ id: uid, username: uname })
       }
-      // 兜底：email 前缀作 username（hr-sync 建号 login=email 前缀——同构）
-      const unm = optString(o, 'user_name')
-      if (unm !== undefined && unm !== '') { parsed.push({ id: uid, username: unm }); continue }
-      parsed.push({ id: uid, username: String(uname) })
     }
     this.memberList = parsed
   }
