@@ -96,10 +96,7 @@ export function parseEntityList(v: unknown, ctxLabel: string): EntityRaw[] {
   return asArray(v, ctxLabel).map((x) => parseEntity(x, ctxLabel))
 }
 
-function parseMember(v: unknown): MemberInfo {
-  const o = asObject(v, 'member')
-  return { id: reqNumber(o, 'id', 'member'), username: reqString(o, 'username', 'member') }
-}
+
 
 function parseStatus(v: unknown): StatusInfo {
   const o = asObject(v, 'status')
@@ -142,7 +139,9 @@ export class TaigaContext {
     if (slug !== this.projectSlug) {
       throw new TaigaPlatformError('CONFIG_INVALID', 'unknown-project', `项目 slug 不符：期望 ${this.projectSlug}，实得 ${slug}`)
     }
-    this.memberList = asArray(o['members'], 'projects/by_slug.members').map(parseMember)
+    // members 从 by_slug 响应内嵌数组解析已废（那是纯用户 ID 数组，parseMember 期望
+    // {id,username} 对象——2026-11-01 assignee 全丢根因）：成员改由 ensureMembers()
+    // 从 memberships API 按需加载（返回完整对象含 username）；by_slug 只解析 projectId。
   }
 
   async project(): Promise<number> {
@@ -154,9 +153,41 @@ export class TaigaContext {
 
   async members(): Promise<MemberInfo[]> {
     await this.resolveProject()
+    if (this.memberList === null) await this.ensureMembers()
     const list = this.memberList
     if (list === null) throw new TaigaPlatformError('CONFIG_INVALID', 'unknown-project', `找不到项目 ${this.projectSlug}`)
     return list
+  }
+
+  /** memberships API 按需加载成员（修复 2026-11-01：by_slug 内嵌数组是纯 ID，无 username） */
+  private async ensureMembers(): Promise<void> {
+    const projectId = await this.project()
+    const res = await this.client.request({
+      method: 'GET',
+      path: '/memberships',
+      query: { project: String(projectId) },
+    })
+    const raw = asArray(res.json, 'memberships')
+    const parsed: MemberInfo[] = []
+    for (const v of raw) {
+      const o = asObject(v, 'membership')
+      const uid = optNumberNull(o, 'user')
+      if (uid === undefined || uid === null) continue // 邀请中成员（无 user）跳过
+      // membership 不直接带 username——从 user_full_name 不可靠，用 extra 兜底
+      const uname = optString(o, 'user_email')?.split('@')[0] ?? String(uid)
+      // 尝试从 extra 里取 username（Taiga 某些版本带 user_extra）
+      const extra = o['user_extra']
+      if (extra !== undefined && typeof extra === 'object' && extra !== null) {
+        const e = extra as Record<string, unknown>
+        const eun = optString(e, 'username')
+        if (eun !== undefined) { parsed.push({ id: uid, username: eun }); continue }
+      }
+      // 兜底：email 前缀作 username（hr-sync 建号 login=email 前缀——同构）
+      const unm = optString(o, 'user_name')
+      if (unm !== undefined && unm !== '') { parsed.push({ id: uid, username: unm }); continue }
+      parsed.push({ id: uid, username: String(uname) })
+    }
+    this.memberList = parsed
   }
 
   async statuses(): Promise<StatusInfo[]> {
