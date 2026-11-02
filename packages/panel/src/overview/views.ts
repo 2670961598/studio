@@ -230,7 +230,7 @@ export function renderOrgTree(tree: OrgTree): string {
 /** 进度卡口径说明 */
 export const PROGRESS_NOTE =
   '进度口径：ticket_mirror（YouTrack 镜像，可重建投影）按 state 聚合计数，只计本司单据；' +
-  '状态名以镜像行为准（YouTrack 状态流是权威源）'
+  '状态名以镜像行为准（YouTrack 状态流是权威源）；平台不可见残行由 daemon mirror GC 备份先行清理（docs/17-§3）'
 
 /** 州表卫生映射层口径说明（127-C：state_mapping 应用时并入 note——统计视图透明可审计） */
 export const PROGRESS_MAPPING_NOTE =

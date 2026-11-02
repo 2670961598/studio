@@ -113,6 +113,8 @@ import { walCheckpoint, type WalCheckpointResult } from './wal.ts'
 import { sameEvent } from './event-compare.ts'
 import type { CostDailyFace } from './cost.ts'
 import { excludedDomainRefs, type ExcludedDomainRef } from './backup.ts'
+import { backupLedgerTo, pruneTicketMirrors } from './mirror-gc.ts'
+import type { LedgerBackupResult, PruneTicketMirrorsOptions, PruneTicketMirrorsResult } from './mirror-gc.ts'
 import { assertRecord, optNum, optStr, str, type SqlRow } from './row-helpers.ts'
 import { currentVersion, migrate } from './migrations.ts'
 import {
@@ -257,6 +259,14 @@ export interface Ledger extends HrSyncQueueFace, PricingFace, UsageFace, ProbesF
   upsertTicketMirror(record: unknown): string
   getTicketMirror(issue: string): TicketMirrorRecord | undefined
   listTicketMirrors(): TicketMirrorRecord[]
+  /**
+   * ticket_mirror 投影 GC 删除面（studio-dev-511；docs/17-§3 镜像=可重建投影）：删除
+   * 「company 下 issue 不在 activeIssues 中」的残行（单事务原子；空活动集 fail-closed 拒删）。
+   * 调用方须先 `backupTo` 备份、且持 writer lease（daemon 相位 1 尾维护步）。
+   */
+  pruneTicketMirrors(company: string, activeIssues: Iterable<string>, opts?: PruneTicketMirrorsOptions): PruneTicketMirrorsResult
+  /** 一致性备份（VACUUM INTO；目标须不存在）——GC 前调用，失败即不得删 */
+  backupTo(outPath: string): LedgerBackupResult
   /**
    * todo_queue 投影全量重投（129-§6.2-R2，v8）：单事务 DELETE+INSERT 整公司换——
    * 可重建投影非事实源（单写者=daemon 每拍末调，diff 判定归引擎侧）；决策永不读表。
@@ -1616,6 +1626,8 @@ export function openLedger(path: string): Ledger {
     upsertTicketMirror,
     getTicketMirror,
     listTicketMirrors,
+    pruneTicketMirrors: (company, activeIssues, opts) => pruneTicketMirrors(db, company, activeIssues, opts),
+    backupTo: (outPath) => backupLedgerTo(db, outPath),
     replaceTodoQueue,
     listTodoQueue,
     recentDispatchWaitsMs,

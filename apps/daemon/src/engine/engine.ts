@@ -276,6 +276,7 @@ import {
 } from './todoqueue/queue.ts'
 import { consumePricingPublish, runPricingStaleCheck, type PricingStaleTickReport } from './pricing/pricing.ts'
 import { costCloseDeps, runCostCloseTick } from './cost-close/close.ts'
+import { runMirrorGcTick, type MirrorGcTickReport } from './mirror-gc/step.ts'
 import type { TickActionResult, TickDecisionEntry, TickPhaseDispatchBudget, TickPhaseHarvest, TickReport } from './tick-report/types.ts'
 import { personViewOf, type QueueJudgeCandidate, type QueueJudgeHook } from './judge/sites129.ts' // 160-B 两址接线体（studio-dev-182）
 import { closeOutMergeHarvest, failMergeHarvest, runMergeAction, type MergeRunHost } from './merge/merge-run.ts' // 202-P2 相位 5 合并跑机器（studio-dev-232）
@@ -514,6 +515,8 @@ export function createEngine(deps: EngineDeps): Engine {
   const intentQueue: InvokeIntent[] = []
   const splitQueue: SplitDirectiveInput[] = []
   let seq = 0
+  /** 镜像 GC 首拍强制位（studio-dev-511：部署后首拍即清残行；完成一次判断后置 false） */
+  let mirrorGcFirstRun = true
 
   // worker 级 wkey（17-§7）：env 通道（TaskBrief.credentials v1.4）——凭据随 launch 进
   // 子进程 env，daemon 不留 token 副本、无在途索引面（吊销按 ticket 走 gateway，不依赖
@@ -1242,12 +1245,40 @@ export function createEngine(deps: EngineDeps): Engine {
       errors.push(`采集相位失败：${err instanceof Error ? err.message : String(err)}`)
     }
 
+    let mirrorListOk = true
     const issues = await platform.issues.list({}).catch((err: unknown) => {
+      mirrorListOk = false
       errors.push(`镜像对账失败（issues.list）：${err instanceof Error ? err.message : String(err)}`)
       return [] as IssueRecord[]
     })
     const issueById = new Map<TicketId, IssueRecord>(issues.map((i) => [i.id, i]))
     for (const issue of issues) syncMirror(issue)
+
+    // —— 相位 1 尾·镜像 GC 维护步（studio-dev-511；docs/17-§2 相位内步骤/§3 可重建投影）——
+    // 平台全量活动集已在本拍取到：删「company 下 issue ∉ 活动集」的残行（LOCAL-* 与未来同型）。
+    // 先 VACUUM INTO 备份再删（备份失败不删）；平台拉取失败/活动集空=跳过；首拍强制。
+    // 观测=daemon 日志 + tick report collect.mirrorGc + daemon_kv mirror.gc.last；不新增事件名。
+    let mirrorGc: MirrorGcTickReport | undefined
+    try {
+      mirrorGc = runMirrorGcTick({
+        ledger,
+        company: config.company,
+        rootDir: config.rootDir,
+        activeIssues: issues.map((issue) => issue.id),
+        listOk: mirrorListOk,
+        ...(config.mirrorGcEveryTicks !== undefined ? { everyTicks: config.mirrorGcEveryTicks } : {}),
+        seq,
+        now: now(),
+        force: mirrorGcFirstRun,
+      })
+      if (mirrorGc !== undefined) {
+        // 已做出一次判断（含跳过：平台不可用/空活动集）→ 后续按节流窗检查，避免逐拍刷日志
+        mirrorGcFirstRun = false
+        if (mirrorGc.deleted > 0) mutations += mirrorGc.deleted
+      }
+    } catch (err) {
+      errors.push(`镜像 GC 失败：${err instanceof Error ? err.message : String(err)}`)
+    }
 
     // —— 相位 1 尾：DEV-49 A4 双哨（未知态哨+状态集巡逻核，docs/52-§十；体=sentinels.ts，
     // 键派生=events-index.ts）——流外态单/出厂态回流不再只走 NOOP 静默观测链：ESCALATE
@@ -1828,6 +1859,7 @@ export function createEngine(deps: EngineDeps): Engine {
           pages,
           affectedTickets: affected.length,
           mirrorSynced: issues.length,
+          ...(mirrorGc !== undefined ? { mirrorGc } : {}),
           cursorBefore,
           cursorAfter: cursor,
           cursorLoop,

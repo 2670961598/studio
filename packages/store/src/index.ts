@@ -164,6 +164,13 @@ export type { AppendResult, BudgetListQuery, BudgetScope, CompanySyncResult, Dum
 export { acquireWriterLease, openLedgerWriter, writerLeasePath } from './writer-lease.ts'
 export type { WriterLease } from './writer-lease.ts'
 
+// ticket_mirror 投影 GC 删除面 + 一致性备份（studio-dev-511；docs/17-§3 镜像=可重建投影）：
+// pruneTicketMirrors=单事务删「company 下不在平台活动集」的残行（空活动集 fail-closed）；
+// backupLedgerTo=VACUUM INTO 一致性快照（GC 前调用，失败不得删）；pruneLedgerBackups=只清
+// 本前缀备份保留份数。daemon 相位 1 尾维护步消费；不新增事件名/不改 schema。
+export { backupLedgerTo, MIRROR_GC_BACKUP_PREFIX, pruneLedgerBackups, pruneTicketMirrors } from './mirror-gc.ts'
+export type { LedgerBackupResult, PruneTicketMirrorsOptions, PruneTicketMirrorsResult } from './mirror-gc.ts'
+
 // D12 只读打开/围栏（PB-5 入口；docs/80 §8.2）：readOnly:true + query_only=ON，
 // 不迁移/不 DDL/不写 WAL；缺库→unavailable/STALL/db-missing，版本偏移→
 // rejected_version/EVOLVE_REJECT/schema-behind|ahead（见 src/readonly.ts 头注）

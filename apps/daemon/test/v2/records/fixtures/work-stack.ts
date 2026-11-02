@@ -21,7 +21,7 @@ import path from 'node:path'
 import { createRegistry } from '@studio-next/adapters'
 import type { EventRecord, FlowPlatform, IssueRecord, TicketId } from '@studio-next/contract'
 import { openLedger, type Ledger } from '@studio-next/store'
-import { createEngine, ENGINE_CONFIG_DEFAULTS, type Engine, type TickReport } from '../../../../src/engine/engine.ts'
+import { createEngine, ENGINE_CONFIG_DEFAULTS, type Engine, type EngineConfig, type TickReport } from '../../../../src/engine/engine.ts'
 import { createFakeAdapter, createFakePlatform, type FakeAdapterMode } from '../../../../src/engine/fakes.ts'
 import { createDefaultGateRunner } from '../../../../src/engine/gate.ts'
 import { createDefaultAssembler } from '../../../../src/engine/prompt-assembly.ts'
@@ -44,8 +44,8 @@ export interface WorkTestStack {
   readonly mode: { value: FakeAdapterMode }
 }
 
-/** 建真栈（一用例一库一目录） */
-export async function createWorkStack(label: string): Promise<WorkTestStack> {
+/** 建真栈（一用例一库一目录；overrides 仅测试面按需覆盖引擎配置——缺省=基线零行为） */
+export async function createWorkStack(label: string, overrides: Partial<EngineConfig> = {}): Promise<WorkTestStack> {
   const root = await mkdtemp(path.join(tmpdir(), `sn-work-${label}-`))
   roots.push(root)
   const ledger = openLedger(path.join(root, 'ledger.sqlite'))
@@ -83,6 +83,7 @@ export async function createWorkStack(label: string): Promise<WorkTestStack> {
       // 镜面对账重决策每拍开（DEV-42①：回退态单在零活动世界也能重进决策）
       mirrorRescanEveryTicks: 1,
       stallAfterMs: 60_000,
+      ...overrides,
     },
     people: DEMO_SNAPSHOT.people,
   })

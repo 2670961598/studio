@@ -155,6 +155,13 @@ export interface EngineConfig {
    */
   mirrorRescanEveryTicks?: number
   /**
+   * 镜像 GC 维护步（studio-dev-511；docs/17-§2 相位 1 尾 / §3 镜像=可重建投影）：每 N 拍
+   * 检查「company 下 issue ∉ 本拍平台全量活动集」的残行，先 VACUUM INTO 备份再删；首拍
+   * 强制（部署后立即清一次）。平台拉取失败/活动集为空=跳过（fail-safe）。0=关；缺省 60
+   * （tickMs=1000 时≈1 分钟；引擎单测可显式置 0 关面）。
+   */
+  mirrorGcEveryTicks?: number
+  /**
    * 状态集巡逻核节流（DEV-49 A4，docs/52-§十）：每 N 拍核对「平台状态集−有效流表
    * 声明集=∅」（C1-08 口径），不成立对心跳哨兵单 ESCALATE（事件派生键去重）。
    * 节流=schema() 读放大；0=关；缺省 30（最坏 30 秒回归发现延迟）。
@@ -263,6 +270,7 @@ export const ENGINE_CONFIG_DEFAULTS: EngineConfig = {
   maxActivityPages: 10,
   killGraceMs: 5_000,
   mirrorRescanEveryTicks: 30,
+  mirrorGcEveryTicks: 60,
   statusSetPatrolEveryTicks: 30,
   harvestReconEveryTicks: 30,
   queueAgeStepMs: DEFAULT_QUEUE_AGE_STEP_MS,

@@ -14,6 +14,7 @@ import type { PricingStaleTickReport } from '../pricing/pricing.ts'
 import type { CostCloseTickReport } from '../cost-close/close.ts'
 import type { QueueSiteJudgeReport } from '../judge/sites129.ts'
 import type { MergeQueueFace } from '../merge/merge-lease.ts'
+import type { MirrorGcTickReport } from '../mirror-gc/step.ts'
 
 /** 采集相位汇报 */
 export interface TickPhaseCollect {
@@ -37,6 +38,11 @@ export interface TickPhaseCollect {
    */
   directives: { tickets: number; consumed: number; rejected: number }
   mirrorSynced: number
+  /**
+   * 镜像 GC 维护步（studio-dev-511）：仅在检查拍/首拍出现；含跳过原因（平台不可用/空活动集）、
+   * 删除数、样本单号与备份路径。不新增事件名（事件枚举冻结 17-§3）。
+   */
+  mirrorGc?: MirrorGcTickReport
   cursorBefore: string | null
   cursorAfter: string | null
   /** studio-dev-409：本拍 activity 翻页出现 nextCursor 同值再现（游标回退环）——
