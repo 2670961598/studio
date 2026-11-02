@@ -47,6 +47,14 @@ import { DIRECTIVE_VERBS, type DirectiveVerb } from '../directive/index.ts'
 export const STALL_KILL_CLOSE_ANCHOR = '工位收口 interrupted'
 
 /**
+ * STALL 活性复核续租锚——executeStallResponse A 面 kill 前复核通过 note 独有子串
+ * （studio-dev-505；与 STALL_KILL_CLOSE_ANCHOR 同法单一源）。语义：本誓**未**收口，
+ * 只是静默计数归零（worker 侧活性证据新鲜）——派生面据此重置 stallStrikes，
+ * 否则一次续租后旧计数残留会让下一静默期「首告即咬合」（丧失 2 次告警宽限）。
+ */
+export const STALL_RENEW_ANCHOR = '活性复核通过'
+
+/**
  * 合并跑锚三件（studio-dev-232，202-P2）：note 独有子串——派生（本文件）与
  * note 构造（engine/merge/merge-run.ts）两侧共用，单一源防漂移（STALL 锚同法）。
  * - MERGE_RUN_ANCHOR：合并跑派发/收割面事件（DISPATCH/GATE_PASS/GATE_FAIL）独有
@@ -243,7 +251,12 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
         if (st !== undefined) platformStatusExtraAlarmed.add(st)
       }
     } else if (e.event === 'STALL') {
-      if ((lastDispatch.get(e.issue) ?? { ts: 0 }).ts < e.ts) {
+      const note = e.note ?? ''
+      if (note.includes(STALL_RENEW_ANCHOR)) {
+        // A 面 kill 前复核通过=续租（studio-dev-505）：静默计数归零，本苗不计连击——
+        // 新静默期从 1 起算（2 次告警宽限对每一静默期都成立）；收口面不变量不变
+        stallStrikes.set(e.issue, 0)
+      } else if ((lastDispatch.get(e.issue) ?? { ts: 0 }).ts < e.ts) {
         // DEV-44 咬合阈计数：在工期（最近 DISPATCH 后）STALL 告警逐次累计——
         // 重派后新 DISPATCH 归零（attempt 作用域），事件派生可重放
         stallStrikes.set(e.issue, (stallStrikes.get(e.issue) ?? 0) + 1)
@@ -258,7 +271,7 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
       // GATE_FAIL 释放面同族。22-§三.2 幂等口径不破：同誓内（DISPATCH 落账至咬合间）
       // 100 重复意图仍只唤起一次。事件流派生可重放：存量咬合事件（含 123 号卡
       // 16:59:09 那条）重放即释放，修复上线后下一节流拍 rescan 自愈。
-      if ((e.note ?? '').includes(STALL_KILL_CLOSE_ANCHOR)) {
+      if (note.includes(STALL_KILL_CLOSE_ANCHOR)) {
         lastOutcome.set(e.issue, Math.max(lastOutcome.get(e.issue) ?? 0, e.ts))
       }
     }

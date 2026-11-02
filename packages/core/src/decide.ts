@@ -13,6 +13,11 @@
  *     100 个重复意图只唤起一次（已处理键集合由 daemon 落账后回灌入参）。
  *   - docs/17-§6 末 / F1-10 断路器：连击达阈值=停重派（本函数只压制 dispatch），
  *     open_bug 动作由 breaker.onWorkerError 在熔断瞬间产生（src/breaker.ts）。
+ *   - docs/02-F1-08（看门狗三道）+ docs/v2/07-§三 EXEC-01/EXEC-02（活性观察面）：
+ *     在工静默判定的**活性锚**＝worker 侧可观测活动（流事件/会话 mtime/adapter 探测），
+ *     issue.updated 只是无活性证据时的回退锚（平台字段刷新≠worker 心跳）；worker 确定性
+ *     消亡（work_record interrupted 且无在途句柄）即时告警，交引擎 B 面即时收口。
+ *     阈值按 executor 分级（daemon.yaml stallAfterMsByExecutor）由引擎解析后入参。
  *
  * Action 语义与七相位的对应（每动作附理由码 decision code，供落账与 golden trace）：
  *   - dispatch        派发相位：launch worker + 平台迁入「已派发」（F1-03：由状态/等级/租约唯一决定）
@@ -184,8 +189,38 @@ export interface OpenBugAction extends ActionBase {
 export interface StallAlarmAction extends ActionBase {
   type: 'stall_alarm'
   code: 'STALL_SILENT'
-  /** 静默时长 ms（now - issue.updated） */
+  /** 静默时长 ms（now − 活性锚；无活性锚时回退 now − issue.updated） */
   silentMs: number
+  /** 判定所用活性锚时刻 epoch-ms（可审计——台账 note 同值落账） */
+  livenessAnchorAt?: number
+  /** 活性锚来源（可审计；缺省=回退锚 issue.updated） */
+  livenessSource?: LivenessSource
+  /** 判定所用阈值 ms（按 executor 分级后的生效值；缺省=入参 stallAfterMs） */
+  stallThresholdMs?: number
+  /** 工人确定性消亡（无在途句柄＋work_record 终态）——引擎 B 面即时收口 */
+  workerGone?: boolean
+}
+
+/**
+ * 活性锚来源（判定面与观测面分离；docs/02-F1-08 / docs/v2/07-§三 EXEC-01）：
+ *   - stream-event   引擎泵收 adapter.stream() 的最后事件时刻（dsh 长回合真机形态）
+ *   - session-mtime  executor 会话文件最后写入时刻（dsh session.v4.jsonl.zstd）
+ *   - adapter-probe  adapter 侧活性探测（进程/会话，adapter 能力面）
+ *   - work-record    台账工位行（B 面：worker 已终态——ended_at/started_at）
+ *   - issue-updated  回退锚（平台单据 updated；**非心跳**，无活性证据时才用）
+ */
+export type LivenessSource = 'stream-event' | 'session-mtime' | 'adapter-probe' | 'work-record' | 'issue-updated'
+
+/** 工人活性证据（引擎装配；decide 只消费——纯函数零 IO，时间锚一律入参） */
+export interface WorkerLiveness {
+  /** worker 最后可观测活动时刻 epoch-ms */
+  lastActivityAt: number
+  /** 活性证据来源（可审计） */
+  source: LivenessSource
+  /** 确定性消亡（B 面即时收口依据；缺省 false） */
+  workerGone?: boolean
+  /** 探测/解析失败原因（活性锚不可得时如实入账，不静默） */
+  probeError?: string
 }
 
 export interface NoopAction extends ActionBase {
@@ -297,8 +332,13 @@ export interface DecisionInput {
   verifiedEvidence?: boolean
   /** 当前时刻 epoch-ms（时间一律入参，core 禁 Date.now） */
   now: number
-  /** 在工静默告警阈值 ms（stall_alarm 触发线；只盯「已派发」态） */
+  /** 在工静默告警阈值 ms（stall_alarm 触发线；只盯「已派发」态。引擎按 executor 分级后入参） */
   stallAfterMs: number
+  /**
+   * 工人活性锚（看门狗判定面）：提供时 silentMs=now−lastActivityAt；缺省回退
+   * now−issue.updated（旧世界字节不变）。workerGone=true 时不受阈值约束即时告警。
+   */
+  liveness?: WorkerLiveness
 }
 
 /** decide 输出（拟升 contract） */
@@ -328,7 +368,7 @@ export function intentKeyOf(intent: InvokeIntent): string {
  *   1. 意图校验与幂等去重（malformed / mismatch / dedup）
  *   2. 定流定表（DEV-43，docs/18-§2.1.1）：类型 T:<type> 优先→等级 L<n> 回退→StateFlow，缺流明报
  *   3. 状态合法性：不在流状态集内=平台自定义态，不动
- *   4. 停摆检查：已派发+静默超阈值 → stall_alarm
+ *   4. 停摆检查：已派发+静默超阈值（活性锚；workerGone 即时）→ stall_alarm
  *   5. 状态机推演（锚点+边）：
  *      后继含待批 → submit_approval；待批态 → 批否分流（dispatch/merge/等批）；
  *      后继含已派发 → dispatch 过四闸；已派发 → wait_evidence；证据就绪 → collect；
@@ -368,13 +408,29 @@ export function decide(input: DecisionInput): DecisionOutput {
     return { intentKey, action: noop(issue.id, 'NOOP_UNKNOWN_STATE') }
   }
 
-  // 4. 停摆（只盯在工态：已派发静默；updated 不可解析时跳过，不基于坏数据告警）
+  // 4. 停摆（只盯在工态：已派发静默；锚不可解析时跳过，不基于坏数据告警）
+  //    活性锚优先（worker 侧活动），issue.updated 仅回退（docs/02-F1-08 本单修订）。
   if (issue.state === anchors.dispatched) {
-    const updatedMs = Date.parse(issue.updated)
-    if (!Number.isNaN(updatedMs)) {
-      const silentMs = input.now - updatedMs
-      if (silentMs > input.stallAfterMs) {
-        return { intentKey, action: { type: 'stall_alarm', code: 'STALL_SILENT', ticket: issue.id, silentMs } }
+    const liveness = input.liveness
+    const anchor = liveness !== undefined && Number.isFinite(liveness.lastActivityAt)
+      ? liveness.lastActivityAt
+      : Date.parse(issue.updated)
+    if (!Number.isNaN(anchor)) {
+      const silentMs = Math.max(0, input.now - anchor)
+      const workerGone = liveness?.workerGone === true
+      if (workerGone || silentMs > input.stallAfterMs) {
+        return {
+          intentKey,
+          action: {
+            type: 'stall_alarm',
+            code: 'STALL_SILENT',
+            ticket: issue.id,
+            silentMs,
+            ...(liveness !== undefined ? { livenessAnchorAt: anchor, livenessSource: liveness.source } : {}),
+            stallThresholdMs: input.stallAfterMs,
+            ...(workerGone ? { workerGone: true } : {}),
+          },
+        }
       }
     }
   }

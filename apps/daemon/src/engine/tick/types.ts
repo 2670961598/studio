@@ -104,8 +104,14 @@ export interface EngineConfig {
   laneTtlMs: number
   /** 合并租约 TTL（ms；202-P4——每拍续租+死主回收，跨进程归后续刀） */
   mergeLeaseTtlMs: number
-  /** 在工静默告警阈值（ms；只盯已派发态，decide 4 号判定） */
+  /** 在工静默告警阈值（ms；只盯已派发态，decide 4 号判定——缺省全档） */
   stallAfterMs: number
+  /**
+   * 按 executor 分级的静默阈值 ms（studio-dev-505；daemon.yaml `stallAfterMsByExecutor`
+   * 解析注入）：长回合 executor 可配更高，缺省/未命中回退 stallAfterMs。形状
+   * `Record<executor 名, ms>`——装载期已 fail-closed 校验（正整数、键非空、坏配拒启）。
+   */
+  stallAfterMsByExecutor?: Readonly<Record<string, number>>
   /**
    * STALL 响置咬合阈（DEV-44，2026-10-20 三例实证 studio-dev-20/25/71：看门狗只叫不咬）：
    * 同 attempt 内 STALL 告警达 N 次（计数=最近一次 DISPATCH 起的事件派生，可重放）→
@@ -323,6 +329,11 @@ export interface Inflight {
   streamError?: string
   /** 流已收尾（done）——本拍可走判定体 */
   streamDone?: boolean
+  /**
+   * 最后一次流事件时刻 epoch-ms（studio-dev-505 活性锚；引擎时钟）——泵收时逐事件刷新，
+   * 看门狗 silentMs 判定面（docs/02-F1-08 daemon 侧兜底）。无事件=缺省（交会话 mtime 锚）。
+   */
+  lastStreamEventAt?: number
   /** 逐拍折算的四要件输入（要件 1：终态 completed） */
   foldCompleted?: boolean
   /** 逐拍折算的四要件输入（要件 2：输出非空） */

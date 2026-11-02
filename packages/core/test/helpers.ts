@@ -63,5 +63,7 @@ export function makeInput(o: InputOverrides = {}): DecisionInput {
     // 默认 now=updated+60s：静默 1 分钟 < 阈值 1 小时，不触停摆
     now: o.now ?? T0 + 60_000,
     stallAfterMs: o.stallAfterMs ?? 3_600_000,
+    // 工人活性锚（studio-dev-505）：缺省不装配=回退 issue.updated（旧迹字节不变）
+    ...(o.liveness !== undefined ? { liveness: o.liveness } : {}),
   }
 }

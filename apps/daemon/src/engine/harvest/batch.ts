@@ -517,7 +517,7 @@ export async function runHarvestAttempt(host: HarvestAttemptHost, entry: Infligh
   if (entry.streamDone !== true) {
     let pumped: 'parked' | 'done'
     try {
-      pumped = await pumpHarvestStream(host.sliceMs, adapter, entry)
+      pumped = await pumpHarvestStream(host.sliceMs, adapter, entry, host.now)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       return fault(
@@ -546,7 +546,7 @@ export async function runHarvestAttempt(host: HarvestAttemptHost, entry: Infligh
  * 记 streamError（防悬空 unhandled rejection）——下一拍泵首查即抛，与同步抛同走
  * WORKER_DEAD 面，不静默。
  */
-async function pumpHarvestStream(sliceMs: number, adapter: ExecutorAdapter, entry: Inflight): Promise<'parked' | 'done'> {
+async function pumpHarvestStream(sliceMs: number, adapter: ExecutorAdapter, entry: Inflight, now: () => number): Promise<'parked' | 'done'> {
   if (entry.streamError !== undefined) throw new Error(entry.streamError)
   if (entry.streamIter === undefined) {
     entry.streamIter = adapter.stream(entry.handle)[Symbol.asyncIterator]()
@@ -573,6 +573,9 @@ async function pumpHarvestStream(sliceMs: number, adapter: ExecutorAdapter, entr
       entry.streamDone = true
       return 'done'
     }
+    // 活性锚（studio-dev-505）：流事件即 worker 侧活性证据（引擎时钟，非墙钟——
+    // 与 decide 同源；fake 时钟测试不因墙钟漂移误判）。逐事件刷新，看门狗 silentMs 用。
+    entry.lastStreamEventAt = now()
     foldHarvestEvent(entry, winner.value)
   }
 }

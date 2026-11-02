@@ -36,6 +36,7 @@ import { createGateway, CONTROL_TICKET } from '@studio-next/gateway'
 import { wirePeopleChangeSource } from '../../engine/hrsync/people-change-source.ts'
 import { wireRelaySource, wireResumeSource, type RelayWorkSignal } from '../../engine/intents/relay-resume-sources.ts'
 import { buildServeDirectiveDeps } from '../../engine/directive/index.ts'
+import { stallServeOverrides } from './watchdog-config.ts'
 import { createDefaultGateRunner, createAcceptanceGateRunner } from '../../engine/gate.ts'
 import { createDefaultMergeRunDeps } from '../../engine/merge/default-deps.ts'
 import { createHotReload, type HotReload, type HotReloadApplyReport } from '../../control/hot-reload.ts'
@@ -269,8 +270,7 @@ export function buildServeRuntime(
     // 装载 case 面——serve/model-tier-tickets fail-closed）
     ...(modelRoles !== undefined ? { modelTierByRole: modelRoles } : {}),
     ...(modelTierTickets !== undefined ? { modelTierTickets } : {}),
-    stallAfterMs: config.stallAfterMs,
-    stallKillAfterAlarms: config.stallKillAfterAlarms,
+    ...stallServeOverrides(config), // 看门狗阈值面（studio-dev-505：含按 executor 分级）
     harvestSliceMs: config.harvestSliceMs,
     laneTtlMs: config.laneTtlMs,
     mergeLeaseTtlMs: config.mergeLeaseTtlMs,

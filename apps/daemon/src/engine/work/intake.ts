@@ -28,6 +28,7 @@
  * 纪律：本件零 IO、零时钟读取（时点经入参）；不持引擎状态；不复制 core 判定与门序。
  */
 import type { InvokeIntent, IssueRecord, TicketId } from '@studio-next/contract'
+import type { WorkerLiveness } from '@studio-next/core'
 import type {
   Action,
   BreakerSnapshot,
@@ -93,6 +94,13 @@ export interface WorkCandidateHost {
   readonly tickActionCount: () => number
   readonly now: () => number
   readonly stallAfterMs: number
+  /**
+   * 工人活性锚（studio-dev-505，看门狗判定面）：在工/消亡面证据由引擎装配——
+   * 缺省不提供=decide 回退 issue.updated（旧调用面字节不变）。
+   */
+  readonly livenessOf?: (ticket: TicketId, issue: IssueRecord) => WorkerLiveness | undefined
+  /** 该单生效静默阈值（按 executor 分级；缺省回退 stallAfterMs） */
+  readonly stallAfterMsOf?: (ticket: TicketId, issue: IssueRecord) => number
 }
 
 /** 一张候选的开工决策（gate 快照＋core decide 产物＋抑制面；队列/占用结算归引擎） */
@@ -151,7 +159,13 @@ export async function decideWorkCandidate(
     ...(host.approvedNow(verbNow) ? { approved: true } : {}),
     ...(host.flows !== undefined ? { flows: host.flows } : {}),
     now: host.now(),
-    stallAfterMs: host.stallAfterMs,
+    stallAfterMs: host.stallAfterMsOf?.(ticket, issue) ?? host.stallAfterMs,
+    ...(host.livenessOf !== undefined
+      ? (() => {
+          const liveness = host.livenessOf(ticket, issue)
+          return liveness !== undefined ? { liveness } : {}
+        })()
+      : {}),
   }
   const out = decide(input)
   return {

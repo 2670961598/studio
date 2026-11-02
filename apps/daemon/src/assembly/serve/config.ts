@@ -35,6 +35,7 @@ import { parseWhitelistSpec } from '../../engine/directive/index.ts'
 import { parseJudgeSites } from '../../engine/judge/sites129.ts'
 import { parseModelTierTickets } from '../../engine/tier/model-tier.ts'
 import { parsePersonInflightOverrides } from '../../engine/todoqueue/queue.ts'
+import { parseStallAfterMsByExecutor } from './watchdog-config.ts'
 import { bool, coerceSeatbeltGrant, num, rejectRemovedGatewayKey, str, type SeatbeltConfigRaw } from '../serveconfig/coerce.ts'
 import { coerceHrServeKey, HR_SERVE_DEFAULTS, validateHrServeCross, type HrServeConfig } from '../hrsync/config.ts'
 import { crossValidateMatrixChannels } from '../channels/channels.ts'
@@ -85,6 +86,8 @@ export interface ServeConfig extends HrServeConfig {
    * attempt+1（rescan 兜底）；无在途句柄=GATE_FAIL（WORKER_DEAD）收口。0=关；缺省 2。
    */
   stallKillAfterAlarms: number
+  /** 按 executor 分级静默阈值（studio-dev-505；`executor=ms;...` 单行字符串；缺省/未命中回退 stallAfterMs；装载期解析即验——空段/坏键/重复键/非正整数一律拒启 fail-closed，不静默忽略）。 */
+  stallAfterMsByExecutor?: Readonly<Record<string, number>>
   /** 收割相位每工位每拍泵流时间片 ms（DEV-9 P1 冻结修复，docs/17-§2 拍有界；须 ≪ tickMs） */
   harvestSliceMs: number
   /** 泳道租约 TTL ms */
@@ -440,6 +443,9 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'maxActionsPerTick': cfg.maxActionsPerTick = num(value, key); break
       case 'maxInflight': cfg.maxInflight = num(value, key); break
       case 'stallAfterMs': cfg.stallAfterMs = num(value, key); break
+      case 'stallAfterMsByExecutor': // studio-dev-505：解析即验（坏段/坏值/重复键启动拒——fail-closed）
+        cfg.stallAfterMsByExecutor = parseStallAfterMsByExecutor(str(value, key))
+        break
       case 'stallKillAfterAlarms': {
         // DEV-44 咬合阈：非负整数（0=关）——非整数明报不静默取整
         const v = num(value, key)

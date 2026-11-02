@@ -140,7 +140,7 @@ export const SECTION = {
   serve: `  studio-next serve --config <daemon.yaml>
        常驻主循环（v0.5，docs/16-§四）：七相位引擎 + 心跳日志 + SIGINT/SIGTERM 优雅停。
        配置最小面（扁平 YAML 子集）：db / platform(fake|localfile) / company / rootDir / tickMs /
-       maxActionsPerTick / maxInflight / stallAfterMs / stallKillAfterAlarms / laneTtlMs / mergeLeaseTtlMs / breakerThreshold /
+       maxActionsPerTick / maxInflight / stallAfterMs / stallAfterMsByExecutor(executor=ms;...) / stallKillAfterAlarms / laneTtlMs / mergeLeaseTtlMs / breakerThreshold /
        autoApprove / seatbeltTier(read-only|workspace-write；缺省 read-only) / seatbeltWriteRoots(引号 JSON 数组，仅 workspace-write) /
        seatbeltAuthorization(谁/何单/何策略，仅 workspace-write 必填) /
        companyDir / jobs / jobPollMs / models / budgetTicketCapUsd / budgetPersonCapUsd / reloadWatch；

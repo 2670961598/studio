@@ -35,6 +35,9 @@
 /** 流归一化器：四家 CLI 原始流 → contract StreamEvent（docs/17-§6 / docs/18-§1.3） */
 export * from "./streams.ts";
 
+/** executor 侧活性探测（看门狗活性锚；studio-dev-505，docs/02-F1-08）——纯读辅助，不改契约端口 */
+export * from "./activity.ts";
+
 /** dsh 适配器（默认主力）：四原语实现，已知坑沉淀见文件头注（docs/17-§6 / docs/18-§1.2） */
 export * from "./dsh.ts";
 
