@@ -74,6 +74,9 @@
  *     派发参数化生成并以 sandbox-exec 包装 argv——生成器见 seatbelt.ts（attempt3 处置 (a)
  *     =删 strictRead 读收口；judge 派发面（studio-dev-164 红队 2）经 writeRootsOverride/
  *     profileDir 复用：workspace 不入写域+profile 落工作区外=无工具只读档）
+ *     —— 外层圈定实际包装 argv 时另注 DSH_PERMISSION_MODE=danger-full-access：关闭 dsh
+ *     内层沙箱 apply（macOS 内核拒嵌套/EPERM），隔离责任归外层 seatbelt 全权圈禁（11-01
+ *     轨7 装备令；机制依据与「只此一面注入」的边界见 spawnHeadless env 位注）
  */
 import { randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
@@ -403,8 +406,10 @@ export class DshAdapter implements ExecutorAdapter {
    * → 如实抛错（装配管线缺件，不静默传空串去撞真机的 "a task is required"）。
    * env=白名单允许集（filterWorkerEnv——docs/43-附录A-1 deny-by-default）+ AGENTS.md 通道
    * 变量（agentsMdEnv）+ TaskBrief.credentials（v1.4 短命按单凭据——键域封闭枚举闸
-   * assertCredentialKeys，枚举外键结构拒收；值不打印不记录）+ DSH_TELEMETRY_MODE=DISABLED
-   * （遥测红线，置于最后——红线优先级最高）。extendEnv:false（白名单生效前提，见 detect 位注记）。
+   * assertCredentialKeys，枚举外键结构拒收；值不打印不记录）+ 外层 seatbelt 实际生效时的
+   * DSH_PERMISSION_MODE=danger-full-access（内层 dsh 沙箱透传——机制见下 env 位注）
+   * + DSH_TELEMETRY_MODE=DISABLED（遥测红线，置于最后——红线优先级最高）。
+   * extendEnv:false（白名单生效前提，见 detect 位注记）。
    * reject:false——退出码不构成异常（成功判定只认流内终态，见 isCompleted）。
    */
   async launch(task: TaskBrief): Promise<Handle> {
@@ -440,6 +445,10 @@ export class DshAdapter implements ExecutorAdapter {
     // sandbox-exec 包装（应用点=未沙箱派发方，嵌套 apply 被拒——detect 前置已闸）。
     let wrappedArgv: string[] = [binary, ...args, ...extraArgs, '--', taskText]
     let dshHomeEnv: Record<string, string> = {}
+    // 外层 seatbelt 是否**实际包装了 argv**（=圈定生效的唯一判据：mode='auto' 且 profile 已
+    // 生成/落盘/包装；env 的内层沙箱透传（见下）只以本标志为条件，不以「配了 mode='auto'」为
+    // 条件——profile 生成抛错时 launch 根本不起进程，不存在「未圈定却注入」的窗口）
+    let outerSeatbeltApplied = false
     if (this.seatbeltEnabled()) {
       const opts = this.seatbelt
       if (opts !== undefined) {
@@ -467,6 +476,7 @@ export class DshAdapter implements ExecutorAdapter {
         const profilePath = join(profileDir, seatbeltProfileFileName())
         writeFileSync(profilePath, profileText, 'utf8')
         wrappedArgv = seatbeltArgv(profilePath, [binary, ...args, ...extraArgs, '--', taskText])
+        outerSeatbeltApplied = true
       }
     }
     const subprocess = execa(wrappedArgv[0] ?? binary, wrappedArgv.slice(1), {
@@ -481,6 +491,19 @@ export class DshAdapter implements ExecutorAdapter {
         ...agentsMdEnv(task.AGENTS_MD),
         ...checkedCredentials(task.credentials),
         ...dshHomeEnv,
+        // 内层 dsh 沙箱透传（11-01 轨7 装备令「隔离责任归外层工位 seatbelt 全权圈禁」）：
+        // 外层 seatbelt 已圈住整棵 worker 进程树时，dsh 的 bash 工具再申请内层沙箱＝内核拒
+        // 嵌套 sandbox_apply（EPERM——与 seatbelt.ts 头注同源事实），worker 全部 bash 死亡
+        // （11-01 起 26+ 份 REPORT 实证）。透传开关只能走 env：
+        // @deepseek-ai/dsh-bash-sandbox 构造器 `this.mode = ctx.sandboxPolicy.defaultMode`
+        // （lib/index.js——无视插件自身 config：11-01 headless profile 的
+        // `bash-sandbox: mode: danger-full-access` patch 从未生效即此因），而
+        // @deepseek-ai/dsh-sandbox-policy 的 mode =
+        // `process.env.DSH_PERMISSION_MODE ?? 'workspace-write'`（随包 dsh-base/cordis.patch.yml）
+        // ——danger-full-access 分支不做内层 apply（bash-sandbox execute 早退），外层 seatbelt
+        // 成为唯一圈禁者。仅外层实际包装时注入：无外层圈禁的调用面不放开（保持 dsh 缺省
+        // workspace-write）。位置在白名单/宿主残留之后＝显式透传优先（同 DSH_TELEMETRY_MODE 手法）。
+        ...(outerSeatbeltApplied ? { DSH_PERMISSION_MODE: 'danger-full-access' } : {}),
         // 遥测红线（docs/31-§5-8）：dsh 默认 FEEDBACK_ONLY 外发 deepseeksvc.com——一律禁外发
         DSH_TELEMETRY_MODE: 'DISABLED',
       },

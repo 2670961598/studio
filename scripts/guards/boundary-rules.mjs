@@ -169,7 +169,7 @@ export const lineBaseline = {
   "packages/company/src/dependencies.ts": 775,
   "packages/company/test/repo-validate.test.ts": 766,
   "apps/daemon/test/engine/sources.test.ts": 768, // 105-刀A 唤醒源测试(+19)
-  "packages/adapters/src/dsh.ts": 758, // 132-§6.1 单A 账目面(+32：aggregateUsage 四桶真值直录+DshAdapterOptions.model 归一注入——studio-dev-168 过审落位；前值 726)
+  "packages/adapters/src/dsh.ts": 781, // 132-§6.1 单A 账目面(+32：aggregateUsage 四桶真值直录+DshAdapterOptions.model 归一注入——studio-dev-168 过审落位；前值 726)；2026-11-03 透传修复 +23（功能约 3 行＋注释引用——制作人批示上调 758→781，§十五.三.三 提案流留痕）
   "packages/taiga/src/testutil.ts": 723,
   "packages/adapters/test/dsh.test.ts": 785, // 132-§6.1 单A 判负线⑤(+70：四桶归并/model 注入/无缓存桶三测试——studio-dev-168；前值 715)
   "packages/panel/src/views.ts": 662,
