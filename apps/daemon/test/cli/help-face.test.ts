@@ -175,7 +175,7 @@ describe('七态矩阵（流分面+退出码——E7 治理面）', () => {
   it('态5b 组内 typo 无近邻：company lst → 列已知子命令、不猜、exit 1', async () => {
     const r = await runCmd(cmdCompany, ['lst'])
     expect(r.code).toBe(1)
-    expect(r.err).toContain('company：未知子命令：lst（当前支持：add、create、validate、check）')
+    expect(r.err).toContain('company：未知子命令：lst（当前支持：add、approve、create、seed、validate、check）')
     expect(r.err).not.toContain('是否想说')
   })
 

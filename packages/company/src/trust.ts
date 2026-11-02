@@ -83,6 +83,28 @@ export function excludeAnchorFiles(files: Record<string, string>): Record<string
 }
 
 /**
+ * 产出落点目录（公司目录根下 `reports/`；04-§三 output 声明的缺省根、17-§6 收割产物面）。
+ * **非配置资产**：报表/工单产出写入不属「公司内容变更」——与 `.AIWS/` 同理（docs/43-§五），
+ * 不得触发热重载、不得进入批准指纹（否则产出即漂移，锚批准后每次落盘都转 RELOAD_TRUST_DRIFT）。
+ */
+export const REPORTS_DIR = 'reports'
+
+/**
+ * 内容面排除（**批准指纹与热重载指纹的唯一口径**）：锚目录自指（`.studio-next/`）+ 产出落点
+ * （`reports/`）。三处消费共用本函数——trust 落锚/批准、hot-reload 指纹面、approve/seed CLI，
+ * 口径不漂移（`excludeAnchorFiles` 只排锚，保留给锚自指的窄面）。
+ */
+export function excludeNonContentFiles(files: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [rel, text] of Object.entries(files)) {
+    if (rel === TRUST_FILE || rel.startsWith(`${TRUST_DIR}/`)) continue
+    if (rel === REPORTS_DIR || rel.startsWith(`${REPORTS_DIR}/`)) continue
+    out[rel] = text
+  }
+  return out
+}
+
+/**
  * 内容指纹：per-file sha256(hex) → sorted `path:hash` 行串 → sha256（`sha256:` 前缀形）。
  * 与 daemon hot-reload fingerprintDirectory 同规则、独立实现（规则一致由测试互证——docs/44 §二）。
  */
@@ -248,7 +270,7 @@ export function seedTrustAnchor(
   files: Record<string, string>,
   entry: { by: string; at: string; note?: string },
 ): TrustAnchor {
-  const fingerprint = contentFingerprint(excludeAnchorFiles(files))
+  const fingerprint = contentFingerprint(excludeNonContentFiles(files))
   const anchor: TrustAnchor = {
     schema: TRUST_SCHEMA,
     slug,
@@ -272,7 +294,7 @@ export function reseedTrustAnchorOnUpgrade(
   entry: { by: string; at: string; note?: string },
 ): TrustAnchor {
   const prev = readTrustAnchor(companyDir)
-  const fingerprint = contentFingerprint(excludeAnchorFiles(files))
+  const fingerprint = contentFingerprint(excludeNonContentFiles(files))
   const anchor: TrustAnchor = {
     schema: TRUST_SCHEMA,
     slug,
@@ -298,7 +320,7 @@ export function approveCompanyDirectory(
   entry: { by: string; at: string; note?: string },
 ): TrustAnchor {
   const prev = readTrustAnchor(companyDir)
-  const fingerprint = contentFingerprint(excludeAnchorFiles(files))
+  const fingerprint = contentFingerprint(excludeNonContentFiles(files))
   if (prev !== null && prev.trust && prev.fingerprint === fingerprint) return prev
   const everApproved =
     prev !== null && prev.history.some((h) => h.action === 'approve' || h.action === 're-approve')

@@ -475,8 +475,7 @@ export function buildServeRuntime(
   if (roomFace !== undefined) startChannelSupply(roomFace, log)
 
   // —— L1 配置热重载执行体（docs/38-§2 L1 / §4 R-A；companyDir 给定时装配）——
-  //    apply 段（校验绿后调用，幂等可重入）：岗播种/移除→快照替换→engine.applyCompanyUpdate
-  //    →署名上下文 mutate；在途单/泳道/指令文件不动（拍边界结构性保证——hot-reload.ts 头注）。
+  //    apply 段（校验绿后调用，幂等可重入）：岗播种/移除→快照替换→engine.applyCompanyUpdate→署名上下文。
   let hotReload: HotReload | undefined
   if (config.companyDir !== undefined) {
     hotReload = createHotReload({
@@ -489,6 +488,8 @@ export function buildServeRuntime(
       log,
       deptFallback: engineConfig.deptFallback,
       watch: config.reloadWatch,
+      // 显式声明无锚（SEC-FC-03；init 通道不落锚——docs/44-§2.3-4）：缺键＝未声明→无锚仍拒（fail-closed）
+      ...(config.reloadAnchorAbsence !== undefined ? { anchorAbsence: config.reloadAnchorAbsence } : {}),
       apply(next: CompanySnapshot): HotReloadApplyReport {
         let seeded = 0
         let kept = 0

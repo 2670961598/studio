@@ -38,6 +38,8 @@ import { parsePersonInflightOverrides } from '../../engine/todoqueue/queue.ts'
 import { bool, coerceSeatbeltGrant, num, rejectRemovedGatewayKey, str, type SeatbeltConfigRaw } from '../serveconfig/coerce.ts'
 import { coerceHrServeKey, HR_SERVE_DEFAULTS, validateHrServeCross, type HrServeConfig } from '../hrsync/config.ts'
 import { crossValidateMatrixChannels } from '../channels/channels.ts'
+import { coerceAnchorAbsenceDeclaration, type AnchorAbsenceRaw } from './anchor-absence.ts'
+import type { AnchorAbsenceDeclaration } from '../../control/hot-reload.ts'
 
 /**
  * serve 配置（v0 最小面；引擎子配置并入扁平键）。hr* 人事同步器键子面在
@@ -185,6 +187,14 @@ export interface ServeConfig extends HrServeConfig {
    * 落账，面板可见）。详见 src/control/hot-reload.ts 头注。
    */
   reloadWatch: boolean
+  /**
+   * 装配显式声明无锚（SEC-FC-03；docs/44-§2.3-4「init 通道目录无锚＝闸不适用」的显式化）：
+   * daemon.yaml 两键 `reloadAnchorAbsenceDeclaredBy`/`reloadAnchorAbsenceReason` 的解析产物。
+   * 缺省 undefined＝未声明→无锚拒自动应用（fail-closed 保持）；锚在场时走批准指纹面
+   * （声明不越过锚）；坏锚仍拒启/拒应用（声明≠放行开关）。解析规则见
+   * assembly/serve/anchor-absence.ts 头注。
+   */
+  reloadAnchorAbsence?: AnchorAbsenceDeclaration
   /** 公司目录路径（可选：装载 CompanySnapshot；缺省用内置 demo 快照） */
   companyDir?: string
   /**
@@ -363,6 +373,8 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
   const cfg: ServeConfig = { ...DEFAULT_SERVE_CONFIG }
   // seatbelt 三键原文（键间交叉校验在循环后一次性收口——read-only 给 roots/auth 即拒）
   const seatbeltRaw: SeatbeltConfigRaw = {}
+  // 无锚声明两键原文（同上：成对/消费面校验在循环后一次收口——SEC-FC-03）
+  const anchorAbsenceRaw: AnchorAbsenceRaw = {}
   for (const [key, value] of Object.entries(raw)) {
     switch (key) {
       case 'db': cfg.db = str(value, key); break
@@ -487,6 +499,9 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         coerceHrServeKey(cfg, key, value, { str, num, bool })
         break
       case 'reloadWatch': cfg.reloadWatch = bool(value, key); break
+      // —— 无锚显式声明（SEC-FC-03；docs/44-§2.3-4）：两键成对，循环后一次收口 ——
+      case 'reloadAnchorAbsenceDeclaredBy': anchorAbsenceRaw.declaredBy = str(value, key); break
+      case 'reloadAnchorAbsenceReason': anchorAbsenceRaw.reason = str(value, key); break
       // —— seatbelt 配置通道（IMPL-07-09 随动；缺省不写=read-only；交叉校验在循环后）——
       case 'seatbeltTier': seatbeltRaw.tier = value; break
       case 'seatbeltWriteRoots': seatbeltRaw.writeRoots = value; break
@@ -524,6 +539,10 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         throw new Error(`daemon.yaml：未知配置键 ${key}（v0 最小面，见 serve.ts 头注）`)
     }
   }
+  // —— 无锚显式声明（SEC-FC-03；docs/44-§2.3-4）：两键成对收口——只给理由/无 companyDir
+  //    ＝CONFIG_INVALID 拒启（不静默放行；缺省 undefined＝未声明，无锚仍拒）——
+  const reloadAnchorAbsence = coerceAnchorAbsenceDeclaration(anchorAbsenceRaw, { companyDir: cfg.companyDir })
+  if (reloadAnchorAbsence !== undefined) cfg.reloadAnchorAbsence = reloadAnchorAbsence
   // —— seatbelt 三键交叉校验（IMPL-07-09）：缺省不写＝undefined（read-only 最严）；任何
   //    read-only 携带放宽键/workspace-write 缺键或根非法＝CONFIG_INVALID 拒启（不静默放宽）
   const seatbelt = coerceSeatbeltGrant(seatbeltRaw)

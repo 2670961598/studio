@@ -6,6 +6,8 @@ import { companyAddGitUrl, deriveDirNameFromGitUrl } from '@studio-next/company'
 import { materializeCompanyRepoInput, renderRepoValidation, repoValidationJson, validateCompanyRepo } from '@studio-next/company'
 import { RepoInputError } from '@studio-next/company'
 import { CREATE_PLATFORMS, companyCreate } from '@studio-next/company'
+import { approveCompanyDirectory, inspectTrustAnchor, loadCompanyDirectory, readDirectoryFiles, seedTrustAnchor } from '@studio-next/company'
+import { TRUST_FILE } from '@studio-next/company'
 import type { CreatePlatform } from '@studio-next/company'
 import { createLocalPlatform } from '@studio-next/localplatform'
 import { openLedgerWriter } from '@studio-next/store'
@@ -210,13 +212,129 @@ export async function cmdCompanyCreate(argv: string[]): Promise<number> {
   }
 }
 
+/**
+ * company seed <公司目录> [--slug <slug>] [--by <动作人>] [--note <说明>] [--json]
+ * —— init 通道/手工目录补锚：落 `.studio-next/trust.json`（trust=false＝import 未批准态）。
+ *
+ * 依据：docs/43-§一（导入落锚 trust=false）／附录 A-3（批准指纹）；docs/v2/15 SEC-FC-03
+ * （坏锚≠无锚：坏锚在场拒写，不覆盖坏值）。只写锚文件，公司内容零改动；锚已在场＝拒
+ * （升级重落归 company add 升级通道）。批准＝company approve；应用＝批准后手动 reload
+ * （锚目录被热载监听排除——批准动作不自扰，docs/44-§四-3）。
+ */
+export async function cmdCompanySeed(argv: string[]): Promise<number> {
+  if (wantsHelp(argv)) return helpOk(SECTION.company) // S1b 预检（先于读盘——零副作用）
+  const parsed = parseArgv(argv, new Set(['slug', 'by', 'note']), undefined, new Set(['json']))
+  if ('error' in parsed) return usageFail('company seed', parsed.error, CONCISE.company)
+  const dir = parsed.positionals[0]
+  if (dir === undefined) return usageFail('company seed', '缺少 <公司目录>（例：studio-next company seed ./my-corp）', CONCISE.company)
+  if (parsed.positionals.length > 1) return usageFail('company seed', `多余的位置参数：${parsed.positionals.slice(1).join(' ')}`, CONCISE.company)
+  const json = parsed.booleans.has('json')
+  const companyDir = path.resolve(dir)
+  try {
+    const seen = inspectTrustAnchor(companyDir)
+    if (seen.kind === 'valid') {
+      console.error(`company seed：锚已在场（${path.join(companyDir, TRUST_FILE)}，slug=${seen.anchor.slug} trust=${seen.anchor.trust}）——升级重落归 company add 升级通道；批准用 company approve`)
+      return 1
+    }
+    if (seen.kind === 'invalid') {
+      console.error(`company seed：坏锚在场（reason=${seen.error.reason}）——拒绝覆盖坏值，先人工修复/移除 ${path.join(companyDir, TRUST_FILE)}（SEC-FC-03：坏锚≠无锚）`)
+      return 1
+    }
+    const files = await readDirectoryFiles(companyDir)
+    const mounted = loadCompanyDirectory(files)
+    if (!mounted.ok) {
+      console.error(`company seed：公司目录校验不通过（${mounted.issues.map((i) => `${i.file}:${i.line} [${i.rule}] ${i.fix}`).join('；')}）`)
+      return 1
+    }
+    const slug = parsed.flags.slug ?? mounted.snapshot.slug
+    if (slug !== mounted.snapshot.slug) {
+      console.error(`company seed：--slug=${slug} 与目录真 slug=${mounted.snapshot.slug} 不符（同家判据，docs/43-§十-2）`)
+      return 1
+    }
+    const by = parsed.flags.by ?? 'cli:company-seed'
+    const at = new Date().toISOString()
+    const anchor = seedTrustAnchor(companyDir, slug, files, { by, at, ...(parsed.flags.note !== undefined ? { note: parsed.flags.note } : {}) })
+    const anchorFile = path.join(companyDir, TRUST_FILE)
+    if (json) {
+      console.log(JSON.stringify({ ok: true, dir: companyDir, anchorFile, slug, trust: anchor.trust, fingerprint: anchor.fingerprint, action: 'import', by, at }))
+      return 0
+    }
+    console.log(`信任锚已落：${anchorFile}`)
+    console.log(`  slug=${slug}  trust=false（未批准）  指纹=${(anchor.fingerprint ?? '').slice(0, 19)}…  留痕 by=${by}`)
+    console.log('下一步：')
+    console.log(`  1. 制作人批准：studio-next company approve ${companyDir} --by <批准人>`)
+    console.log(`  2. 显式应用：studio-next reload --company ${slug}（锚目录不在自动监听面——批准动作不自扰，docs/44-§四-3）`)
+    return 0
+  } catch (err) {
+    console.error(`company seed 失败：${errText(err)}`)
+    return 1
+  }
+}
+
+/**
+ * company approve <公司目录> --by <批准人> [--note <说明>] [--json]
+ * —— 制作人显式批准信任锚（trust=true + 内容指纹 + 留痕；docs/43 附录 A-3）。
+ *
+ * 前置：锚已在场且可读（无锚先 company seed；坏锚拒绝——坏锚≠无锚）。指纹口径＝
+ * 公司内容（排除 `.studio-next/` 锚自指与 `reports/` 产出落点——与 daemon 热载指纹同源，
+ * 否则产出落盘即被判漂移）。批准后公司内容再变→RELOAD_TRUST_DRIFT 拒载+撤销受信位，
+ * 须重新 approve（re-approve 留痕）再手动 reload。
+ */
+export async function cmdCompanyApprove(argv: string[]): Promise<number> {
+  if (wantsHelp(argv)) return helpOk(SECTION.company) // S1b 预检（先于读盘——零副作用）
+  const parsed = parseArgv(argv, new Set(['by', 'note']), undefined, new Set(['json']))
+  if ('error' in parsed) return usageFail('company approve', parsed.error, CONCISE.company)
+  const dir = parsed.positionals[0]
+  if (dir === undefined) return usageFail('company approve', '缺少 <公司目录>（例：studio-next company approve ./my-corp --by 制作人-甲）', CONCISE.company)
+  if (parsed.positionals.length > 1) return usageFail('company approve', `多余的位置参数：${parsed.positionals.slice(1).join(' ')}`, CONCISE.company)
+  const by = parsed.flags.by
+  if (by === undefined || by.trim() === '') {
+    return usageFail('company approve', '缺少 --by <批准人>（批准=显式动作，署名须可还原决定人——SEC-SIG-01）', CONCISE.company)
+  }
+  const json = parsed.booleans.has('json')
+  const companyDir = path.resolve(dir)
+  try {
+    const seen = inspectTrustAnchor(companyDir)
+    if (seen.kind === 'absent') {
+      console.error(`company approve：无锚（${path.join(companyDir, TRUST_FILE)} 不存在）——init 通道目录先 company seed 补锚，再批准`)
+      return 1
+    }
+    if (seen.kind === 'invalid') {
+      console.error(`company approve：坏锚（reason=${seen.error.reason}）——拒绝在坏值上批准，先人工修复/移除（SEC-FC-03）`)
+      return 1
+    }
+    const files = await readDirectoryFiles(companyDir)
+    const at = new Date().toISOString()
+    const anchor = approveCompanyDirectory(companyDir, files, { by: by.trim(), at, ...(parsed.flags.note !== undefined ? { note: parsed.flags.note } : {}) })
+    const action = anchor.history[anchor.history.length - 1]?.action ?? 'approve'
+    const anchorFile = path.join(companyDir, TRUST_FILE)
+    if (json) {
+      console.log(JSON.stringify({ ok: true, dir: companyDir, anchorFile, slug: anchor.slug, trust: anchor.trust, fingerprint: anchor.fingerprint, action, by: by.trim(), at, idempotent: action !== 'approve' && action !== 're-approve' }))
+      return 0
+    }
+    console.log(`信任锚已批准：${anchorFile}`)
+    console.log(`  slug=${anchor.slug}  trust=${anchor.trust}  指纹=${(anchor.fingerprint ?? '').slice(0, 19)}…  动作=${action}（by=${by.trim()}）`)
+    console.log('下一步：')
+    console.log(`  1. 显式应用：studio-next reload --company ${anchor.slug}（锚目录被热载监听排除——docs/44-§四-3）`)
+    console.log('  2. 之后公司内容再变→RELOAD_TRUST_DRIFT 拒载+撤销受信位，须重新 approve 再 reload')
+    return 0
+  } catch (err) {
+    console.error(`company approve 失败：${errText(err)}`)
+    return 1
+  }
+}
+
 export async function cmdCompany(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv
   switch (sub) {
     case 'add':
       return cmdCompanyAdd(rest)
+    case 'approve':
+      return cmdCompanyApprove(rest)
     case 'create':
       return cmdCompanyCreate(rest)
+    case 'seed':
+      return cmdCompanySeed(rest)
     case 'validate':
       return cmdCompanyValidate(rest)
     case 'check':
@@ -234,7 +352,7 @@ export async function cmdCompany(argv: string[]): Promise<number> {
 }
 
 /** 组面已知子命令表（S1d did-you-mean 的候选集=本表） */
-const COMPANY_SUBS = ['add', 'create', 'validate', 'check'] as const
+const COMPANY_SUBS = ['add', 'approve', 'create', 'seed', 'validate', 'check'] as const
 
 /**
  * company validate <git-url | 本地路径 | tarball> [--json] [--allow-extra] —— 公司仓库

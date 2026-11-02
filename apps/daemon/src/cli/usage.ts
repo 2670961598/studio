@@ -50,6 +50,16 @@ export const SECTION = {
        目录结构校验（studio-dev-103 S2：接棒顶级 validate 的语义——挂载闸，docs/04-§九）：
        合法=摘要+「下一步」exit 0；不合法=逐条「文件:行 [规则] 修法」到 stderr 并 exit 1。
        本命令无旗标；-h/--help/help 预检零副作用
+  studio-next company seed <目录> [--slug <slug>] [--by <动作人>] [--note <说明>] [--json]
+       补锚（init 通道/手工目录）：落 .studio-next/trust.json trust=false（未批准态）——
+       只写锚文件、公司内容零改动；锚已在场/坏锚在场=拒（升级重落归 company add 升级通道；
+       坏锚≠无锚，不覆盖坏值——SEC-FC-03）。--by 缺省 cli:company-seed（诚实系统署名）
+  studio-next company approve <目录> --by <批准人> [--note <说明>] [--json]
+       制作人显式批准信任锚（docs/43-附录A-3）：trust=true + 内容指纹 + 留痕（approve/
+       re-approve 幂等）；--by 必填（署名可还原决定人——SEC-SIG-01）。指纹口径=公司内容，
+       排除 .studio-next/（锚自指）与 reports/（产出落点）——与 daemon 热载指纹同源。
+       批准后显式应用：studio-next reload --company <slug>（锚目录不在自动监听面）；
+       公司内容再变→RELOAD_TRUST_DRIFT 拒载+撤销受信位，须重新 approve 再 reload
 `,
   validate: `  studio-next validate <目录>
        校验公司目录结构：不合法逐条打印「文件:行 [规则] 修法」到 stderr 并 exit 1
@@ -189,7 +199,7 @@ export const CONCISE = {
   例：studio-next gen-templates（--out 缺省仓根 templates/；再生成零 diff——种子冻结）
   本命令全文：studio-next gen-templates --help
 `,
-  company: `company <子命令> —— 公司面命令组：add（git 网址即公司导入）/ validate（仓库判定器）/ create（一条命令创建编排）/ check（目录结构校验——接棒顶级 validate）
+  company: `company <子命令> —— 公司面命令组：add（git 网址即公司导入）/ approve（制作人批准信任锚）/ seed（补锚 trust=false）/ validate（仓库判定器）/ create（一条命令创建编排）/ check（目录结构校验——接棒顶级 validate）
   例：studio-next company add <git-url> my-corp
   本组全文：studio-next company --help（各子命令 -h 看分面全文）
 `,

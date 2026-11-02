@@ -36,9 +36,10 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import {
+  REPORTS_DIR,
   SCAN_EXCLUDED_NAMES,
   TRUST_DIR,
-  excludeAnchorFiles,
+  excludeNonContentFiles,
   inspectTrustAnchor,
   loadCompanyDirectory,
   readDirectoryFiles,
@@ -48,9 +49,10 @@ import {
 import type { CompanySnapshot, DirectoryIssue, EventRecord } from '@studio-next/contract'
 import type { Ledger } from '@studio-next/store'
 
-/** 监听排除表（单源扩展：company 基表 + 信任锚目录 .studio-next/——锚自指隔离，docs/43-附录A-3）；
+/** 监听排除表（单源扩展：company 基表 + 信任锚目录 .studio-next/——锚自指隔离，docs/43-附录A-3
+ *  + 产出落点 reports/——报表/工单产出非配置面，写它不得触发热重载，04-§三/17-§6）；
  *  statDirectory 与基线 walk 同消费本表，一处改两处不漂移。 */
-const WATCH_EXCLUDED_NAMES: readonly string[] = [...SCAN_EXCLUDED_NAMES, TRUST_DIR]
+const WATCH_EXCLUDED_NAMES: readonly string[] = [...SCAN_EXCLUDED_NAMES, TRUST_DIR, REPORTS_DIR]
 
 // ————————————————————————— 指纹面（纯函数，单测直接打） —————————————————————————
 
@@ -423,6 +425,9 @@ export function createHotReload(deps: HotReloadDeps): HotReload {
     diff: StatDiff,
   ): Promise<HotReloadReport> {
     const files = await readFiles(deps.companyDir)
+    // 内容面口径（锚目录 + reports/ 均排除）：批准指纹/漂移比对/账目 bytes 只看配置资产——
+    // 产出落盘不得被当成配置漂移（04-§三 output 面；docs/43-附录A-3 锚自指同理）
+    const contentFiles = excludeNonContentFiles(files)
     const mounted = loadCompanyDirectory(files)
     if (!mounted.ok) {
       const detail = renderIssues(mounted.issues)
@@ -439,7 +444,7 @@ export function createHotReload(deps: HotReloadDeps): HotReload {
     const anchor = gate.anchor
     // valid 锚：批准指纹面（docs/43-附录A-3）——trust=false 或内容指纹漂移 → 拒 + 撤销受信位
     if (anchor !== null) {
-      const contentFp = fingerprintDirectory(excludeAnchorFiles(files)).overall
+      const contentFp = fingerprintDirectory(contentFiles).overall
       if (!anchor.trust || anchor.fingerprint !== contentFp) {
         const reason = !anchor.trust
           ? '锚 trust=false（import 后未经制作人 approve——变更不可自动应用）'
@@ -453,7 +458,7 @@ export function createHotReload(deps: HotReloadDeps): HotReload {
 
     const snapshot = mounted.snapshot
     // 指纹面与基线同集（排除锚文件——基线 walk 已排除 .studio-next/，此处同口径，幂等闸才可比）
-    const next = fingerprintDirectory(excludeAnchorFiles(files))
+    const next = fingerprintDirectory(contentFiles)
     if (next.overall === baselineFingerprint.overall) {
       // 幂等闸：内容未变（stat 变而指纹同）——基线 stats 归位、拒载在册复位，零事件零应用
       baselineStats = scanStats(deps.companyDir)
@@ -474,7 +479,7 @@ export function createHotReload(deps: HotReloadDeps): HotReload {
     const applyReport = deps.apply(snapshot)
     const oldFp = baselineFingerprint.overall
     // bytes 同指纹口径（排除锚文件——账目 size 与指纹面同集，可对账）
-    const bytes = Object.values(excludeAnchorFiles(files)).reduce((s, t) => s + Buffer.byteLength(t, 'utf8'), 0)
+    const bytes = Object.values(contentFiles).reduce((s, t) => s + Buffer.byteLength(t, 'utf8'), 0)
     const evt = appendEvent(
       makeEvent(
         'SCHEMA_EVOLVE',

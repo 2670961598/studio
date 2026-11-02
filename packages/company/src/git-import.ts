@@ -47,7 +47,7 @@ import { configInvalid } from '@studio-next/contract'
 import { validateCompanyRepo, type RepoValidateOptions, type RepoValidateResult } from './repo-validate.ts'
 import { AIWS_DIR, readDirectoryFiles } from './init.ts'
 import { ensureAiwsTree, type AiwsTreeResult } from './aiws.ts'
-import { contentFingerprint, excludeAnchorFiles, readTrustAnchor, reseedTrustAnchorOnUpgrade, seedTrustAnchor } from './trust.ts'
+import { contentFingerprint, excludeNonContentFiles, readTrustAnchor, reseedTrustAnchorOnUpgrade, seedTrustAnchor } from './trust.ts'
 import { extractPersonAttrs, installCompanyPlugins, type PluginInstallItem, type PluginInstallReport } from './dependencies.ts'
 
 // ————————————————————————— 判定器注入（DEV-32 两遍共用核） —————————————————————————
@@ -436,7 +436,7 @@ export async function importCompanyRepo(opts: RepoImportOptions): Promise<RepoIm
   } else {
     reseedTrustAnchorOnUpgrade(targetDir, slug, targetFiles, { by, at: iso, note: `upgrade: ${slug} 内容更新` })
   }
-  const fingerprint = contentFingerprint(excludeAnchorFiles(targetFiles))
+  const fingerprint = contentFingerprint(excludeNonContentFiles(targetFiles)) // 与锚内批准指纹同口径（锚+reports/ 均非内容面）
 
   // 6b. .AIWS 员工工作区树（fresh 与 upgrade 同建——升级后组织可能扩编；幂等可重入，
   //     增量同步=扩编建目录/缩编归档不删。落点缺省=公司根目录（targetDir 同级），不进
