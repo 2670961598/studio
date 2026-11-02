@@ -149,7 +149,7 @@ export function collectWorkIntents(deps: WorkIntakeDeps): WorkIntakeResult {
       if (deps.closed.has(issue.id) || candidateSeen.has(issue.id)) continue
       deps.candidates.push({
         ticket: issue.id,
-        intent: { kind: 'ticket', company: deps.company, ticket: issue.id, source: 'mirror', priority: 0 },
+        intent: { kind: 'ticket', company: deps.company, ticket: issue.id, source: `mirror:${issue.updated}`, priority: 0 }, // 应急修(2026-11-02): 加 updated 使回滚后键变→可重派(P0#417)
       })
       candidateSeen.add(issue.id)
       rescanned += 1
