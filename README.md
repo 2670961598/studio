@@ -218,6 +218,5 @@ MIT
 - 作者：叶青鑫
 - Email：yeqingxin@mail.nwpu.edu.cn
 - Email：yeqingxin0126@foxmail.com
-- 手机：18122420822
 
 欢迎就 AI Agent 组织、运行时治理、公司目录与交付验证等方向交流。
