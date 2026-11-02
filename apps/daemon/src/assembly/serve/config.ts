@@ -39,6 +39,7 @@ import { parseStallAfterMsByExecutor } from './watchdog-config.ts'
 import { bool, coerceSeatbeltGrant, num, rejectRemovedGatewayKey, str, type SeatbeltConfigRaw } from '../serveconfig/coerce.ts'
 import { coerceHrServeKey, HR_SERVE_DEFAULTS, validateHrServeCross, type HrServeConfig } from '../hrsync/config.ts'
 import { crossValidateMatrixChannels } from '../channels/channels.ts'
+import { coerceRestartServeKey, isRestartKey, RESTART_SERVE_DEFAULTS, validateRestartCross, type RestartServeConfig } from '../serveconfig/restart.ts'
 import { coerceAnchorAbsenceDeclaration, type AnchorAbsenceRaw } from './anchor-absence.ts'
 import type { AnchorAbsenceDeclaration } from '../../control/hot-reload.ts'
 
@@ -46,7 +47,7 @@ import type { AnchorAbsenceDeclaration } from '../../control/hot-reload.ts'
  * serve 配置（v0 最小面；引擎子配置并入扁平键）。hr* 人事同步器键子面在
  * assembly/hrsync/config.ts 的 HrServeConfig（DEV-48，docs/52-§九——此处 extends 收平）。
  */
-export interface ServeConfig extends HrServeConfig {
+export interface ServeConfig extends HrServeConfig, RestartServeConfig {
   /** 台账库路径（不存在则建库+migrate——store openLedger 语义） */
   db: string
   /** 协作平台：fake（demo）| localfile（docs/23 LocalFile 平台）| taiga（docs/30 推荐 + docs/32 真机试点；接入点见 wirePlatform） */
@@ -58,18 +59,13 @@ export interface ServeConfig extends HrServeConfig {
    * 派发 workspace 归 .AIWS 员工家（DEV-28，docs/43-§五）——根推导见 aiwsRoot。
    */
   rootDir: string
-  /**
-   * 对外 API 监听端口（MIG-06 装配欠账收口；docs/v2/14 §四）：
-   * **缺省 0＝ephemeral**（不抢 :8788；测试/多实例同机不撞端口）；生产在 daemon.yaml
-   * 显式指定 8788。绑定地址恒 127.0.0.1（v2/14 §四默认环回 fail-closed——LAN 暴露需
-   * 显式旗标，当前未落位＝缺口，不默认监听 0.0.0.0）。
-   */
+  /** 对外 API 监听端口（MIG-06 装配欠账收口；docs/v2/14 §四）：**缺省 0＝ephemeral**（不抢 :8788；
+   *  测试/多实例同机不撞端口）；生产在 daemon.yaml 显式指定 8788。绑定地址恒 127.0.0.1（v2/14 §四
+   *  默认环回 fail-closed——LAN 暴露需显式旗标，当前未落位＝缺口，不默认监听 0.0.0.0）。 */
   apiPort?: number
-  /**
-   * .AIWS 员工工作区树根（DEV-28，docs/43-§五+§十9）：缺省推导=显式本键 >
-   * dirname(companyDir)/.AIWS（公司根，生产形态——与公司 git 目录/var 平级）>
-   * `<rootDir>/.AIWS`（demo 无公司目录）。per-company 不并树：根归属标记异 slug 拒启动。
-   */
+  /** .AIWS 员工工作区树根（DEV-28，docs/43-§五+§十9）：缺省推导=显式本键 > dirname(companyDir)/.AIWS
+   *  （公司根，生产形态——与公司 git 目录/var 平级）> `<rootDir>/.AIWS`（demo 无公司目录）。
+   *  per-company 不并树：根归属标记异 slug 拒启动。 */
   aiwsRoot?: string
   /** 自动派工分配器开关（studio-dev-345；缺省关=行为零变） */
   autoAssign?: boolean
@@ -80,11 +76,9 @@ export interface ServeConfig extends HrServeConfig {
   maxInflight: number
   /** 在工静默告警阈值 ms */
   stallAfterMs: number
-  /**
-   * STALL 响置咬合阈（DEV-44，2026-10-20 三例实证：看门狗只叫不咬）：同 attempt 内告警
-   * 达 N 次 → 整树杀在途 worker（stop 通道同款 kill 链）+ 工位收口 + 回首批位重派
-   * attempt+1（rescan 兜底）；无在途句柄=GATE_FAIL（WORKER_DEAD）收口。0=关；缺省 2。
-   */
+  /** STALL 响置咬合阈（DEV-44，2026-10-20 三例实证：看门狗只叫不咬）：同 attempt 内告警达 N 次 →
+   *  整树杀在途 worker（stop 通道同款 kill 链）+ 工位收口 + 回首批位重派 attempt+1（rescan 兜底）；
+   *  无在途句柄=GATE_FAIL（WORKER_DEAD）收口。0=关；缺省 2。 */
   stallKillAfterAlarms: number
   /** 按 executor 分级静默阈值（studio-dev-505；`executor=ms;...` 单行字符串；缺省/未命中回退 stallAfterMs；装载期解析即验——空段/坏键/重复键/非正整数一律拒启 fail-closed，不静默忽略）。 */
   stallAfterMsByExecutor?: Readonly<Record<string, number>>
@@ -114,12 +108,9 @@ export interface ServeConfig extends HrServeConfig {
   jobs: boolean
   /** 调度轮询间隔 ms（22-§二「节奏可配」；缺省 15 秒） */
   jobPollMs: number
-  /**
-   * matrix @唤醒源开关（22-§二；缺省关）：true 时经**注入工厂**装配（buildServeRuntime
-   * opts.matrixSource）——daemon 不强依赖 @studio-next/matrix（装配单元注入
-   * createMentionSource 产物；start/stop 签名对齐 InvokeSource 端口即可接入）。
-   * 开而未注入工厂=CONFIG_INVALID 拒启动（不静默空转）。
-   */
+  /** matrix @唤醒源开关（22-§二；缺省关）：true 时经**注入工厂**装配（buildServeRuntime opts.matrixSource）——
+   *  daemon 不强依赖 @studio-next/matrix（装配单元注入 createMentionSource 产物；start/stop 签名对齐
+   *  InvokeSource 端口即可接入）。开而未注入工厂=CONFIG_INVALID 拒启动（不静默空转）。 */
   matrix: boolean
   /**
    * matrix homeserver 基址（105-刀A A-3；matrix: true 时必配）：如 http://127.0.0.1:8008。
@@ -317,6 +308,8 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   matrixChannels: false,
   // 人事同步器缺省关（DEV-48，docs/52-§九；缺省值面=HR_SERVE_DEFAULTS 单一源）
   ...HR_SERVE_DEFAULTS,
+  // 受权重启缺省关（studio-dev-504 / #497 C-6）：不开面=生产零行为
+  ...RESTART_SERVE_DEFAULTS,
   fileWatch: false,
   cadence: false,
   sla: false,
@@ -542,6 +535,11 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'agentYaml': cfg.agentYaml = str(value, key); break
       case 'acceptance': cfg.acceptance = str(value, key); break
       default:
+        // 受权重启键组（studio-dev-504 S4；值域/交叉校验在 serveconfig/restart.ts）
+        if (isRestartKey(key)) {
+          coerceRestartServeKey(cfg, key, value, { str, num, bool })
+          break
+        }
         throw new Error(`daemon.yaml：未知配置键 ${key}（v0 最小面，见 serve.ts 头注）`)
     }
   }
@@ -567,6 +565,8 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
   }
   // —— 人事同步器交叉校验（DEV-48，docs/52；细节在 assembly/hrsync/config.ts）——
   validateHrServeCross(cfg)
+  // —— 受权重启交叉校验（studio-dev-504 S4）：关就是关/开面须有有效授权——
+  validateRestartCross(cfg, new Set(Object.keys(raw)))
   // —— matrix 必配键交叉校验（105-刀A A-3；fail-fast 同 taiga 先例）：开关开=非敏感装配
   //    面必齐；bot 密码只经 env MATRIX_BOT_PASSWORD（永不入 yaml，21A D5）——
   //    键组由装配单元 apps/boot 消费（daemon 只收不发 Matrix 网络请求）。

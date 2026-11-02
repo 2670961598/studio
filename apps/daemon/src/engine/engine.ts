@@ -246,6 +246,8 @@ import { accountJobOutput } from './jobs/output-account.ts'
 import { sentinelBriefBlock, sentinelDutyForTicket, verifySidecarSentinelAtPath } from './jobs/sentinel.ts'
 import { deliverablesOf, reconIssueRecord, runHarvestRecon, statHarvestDenial, WORKSPACE_UMASK, type HarvestReconResult } from './jobs/harvest-recon.ts'
 import { makeUlid } from './tools/id.ts'
+import { constructEngineSignature, type EngineSignatureDraft } from './signature/index.ts'
+import { createDrainController, type DrainSettleResult } from './drain/drain.ts'
 import { instructionsTarget, removeInstructions, writeInstructions } from './instructions-store.ts'
 import { aiwsWorkspaceOf, type PromptAssembler } from './prompt-assembly.ts'
 import { blindArtifactPaths, createView, resolveReadTier, roleOfAssignee } from './read-tiers.ts'
@@ -417,6 +419,15 @@ export interface Engine {
   applyCompanyUpdate(update: CompanyRuntimeUpdate): void
   /** 在途 drain（v0：对内存 handle 优雅 kill；work_records 留 running——重启接管归后续刀） */
   dispose(): Promise<void>
+  // —— 受权重启 draining 面（studio-dev-504 S2；docs/17-§2 相位 3 闸，不增删相位）——
+  /** 进入 draining：只关相位 3 派发闸（拍边界调用；幂等） */
+  beginDrain(reason: string): void
+  /** 撤销 draining（未 checkpointing 前） */
+  cancelDrain(): void
+  /** draining 只读观测面（tick 闸/编排判定） */
+  readonly drain: { readonly active: boolean; readonly reason: string | undefined; readonly startedAt: number | undefined }
+  /** 到期强收：整树杀在途 + running 收口 interrupted（不判四要件；返回如实清单） */
+  forceSettleTimeout(): Promise<DrainSettleResult>
   readonly config: EngineConfig
   /** 收割批次簿观测面（IMPL-06-03 / REC-EVD-01）：只读视图；写口仅收割相位（batch.ts） */
   readonly harvestBatches: HarvestBatchLedger
@@ -457,51 +468,9 @@ const TICK_SEQ_KEY = 'tick.seq'
 
 // ————————————————————————— 署名构造（SEC-FC-06 / SEC-SIG-01） —————————————————————————
 
-/**
- * 署名草稿（三值：person/control/system）：`onBehalfOf`、`decisionRef` 在草稿面允许缺省
- * ——**唯一目的**是让构造期校验有缝可拒（缺省即非法），而不是缺省放行。
- */
-export type EngineSignatureDraft =
-  | { readonly actorKind: 'person'; readonly actorRef: string; readonly onBehalfOf?: string }
-  | { readonly actorKind: 'control'; readonly actorRef: string; readonly decisionRef?: string; readonly onBehalfOf?: string }
-  | { readonly actorKind: 'system'; readonly actorRef: string; readonly onBehalfOf?: string }
-
-/** 构造期校验后的写署名（与 contract `Signature` 同形：system 的 onBehalfOf 必填） */
-export type EngineSignature = EngineSignatureDraft &
-  (
-    | { readonly actorKind: 'person' }
-    | { readonly actorKind: 'control'; readonly decisionRef: string }
-    | { readonly actorKind: 'system'; readonly onBehalfOf: string }
-  )
-
-/**
- * 署名构造层校验（SEC-FC-06；docs/v2/15 §二 SEC-SIG-01）：system 缺 `onBehalfOf`（空白＝缺）、
- * control 缺 `decisionRef`、actorRef 空白、actorKind 未知 → **构造期抛错**（不降级、不补缺省）。
- * `onBehalfOf` 指向可还原的工号/决定记录引用；actorRef 只是通道位（审计断言归 IMPL-07-10）。
- */
-export function constructEngineSignature(draft: EngineSignatureDraft): EngineSignature {
-  const d = (draft ?? {}) as { actorKind?: unknown; actorRef?: unknown; onBehalfOf?: unknown; decisionRef?: unknown }
-  const text = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
-  const actorRef = text(d.actorRef)
-  if (actorRef === '') throw new Error('SIGNATURE_INVALID：actorRef 空白——署名回不到任何主体')
-  const onBehalfOf = text(d.onBehalfOf)
-  const withOnBehalf = onBehalfOf === '' ? {} : { onBehalfOf }
-  switch (d.actorKind) {
-    case 'person':
-      return { actorKind: 'person', actorRef, ...withOnBehalf }
-    case 'control': {
-      const decisionRef = text(d.decisionRef)
-      if (decisionRef === '') throw new Error('SIGNATURE_INVALID：control 署名缺 decisionRef（SEC-SIG-01）——控制面位置须可还原决定记录')
-      return { actorKind: 'control', actorRef, decisionRef, ...withOnBehalf }
-    }
-    case 'system': {
-      if (onBehalfOf === '') throw new Error(`SIGNATURE_INVALID：system 署名必须携 onBehalfOf（SEC-FC-06/SEC-SIG-01）——actor=${actorRef} 不可充当最终署名`)
-      return { actorKind: 'system', actorRef, onBehalfOf }
-    }
-    default:
-      throw new Error(`SIGNATURE_INVALID：未知署名主体 ${String(d.actorKind)}（只收 person|control|system）`)
-  }
-}
+// 署名构造析出至 ./signature.ts（行数基线棘轮「先拆再增」，studio-dev-504）：本文件
+// 仍再出口同名类型/函数，既有导入路径与调用面零漂移。
+export { constructEngineSignature, type EngineSignature, type EngineSignatureDraft } from './signature/index.ts'
 
 // ————————————————————————— mention 意图消费件（105-刀A A-2） —————————————————————————
 
@@ -578,6 +547,8 @@ export function createEngine(deps: EngineDeps): Engine {
 
   /** 时钟（一切时刻经注入 clock——core 纪律在 daemon 侧的同形落点） */
   const now = (): number => clock()
+  // draining 控制器（studio-dev-504 S2）：只置内存闸/到期强收，自然收割仍归相位 4
+  const drainCtl = createDrainController({ ledger, inflight, registry, killGraceMs: config.killGraceMs, now })
   const mergeHost: MergeRunHost = { platform, ledger, registry, assemble: (i) => assembler(i), config, people: () => people, budgetDeps, costGuard: () => costGuard, modelTiers: catalog !== undefined ? () => catalog.tiers() : undefined, inflight, mergeRun: deps.mergeRun, mergeLease: mergeLeases, seq: () => seq, now, makeId, makeEvent, syncMirror, resolvePerson, flowOf } // 202-P2 合并跑宿主：热换绑定经 thunk 取活值；函数面声明提升安全（202-P4 增租约簿注入）
 
   // 事件四要素形状（evtLevel/evtDept/tokenBuckets）：抽件 sentinel/shape.ts
@@ -1630,10 +1601,18 @@ export function createEngine(deps: EngineDeps): Engine {
     }
 
     // —— 相位 3 派发：submit_approval（派发前置呈批）→ dispatch ——
-    const approvals = await runApprovalTransitions(workPhaseHost, approvalQ)
+    // draining 闸（studio-dev-504 S2；docs/17-§2）：只关本相位——审批不新起、派发不执行，
+    // 相位 1/2/4/5/6/7 照跑（自然收割/合并/回收/落账不被停机打断）。
+    const dispatchGate: 'open' | 'draining' = drainCtl.active ? 'draining' : 'open'
+    const approvals = dispatchGate === 'draining' ? 0 : await runApprovalTransitions(workPhaseHost, approvalQ)
     let dispatched = 0
+    let drainSkipped = 0
     const budget: TickPhaseDispatchBudget = { budgetReserved: 0, budgetRefused: 0 }
     for (const { action, intentKey, resumePlan, autoAssign } of dispatchQ) {
+      if (dispatchGate === 'draining') {
+        drainSkipped += 1
+        continue
+      }
       const result = await executeDispatch(action, intentKey, index, tickEvents, budget, resumePlan, autoAssign, dispatchPersons)
       actionResults.push(result)
       if (result.ok) {
@@ -1867,6 +1846,8 @@ export function createEngine(deps: EngineDeps): Engine {
           budgetReserved: budget.budgetReserved,
           budgetRefused: budget.budgetRefused,
           scheduleToStart,
+          gate: dispatchGate,
+          ...(drainSkipped > 0 ? { drainSkipped } : {}),
         },
         harvest,
         merge: { merged, queue: mergeQueueFace(mergeHost, mergeWaiting, now()) }, // 202-P4 合并队列栏（只读投影）
@@ -1935,6 +1916,18 @@ export function createEngine(deps: EngineDeps): Engine {
       }
     },
     dispose,
+    beginDrain(nextReason: string): void {
+      drainCtl.begin(nextReason)
+    },
+    cancelDrain(): void {
+      drainCtl.cancel()
+    },
+    get drain(): { readonly active: boolean; readonly reason: string | undefined; readonly startedAt: number | undefined } {
+      return { active: drainCtl.active, reason: drainCtl.reason, startedAt: drainCtl.startedAt }
+    },
+    forceSettleTimeout(): Promise<DrainSettleResult> {
+      return drainCtl.forceSettleTimeout()
+    },
     get config(): EngineConfig {
       return config
     },

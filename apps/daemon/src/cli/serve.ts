@@ -53,6 +53,14 @@ export async function cmdServe(argv: string[]): Promise<number> {
       console.error(`serve：运行中断（tick 异常）：${result.lastError ?? '未知'}`)
       return 2
     }
+    if (result.stopReason === 'restart-failed') {
+      console.error(`serve：受权重启检查点失败：${result.lastError ?? '未知'}`)
+      return 1
+    }
+    if (result.stopReason === 'restart') {
+      console.log(`serve：受权重启已就绪（request=${result.restart?.requestId ?? '-'}，exit 0 authorized）`)
+      return 0
+    }
     console.log(`serve：已停机（共 ${result.ticks} 拍）`)
     return 0
   } catch (err) {

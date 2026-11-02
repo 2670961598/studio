@@ -136,6 +136,15 @@ async function main(argv: readonly string[]): Promise<number> {
       console.error(`daemon：运行中断（tick 异常）：${result.lastError ?? '未知'}`)
       return 2
     }
+    if (result.stopReason === 'restart-failed') {
+      // 检查点失败：exit 1 + 不写 authorized 标记（supervisor 按 crash 退避拉起）
+      console.error(`daemon：受权重启检查点失败：${result.lastError ?? '未知'}`)
+      return 1
+    }
+    if (result.stopReason === 'restart') {
+      console.log(`daemon：受权重启已就绪（request=${result.restart?.requestId ?? '-'}，exit 0 authorized）——等待 supervisor 拉起`)
+      return 0
+    }
     console.log(`daemon：已停机（共 ${result.ticks} 拍）`)
     return 0
   } catch (err) {

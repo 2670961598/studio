@@ -126,7 +126,14 @@ export interface TickReport {
       /** 队列小模型精序（160-B·studio-dev-182：pick/interrupt 观测摘要；未注入=缺席） */
       judge?: TickQueueJudgeReport
     }
-    dispatch: { dispatched: number; approvals: number; results: readonly TickActionResult[] } & TickPhaseDispatchBudget & { scheduleToStart: TickDispatchScheduleToStart }
+    dispatch: { dispatched: number; approvals: number; results: readonly TickActionResult[] } &
+      TickPhaseDispatchBudget & {
+        scheduleToStart: TickDispatchScheduleToStart
+        /** 相位 3 闸位（studio-dev-504 S2）：draining=受权重启只停派发，其余相位照跑 */
+        gate?: 'open' | 'draining'
+        /** draining 期间被闸掉的派发/呈批数（只读观测；不含自然收割） */
+        drainSkipped?: number
+      }
     harvest: TickPhaseHarvest
     /** 合并队列栏（202-P4，studio-dev-234）：只读投影——等待单（merge-lease-busy 顺延）/在跑单/租约态 */
     merge: { merged: number; queue: MergeQueueFace }

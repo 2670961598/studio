@@ -66,12 +66,12 @@ import { queueServeOverrides } from '../../engine/todoqueue/queue.ts'
 import { reEnsureChannels, startChannelSupply, wireRoomFace } from '../channels/channels.ts'
 import { seedJobs, removeMissingJobs } from '../jobs-seed/jobs-seed.ts'
 import { daemonIdentity, type ServeConfig } from './config.ts'
-import { wireExecutorFace } from './executor-face.ts'
+import { wireExecutorFace, type RestartProbeFace } from './executor-face.ts'
 import { wireServeApi, type ServeApiWiring } from '../api/serve-face.ts'
 import type { WorkerKeyDeps } from '../../engine/worker-key.ts'
 
 /** serve 运行栈（engine + 唤起源注册表 + PORT-OPS 面 + 统一停机面；runServe 与测试共用装配） */
-export interface ServeRuntime extends ServeOpsFace {
+export interface ServeRuntime extends ServeOpsFace, RestartProbeFace {
   engine: Engine
   scheduler: Scheduler | null
   /** 唤起源注册表（22-§一）：startAll 的 emit 统一进 engine.ingest（runServe 接线） */
@@ -235,9 +235,8 @@ export function buildServeRuntime(
       `${aiwsTree.created > 0 ? `、新建 ${aiwsTree.created}` : ''}${aiwsTree.archived.length > 0 ? `、归档 ${aiwsTree.archived.length}` : ''}）——派发 cwd=<部门>/<工号>/tickets/<单号>/att<N>，家保留（docs/43-§五；per-company 不并树 §十9）`,
   )
 
-  // —— executor 面装配（注册表/桥接 overlay/价目表与档位/judge 两址）——体=runtime-executor
-  //    （20-§十五.三 先拆再增：本段零 engine 实例依赖，构造结果供下方 engine 注入与启动日志）
-  const { registry, catalog, modelRoles, modelTierTickets, judgeHook, acceptance, realGate } = wireExecutorFace(config, {
+  // —— executor 面装配（注册表/桥接 overlay/价目表与档位/judge 两址）——体=runtime-executor（20-§十五.三 先拆再增：本段零 engine 实例依赖，构造结果供下方 engine 注入与启动日志）
+  const { registry, catalog, modelRoles, modelTierTickets, judgeHook, acceptance, realGate, restartProbe } = wireExecutorFace(config, {
     ledger,
     clock,
     log,
@@ -584,6 +583,7 @@ export function buildServeRuntime(
     dispatchSeatbelt: config.seatbelt,
     ...opsFace,
     evolveSelfCheck,
+    restartProbe,
     ...(hotReload !== undefined ? { hotReload } : {}),
     // 129-E（184）：续命意图推送面露头（resume: true 时；调用面归 B4 CLI resume——另批）
     ...(resumePublish !== undefined ? { resumePublish } : {}),

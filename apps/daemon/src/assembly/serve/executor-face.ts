@@ -48,7 +48,15 @@ export interface ExecutorFaceDeps {
 }
 
 /** executor 面装配产物（engine 构造与启动日志共用） */
-export interface ExecutorFace {
+/** 重启自检探针面（studio-dev-504 S5；runtime 经 ServeRuntime 暴露，不增文件行） */
+export interface RestartProbeFace {
+  restartProbe: {
+    models: () => { catalogLoaded: boolean; mainWorkerTier: string | undefined; demoBypass: boolean }
+    executors: () => Promise<{ count: number; failures: readonly string[] }>
+  }
+}
+
+export interface ExecutorFace extends RestartProbeFace {
   /** executor 注册表（agentYaml=真注册表；缺省=fake adapter） */
   registry: ExecutorRegistry
   /** 价目表（models: 段给定=态 A；缺省 undefined=态 B 降级） */
@@ -182,6 +190,33 @@ export function wireExecutorFace(config: ServeConfig, deps: ExecutorFaceDeps): E
     log(`[serve] 队列小模型两址：${on}（拍闸缺省 1/址/拍+2/公司/拍+12s 墙钟；降级=规则档原序）`)
   }
 
+  const restartProbe = {
+    models: (): { catalogLoaded: boolean; mainWorkerTier: string | undefined; demoBypass: boolean } => {
+      let mainWorkerTier: string | undefined
+      if (catalog !== undefined) {
+        try {
+          mainWorkerTier = catalog.resolve('main_worker').tier
+        } catch {
+          mainWorkerTier = undefined
+        }
+      }
+      return { catalogLoaded: catalog !== undefined, mainWorkerTier, demoBypass: catalog === undefined && config.agentYaml === undefined }
+    },
+    executors: async (): Promise<{ count: number; failures: readonly string[] }> => {
+      const entries = registry.list()
+      const failures: string[] = []
+      for (const entry of entries) {
+        try {
+          const detected = await registry.resolve(entry.name).detect()
+          if (!detected.ok) failures.push(`${entry.name}:detect-not-ok${detected.gaps.length > 0 ? `(${detected.gaps.join('|')})` : ''}`)
+        } catch (err) {
+          failures.push(`${entry.name}:${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
+      return { count: entries.length, failures }
+    },
+  }
+
   return {
     registry,
     catalog,
@@ -190,5 +225,6 @@ export function wireExecutorFace(config: ServeConfig, deps: ExecutorFaceDeps): E
     judgeHook,
     acceptance,
     realGate,
+    restartProbe,
   }
 }

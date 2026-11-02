@@ -109,6 +109,8 @@ import type { PricingFace } from './pricing.ts'
 import { createUsageFace } from './usage.ts'
 import type { UsageFace } from './usage.ts'
 import { createCostDailyFace } from './cost.ts'
+import { walCheckpoint, type WalCheckpointResult } from './wal.ts'
+import { sameEvent } from './event-compare.ts'
 import type { CostDailyFace } from './cost.ts'
 import { excludedDomainRefs, type ExcludedDomainRef } from './backup.ts'
 import { assertRecord, optNum, optStr, str, type SqlRow } from './row-helpers.ts'
@@ -230,6 +232,8 @@ export type PersonnelTimelineEntry =
 export interface Ledger extends HrSyncQueueFace, PricingFace, UsageFace, ProbesFace, CostDailyFace {
   db: DatabaseSync
   close(): void
+  /** WAL checkpoint(TRUNCATE)（受权重启检查点第 5 步；busy≠0 抛错不静默） */
+  checkpoint(): WalCheckpointResult
   /** 当前 schema 版本（schema_version 表 MAX(version)；0=无迁移记录） */
   version(): number
   /** events 唯一写口：先契约校验后插入（append-only） */
@@ -1585,6 +1589,7 @@ export function openLedger(path: string): Ledger {
   return {
     db,
     close: () => db.close(),
+    checkpoint: () => walCheckpoint(db),
     version: () => currentVersion(db),
     appendEvent,
     queryEvents,
@@ -1655,29 +1660,6 @@ export function openLedger(path: string): Ledger {
     // daemon 收口工序供）
     ...createCostDailyFace(db),
   }
-}
-
-/** 记录级全列比对（tokens 经 canonical 序列化后比字节；支撑幂等规则判定） */
-function sameEvent(a: EventRecord, b: EventRecord): boolean {
-  return (
-    a.id === b.id &&
-    a.ts === b.ts &&
-    a.company === b.company &&
-    a.issue === b.issue &&
-    a.event === b.event &&
-    a.actor === b.actor &&
-    a.attempt === b.attempt &&
-    a.level === b.level &&
-    a.dept === b.dept &&
-    a.correlation_id === b.correlation_id &&
-    a.causation_id === b.causation_id &&
-    canonicalTokens(a.tokens) === canonicalTokens(b.tokens) &&
-    a.cost_usd === b.cost_usd &&
-    a.duration_ms === b.duration_ms &&
-    a.size === b.size &&
-    a.payload_hash === b.payload_hash &&
-    a.note === b.note
-  )
 }
 
 /** 类型通道：ClassifiedError 形状（kernel；供调用方 catch 判类） */
