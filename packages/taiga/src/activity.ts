@@ -22,8 +22,11 @@
  *     游标跨了作用域变化，返回全部活动让上游去重，绝不静默空转）
  *
  * 剪枝（成本面）：边界非空时只对 modified_date >= 边界 ts 的单取 history——
- * 边界所在单若仍存活必在候选集内（其 modified_date ≥ 边界条目时刻），可达性判定无损；
- * 候选集中未见边界 id 才判不可达 → 全量重放。docs/32 §四「全量重放代价」按此收敛。
+ * 候选未含边界**不直接判不可达**：modified_date 与 history.created_at 精度/后缀
+ * 不一致（秒级 vs 毫秒、+00:00 vs Z）或历史行曾受损（2026-10-31 事故 SQL）都会
+ * 误剪「边界所在单」（studio-dev-409 根因）——先在全量集复核，命中=可达按增量走，
+ * 全量集也未见才判不可达 → 全量重放。复核仅快路径未命中时发生（与重放同一次
+ * collect，零额外成本），裁决(a) 语义不变。docs/32 §四「全量重放代价」按此收敛。
  */
 import type { ActivityPage, PlatformActivity, TicketId } from '@studio-next/contract'
 import type { TaigaContext, EntityRaw } from './transport/context.ts'
@@ -162,12 +165,19 @@ export async function activitySince(
     const bts: string = boundary.ts // 收窄快照（闭包内属性收窄失效，先落 const）
     const bid: string = boundary.id
     // 快路径：可达性=候选集中见到边界条目
-    if (!merged.some((m) => m.entry.id === bid)) {
-      // 边界不可达（单据被删/条目被隐藏=作用域漂移）→ 全量重放（裁决(a) 对齐）
-      const full = sortAscending(await collect(ctx, all))
-      return pageOf(ctx, full, pageSize)
+    if (merged.some((m) => m.entry.id === bid)) {
+      return pageOf(ctx, merged.filter((m) => strictlyAfter(m.entry, { ts: bts, id: bid })), pageSize)
     }
-    return pageOf(ctx, merged.filter((m) => strictlyAfter(m.entry, { ts: bts, id: bid })), pageSize)
+    // 慢路径（studio-dev-409 根因①）：剪枝未见 ≠ 不可达——边界所在单可能被误剪
+    // （modified_date 精度/后缀与 created_at 不一致，或 2026-10-31 历史行受损）。
+    // 全量集复核（与全量重放同一次 collect，零额外成本）：命中=可达，按严格增量
+    // 走，绝不回退重放（游标回退环根治面）
+    const full = sortAscending(await collect(ctx, all))
+    if (full.some((m) => m.entry.id === bid)) {
+      return pageOf(ctx, full.filter((m) => strictlyAfter(m.entry, { ts: bts, id: bid })), pageSize)
+    }
+    // 全量集也未见=真不可达（单据被删/条目被隐藏=作用域漂移）→ 全量重放（裁决(a) 对齐）
+    return pageOf(ctx, full, pageSize)
   }
 
   // 裸 id 边界：无 ts 不能剪枝也不能比大小——在升序全量里定位边界，切其后

@@ -39,6 +39,9 @@ export interface TickPhaseCollect {
   mirrorSynced: number
   cursorBefore: string | null
   cursorAfter: string | null
+  /** studio-dev-409：本拍 activity 翻页出现 nextCursor 同值再现（游标回退环）——
+   * 已停翻防打转，cursor 停在最后未重复值 */
+  cursorLoop: boolean
 }
 
 /** state-diff 相位：每候选一决（含 hold/noop——落账口径全量留痕） */

@@ -1300,7 +1300,9 @@ export function createEngine(deps: EngineDeps): Engine {
     const affectedSeen = new Set<TicketId>()
     let pages = 0
     let activityCount = 0
+    let cursorLoop = false // studio-dev-409：nextCursor 同值再现=游标回退环（观测面）
     try {
+      const seenCursors = new Set<string>()
       for (let i = 0; i < config.maxActivityPages; i += 1) {
         pages += 1
         const page = await platform.activity.since(cursor)
@@ -1312,6 +1314,15 @@ export function createEngine(deps: EngineDeps): Engine {
           }
         }
         if (page.nextCursor !== null) {
+          if (seenCursors.has(page.nextCursor)) {
+            // 游标回退环（studio-dev-409 根因③面）：适配器把 nextCursor 拉回已见
+            // 旧位置（边界假不可达→全量重放）——同值再现即环，停翻防打转；cursor
+            // 停在最后一个未重复值，下拍增量续走。游标不透明（docs/25-§3.2）：
+            // 只认重复、不解释内容，端口契约零变更
+            cursorLoop = true
+            break
+          }
+          seenCursors.add(page.nextCursor)
           cursor = page.nextCursor
         } else if (page.items.length > 0) {
           // 平台「无更多」但本页有货：游标退守最后活动 id（docs/25-§3.2 YouTrack=最后活动 id 边界）
@@ -1894,6 +1905,7 @@ export function createEngine(deps: EngineDeps): Engine {
           mirrorSynced: issues.length,
           cursorBefore,
           cursorAfter: cursor,
+          cursorLoop,
           unknownStateAlarmed,
           foreignKnown,
           statusSetDrift,

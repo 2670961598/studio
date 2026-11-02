@@ -497,8 +497,17 @@ export class FakeTaiga {
       const targetId = Number(m[1])
       const e = this.entities.find((x) => x.id === targetId)
       if (e === undefined) return respond(404, { _error_message: 'History not found', _error_type: 'not_found' })
+      // studio-dev-409：history 同实体列表——服务端分页（page/page_size+分页头，缺省
+      // 30 对齐真机）。不翻页的读面只见首页窗口（「假不可达」缺陷的复现前提）
+      const pageSize = Number(query['page_size'] ?? '30')
+      const page = Number(query['page'] ?? '1')
       const entries = [...e.history].reverse() // 内部存旧→新，响应翻转成新→旧
-      return respond(200, entries.map((h) => this.historyJson(h, e.ref)))
+      const slice = entries.slice((page - 1) * pageSize, page * pageSize)
+      return respond(200, slice.map((h) => this.historyJson(h, e.ref)), {
+        'x-pagination-count': String(entries.length),
+        'x-paginated-by': String(pageSize),
+        'x-pagination-current': String(page),
+      })
     }
 
     // —— wiki（读 + upsert 写面；真机 P60-P66 端点形状）——

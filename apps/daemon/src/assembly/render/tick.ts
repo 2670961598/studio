@@ -12,6 +12,8 @@ export function renderTick(report: TickReport): string {
     `budget=${p.dispatch.budgetReserved}reserved/${p.dispatch.budgetRefused}refused ` +
     `harvest=${p.harvest.completed}/${p.harvest.checked}/p${p.harvest.pending} merged=${p.merge.merged} recycled=${p.recycle.recycled} ` +
     `events=${p.account.eventsAppended} inflight=${report.inflightAfter} cursor=${p.collect.cursorAfter ?? '-'}${
+      p.collect.cursorLoop ? ' [cursor-loop]' : ''
+    }${
       p.stateDiff.reopened > 0 ? ` reopened=${p.stateDiff.reopened}` : ''
     }${p.stateDiff.rescanned > 0 ? ` rescan=+${p.stateDiff.rescanned}` : ''}${p.account.heartbeat ? ' [heartbeat]' : ''}`
   )

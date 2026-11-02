@@ -4,6 +4,7 @@
  *  - 边界精确（(ts,id) 严格新于）；分页翻页不重不漏；坏游标显式报错
  *  - 边界不可达（边界所在单被删）→ 全量重放（yt 裁决(a) 对齐）
  *  - 剪枝：边界后只有改动过的单才拉 history（call 断言）
+ *  - studio-dev-409 回归：误剪/首页窗口外边界 ≠ 不可达——全量复核命中按增量走
  *  - kind 归一（commented/transitioned/field-set）+ actor + issue 归属
  *  - 建单事件缺席（history 不录建单——实测口径，webhook 主通道负责）
  */
@@ -170,5 +171,53 @@ describe('剪枝（成本面：modified_date 早于边界的单不拉 history）
     const before = fake.countHistoryFetches()
     await makePlatform(fake).activity.since(null)
     expect(fake.countHistoryFetches() - before).toBe(2)
+  })
+})
+
+describe('studio-dev-409 回归①：剪枝不变量破坏不触发全量重放（游标回退环根因）', () => {
+  it('边界所在单 modified_date 因精度/后缀差异被误剪 → 全量复核命中 → 严格增量（不回退）', async () => {
+    const fake = new FakeTaiga()
+    const a = fake.seedEntity({ subject: '甲' })
+    fake.pushHistory(a.id, { diffKeys: ['status'], at: '2026-10-19T14:08:01.354Z' })
+    const boundaryId = fake.pushHistory(a.id, { diffKeys: ['subject'], at: '2026-10-19T22:54:21.620Z' })
+    const newer = fake.pushHistory(a.id, { comment: '新活动', at: '2026-11-02T09:00:00.000Z' })
+    const boundaryEntry = a.history.find((h) => h.id === boundaryId)
+    expect(boundaryEntry).toBeDefined()
+    const canonical = encodeCursor(boundaryEntry?.createdAt ?? '', boundaryId)
+    // 人为破坏剪枝前提（真机三面：modified_date 秒级精度+时区后缀——'+'(0x2B) <
+    // '.'(0x2E) 字符串序即被剪；毫秒截断；2026-10-31 历史行 SQL 误伤）
+    a.modifiedDate = '2026-10-19T22:54:21+00:00'
+    const p = makePlatform(fake)
+    const page = await p.activity.since(canonical)
+    // 修复后：全量复核命中边界 → 只回严格新于边界的活动；修复前：误判不可达 →
+    // 全量重放回最旧页（nextCursor 回拉 → 生产环境游标回退环 A→B→C→A）
+    expect(ids(page.items)).toEqual([newer])
+    expect(page.nextCursor).toBeNull()
+  })
+})
+
+describe('studio-dev-409 回归②：长历史单窗口外边界可达（history 翻页取尽）', () => {
+  it('边界落在服务端首页窗口（30 条）外仍可达——增量翻页前进不回环不漏条', async () => {
+    const fake = new FakeTaiga()
+    const a = fake.seedEntity({ subject: '甲' })
+    const seq: string[] = []
+    for (let i = 0; i < 35; i += 1) seq.push(fake.pushHistory(a.id, { comment: `c${String(i)}` }))
+    const boundaryId = seq[0] ?? '' // 最旧一条：旧窗口实现里永不可见
+    const boundaryEntry = a.history.find((h) => h.id === boundaryId)
+    expect(boundaryEntry).toBeDefined()
+    const canonical = encodeCursor(boundaryEntry?.createdAt ?? '', boundaryId)
+    const p = makePlatform(fake, { pageSize: 10 })
+    const collected: string[] = []
+    let cursor: string | null = canonical
+    for (let round = 0; round < 10; round++) {
+      const page = await p.activity.since(cursor)
+      collected.push(...ids(page.items))
+      if (page.nextCursor === null) break
+      cursor = page.nextCursor
+    }
+    // 修复后：fetchHistory 翻页取尽 35 条 → 边界可见 → 自边界严格增量走到底，
+    // 窗口外旧条目（i=1..4）不重不漏；修复前（单次 GET 首页窗口 30）：边界假不可
+    // 达 → 全量重放 → collected 恒为窗口内 30 条（i=5..34），旧 4 条永久丢失（红证）
+    expect(collected).toEqual(seq.slice(1))
   })
 })

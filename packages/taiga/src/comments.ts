@@ -48,10 +48,20 @@ export function parseHistoryList(v: unknown): HistoryEntry[] {
   return asArray(v, 'history').map(parseHistoryEntry)
 }
 
-/** 取单实体的可见 history（新→旧原样；排序由调用方定） */
+/** history 翻页步长（对齐实体列表页 100；分页头真机实测——transport/http.ts 头注） */
+export const HISTORY_PAGE_SIZE = 100
+
+/**
+ * 取单实体的可见 history（新→旧原样；排序由调用方定）——**翻页取尽**。
+ * studio-dev-409 根因②：单次 GET 只回服务端首页窗口（缺省 30 条），长历史单的
+ * 旧条目落在窗口外 → 活动边界「假不可达」→ 全量重放 → 游标回退环。翻页后窗口完整。
+ */
 export async function fetchHistory(ctx: TaigaContext, internalId: number): Promise<HistoryEntry[]> {
-  const res = await ctx.client.request({ method: 'GET', path: `/history/${ctx.desc.history}/${String(internalId)}` })
-  return parseHistoryList(res.json)
+  return ctx.client.paginate(
+    { method: 'GET', path: `/history/${ctx.desc.history}/${String(internalId)}` },
+    parseHistoryList,
+    HISTORY_PAGE_SIZE,
+  )
 }
 
 /** history 条目 → 活动动词（与 localplatform/yt 词表对齐；未知面透传） */
