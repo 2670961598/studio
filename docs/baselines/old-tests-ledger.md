@@ -23,6 +23,8 @@
 
 **失败类判定口径**：JSON 报告里 19 条 failed 的 `failureMessages` 被收敛为 `Error: STACK_TRACE_ERROR`（stackTrace 省略），故按**可复核的物理证据**判定——每条失败用例的实测耗时均 > 5000ms 默认超时（5077–12440ms），与 docs/86 B5 记载的「5s timeout 家族（CLI spawn / fs.watch）」同族，判 **timeout**；`packages/adapters/test/claude.test.ts` 的失败是 `AssertionError: expected 8 to be greater than or equal to 250`（耗时 126ms），判 **断言**。**不臆造错误文本**：来源为 JSON 的 duration ＋ failureMessages 摘要。
 
+**2026-11-03 补登（台账维护，数据源时点不变）**：仓内旧 `.test.ts` 实测 **214 件**——2026-10-28 数据源时点为 209 件；其后 `44ad987`（2026-11-01，studio-dev-345）新增 3 件、`d1bfcd2`（2026-11-03，studio-dev-409/471）与 `0e20f10`（2026-11-03，11-01 轨7 装备令）各新增 1 件，共 5 件未纳入 10-28 全量 JSON。故 §二 主表补登 5 行（4 绿＋1 未跑），主表 **209→214 行**；vitest 计 **215 files**（214 `.test.ts` ＋口径差 1）。**20 failed / 13 failed files / 2976 tests 仍为 2026-10-28 数据源口径**，不因补登改写；补登红不入 §四、不并入 13/20（见 §十一）。
+
 ---
 
 ## 一、处置 / 责任波 / 理由三列的口径
@@ -31,13 +33,13 @@
 - **责任波**：全部 **「V2 后存废门」**——旧测试存废由制作人/DSF 在 V2 完成后判（覆盖/维护成本/行为是否仍成立三判据，plan/04 §1.8.6），施工方不自判。
 - **理由**：每行必须写明「观察位、非门」——旧套件的绿/红都不属 V2 任何一层（v2/17 §1.3），不得被引用为能力证据或放行依据。
 - **状态列**：绿/红取自 2026-10-28 16:28 实测；红行必须能在 §四找到**逐条**红用例归属（本台账 13 红文件 / 20 红用例，数字与 §〇 一致）。
-- **无「未跑」行**：本次全量跑覆盖 209/209，故无 `n/a` 用例数行；后续若只跑触及面子集，新增行须写 `n/a` ＋原因（本波未产生此类行）。
+- **「未跑」行仅限补登**：2026-10-28 全量跑覆盖 209/209，原主表无 `n/a` 用例数行；2026-11-03 补登 5 件中 4 件定向复跑绿（按实测过/败登记），1 件（auto-assign.e2e）因 10-28 数据源未含此件、且定向复跑稳定红，按「未跑＋原因」登记（明细见 §十一 补登观察红）。
 
 ---
 
-## 二、逐文件台账（209 行 = `.test.ts` 全量）
+## 二、逐文件台账（214 行 = `.test.ts` 全量；2026-10-28 基线 209＋2026-11-03 补登 5）
 
-生成口径同 plan/04 §1.8.3-补：`find apps/daemon/test packages/*/test apps/*/src packages/*/src -name '*.test.ts' | sort`（剔除 `test/v2/**` 后 209 件）；JSON 逐文件断言数与 `find` 清单**逐项相等**（209↔209，0 缺 0 多）。
+生成口径同 plan/04 §1.8.3-补：`find apps/daemon/test packages/*/test apps/*/src packages/*/src -name '*.test.ts' | sort`（剔除 `test/v2/**` 后 **214 件**；2026-10-28 数据源 209 件＋2026-11-03 补登 5 件，补登说明见 §〇）；原 10-28 JSON 逐文件断言数与当时 `find` 清单**逐项相等**（209↔209，0 缺 0 多）。
 
 <!-- ledger:files:start -->
 | 路径 | 状态 | 用例数（过/败） | 失败类 | 处置 | 责任波 | 理由 | 最近复跑 |
@@ -45,6 +47,7 @@
 | `apps/boot/src/boot.test.ts` | 绿 | 35/0 | — | 保留观察 | V2 后存废门 | boot 旧单测；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
 | `apps/daemon/test/assembly/inflight-takeover.test.ts` | 绿 | 5/0 | — | 保留观察 | V2 后存废门 | daemon 旧回归面（引擎/CLI/控制/进化）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
 | `apps/daemon/test/assembly/serve-channels.test.ts` | 绿 | 9/0 | — | 保留观察 | V2 后存废门 | daemon 旧回归面（引擎/CLI/控制/进化）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
+| `apps/daemon/test/assembly/serve-config-autoassign.test.ts` | 绿 | 4/0 | — | 保留观察 | V2 后存废门 | 2026-11-01 提交 44ad987（studio-dev-345）新增 daemon assembly 自动派工开关配置解析；2026-11-03 定向复跑 4/4 过；观察位，非门 | 2026-11-03 03:35 定向单文件 vitest（定向非全量） |
 | `apps/daemon/test/assembly/serve-config.test.ts` | 绿 | 28/0 | — | 保留观察 | V2 后存废门 | daemon 旧回归面（引擎/CLI/控制/进化）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
 | `apps/daemon/test/assembly/serve-hrmatrix.test.ts` | 绿 | 3/0 | — | 保留观察 | V2 后存废门 | daemon 旧回归面（引擎/CLI/控制/进化）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
 | `apps/daemon/test/assembly/serve-notify.test.ts` | 绿 | 3/0 | — | 保留观察 | V2 后存废门 | daemon 旧回归面（引擎/CLI/控制/进化）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
@@ -60,8 +63,10 @@
 | `apps/daemon/test/cli/usage-contract.test.ts` | 红 | 5/2 | timeout | 保留观察 | V2 后存废门 | 2 条旗标同义用例超 5s（实测 5420/7497ms）——timeout 族；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
 | `apps/daemon/test/control/hot-reload.test.ts` | 绿 | 33/0 | — | 保留观察 | V2 后存废门 | daemon 旧回归面（引擎/CLI/控制/进化）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
 | `apps/daemon/test/control/stop-channel.test.ts` | 红 | 8/1 | timeout | 保留观察 | V2 后存废门 | stop 控制面真进程用例超 5s（实测 5077ms）——timeout 族；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
+| `apps/daemon/test/engine/assign/auto-assign.e2e.test.ts` | 未跑 | n/a | — | 保留观察 | V2 后存废门 | 2026-11-01 提交 44ad987（studio-dev-345）新增 daemon engine 自动派工 e2e；10-28 数据源未含此件（故 n/a）；2026-11-03 定向复跑稳定红 5 过/1 败（断言，见 §十一 补登观察红）；观察位，非门 | 2026-11-03 03:35/03:37 定向单文件 vitest（定向非全量） |
 | `apps/daemon/test/engine/breaker-half-open.test.ts` | 绿 | 7/0 | — | 保留观察 | V2 后存废门 | daemon 旧回归面（引擎/CLI/控制/进化）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
 | `apps/daemon/test/engine/budget-gate.test.ts` | 绿 | 16/0 | — | 保留观察 | V2 后存废门 | daemon 旧回归面（引擎/CLI/控制/进化）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
+| `apps/daemon/test/engine/collect/collect-cursor-loop.test.ts` | 绿 | 2/0 | — | 保留观察 | V2 后存废门 | 2026-11-03 提交 d1bfcd2（studio-dev-409/471）新增采集游标回退环防护；2026-11-03 定向复跑 2/2 过；观察位，非门 | 2026-11-03 03:35 定向单文件 vitest（定向非全量） |
 | `apps/daemon/test/engine/cost-close/close.test.ts` | 绿 | 13/0 | — | 保留观察 | V2 后存废门 | daemon 旧回归面（引擎/CLI/控制/进化）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
 | `apps/daemon/test/engine/cost-guard/consume.test.ts` | 绿 | 16/0 | — | 保留观察 | V2 后存废门 | daemon 旧回归面（引擎/CLI/控制/进化）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
 | `apps/daemon/test/engine/cost-guard/seams.test.ts` | 绿 | 8/0 | — | 保留观察 | V2 后存废门 | daemon 旧回归面（引擎/CLI/控制/进化）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
@@ -136,6 +141,7 @@
 | `packages/adapters/test/dsh-agents-md-channel.test.ts` | 绿 | 6/0 | — | 保留观察 | V2 后存废门 | adapters 旧回归面（executor 适配器）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
 | `packages/adapters/test/dsh-env-whitelist.test.ts` | 绿 | 12/0 | — | 保留观察 | V2 后存废门 | adapters 旧回归面（executor 适配器）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
 | `packages/adapters/test/dsh-judge.test.ts` | 绿 | 2/0 | — | 保留观察 | V2 后存废门 | adapters 旧回归面（executor 适配器）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
+| `packages/adapters/test/dsh-permission-mode.test.ts` | 绿 | 4/0 | — | 保留观察 | V2 后存废门 | 2026-11-03 提交 0e20f10（11-01 轨7 装备令）新增 dsh 内层沙箱透传；2026-11-03 定向复跑 4/4 过；观察位，非门 | 2026-11-03 03:35 定向单文件 vitest（定向非全量） |
 | `packages/adapters/test/dsh.test.ts` | 绿 | 33/0 | — | 保留观察 | V2 后存废门 | adapters 旧回归面（executor 适配器）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
 | `packages/adapters/test/fake-cli.test.ts` | 绿 | 6/0 | — | 保留观察 | V2 后存废门 | adapters 旧回归面（executor 适配器）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
 | `packages/adapters/test/kimi.test.ts` | 绿 | 27/0 | — | 保留观察 | V2 后存废门 | adapters 旧回归面（executor 适配器）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
@@ -165,6 +171,7 @@
 | `packages/company/test/workflows.test.ts` | 绿 | 33/0 | — | 保留观察 | V2 后存废门 | company 旧回归面（公司目录/CLI）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
 | `packages/contract/test/contract.test.ts` | 绿 | 2/0 | — | 保留观察 | V2 后存废门 | contract 旧回归面（契约 case 标尺）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
 | `packages/contract/test/schemas.test.ts` | 绿 | 34/0 | — | 保留观察 | V2 后存废门 | contract 旧回归面（契约 case 标尺）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
+| `packages/core/test/assign.test.ts` | 绿 | 13/0 | — | 保留观察 | V2 后存废门 | 2026-11-01 提交 44ad987（studio-dev-345）新增自动派工分配器纯函数；2026-11-03 定向复跑 13/13 过；观察位，非门 | 2026-11-03 03:35 定向单文件 vitest（定向非全量） |
 | `packages/core/test/breaker.test.ts` | 绿 | 13/0 | — | 保留观察 | V2 后存废门 | core 旧单测（纯逻辑，零 IO）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
 | `packages/core/test/budget.test.ts` | 绿 | 50/0 | — | 保留观察 | V2 后存废门 | core 旧单测（纯逻辑，零 IO）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
 | `packages/core/test/costclose.test.ts` | 绿 | 19/0 | — | 保留观察 | V2 后存废门 | core 旧单测（纯逻辑，零 IO）；观察位，非门 | 2026-10-28 16:28 全量 vitest（JSON） |
@@ -477,7 +484,7 @@ MIG-02 触及面登记（共享文件＝根 `package.json`、`tsconfig*.json`、
 ## 五、本波明确不做（防越界）
 
 1. **不修旧测试**：20 条红原样留在旧套件里，不改断言、不上调 timeout、不加 retry、不 skip（plan/04 §1.8.2 三条禁令）。
-2. **不删除/不改名**：209 件路径与内容零改动；删除须先走「退役」处置＋删除单（plan/04 §1.8.4）。
+2. **不删除/不改名**：209 件基线＋5 件补登共 214 件路径与内容零改动；删除须先走「退役」处置＋删除单（plan/04 §1.8.4）。
 3. **不把旧测试改写成 V2 case**：`test:v2` 的 include 只含 `test/v2`，旧路径在形态上不可进入 V2 门（`scripts/verify/v2-suite-manifest.mjs` 机械背书）。
 4. **不以旧套件绿/红作任何放行依据**：旧套件只在观察位（本件 §〇「施工门＝不是」）。
 
@@ -486,7 +493,7 @@ MIG-02 触及面登记（共享文件＝根 `package.json`、`tsconfig*.json`、
 ## 六、复算命令（只读）
 
 ```bash
-# ① 209：find 清单（剔除 test/v2）
+# ① 214：find 清单（剔除 test/v2；2026-10-28 基线 209＋2026-11-03 补登 5）
 find apps/daemon/test packages/*/test apps/*/src packages/*/src -name '*.test.ts' | grep -v '/test/v2/' | sort | wc -l
 
 # ② 210 / 2976 / 20 / 13：JSON 复算
@@ -576,3 +583,23 @@ mise exec -- node scripts/verify/old-test-ledger.mjs
 | `apps/daemon/test/cli/help-face.test.ts` | 红 | 1 | 断言 | `external` 子命令已退役，help 面不再列 | 重写（删 external 期望） | V2 后存废门 |
 
 **复跑命令**：`mise exec -- node_modules/.bin/vitest run packages/panel/test/external-serve.test.ts packages/panel/test/external.test.ts apps/daemon/test/cli/help-face.test.ts`；实测 2 collection 红＋1 断言红。**不修、不删、不 skip**；V2 门不以此表判。
+
+---
+
+## 十一、2026-11-03 补登观察红（定向复跑登记；不属 §二 214 行主表、不参与 10-28 的 13/20 红计数）
+
+> 性质：**补登件定向复跑观察红登记**（旧套件非门；红也登记、不阻塞 V2 门）。本表**不属于 §二 主表计数**，只追加、不删行。
+> 触发：2026-11-03 台账补登 5 件（§〇 补登段）时**定向、非全量**复跑：4 件绿（已按实测过/败登记于 §二），1 件稳定红（见下）。
+> 归属：该件为 2026-11-01 提交 `44ad987`（studio-dev-345）新增旧套件 e2e，2026-10-28 数据源时点尚不存在；红属「旧测试漂移/缺陷观察」，修旧测试不立项（plan/04 §1.8.2），处置「保留观察」，责任波「V2 后存废门」。
+
+| 文件 | 复跑结果 | 红用例 | 失败类 | 原因 | 处置 | 责任波 |
+|---|---|---|---|---|---|---|
+| `apps/daemon/test/engine/assign/auto-assign.e2e.test.ts` | 红 | 1（5 过/1 败） | 断言 | DISPATCH note 尾缺 `;wait=…;prio=…;boost=…` 锚（`expected null`）；定向复跑 2/2 稳定复现 | 保留观察 | V2 后存废门 |
+
+红用例清单：
+
+| 文件 | 用例名 | 失败类 | 处置 | 责任波 | 理由 |
+|---|---|---|---|---|---|
+| `apps/daemon/test/engine/assign/auto-assign.e2e.test.ts` | 轨2 R1① 自动派工：选人写回 + 同级轮转 + 在途最小 > 无主单派发即写回平台 assignee；DISPATCH note 携 autoassign 锚且 wait 锚形不漂 | 断言 | 保留观察 | V2 后存废门 | 断言 `expected null not to be null`（note 无 wait/prio/boost 锚尾）；定向 2 次复现；旧套件观察位，非门 |
+
+**复跑命令（定向，非全量）**：`mise exec -- ./node_modules/.bin/vitest run apps/daemon/test/assembly/serve-config-autoassign.test.ts apps/daemon/test/engine/assign/auto-assign.e2e.test.ts apps/daemon/test/engine/collect/collect-cursor-loop.test.ts packages/adapters/test/dsh-permission-mode.test.ts packages/core/test/assign.test.ts`；实测 **5 文件 29 用例：4 绿（4/0、2/0、4/0、13/0）＋1 红（5 过/1 败）**；红件单跑二次复核同红（2/2）。**不修、不删、不 skip**；旧套件非门、V2 门不以此表判。

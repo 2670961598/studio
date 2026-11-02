@@ -38,19 +38,19 @@
 pgrep -f "studio-dev/daemon.yaml"
 
 # ② cursor 推进？（取两次值，3 秒间隔，不同=推进）
-sqlite3 /Volumes/BigDisk/companies/studio-dev/ledger.sqlite \
+sqlite3 <company>/ledger.sqlite \
   "select value from daemon_kv where key='activity.cursor'"
 
 # ③ assignee 可见？（Taiga API 列单，看 assigned_to 字段）
 # ④ 近 30min 有派发？
-sqlite3 /Volumes/BigDisk/companies/studio-dev/ledger.sqlite \
+sqlite3 <company>/ledger.sqlite \
   "select count(*) from events where event='DISPATCH' and ts > (strftime('%s','now')-1800)*1000"
 
 # ⑤ worker 在跑？
 pgrep -c -f "bin/dsh --profile headless"
 
 # ⑥ GATE 产出？
-sqlite3 /Volumes/BigDisk/companies/studio-dev/ledger.sqlite \
+sqlite3 <company>/ledger.sqlite \
   "select count(*) from events where event in ('GATE_PASS','GATE_FAIL') and ts > (strftime('%s','now')-3600)*1000"
 
 # ⑦ 积压趋势
@@ -68,7 +68,7 @@ WHERE ref IN (404, 398, 447, 372, 397, 405, 406) AND project_id=3;
 
 ### GitHub 推送（每班）
 ```bash
-cd /Volumes/BigDisk/StudioNext && git push origin dev
+cd <workspace> && git push origin dev
 ```
 
 ### 哨班日志
@@ -82,7 +82,7 @@ cd /Volumes/BigDisk/StudioNext && git push origin dev
 # 用 Node fetch（能穿透认证振荡窗口）
 node -e "
 const B='http://127.0.0.1:9000';
-const pp=require('fs').readFileSync('/Volumes/BigDisk/credentials/taiga-producer.txt','utf8').split('\n')[0].split(/\s+/);
+const pp=require('fs').readFileSync('<credentials>/taiga-producer.txt','utf8').split('\n')[0].split(/\s+/);
 (async()=>{
   const lr=await fetch(B+'/api/v1/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:pp[0],password:pp[2],type:'normal'})});
   const tok=(await lr.json()).auth_token;
@@ -123,11 +123,11 @@ const pp=require('fs').readFileSync('/Volumes/BigDisk/credentials/taiga-producer
 
 ## 五、红线（每次操作前检查）
 
-1. **密钥永不入库/提示词/台账**——凭据只在 `/Volumes/BigDisk/credentials/`（0700）
+1. **密钥永不入库/提示词/台账**——凭据只在 `<credentials>/`（0700）
 2. **平台事实源禁 DB 直写**——Taiga 数据只走 API，不直接写 PostgreSQL
 3. **不杀活 worker、不动在途单**
 4. **不 force push、不重写历史**
-5. **推送前扫描**——密钥/本机路径(/Users/xieqingxin)/IP 不得出现
+5. **推送前扫描**——密钥/本机路径(<home>)/IP 不得出现
 6. **宰相不写代码**——只观察、派单、验收
 
 ---
@@ -136,20 +136,20 @@ const pp=require('fs').readFileSync('/Volumes/BigDisk/credentials/taiga-producer
 
 | 用途 | 路径 |
 |---|---|
-| 框架仓 | /Volumes/BigDisk/StudioNext |
-| 公司目录 | /Volumes/BigDisk/companies/studio-dev |
-| daemon 配置 | /Volumes/BigDisk/companies/studio-dev/daemon.yaml |
-| agent.yaml（执行器） | /Volumes/BigDisk/companies/studio-dev/agent.yaml |
-| 台账 | /Volumes/BigDisk/companies/studio-dev/ledger.sqlite |
-| daemon 日志 | /Volumes/BigDisk/companies/studio-dev/logs/boot-*.log |
-| 组织配置 | /Volumes/BigDisk/companies/studio-dev/company/org-config.yaml |
-| 员工档案 | /Volumes/BigDisk/companies/studio-dev/company/departments/*/people/ |
-| 员工工作区 | /Volumes/BigDisk/companies/studio-dev/.AIWS/ |
-| 凭据目录 | /Volumes/BigDisk/credentials/（0700） |
-| 自优化宪章 | /Volumes/BigDisk/StudioNext/docs/88-自优化守护程序.md |
-| 多公司+GUI | /Volumes/BigDisk/StudioNext/docs/89-多公司验证与GUI程序.md |
-| 自主存活 | /Volumes/BigDisk/StudioNext/docs/90-自主存活架构.md |
-| 哨班日志 | /Volumes/BigDisk/StudioNext/docs/sentinel-logs/ |
+| 框架仓 | <workspace> |
+| 公司目录 | <company> |
+| daemon 配置 | <company>/daemon.yaml |
+| agent.yaml（执行器） | <company>/agent.yaml |
+| 台账 | <company>/ledger.sqlite |
+| daemon 日志 | <company>/logs/boot-*.log |
+| 组织配置 | <company>/company/org-config.yaml |
+| 员工档案 | <company>/company/departments/*/people/ |
+| 员工工作区 | <company>/.AIWS/ |
+| 凭据目录 | <credentials>/（0700） |
+| 自优化宪章 | <workspace>/docs/88-自优化守护程序.md |
+| 多公司+GUI | <workspace>/docs/89-多公司验证与GUI程序.md |
+| 自主存活 | <workspace>/docs/90-自主存活架构.md |
+| 哨班日志 | <workspace>/docs/sentinel-logs/ |
 
 ---
 
