@@ -334,21 +334,26 @@ describe('gated-platform 集成：拒绝时底层零副作用，放行时副作�
     return { gated, created: () => count, evidence }
   }
 
-  it('越权建单（授予不含 platform.comment）→ EXTERNAL_REJECT/gw-authority-prohibited，平台零调用', async () => {
-    const narrow: GrantLink = { ...DELEGATION, scope: ['platform.transition'] }
-    const { gated, created, evidence } = stack([ROOT, narrow])
-    const input = { title: '越权建单', authority: claim() } as unknown as IssueCreate
+  // 控制面写申报 ctl- 动词（studio-dev-545）：ctl-create 路由按 ENU-139 走 internal_boss，
+  // 主张须为根被授予者本人（g-root / internal-boss），不再是借道 comment 的 self 主张。
+  const controlClaim = (): Record<string, unknown> => claim({ grantId: 'g-root', exercisedBy: 'internal-boss' })
+
+  it('越权建单（根授予不含 platform.create）→ EXTERNAL_REJECT/gw-authority-prohibited，平台零调用', async () => {
+    const narrowRoot: GrantLink = { ...ROOT, scope: ['platform.transition'] }
+    const { gated, created, evidence } = stack([narrowRoot])
+    const input = { title: '越权建单', authority: controlClaim() } as unknown as IssueCreate
     await expect(gated.issues.create(input)).rejects.toMatchObject({
       category: 'EXTERNAL_REJECT',
       subcause: 'gw-authority-prohibited',
     })
     expect(created()).toBe(0)
-    expect(evidence[0]).toMatchObject({ state: 'prohibited', action: 'comment' })
+    // 控制面写申报 ctl- 动词（studio-dev-545）：授权证据动作=ctl-create，不是借道 comment
+    expect(evidence[0]).toMatchObject({ state: 'prohibited', action: 'ctl-create' })
   })
 
   it('合法主张建单 → 过授权闸与 wkey 闸，平台副作用发生', async () => {
     const { gated, created } = stack([ROOT, DELEGATION])
-    const input = { title: '合法建单', authority: claim() } as unknown as IssueCreate
+    const input = { title: '合法建单', authority: controlClaim() } as unknown as IssueCreate
     const rec = await gated.issues.create(input)
     expect(created()).toBe(1)
     expect(rec.title).toBe('合法建单')

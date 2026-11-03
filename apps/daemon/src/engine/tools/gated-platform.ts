@@ -3,8 +3,11 @@
  * 的 daemon 侧机制化：engine 此前直调 platform，是最后一条未收口的写路径）
  *
  * 依据（实现单引用）：
- *   - docs/17-§7 写入全收口：写方法先 gateway.gateWrite（fail-closed，被拒绝不绕过直调原
- *     platform）；控制面自身也过网关（不留绕过通道）；署名自动注入 [公司·部门·岗位·级别]。
+ *   - docs/17-§7 写入全收口：写方法先过 gateway（worker 面 `gateWrite` / 控制面面
+ *     `gateWriteCtl`；fail-closed，被拒绝不绕过直调原 platform）；控制面自身也过网关
+ *     （不留绕过通道）；署名自动注入 [公司·部门·岗位·级别]。
+ *   - docs/v2/15 §二 SEC-SIG-03 / docs/v2/14 §二-2 / docs/v2/09 ENU-119：控制面平台写
+ *     申报 ctl- 六动词，禁借道 `comment`（本件=接线落点；动作词值集仍归 gateway 侧合成）。
  *   - docs/25-§4.1 / contract ports/gateway.ts：GATEWAY_ACTIONS 冻结六动词
  *     （comment/heartbeat/article/kb-search/evidence-write/budget-query）——**状态推进不在表内**
  *     （18-§二.3：agent 永远拿不到改状态通道）。
@@ -16,12 +19,19 @@
  *   - 读面（直通零开销——不触闸）：issues.list / issues.get / comments.list / fields.schema /
  *     kb.search / kb.get / activity.since / links.children
  *
- * 拟稿待批点（本文件口径，汇报后走批示流）：
- *   - 【动词映射借道】控制面状态操作（create/transition/setField/link/provision/guards）在冻结
- *     白名单内无对应动词（六动词全是 worker 面：评论/心跳/文章/检索/证据/预算）。v0 借道
- *     'comment' + args.op 自述真实操作（如 {"op":"issues.transition","issue":"T-1","to":"已派发"}）。
- *     机制上等价（鉴权/吊销/时效/重放全链生效、payload 与申报动词一致），语义上是借用——
- *     GATEWAY_ACTIONS 增补控制面动词族（如 ctl-* 族）须改 contract 走批示，不属本单（只动 apps/daemon）。
+ * 动作词路由（studio-dev-545；SEC-SIG-03 / docs/v2/15 §二、docs/v2/14 §二-2）：
+ *   - 控制面平台写（create/transition/setField/link/provision/guards）**不再借道 comment**：
+ *     申报动词走 ctl- 六动词（ctl-create / ctl-transition / ctl-set-field / ctl-link /
+ *     ctl-provision / ctl-guards），入口恒为 `gateway.gateWriteCtl`（与 gateWrite 同一条闸链，
+ *     只切申报动词域）；op→动词路由表复用 gateway 的 `CONTROL_OP_ACTIONS`（唯一源，
+ *     本文件不重写 ctl- 字面量），禁第二值域源。
+ *   - worker 面写（comments.add / kb.upsert）仍走 `gateway.gateWrite` 的 comment/article——
+ *     两面入口与词域互斥，运行期硬化（擦除后无类型仍拦）：ctl- 动词从 worker 口进入＝
+ *     gw-action-mismatch，worker 动词从 ctl 口进入同拒。
+ *   - 审计面：args.op 自述保留（如 {"op":"issues.transition",...}），resolveAuditAction 直报
+ *     ctl- 与自述同族＝一致、不降级；transition 不再显示为 comment（v2/15 §二）。
+ *   - 缺证/未登记动词 fail-closed：授权链拒、wkey 拒、动词域不匹配任一命中＝EXTERNAL_REJECT，
+ *     底层 platform 零调用（不静默放行、不降级）。
  *   - 【错误分类】运行期拒绝按两级分类上抛为 ClassifiedError：category=EXTERNAL_REJECT
  *     （17-§9「外部系统拒绝需人介入协调，机器不自愈」——与 fail-closed 不自愈语义最贴；
  *     无 GATEWAY_REJECT 类别，归类拟稿），subcause=网关拒绝码（gw-verify-* / gw-action-*）。
@@ -40,8 +50,8 @@
  *   - 包装器透明：engine 写调用签名不变（返回值仍是 FlowPlatform），零改动接线见 serve.ts。
  */
 import { configInvalid } from '@studio-next/contract'
-import { CONTROL_TICKET, composeSignature, signedBody } from '@studio-next/gateway'
-import type { Gateway, SignatureContext } from '@studio-next/gateway'
+import { CONTROL_OP_ACTIONS, CONTROL_TICKET, composeSignature, isCtlAction, isGatewayAction, signedBody } from '@studio-next/gateway'
+import type { CtlAction, Gateway, GatewayActionWord, GateWriteResult, SignatureContext } from '@studio-next/gateway'
 import type { AuthorityGate } from './authority-gate.ts'
 import type {
   ActivityPage,
@@ -98,7 +108,7 @@ export interface GatedPlatformOptions {
    * 控制 key 铸造器注入（缺省 gateway.issueControlKey——一调用一签发）。
    * 测试注入坏 token 验 fail-closed；未来按单 wkey 在此接缝切换（TODO 头注）。
    */
-  mintControlKey?: () => string
+  mintControlKey?: (action: GatewayActionWord) => string
   /**
    * 授权链闸（studio-dev-528；缺省不启用＝存量装配零变更）。给出即在 wkey 鉴权前先过
    * core/authority 五函数接线（engine/tools/authority-gate.ts）：拒绝＝EXTERNAL_REJECT/
@@ -130,35 +140,72 @@ export function createGatedPlatform(platform: FlowPlatform, gateway: Gateway, op
   if (opts.author === '') throw configInvalid('gwp-empty-author', '网关署名工号不得为空（daemon 侧身份入参）')
   composeSignature(opts.ctx)
 
-  const mint = opts.mintControlKey ?? ((): string => gateway.issueControlKey())
+  // 每次写按**本次申报动词**现铸最小 scope 的 control key（ctl- 写必须显式声明 ctl- scope，
+  // 否则网关 scope 判定恒拒——studio-dev-545；worker 写仍只声明 worker 动词）
+  const mint = opts.mintControlKey ?? ((action: GatewayActionWord): string => gateway.issueControlKey({ scope: [action] }))
 
   /**
-   * 写路径闸（17-§7）：授权链判定（studio-dev-528）→ 现铸短命 control key → gateWrite
-   * （鉴权→结构化→署名）。任一步被拒 → EXTERNAL_REJECT/<gw-*> 上抛，**底层 platform 不被调用**
+   * 唯一闸链执行体（17-§7 / SEC-SIG-03）：入口由 face 决定（worker=gateWrite / ctl=gateWriteCtl），
+   * 其余步骤（授权链判定 → 现铸短命 control key → 网关鉴权/结构化/署名）完全同构——
+   * 不是两条闸、不设旁路。任一步被拒 → EXTERNAL_REJECT/<gw-*> 上抛，**底层 platform 不被调用**
    * （fail-closed，绝不绕过）。payload=包装器自组的 @action 信封（JSON.stringify 恒产对象、
    * 无裸换行——首行信封稳定）。
+   *
+   * 入口动词域硬化（先于授权/铸造 token）：worker 口只收 contract 六动词，ctl 口只收 ctl- 六动词；
+   * 不匹配＝gw-action-mismatch（擦除后无类型仍拦，越权动词不进任何判定链）。
    */
-  function gate(action: GatewayAction, args: Record<string, unknown>, op: string): void {
+  function runGate(face: 'worker' | 'ctl', action: GatewayActionWord, args: Record<string, unknown>, op: string): void {
+    let entryAction: GatewayAction | CtlAction
+    if (face === 'ctl') {
+      if (!isCtlAction(action)) {
+        throw gatewayRejected(
+          'gw-action-mismatch',
+          `平台写 ${op} 从控制面口夹带非 ctl- 动作 ${action}（fail-closed：底层平台未被调用）`,
+        )
+      }
+      entryAction = action
+    } else {
+      if (!isGatewayAction(action)) {
+        throw gatewayRejected(
+          'gw-action-mismatch',
+          `平台写 ${op} 从 worker 口夹带 ctl- 动作 ${action}（fail-closed：底层平台未被调用）`,
+        )
+      }
+      entryAction = action
+    }
     // 0) 授权链判定（先于铸造 token：拒绝不烧 nonce；证据由闸内 record 落点留痕）
     if (opts.authority !== undefined) {
-      const decision = opts.authority.authorize({ action, args, ticket: opts.ticket ?? CONTROL_TICKET })
+      const decision = opts.authority.authorize({ action: entryAction, args, ticket: opts.ticket ?? CONTROL_TICKET })
       if (!decision.allowed) {
         throw gatewayRejected(
           decision.reason ?? 'gw-authority-prohibited',
-          `平台写 ${op} 被授权链拒绝（动作 ${action}；state=${decision.state}；evidence=${decision.evidenceId}；` +
+          `平台写 ${op} 被授权链拒绝（动作 ${entryAction}；state=${decision.state}；evidence=${decision.evidenceId}；` +
             `fail-closed：底层平台未被调用）`,
         )
       }
     }
-    const token = mint()
-    const payload = `@action ${action} ${JSON.stringify(args)}`
-    const verdict = gateway.gateWrite(token, action, payload)
+    const token = mint(entryAction)
+    const payload = `@action ${entryAction} ${JSON.stringify(args)}`
+    // 入口切换只切申报动词域：ctl- 走 gateWriteCtl，其余走 gateWrite（同一条闸链）
+    const verdict: GateWriteResult = isCtlAction(entryAction)
+      ? gateway.gateWriteCtl(token, entryAction, payload)
+      : gateway.gateWrite(token, entryAction, payload)
     if (!verdict.allowed) {
       throw gatewayRejected(
         verdict.reason,
-        `平台写 ${op} 被网关拒绝（申报动作 ${action}；fail-closed：底层平台未被调用）`,
+        `平台写 ${op} 被网关拒绝（申报动作 ${entryAction}；fail-closed：底层平台未被调用）`,
       )
     }
+  }
+
+  /** worker 面写入口（contract 六动词：comment/article 等） */
+  function gate(action: GatewayAction, args: Record<string, unknown>, op: string): void {
+    runGate('worker', action, args, op)
+  }
+
+  /** 控制面写入口（ctl- 六动词；禁借道 gateWrite） */
+  function gateCtl(action: CtlAction, args: Record<string, unknown>, op: string): void {
+    runGate('ctl', action, args, op)
   }
 
   return {
@@ -168,16 +215,20 @@ export function createGatedPlatform(platform: FlowPlatform, gateway: Gateway, op
       get: (id: TicketId): Promise<IssueRecord> => platform.issues.get(id),
       // —— 写面过闸 ——
       async create(input: IssueCreate): Promise<IssueRecord> {
-        gate('comment', { op: 'issues.create', ...input }, 'issues.create')
+        gateCtl(CONTROL_OP_ACTIONS['issues.create'], { op: 'issues.create', ...input }, 'issues.create')
         return platform.issues.create(input)
       },
       async transition(id: TicketId, toState: string): Promise<IssueRecord> {
-        gate('comment', { op: 'issues.transition', issue: id, to: toState }, 'issues.transition')
+        gateCtl(CONTROL_OP_ACTIONS['issues.transition'], { op: 'issues.transition', issue: id, to: toState }, 'issues.transition')
         return platform.issues.transition(id, toState)
       },
       async setField(id: TicketId, field: string, value: unknown): Promise<void> {
         // JSON 无 undefined——显式归一 null（信封稳定性，不改写给平台的原值）
-        gate('comment', { op: 'issues.setField', issue: id, field, value: value === undefined ? null : value }, 'issues.setField')
+        gateCtl(
+          CONTROL_OP_ACTIONS['issues.setField'],
+          { op: 'issues.setField', issue: id, field, value: value === undefined ? null : value },
+          'issues.setField',
+        )
         return platform.issues.setField(id, field, value)
       },
     },
@@ -193,7 +244,11 @@ export function createGatedPlatform(platform: FlowPlatform, gateway: Gateway, op
     fields: {
       schema: (): Promise<FieldSchema[]> => platform.fields.schema(),
       async provision(map: FieldProvisionMap): Promise<void> {
-        gate('comment', { op: 'fields.provision', states: map.states, fields: Object.keys(map.fields) }, 'fields.provision')
+        gateCtl(
+          CONTROL_OP_ACTIONS['fields.provision'],
+          { op: 'fields.provision', states: map.states, fields: Object.keys(map.fields) },
+          'fields.provision',
+        )
         return platform.fields.provision(map)
       },
     },
@@ -210,18 +265,18 @@ export function createGatedPlatform(platform: FlowPlatform, gateway: Gateway, op
     },
     links: {
       async link(a: TicketId, b: TicketId, type: LinkType): Promise<void> {
-        gate('comment', { op: 'links.link', a, b, type }, 'links.link')
+        gateCtl(CONTROL_OP_ACTIONS['links.link'], { op: 'links.link', a, b, type }, 'links.link')
         return platform.links.link(a, b, type)
       },
       children: (id: TicketId): Promise<TicketId[]> => platform.links.children(id),
     },
     guards: {
       async install(company: CompanySlug, rules: GuardRule[]): Promise<void> {
-        gate('comment', { op: 'guards.install', company, rules: rules.length }, 'guards.install')
+        gateCtl(CONTROL_OP_ACTIONS['guards.install'], { op: 'guards.install', company, rules: rules.length }, 'guards.install')
         return platform.guards.install(company, rules)
       },
       async uninstall(company: CompanySlug): Promise<void> {
-        gate('comment', { op: 'guards.uninstall', company }, 'guards.uninstall')
+        gateCtl(CONTROL_OP_ACTIONS['guards.uninstall'], { op: 'guards.uninstall', company }, 'guards.uninstall')
         return platform.guards.uninstall(company)
       },
     },

@@ -251,7 +251,8 @@ describe('坏 token 拒：fail-closed——底层平台未被调用', () => {
   test('同 token 重放 → gw-verify-replay（固定铸器直证「一调用一签发」的必要性）；底层未调', async () => {
     const cp = countingPlatform()
     const { gw } = makeGateway()
-    const fixed = gw.issueControlKey()
+    // 控制面写申报 ctl- 动词：固定 key 须显式含 ctl- scope（studio-dev-545）
+    const fixed = gw.issueControlKey({ scope: ['ctl-create'] })
     const gated = createGatedPlatform(cp.platform, gw, { ctx: CTX, author: AUTHOR, mintControlKey: () => fixed })
     await gated.issues.create({ title: '第一次过', level: 0 })
     await expect(gated.issues.create({ title: '第二次必拒', level: 0 })).rejects.toThrow(/gw-verify-replay/)
@@ -378,9 +379,9 @@ describe('demo e2e 回归：经闸后全链仍绿（engine 零改动，包装器
     gated = createGatedPlatform(cp.platform, gw, {
       ctx: CTX,
       author: AUTHOR,
-      mintControlKey: (): string => {
+      mintControlKey: (action): string => {
         mints += 1
-        return gw.issueControlKey()
+        return gw.issueControlKey({ scope: [action] })
       },
     })
     const registry = createRegistry()

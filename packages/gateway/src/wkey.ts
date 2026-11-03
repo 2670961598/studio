@@ -22,8 +22,9 @@
  * ctl- 六动词）而非 contract 冻结表——控制面平台写凭据必须能在 scope 内声明 ctl- 动词，
  * 否则「入网关校验」落成死词。contract 表仍是 worker 面唯一值域源，扩表走批示流；
  * 词表本体只在 actions.ts 出现一次（本文件不重述字面量，防第二值域源）。
- * 控制面自用 key（issueControlKey）scope 仍＝contract 六动词全量：冻结表未扩前不擅自加面
- * （破「控制面 key scope＝白名单全量」的既有口径），ctl- 写按调用方显式 scope 签发。
+ * 控制面自用 key（issueControlKey）**缺省** scope 仍＝contract 六动词全量（既有口径不破）；
+ * ctl- 写由调用方显式 `scope` 签发（gated-platform 按单次申报动词最小授权：scope=[action]），
+ * 否则「ctl- 入网关校验」会因 key scope 不含 ctl- 而死词（studio-dev-545）。
  */
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
@@ -201,15 +202,18 @@ export function createWkeyAuthority(secret: Uint8Array, clock: () => number): Wk
  *   - 默认短 TTL（CONTROL_TTL_DEFAULT），用毕即 revoke(CONTROL_TICKET)
  *   - 单号固定 CONTROL_TICKET（保留名，拟稿），吊销 = revoke(CONTROL_TICKET) 一刀切
  *   - 仍走同一 verify 链（含 nonce 单次有效）——控制面不豁免任何检查
- *   - scope 口径＝contract 冻结六动词（「白名单全量」既有语义）——**不擅自加 ctl- 面**：
- *     冻结表扩表走批示流（v2/14 §二）；ctl- 写按调用方显式 scope 签发（authority.issue）。
- *     本口子不构成绕过：ctl- 写仍过同一条 verify 链的 scope 判定。
+ *   - **缺省** scope 口径＝contract 冻结六动词（「白名单全量」既有语义，不擅自加 ctl- 面）；
+ *     ctl- 写按调用方显式 `scope` 签发（本参数为 studio-dev-545 的接线接缝：最小授权
+ *     scope=[申报动词]，仍过同一条 verify 链的 scope 判定，不构成绕过）。
  */
-export function issueControlKey(authority: WkeyAuthority, opts?: { ttl?: string }): ControlKey {
+export function issueControlKey(
+  authority: WkeyAuthority,
+  opts?: { ttl?: string; scope?: readonly GatewayActionWord[] },
+): ControlKey {
   const nonce = randomUUID()
   return authority.issue({
     ticket: CONTROL_TICKET,
-    scope: [...GATEWAY_ACTIONS],
+    scope: [...(opts?.scope ?? GATEWAY_ACTIONS)],
     ttl: opts?.ttl ?? CONTROL_TTL_DEFAULT,
     nonce,
   }) as ControlKey

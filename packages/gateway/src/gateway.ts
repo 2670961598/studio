@@ -93,8 +93,11 @@ export interface Gateway {
   gateWriteCtl(token: string, action: CtlAction, payload: string): GateWriteResult
   /** 签发按单 wkey（daemon 派工时给 worker 的唯一凭据；nonce 由调用方给定） */
   issue(claims: GatewayWkeyClaims): string
-  /** 控制面自用 wkey（scope 全开，独立类型；头注警示见 wkey.ts） */
-  issueControlKey(opts?: { ttl?: string }): ControlKey
+  /**
+   * 控制面自用 wkey（独立类型；头注警示见 wkey.ts）。缺省 scope=contract 六动词；
+   * `scope` 供控制面按单次申报动词最小授权（ctl- 写必须显式声明，SEC-SIG-03）。
+   */
+  issueControlKey(opts?: { ttl?: string; scope?: readonly GatewayActionWord[] }): ControlKey
   /** 关单即吊销（透传 wkey 机构；幂等） */
   revoke(ticket: TicketId): void
   /**

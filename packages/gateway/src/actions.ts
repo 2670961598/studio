@@ -14,6 +14,8 @@
  *     结构化意图优先，坏结构比自由文本更可疑
  *
  * ctl- 词族（SEC-SIG-03；plan/05 IMPL-07-10；v2/14 §二-2）：
+ *   - 控制面写路由（studio-dev-545）：`CONTROL_OP_ACTIONS` 同时是 daemon gated-platform 的
+ *     op→ctl- 路由表（唯一源；调用点不得重写字面量，防第二值域源）。
  *   - 控制面平台写作（create/transition/setField/link/provision/guards）不再借道 `comment`：
  *     `ctl-create`/`ctl-transition`/`ctl-set-field`/`ctl-link`/`ctl-provision`/`ctl-guards`
  *     六动词入网关词表，审计面 transition 不得显示为 comment。
@@ -123,7 +125,7 @@ export function parseAction(text: string): ActionParseResult {
  * 只登记控制面平台写操作；comments.add / kb.upsert 等真实评论/文章操作不在表内（不得冒充）。
  * guards.install / guards.uninstall 同归 ctl-guards（词族按能力粒度冻结，不按 install 细分）。
  */
-const CONTROL_OP_ACTIONS: Readonly<Record<string, CtlAction>> = {
+export const CONTROL_OP_ACTIONS = {
   'issues.create': 'ctl-create',
   'issues.transition': 'ctl-transition',
   'issues.setField': 'ctl-set-field',
@@ -131,7 +133,10 @@ const CONTROL_OP_ACTIONS: Readonly<Record<string, CtlAction>> = {
   'fields.provision': 'ctl-provision',
   'guards.install': 'ctl-guards',
   'guards.uninstall': 'ctl-guards',
-}
+} as const satisfies Record<string, CtlAction>
+
+/** 控制面平台写 op（gated-platform 路由键；值域仍只在本文件出现一次） */
+export type ControlOp = keyof typeof CONTROL_OP_ACTIONS
 
 /**
  * 审计面动作解析结果（SEC-SIG-03「审计面 transition 不得显示为 comment」的判定体）：
@@ -158,7 +163,8 @@ export interface ActionAudit {
 export function resolveAuditAction(action: GatewayActionWord, args: Record<string, unknown>): ActionAudit {
   const op = args.op
   if (typeof op !== 'string') return { action, downgraded: false, mismatch: false }
-  const ctl = CONTROL_OP_ACTIONS[op]
+  // 表为字面量键对象（单一源）；运行期 op 为任意 string，按宽表索引（缺省 undefined）
+  const ctl: CtlAction | undefined = (CONTROL_OP_ACTIONS as Readonly<Record<string, CtlAction | undefined>>)[op]
   if (ctl === undefined) return { action, downgraded: false, selfDeclaredOp: op, mismatch: false }
   if (action === 'comment') return { action: ctl, downgraded: true, selfDeclaredOp: op, mismatch: false }
   if (action === ctl) return { action, downgraded: false, selfDeclaredOp: op, mismatch: false }
