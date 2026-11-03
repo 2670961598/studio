@@ -118,7 +118,7 @@ export interface OutboundGate {
   guard(exit: OutboundExitId, text: string): string
   /** 出站结构化载荷过闸（深扫字符串叶子；失败抛错并落失败记录） */
   guardPayload(exit: OutboundExitId, payload: unknown): unknown
-  /** 证据导出面 wrapper（生产装配点未落位＝catalog gap；wrapper 供接线与测试） */
+  /** 证据导出面（第 5 出口；拒发档：命中/扫描失败即拒，不脱敏改写；完整性引用 40/64 hex 保留） */
   guardEvidenceExport(text: string): string
   /** API 响应面 wrapper（生产装配点未落位＝catalog gap；wrapper 供接线与测试） */
   guardApiResponse(payload: unknown): unknown
@@ -351,9 +351,11 @@ export function createOutboundGate(options: OutboundGateOptions): OutboundGate {
 
   const startupLine = (): string => {
     const cov = coverage()
+    const evidenceExport = outboundExitDef('evidence-export')
     return (
       `[outbound-gate] 五出口：wired=${String(cov.wired)} / gap=${String(cov.gapCount)}` +
       `（${cov.gaps.length > 0 ? cov.gaps.join('、') : '无'}）；三不入强制点=${THREE_NOT_IN_IDS.join('/')}；` +
+      `evidence-export=${evidenceExport.status}（guardEvidenceExport：拒发档；收割归档/对账补收前置）；` +
       `失败词表缺口=${OUTBOUND_EVENT_VOCAB_GAP.names.join('、')}` +
       `（contract patch 经 C；落账承载=${OUTBOUND_EVENT_VOCAB_GAP.fallbackEvent} note，判定行前缀=${OUTBOUND_FAILURE_NOTE_PREFIX}）`
     )
@@ -366,7 +368,15 @@ export function createOutboundGate(options: OutboundGateOptions): OutboundGate {
     gaps: outboundExitGaps(),
     guard,
     guardPayload,
-    guardEvidenceExport: (text: string): string => guard('evidence-export', text),
+    guardEvidenceExport: (text: string): string =>
+      // 第 5 出口（证据导出）：与其他出口同扫描核，但处置=**拒发**（命中/失败即拒绝该次
+      // 归档，不脱敏改写——归档件须与工位副本逐字节一致，否则 P3 哈希对账恒冲突）；
+      // 完整性引用（40/64 hex 证据摘要）不按 long-token 处理（防毁证据链）。
+      guardTextAt('exit', 'evidence-export', text, {
+        shapeFallback: true,
+        disposition: 'reject',
+        preserveIntegrityDigests: true,
+      }),
     guardApiResponse: (payload: unknown): unknown => guardPayload('api-response', payload),
     guardPromptText,
     promptRedactor: (text: string): string => guardPromptText(text),

@@ -21,7 +21,7 @@
  * tick errors）。安全闸双保险：isSafeRelativeOutputPath 写边复检（装载期已过闸，防
  * 热更/直写绕过）+ companyDir 包含性校验（拼接后再核一次，防 `..` 变体）。
  */
-import { copyFileSync, mkdirSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { isSafeRelativeOutputPath, parseJobOps } from '@studio-next/company'
 import type { TicketId } from '@studio-next/contract'
@@ -44,6 +44,11 @@ export interface JobOutputAccountInput {
    * `<归档名>.summary.json`——P3 对账步哨兵核验的事实源（框架字段 sentinel 随件归档）。
    */
   summaryPath?: string
+  /**
+   * 证据导出面出站闸（docs/v2/15 §4.4 第 5 出口）：归档写出**前**对正文过闸，命中/失败
+   * =拒绝该次归档（fail-closed）。缺省不注入=既有直拷路径（旧调用/单测零行为变化）。
+   */
+  guardEvidenceExport?: (text: string) => string
 }
 
 /** 收账结果：noteSuffix 拼进 GATE_PASS note（证据面）；target=实际落位（成功时） */
@@ -106,20 +111,32 @@ export function accountJobOutput(input: JobOutputAccountInput): JobOutputAccount
   }
   const target = path.join(targetDir, reportFileName(job, ticket, now()))
   const sidecarTarget = `${target}.summary.json`
+  const guard = input.guardEvidenceExport
+  // 证据导出面（第 5 出口）：有闸=正文先过闸再落盘（拒发档不改写正文）；无闸=既有直拷。
+  // 拒发时整次收账失败（REPORT 不落盘、sidecar 不落盘），note/onProblem 如实留痕。
+  const exportFile = (src: string, dest: string): void => {
+    if (guard === undefined) {
+      copyFileSync(src, dest)
+      return
+    }
+    writeFileSync(dest, guard(readFileSync(src, 'utf8')), 'utf8')
+  }
   try {
     mkdirSync(targetDir, { recursive: true })
-    copyFileSync(reportPath, target)
+    exportFile(reportPath, target)
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return fail(`写失败(${msg})`)
+    const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+    // 闸拦截（OutboundBlockedError）=证据导出拒发；其余=读写失败（旧文案「写失败」保持不变）
+    const blocked = err instanceof Error && err.name === 'OutboundBlockedError'
+    return fail(`${blocked ? '证据导出拒发' : '写失败'}(${msg})`)
   }
   // sidecar 同拷（127-A R1 批示③：哨兵随件归档——P3 对账步事实源）；失败不回滚收账，
   // 如实留痕（哨兵门 P3 面读不到即 SENTINEL_MISSING fail-closed——此处只记观测）
   if (input.summaryPath === undefined) return { noteSuffix: `;output=${target}`, target, sidecarSuffix: '' }
   try {
-    copyFileSync(input.summaryPath, sidecarTarget)
+    exportFile(input.summaryPath, sidecarTarget)
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
     input.onProblem?.(`岗产物 sidecar 收账 ${ticket}：${msg}`)
     return { noteSuffix: `;output=${target}`, target, sidecarSuffix: `;sidecar-err=${msg}` }
   }

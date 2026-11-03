@@ -220,6 +220,8 @@ import { createSplitMaterializer, type SplitDirectiveInput } from './split/mater
 import { buildEventIndex, type EventIndex } from './sentinel/events-index.ts'
 // 事件四要素形状＋人闸快照投影（自本件抽件——20-§十五「先拆再增」；BC-S2 清偿）
 import { evtDept, evtLevel, personGateSnapshot, tokenBuckets } from './sentinel/shape.ts'
+// CAP 记录＋能力缺口五出口（studio-dev-540；体=capability/，engine 侧只留一次失败收口装配）
+import { makeDispatchFail } from './capability/index.ts'
 // 收割批次编排（IMPL-06-03 拆出；20-§十五「先拆再增」——区间幂等键/证据项登记/
 // 收割者≠交付者结构位/失败·部分·重复批次全在 harvest/batch.ts；本文件只留相位缝与
 // 判定体/失败面闭包，四要件判定与 GATE_PASS|FAIL 语义零漂移）
@@ -246,7 +248,8 @@ import {
 import type { GateRunner } from './gate.ts'
 import { accountJobOutput } from './jobs/output-account.ts'
 import { sentinelBriefBlock, sentinelDutyForTicket, verifySidecarSentinelAtPath } from './jobs/sentinel.ts'
-import { deliverablesOf, reconIssueRecord, runHarvestRecon, statHarvestDenial, WORKSPACE_UMASK, type HarvestReconResult } from './jobs/harvest-recon.ts'
+import { accountOutputDeps, runHarvestReconStep } from './jobs/harvest-archive-wire.ts'
+import { deliverablesOf, statHarvestDenial, WORKSPACE_UMASK, type HarvestReconResult } from './jobs/harvest-recon.ts'
 import { makeUlid } from './tools/id.ts'
 import { constructEngineSignature, type EngineSignatureDraft } from './signature/index.ts'
 import { createDrainController, type DrainSettleResult } from './drain/drain.ts'
@@ -389,6 +392,7 @@ export interface EngineDeps {
   mergeRun?: MergeRunDeps // 202-P2 studio-dev-232：注入=相位 5 真单刀面开；缺省=v0 模拟轨零行为
   dispatchSeatbelt?: SeatbeltGrant // IMPL-07-09 派发域 seatbelt 圈定授权（省略=read-only 最严；放宽须显式授权并留痕；校验/留痕面见 work/dispatch-seatbelt.ts）
   derivationGuard?: DispatchDerivationGuard // GAP-V2-04 派生树撤回闸（省略=不拦；注入=phase-3 派发前拒已撤派生树，NEG-SEC-08/NEG-RUN-05）
+  capabilitySupply?: import('./capability/index.ts').CapabilitySupplyFace // CAP 记录＋五出口决策（studio-dev-540；缺省＝面关零行为）
 }
 
 // ————————————————————————— TickReport（17-§2「tick 返回结构化 actions」；各面类型驻 tick-report/types.ts） —————————————————————————
@@ -684,11 +688,8 @@ export function createEngine(deps: EngineDeps): Engine {
   ): Promise<TickActionResult> {
     const ticket = action.ticket
     // state-diff 排队时已占泳道（决策即占用）——任何失败路径都必须归还，不留死锁
-    const fail = (detail: string): TickActionResult => {
-      lanes.release(action.lane, ticket)
-      inflight.delete(ticket)
-      return { ticket, actionType: action.type, ok: false, detail }
-    }
+    const fail = makeDispatchFail({ face: deps.capabilitySupply, ticket, actionType: action.type, attemptOf: () => index.attemptOf(ticket), at: () => new Date(now()).toISOString(), releaseLane: () => lanes.release(action.lane, ticket), dropInflight: () => inflight.delete(ticket),
+      emitEscalate: (note) => makeEvent('ESCALATE', fresh, index.attemptOf(ticket), tickEvents, { note }) })
     if (inflight.has(ticket)) return fail('该单已有在途工位（幂等跳过，不双写）')
     const fresh = await platform.issues.get(ticket)
     // 派工对象解析（轨2 R1①，studio-dev-345）：面开且无 assignee→分配器选人+写回平台
@@ -723,9 +724,7 @@ export function createEngine(deps: EngineDeps): Engine {
       resumeFace !== undefined && resumeFace.adapter !== undefined
         ? resumeFace.adapter
         : (tierFace?.adapter ?? registry.pick())
-    if (adapter === undefined) {
-      return fail('注册表无存活 executor（registry.pick 空）')
-    }
+    if (adapter === undefined) return fail('注册表无存活 executor（registry.pick 空）', { kind: 'missing', capabilityRef: 'executor:registry.pick' })
     const attempt = index.attemptOf(ticket)
     // workspace 落点（DEV-28，docs/43-§五 派发权限圈①cwd）：aiwsRoot 给定 → 员工家
     // .AIWS/<部门路径>/<工号>/tickets/<单号>/att<N>（收割四要件与 deliverables 收账经
@@ -754,7 +753,7 @@ export function createEngine(deps: EngineDeps): Engine {
       const seatbelt = resolveWorkerDispatchSeatbelt({ ticket, executor: adapter.name, workspace, grant: deps.dispatchSeatbelt, derivationGuard: deps.derivationGuard })
       // detect 前置（18-§一：launch 前必跑；不达标明报不静默降级）
       const detect = await adapter.detect()
-      if (!detect.ok) return fail(`executor ${adapter.name} detect 不达标：${detect.gaps.join('；')}`)
+      if (!detect.ok) return fail(`executor ${adapter.name} detect 不达标：${detect.gaps.join('；')}`, { kind: 'degraded', capabilityRef: `executor:${adapter.name}`, probe: { executor: adapter.name, version: detect.version, ok: false, gaps: detect.gaps } })
       // 读面分级（17-§7）：dispatch 装配时按岗选档（装配期选择非运行期闸——daemon 自身
       // 读不拦，见 src/engine/read-tiers.ts 头注与写闸的区别）。Blind 档在此补齐冻结验收命令
       //（config 同源）+ 本工位证据面路径；缺验收 → CONFIG_INVALID fail-closed（无验收
@@ -833,6 +832,7 @@ export function createEngine(deps: EngineDeps): Engine {
         return fail(
           `budget-refusal:${gate.reason}：估算 $${gate.estimated} + 在途 $${gate.inflight} 超帽 $${gate.cap}` +
             `——refusal 行已落账（可查，F1-09），不派（20-§六.8 预留不落即不派的镜像面）`,
+          { kind: 'cost_runaway', capabilityRef: `ticket:${ticket}/budget` },
         )
       }
       if (gate.kind === 'reserved') budget.budgetReserved += 1
@@ -1029,15 +1029,7 @@ export function createEngine(deps: EngineDeps): Engine {
       // 岗产物落位收账（DEV-50，docs/04-§三）：GATE_PASS 后置步——jobs[].output 声明
       // 落点收账工位 REPORT（四要件冻结口径不动；收账失败不回滚收割，如实留痕上报）
       // ＋summary sidecar 同拷（127-A R1 批示③：哨兵随件归档——P3 对账步事实源）
-      const account = accountJobOutput({
-        ledger,
-        ticket,
-        reportPath: gate.reportPath,
-        companyDir: config.companyDir,
-        now,
-        onProblem: (message) => errors.push(message),
-        ...(gate.summaryPath !== undefined ? { summaryPath: gate.summaryPath } : {}),
-      })
+      const account = accountJobOutput(accountOutputDeps({ ledger, ticket, reportPath: gate.reportPath, summaryPath: gate.summaryPath, companyDir: config.companyDir, now, errors, guard: config.evidenceExportGuard }))
       // 哨兵观测（127-A R1）：工位 sidecar 即时核验——不拦收割（P3 对账步才是权威事件
       // 面），note 尾缀留痕；非岗单/patrol 工件无义务不加缀
       const harvestSentinel = sentinelDutyForTicket(ledger, ticket)
@@ -1744,14 +1736,7 @@ export function createEngine(deps: EngineDeps): Engine {
     const reconEvery = config.harvestReconEveryTicks ?? 30
     if (config.companyDir !== undefined && reconEvery > 0 && seq % reconEvery === 0) {
       const at = now()
-      recon = runHarvestRecon({
-        ledger,
-        companyDir: config.companyDir,
-        emit: (name, ticket, attempt, note) => {
-          makeEvent(name, reconIssueRecord({ ticket, mirror: ledger.getTicketMirror(ticket), deptFallback: config.deptFallback, at }), attempt, tickEvents, { note })
-        },
-        onProblem: (message) => errors.push(message),
-      })
+      recon = runHarvestReconStep({ ledger, companyDir: config.companyDir, at, config, tickEvents, errors, makeEvent })
       if (recon !== undefined) harvest.recon = recon
     }
 

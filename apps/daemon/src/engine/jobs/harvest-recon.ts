@@ -40,13 +40,26 @@
  * 留给事件流）；四要件判定与 GATE_PASS/FAIL 语义零改动。
  */
 import { createHash } from 'node:crypto'
-import { accessSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { accessSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { isSafeRelativeOutputPath, parseJobOps } from '@studio-next/company'
 import type { IssueRecord, TicketId } from '@studio-next/contract'
 import type { Ledger } from '@studio-next/store'
 import { reportFileName } from './output-account.ts'
 import { expectedSentinel, verifySidecarSentinelAtPath } from './sentinel.ts'
+
+/**
+ * 证据导出归档写（第 5 出口）：有闸=正文过闸后落盘（拒发档不改写正文，命中即抛→调用面
+ * 转人工/欠账，不落未扫描文本）；无闸=既有直拷（旧调用零行为变化）。闸放行时正文与源
+ * 逐字节一致，故 P3「回读核哈希」判据不受影响。
+ */
+function writeEvidenceArchive(src: string, dest: string, guard?: (text: string) => string): void {
+  if (guard === undefined) {
+    copyFileSync(src, dest)
+    return
+  }
+  writeFileSync(dest, guard(readFileSync(src, 'utf8')), 'utf8')
+}
 
 // —— ② 权限前移（P3，提案 §4.3-2）——
 
@@ -138,6 +151,12 @@ export interface HarvestReconDeps {
   ) => void
   /** 异常上报口（engine tick errors 面；不接=只留事件痕） */
   onProblem?: (message: string) => void
+  /**
+   * 证据导出面出站闸（docs/v2/15 §4.4 第 5 出口；serve 装配时＝outbound.gate.guardEvidenceExport）：
+   * P3 对账补收在写出归档前对正文过闸；命中/失败=不写该归档（fail-closed，转 manual/欠账，
+   * 事件与 onProblem 如实留痕）。缺省不注入=既有直拷（旧调用零行为变化）。
+   */
+  guardEvidenceExport?: (text: string) => string
 }
 
 /** 对账步结果（tick 汇报面；phase 4 尾计入 harvest.recon） */
@@ -303,7 +322,7 @@ export function runHarvestRecon(deps: HarvestReconDeps): HarvestReconResult {
           for (const cand of [path.join(wsDir, 'summary.json'), path.join(wsDir, 'deliverables', 'summary.json')]) {
             if (!existsSync(cand) || verifySidecarSentinelAtPath(cand, expected) !== 'ok') continue
             try {
-              copyFileSync(cand, sidecarTarget)
+              writeEvidenceArchive(cand, sidecarTarget, deps.guardEvidenceExport)
               if (verifySidecarSentinelAtPath(sidecarTarget, expected) === 'ok') {
                 result.sentinelOk += 1
                 result.sentinelBackfilled += 1
@@ -417,7 +436,7 @@ export function runHarvestRecon(deps: HarvestReconDeps): HarvestReconResult {
           }
           continue
         }
-        copyFileSync(source, target)
+        writeEvidenceArchive(source, target, deps.guardEvidenceExport)
         // 补收后回读核哈希（spike-3 判负线：不核=负）
         const after = sha256Of(target)
         if (after === srcHash) {

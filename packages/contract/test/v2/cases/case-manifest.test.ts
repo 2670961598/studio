@@ -81,7 +81,9 @@ const PORT_MODULES: ReadonlyArray<readonly [string, unknown]> = [
 ]
 /** 新五域首批下限与总数（plan/05 IMPL-03-06；实现单给数，后续批次只增不减故断言取 ≥） */
 const NEW_DOMAIN_FLOORS: Readonly<Record<string, number>> = { enc: 10, rule: 10, sch: 10, rec: 10, port: 3 }
-const KNOWN_DOMAINS: readonly string[] = ['meta', 'dir', 'evt', 'rpt', 'deps', 'plat', 'mj', 'enc', 'rule', 'sch', 'rec', 'port']
+// 六族域（i/r/e/w/hr/work）＝studio-dev-553 追加登记（CASES.md「六族 case 登记」节）；
+// 族级覆盖闸（每族至少一正一负）在 test/v2/cases/family-cases.test.ts，本表只做「域已登记」机械闸。
+const KNOWN_DOMAINS: readonly string[] = ['meta', 'dir', 'evt', 'rpt', 'deps', 'plat', 'mj', 'enc', 'rule', 'sch', 'rec', 'port', 'i', 'r', 'e', 'w', 'hr', 'work']
 const FIRST_BATCH_TOTAL = 43
 const FIRST_BATCH_NEG = 32
 

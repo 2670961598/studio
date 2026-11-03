@@ -206,7 +206,7 @@ function withTempDir<T>(fn: (dir: string) => T): T {
 // ————————————————————— 一、五出口：目录/零泄漏/覆盖 —————————————————————
 
 describe('五出口覆盖：目录是唯一定义，wired/gap 逐条可判（v2/15 §4.4；NEG-SEC-07）', () => {
-  it('目录恰五项；wired=3、gap=2，缺口码精确（不静默）', () => {
+  it('目录恰五项；五出口全 wired、gap=0（第 5 出口证据导出已接线，不静默）', () => {
     const { gate } = makeGate()
     const coverage = gate.coverage()
     expect(coverage.exits.map((e) => e.id)).toEqual([...OUTBOUND_EXIT_IDS])
@@ -214,15 +214,15 @@ describe('五出口覆盖：目录是唯一定义，wired/gap 逐条可判（v2/
     expect(coverage.exits.filter((e) => e.status === 'wired').map((e) => e.id)).toEqual([
       'platform-write',
       'notify',
+      'evidence-export',
       'log-egress',
       'api-response',
     ])
-    expect(coverage.gaps).toEqual(['evidence-export:no-export-channel'])
-    expect(coverage.gapCount).toBe(1)
-    expect(coverage.gaps.every((code) => code.includes(':'))).toBe(true)
+    expect(coverage.gaps).toEqual([])
+    expect(coverage.gapCount).toBe(0)
   })
 
-  it('装配行显式带剩余缺口＋词表缺口（serve 装配真实入口）', () => {
+  it('装配行显式带五出口 wired 与证据导出装配行＋词表缺口（serve 装配真实入口）', () => {
     const capture = fakeLedger()
     const lines: string[] = []
     const wiring = wireServeOutboundGate({
@@ -236,7 +236,9 @@ describe('五出口覆盖：目录是唯一定义，wired/gap 逐条可判（v2/
         lines.push(line)
       },
     })
-    expect(wiring.startupLine).toContain('evidence-export:no-export-channel')
+    expect(wiring.startupLine).toContain('wired=5 / gap=0')
+    expect(wiring.startupLine).toContain('evidence-export=wired')
+    expect(wiring.startupLine).not.toContain('evidence-export:no-export-channel')
     expect(wiring.startupLine).not.toContain('api-response:api-assembly-not-wired')
     expect(wiring.startupLine).toContain('redaction-failed')
     expect(lines.join('\n')).toContain('outbound-gate')
@@ -298,16 +300,23 @@ describe('探针秘密五出口零泄漏（PRB-07 扩全出口）', () => {
     expect(envLine).toContain('TAIGA_PASSWORD=<redacted:env>')
   })
 
-  it('evidence-export / api-response：wrapper 零泄漏（catalog gap 显式、不冒充满覆盖）', () => {
+  it('evidence-export：拒发档（命中即拒、不改写；完整性引用保留）＋ api-response 零泄漏', () => {
     const { gate } = makeGate()
-    const evidence = gate.guardEvidenceExport(`证据导出：${PROBE_TOKEN}\n结论：通过`)
-    expect(evidence).not.toContain(PROBE_TOKEN)
+    // 第 5 出口＝拒发档：命中已知值即拒绝该次导出（不返回脱敏文本，fail-closed）
+    const failure = blockedFailure(() => gate.guardEvidenceExport(`证据导出：${PROBE_TOKEN}\n结论：通过`))
+    expect(failure.point).toBe('evidence-export')
+    expect(failure.code).toBe('redaction-failed')
+    // 完整性引用（40/64 hex 证据摘要）不是秘密值：保留原值，防毁证据链
+    const digest = 'f7e7f7f72918335e7564e8de1b64a89c08d06354f938c193d3dd5dd0f86220fd'
+    const clean = gate.guardEvidenceExport(`证据导出：sha256:${digest}\n结论：通过`)
+    expect(clean).toContain(digest)
     const api = gate.guardApiResponse({ data: { title: PROBE_TOKEN, nested: { body: [PROBE_KEY] } }, count: 1 })
     expect(JSON.stringify(api)).not.toContain(PROBE_TOKEN)
     expect(JSON.stringify(api)).not.toContain(PROBE_KEY)
-    // 生产出口已接线；evidence-export 仍是 gap（两条不同事实）
+    // 两条都是生产装配的真实出口（wired），且证据导出走的是拒发而非脱敏
     const coverage = gate.coverage()
-    expect(coverage.exits.find((e) => e.id === 'evidence-export')?.status).toBe('gap')
+    expect(coverage.exits.find((e) => e.id === 'evidence-export')?.status).toBe('wired')
+    expect(coverage.exits.find((e) => e.id === 'evidence-export')?.blocked).toBe(1)
     expect(coverage.exits.find((e) => e.id === 'api-response')?.status).toBe('wired')
     expect(coverage.scanned).toBeGreaterThanOrEqual(2)
   })

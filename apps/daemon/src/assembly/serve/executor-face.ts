@@ -32,6 +32,8 @@ import { checkTierPositionDeclarations, parseModelTierTickets, provisionModelTie
 import { createFakeAdapter } from '../../engine/fakes.ts'
 import { provisionDshBridgeOverlay } from '../../engine/instructions-store.ts'
 import { dispatchAdapterResolver } from '../../engine/work/dispatch-seatbelt.ts'
+import { wireCapabilitySupply } from './capability-face.ts'
+import type { CapabilitySupplyFace } from '../../engine/capability/index.ts'
 import type { ServeConfig } from './config.ts'
 
 /**
@@ -71,6 +73,8 @@ export interface ExecutorFace extends RestartProbeFace {
   acceptance: string[]
   /** 真验收闸门形态（acceptance 配置给定） */
   realGate: boolean
+  /** 能力供给 CAP 记录面（REC-CAP-01 已在装配期落库；engine 派发相位消费，studio-dev-540） */
+  capabilitySupply: CapabilitySupplyFace
 }
 
 /**
@@ -217,8 +221,13 @@ export function wireExecutorFace(config: ServeConfig, deps: ExecutorFaceDeps): E
     },
   }
 
+  // —— 能力供给 CAP 记录面（studio-dev-540；docs/v2/11 §9 / docs/v2/02 §五）：注册面声明
+  //    落 REC-CAP-01（PORT-HIST 唯一写口），面注入 engine 供派发相位探测回执/五出口决策。
+  const capabilitySupply = wireCapabilitySupply({ ledger, registry, company: config.company, clock, log })
+
   return {
     registry,
+    capabilitySupply,
     catalog,
     modelRoles,
     modelTierTickets: modelTierTicketsMap,

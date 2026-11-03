@@ -29,11 +29,10 @@ import path from 'node:path'
 import { createEngine, ENGINE_CONFIG_DEFAULTS, parseDataChangeRoutes, type Engine, type EngineConfig } from '../../engine/engine.ts'
 import { runEvolveStartupSelfCheck, type FrozenAsset } from '../../evolve/evolve-guard.ts'
 import { mergeDataChangeRoutes } from '../../engine/intents/taxonomy.ts'
-import { createCostNotifyOutlet, mergeCostThresholdDefaults } from '../../engine/intents/escalate.ts'
+import { createCostNotifyOutlet } from '../../engine/intents/escalate.ts'
 import { wirePeopleChangeSource } from '../../engine/hrsync/people-change-source.ts'
 import { wireRelaySource, wireResumeSource, type RelayWorkSignal } from '../../engine/intents/relay-resume-sources.ts'
 import { buildServeDirectiveDeps } from '../../engine/directive/index.ts'
-import { stallServeOverrides } from './watchdog-config.ts'
 import { createDefaultGateRunner, createAcceptanceGateRunner } from '../../engine/gate.ts'
 import { createDefaultMergeRunDeps } from '../../engine/merge/default-deps.ts'
 import { createHotReload, type HotReload, type HotReloadApplyReport } from '../../control/hot-reload.ts'
@@ -51,7 +50,7 @@ import { wireNotifyAssembly } from '../notify/notify.ts'
 import { wireServeOutboundGate } from '../outbound-gate/wire.ts'
 import type { NotifyBroadcastFace } from '../../engine/notify/broadcast.ts'
 import { assembleHrSync, hrApplySegment } from '../hrsync/assemble.ts'
-import { loadTaigaFieldMap, provisionDeclaredStates, wireGatedPlatform, wirePlatform } from '../platform/wire.ts'
+import { wireGatedPlatform, wirePlatform } from '../platform/wire.ts'
 import {
   createFileWatchSource,
   createSchedulerSource,
@@ -59,10 +58,10 @@ import {
   FILE_WATCH_MANIFEST,
   SCHEDULER_SOURCE_MANIFEST,
 } from '../../engine/sources.ts'
-import { queueServeOverrides } from '../../engine/todoqueue/queue.ts'
 import { reEnsureChannels, startChannelSupply, wireRoomFace } from '../channels/channels.ts'
 import { seedJobs, removeMissingJobs } from '../jobs-seed/jobs-seed.ts'
 import { daemonIdentity, type ServeConfig } from './config.ts'
+import { buildServeEngineConfig } from './engine-config.ts'
 import { loadRootDelegationFace } from './root-delegation/root-face.ts'
 import { wireWorkerKeys } from './root-delegation/worker-key-face.ts'
 import { wireExecutorFace } from './executor-face.ts'
@@ -136,7 +135,8 @@ export function buildServeRuntime(
   const rawLog = opts?.log ?? ((line: string): void => console.log(line))
   const clock = opts?.clock ?? ((): number => Date.now())
   // —— 出站闸（IMPL-07-11；docs/v2/15 §4.4/4.5）：五出口＋三不入统一件。日志/平台写/通知/
-  //    提示词/台账五处即刻过闸；证据导出与 API 响应登记显式 gap（outbound-gate/exits.ts）
+  //    提示词/台账五处即刻过闸；证据导出经 engineConfig.evidenceExportGuard（收割归档/对账
+  //    补收写出前），API 响应经 guardResponse——五出口全 wired（outbound-gate/exits.ts）
   const outbound = wireServeOutboundGate({
     env: process.env,
     ledger,
@@ -194,7 +194,7 @@ export function buildServeRuntime(
   )
 
   // —— executor 面装配（注册表/桥接 overlay/价目表与档位/judge 两址）——体=runtime-executor（20-§十五.三 先拆再增：本段零 engine 实例依赖，构造结果供下方 engine 注入与启动日志）
-  const { registry, catalog, modelRoles, modelTierTickets, judgeHook, acceptance, realGate, restartProbe } = wireExecutorFace(config, {
+  const { registry, catalog, modelRoles, modelTierTickets, judgeHook, acceptance, realGate, restartProbe, capabilitySupply } = wireExecutorFace(config, {
     ledger,
     clock,
     log,
@@ -203,59 +203,17 @@ export function buildServeRuntime(
   // data-change 路由登记位（129-A）：坏形态 CONFIG_INVALID 明报拒启动（解析件在 engine/intents/taxonomy.ts）
   const dataChangeRoutes = mergeDataChangeRoutes(snapshot.hooks, parseDataChangeRoutes(config.dataChangeRoutes)) // 129-C：org-config 规范位+daemon.yaml 逃生位逐键覆盖；合并空=undefined（路由闸 fail-closed 不变）
 
-  const engineConfig: EngineConfig = {
-    ...ENGINE_CONFIG_DEFAULTS,
-    company: config.company,
-    rootDir: path.resolve(config.rootDir),
-    // .AIWS 员工家（DEV-28）：派发 workspace 落员工家（docs/43-§五）——收割四要件与
-    // deliverables 收账经 dirname(briefPath) 全随迁；缺省不注入=引擎旧布局回退面
+  const engineConfig: EngineConfig = buildServeEngineConfig({
+    config,
+    snapshot,
     aiwsRoot,
-    defaultPersonId: (snapshot.people[0] as PersonRef | undefined)?.id ?? '',
-    ...(dataChangeRoutes !== undefined ? { dataChangeRoutes } : {}), // 129-A 路由登记位（未配=闸面 fail-closed）
-    ...mergeCostThresholdDefaults(snapshot.hooks, config.costThresholdTarget, config.costThresholdLane), // 129-D 缺省路由登记位（org 规范位+daemon 逃生位整体覆盖；全缺=引擎 fail-closed）
-    deptFallback: snapshot.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback,
-    defaultLane: snapshot.departments[0]?.lanes[0] ?? ENGINE_CONFIG_DEFAULTS.defaultLane,
-    limits: {
-      maxActionsPerTick: config.maxActionsPerTick,
-      maxInflight: config.maxInflight,
-      // 人闸缺省帽（129-§6.2-R3）：缺省不注入=引擎兜底 1（串行）；批量执行岗走覆盖表
-      ...(config.maxInflightPerPerson !== undefined ? { maxInflightPerPerson: config.maxInflightPerPerson } : {}),
-    },
-    ...queueServeOverrides(config), // 队列面三键（129-§6.2 单B：步长/人闸覆盖表/置顶集——解析件 todoqueue/queue.ts）
-    // 模型档路由面（studio-dev-196）：modelTierByRole 注入即开面（models.yaml 未装载=
-    // 不注入=面关，派发行为与本单之前一致）；显式单级覆盖表装配期转 map（解析即验在
-    // 装载 case 面——serve/model-tier-tickets fail-closed）
-    ...(modelRoles !== undefined ? { modelTierByRole: modelRoles } : {}),
-    ...(modelTierTickets !== undefined ? { modelTierTickets } : {}),
-    ...stallServeOverrides(config), // 看门狗阈值面（studio-dev-505：含按 executor 分级）
-    harvestSliceMs: config.harvestSliceMs,
-    laneTtlMs: config.laneTtlMs,
-    mergeLeaseTtlMs: config.mergeLeaseTtlMs,
-    breakerThreshold: config.breakerThreshold,
-    breakerCooldownMs: config.breakerCooldownMs,
-    mirrorRescanEveryTicks: config.mirrorRescanEveryTicks,
-    ...(config.autoAssign !== undefined ? { autoAssign: config.autoAssign } : {}),
-    autoApprove: config.autoApprove,
-    // 读面分级（17-§7）：Blind 档冻结验收命令来源——与装配器 acceptance **同一事实源**
-    //（单一事实源，不双源漂移；真单模式=acceptance 配置）；遇 Blind 派发而缺失 →
-    // createView fail-closed 明报
-    readBlindAcceptance: acceptance,
-    // 类型流注入（DEV-43，docs/18-§2.1.1 D13 合并序）：T 键叠在 DEFAULT_FLOW_TABLE 上；
-    // 无 workflows 声明=不注入（引擎走内置缺省表，现状行为字节不变——D9）
-    ...(typeFlows !== undefined ? { flows: { ...DEFAULT_FLOW_TABLE, ...typeFlows } } : {}),
-    ...(config.budgetTicketCapUsd !== undefined ? { budgetTicketCapUsd: config.budgetTicketCapUsd } : {}),
-    ...(config.budgetPersonCapUsd !== undefined ? { budgetPersonCapUsd: config.budgetPersonCapUsd } : {}),
-    // C2 声明态漂移哨输入（studio-dev-126）：taiga 且挂了字段映射文件才注入（同一份
-    // 文件 loadTaigaFieldMap 单源重读——启动期一次，非每拍）；其余平台缺省=面关
-    ...(config.platform === 'taiga' && config.taigaFieldsFile !== undefined
-      ? { provisionDeclaredStates: provisionDeclaredStates(loadTaigaFieldMap(config.taigaFieldsFile), config.taigaEntity ?? 'userstory') }
-      : {}),
-    // 州表卫生白名单注入（127-C，studio-dev-127 §4.7）：快照携带（org-config
-    // yt.known_foreign_states 经 SH-1 内容规则校验）——已知外来态哨兵降 FOREIGN_KNOWN
-    // 观察级；恒传显式数组（缺声明=空数组=哨兵全灵敏度，不留 undefined 滞留面）
-    knownForeignStates: snapshot.knownForeignStates ?? [],
-    ...(config.companyDir !== undefined ? { companyDir: path.resolve(config.companyDir) } : {}), // 岗产物落位收账锚（DEV-50）
-  }
+    dataChangeRoutes,
+    modelRoles,
+    modelTierTickets,
+    acceptance,
+    typeFlows,
+    evidenceExportGuard: outbound.gate.guardEvidenceExport,
+  })
   // 装配器工厂（L1 热重载换装配器=换快照重建——静态部分不随公司目录变）
   const makeAssembler = (): PromptAssembler =>
     createDefaultAssembler({
@@ -327,7 +285,7 @@ export function buildServeRuntime(
     ...(roomFace !== undefined ? { rooms: roomFace } : {}),
     ledger, // 已在装配序开头过三不入·库闸（appendEvent 写前扫描）
     records: recordsFace.records, // 记录族生产写面（docs/17-§2「记录族生产写面」段）
-    ...(config.seatbelt !== undefined ? { dispatchSeatbelt: config.seatbelt } : {}), // IMPL-07-09 配置通道（缺省不注入=read-only）
+    ...(config.seatbelt !== undefined ? { dispatchSeatbelt: config.seatbelt } : {}), capabilitySupply, // IMPL-07-09 配置通道＋CAP 记录/五出口决策（studio-dev-540）
     registry,
     ...(judgeHook !== undefined ? { judge: judgeHook } : {}), // 160-B 两址精序（缺省不注入=规则缺省档）
     assembler: makeAssembler(),

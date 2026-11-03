@@ -4698,6 +4698,1685 @@
         }
       },
       "domain": "port"
+    },
+    {
+      "id": "C-i-001",
+      "domain": "i",
+      "docs": "v2/01-§三",
+      "title": "I-1｜根授予有效＋root 动作在范围/期限内 → 放行（内部程序不得补位）",
+      "input": {
+        "kind": "rootPreflight",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-AUTH-01",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "grantor": {
+              "refId": "external-owner",
+              "refVersion": "1.0.0"
+            },
+            "grantee": {
+              "refId": "g9.internal-boss",
+              "refVersion": "1.0.0"
+            },
+            "parent_grant": {
+              "refType": "REC-LIFE-07",
+              "refId": "founding-record-1",
+              "refVersion": "1.0.0"
+            },
+            "grant_class": "root_delegation",
+            "scope": {
+              "purpose": "以内部老板身份签发内部硬动作",
+              "object": "经营权限",
+              "included": [
+                "approve_internal_hard_action",
+                "appoint_g8"
+              ],
+              "forbidden": [
+                "外部审计",
+                "清算"
+              ]
+            },
+            "conditions": [],
+            "term": {
+              "from": "2026-01-01T00:00:00Z",
+              "to": "2027-01-01T00:00:00Z"
+            },
+            "delegable": true,
+            "withdrawal_terms": "外部老板随时撤回/轮换；后代停用为完成条件",
+            "conflict_check_ref": {
+              "refType": "REC-LIFE-05",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "key_fingerprint": "sha256:operating-root-key-fp",
+            "external_signature": {
+              "refId": "signature-artifact-1",
+              "refVersion": "1.0.0"
+            },
+            "proof_mode": "ritual_and_key",
+            "external_veto_configured": false
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        },
+        "request": {
+          "action_scope": [
+            "approve_internal_hard_action"
+          ],
+          "at": "2026-10-28T00:00:00Z"
+        },
+        "resolution": {
+          "grantorClass": "external_owner",
+          "proofVerified": true,
+          "fingerprintMatches": true,
+          "actorClass": "internal_boss"
+        }
+      },
+      "expected": {
+        "out": {
+          "ok": true
+        }
+      }
+    },
+    {
+      "id": "C-i-002",
+      "domain": "i",
+      "docs": "v2/01-§三",
+      "title": "I-1｜根授予证明未过（proofVerified=false）→ 拒（SEC-ROOT-02 验签不过）",
+      "input": {
+        "kind": "rootPreflight",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-AUTH-01",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "grantor": {
+              "refId": "external-owner",
+              "refVersion": "1.0.0"
+            },
+            "grantee": {
+              "refId": "g9.internal-boss",
+              "refVersion": "1.0.0"
+            },
+            "parent_grant": {
+              "refType": "REC-LIFE-07",
+              "refId": "founding-record-1",
+              "refVersion": "1.0.0"
+            },
+            "grant_class": "root_delegation",
+            "scope": {
+              "purpose": "以内部老板身份签发内部硬动作",
+              "object": "经营权限",
+              "included": [
+                "approve_internal_hard_action",
+                "appoint_g8"
+              ],
+              "forbidden": [
+                "外部审计",
+                "清算"
+              ]
+            },
+            "conditions": [],
+            "term": {
+              "from": "2026-01-01T00:00:00Z",
+              "to": "2027-01-01T00:00:00Z"
+            },
+            "delegable": true,
+            "withdrawal_terms": "外部老板随时撤回/轮换；后代停用为完成条件",
+            "conflict_check_ref": {
+              "refType": "REC-LIFE-05",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "key_fingerprint": "sha256:operating-root-key-fp",
+            "external_signature": {
+              "refId": "signature-artifact-1",
+              "refVersion": "1.0.0"
+            },
+            "proof_mode": "ritual_and_key",
+            "external_veto_configured": false
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        },
+        "request": {
+          "action_scope": [
+            "approve_internal_hard_action"
+          ],
+          "at": "2026-10-28T00:00:00Z"
+        },
+        "resolution": {
+          "grantorClass": "external_owner",
+          "proofVerified": false,
+          "fingerprintMatches": true,
+          "actorClass": "internal_boss"
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-i-003",
+      "domain": "i",
+      "docs": "v2/01-§三",
+      "title": "I-1｜root 动作越出 root_delegation 范围（external_audit）→ 拒（超范围走外部撤回/轮换）",
+      "input": {
+        "kind": "rootPreflight",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-AUTH-01",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "grantor": {
+              "refId": "external-owner",
+              "refVersion": "1.0.0"
+            },
+            "grantee": {
+              "refId": "g9.internal-boss",
+              "refVersion": "1.0.0"
+            },
+            "parent_grant": {
+              "refType": "REC-LIFE-07",
+              "refId": "founding-record-1",
+              "refVersion": "1.0.0"
+            },
+            "grant_class": "root_delegation",
+            "scope": {
+              "purpose": "以内部老板身份签发内部硬动作",
+              "object": "经营权限",
+              "included": [
+                "approve_internal_hard_action",
+                "appoint_g8"
+              ],
+              "forbidden": [
+                "外部审计",
+                "清算"
+              ]
+            },
+            "conditions": [],
+            "term": {
+              "from": "2026-01-01T00:00:00Z",
+              "to": "2027-01-01T00:00:00Z"
+            },
+            "delegable": true,
+            "withdrawal_terms": "外部老板随时撤回/轮换；后代停用为完成条件",
+            "conflict_check_ref": {
+              "refType": "REC-LIFE-05",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "key_fingerprint": "sha256:operating-root-key-fp",
+            "external_signature": {
+              "refId": "signature-artifact-1",
+              "refVersion": "1.0.0"
+            },
+            "proof_mode": "ritual_and_key",
+            "external_veto_configured": false
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        },
+        "request": {
+          "action_scope": [
+            "external_audit"
+          ],
+          "at": "2026-10-28T00:00:00Z"
+        },
+        "resolution": {
+          "grantorClass": "external_owner",
+          "proofVerified": true,
+          "fingerprintMatches": true,
+          "actorClass": "internal_boss"
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-r-001",
+      "domain": "r",
+      "docs": "v2/01-§四",
+      "title": "R-8｜变更链首段 candidate 且 no_override=true → 放行（判据变更只向前适用）",
+      "input": {
+        "kind": "changeSegment",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-CHG-01",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "chain_id": "chain-1",
+            "segment": "candidate",
+            "subject": {
+              "refId": "rule-1",
+              "refVersion": "1.0.0"
+            },
+            "subject_kind": "rule",
+            "decided_by": "unit-head-1",
+            "authority_ref": {
+              "refType": "REC-AUTH-01",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "basis_refs": [
+              {
+                "refType": "REC-WORK-17",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              }
+            ],
+            "impact_assessment": {
+              "tasks": [],
+              "information": [],
+              "permissions": [],
+              "commitments": [],
+              "evidence": [],
+              "qualifications": [],
+              "in_flight_side_effects": []
+            },
+            "criteria_version": "criteria@1.0.0",
+            "no_override": true,
+            "rollback_path": {
+              "stop_conditions": [
+                "撤回率升高"
+              ],
+              "monitoring": [
+                "MON-14 变更与进化"
+              ],
+              "rollback_steps": [
+                "回退旧版本并清理"
+              ]
+            },
+            "dissent_position": "无异议",
+            "effective_state": "effective",
+            "effective_time": "2026-10-28T00:00:00Z"
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "out": {
+          "ok": true
+        }
+      }
+    },
+    {
+      "id": "C-r-002",
+      "domain": "r",
+      "docs": "v2/01-§四",
+      "title": "R-8｜判据变更覆盖原结论（no_override=false）→ 拒（原结论保留）",
+      "input": {
+        "kind": "changeSegment",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-CHG-01",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "chain_id": "chain-1",
+            "segment": "candidate",
+            "subject": {
+              "refId": "rule-1",
+              "refVersion": "1.0.0"
+            },
+            "subject_kind": "rule",
+            "decided_by": "unit-head-1",
+            "authority_ref": {
+              "refType": "REC-AUTH-01",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "basis_refs": [
+              {
+                "refType": "REC-WORK-17",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              }
+            ],
+            "impact_assessment": {
+              "tasks": [],
+              "information": [],
+              "permissions": [],
+              "commitments": [],
+              "evidence": [],
+              "qualifications": [],
+              "in_flight_side_effects": []
+            },
+            "criteria_version": "criteria@1.0.0",
+            "no_override": false,
+            "rollback_path": {
+              "stop_conditions": [
+                "撤回率升高"
+              ],
+              "monitoring": [
+                "MON-14 变更与进化"
+              ],
+              "rollback_steps": [
+                "回退旧版本并清理"
+              ]
+            },
+            "dissent_position": "无异议",
+            "effective_state": "effective",
+            "effective_time": "2026-10-28T00:00:00Z"
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-r-003",
+      "domain": "r",
+      "docs": "v2/01-§四",
+      "title": "R-8｜验证授权/独立验证/激活批准三门由同一具名位置作出 → 拒（三门不合并）",
+      "input": {
+        "kind": "changeSegment",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-CHG-01",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "chain_id": "chain-1",
+            "segment": "candidate",
+            "subject": {
+              "refId": "rule-1",
+              "refVersion": "1.0.0"
+            },
+            "subject_kind": "rule",
+            "decided_by": "unit-head-1",
+            "authority_ref": {
+              "refType": "REC-AUTH-01",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "basis_refs": [
+              {
+                "refType": "REC-WORK-17",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              }
+            ],
+            "impact_assessment": {
+              "tasks": [],
+              "information": [],
+              "permissions": [],
+              "commitments": [],
+              "evidence": [],
+              "qualifications": [],
+              "in_flight_side_effects": []
+            },
+            "criteria_version": "criteria@1.0.0",
+            "no_override": true,
+            "rollback_path": {
+              "stop_conditions": [
+                "撤回率升高"
+              ],
+              "monitoring": [
+                "MON-14 变更与进化"
+              ],
+              "rollback_steps": [
+                "回退旧版本并清理"
+              ]
+            },
+            "dissent_position": "无异议",
+            "effective_state": "effective",
+            "effective_time": "2026-10-28T00:00:00Z"
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        },
+        "ctx": {
+          "gateDeciders": {
+            "verification_authorization": "unit-head-1",
+            "independent_verification": "unit-head-1",
+            "activation_approval": "unit-head-1"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-e-001",
+      "domain": "e",
+      "docs": "v2/02-§十一",
+      "title": "E-2｜累计禁配：全范围已查且无冲突 → 放行（主体同一/范围完整）",
+      "input": {
+        "kind": "cumulativeConflict",
+        "input": {
+          "holdings": [
+            {
+              "holderId": "holder-h1",
+              "subjectId": "subject-s1",
+              "positionRef": "position-p1",
+              "deploymentIds": [
+                "deploy-d1"
+              ],
+              "accountIds": [
+                "account-a1"
+              ],
+              "appointmentKind": "appointment"
+            }
+          ],
+          "conflicts": [],
+          "conflictChecks": [
+            {
+              "subjectId": "subject-s1",
+              "checkedPositionRefs": [
+                "position-p1"
+              ],
+              "checkedDeploymentIds": [
+                "deploy-d1"
+              ],
+              "checkedAccountIds": [
+                "account-a1"
+              ],
+              "conclusion": "无冲突（全范围已查）",
+              "conflictFree": true
+            }
+          ],
+          "cumulativeView": {
+            "coveredSubjectIds": [
+              "subject-s1"
+            ],
+            "conclusion": "无禁配",
+            "conflictFree": true
+          }
+        }
+      },
+      "expected": {
+        "out": {
+          "ok": true
+        }
+      }
+    },
+    {
+      "id": "C-e-002",
+      "domain": "e",
+      "docs": "v2/02-§十一",
+      "title": "E-2｜已声明冲突未处置（disposition 缺）→ 拒（不得先做后补）",
+      "input": {
+        "kind": "cumulativeConflict",
+        "input": {
+          "holdings": [
+            {
+              "holderId": "holder-h1",
+              "subjectId": "subject-s1",
+              "positionRef": "position-p1",
+              "deploymentIds": [
+                "deploy-d1"
+              ],
+              "accountIds": [
+                "account-a1"
+              ],
+              "appointmentKind": "appointment"
+            }
+          ],
+          "conflicts": [
+            {
+              "conflictId": "conflict-1",
+              "subjectId": "subject-s1",
+              "counterpartyId": "counterparty-x",
+              "conflictKind": "financial"
+            }
+          ],
+          "conflictChecks": [
+            {
+              "subjectId": "subject-s1",
+              "checkedPositionRefs": [
+                "position-p1"
+              ],
+              "checkedDeploymentIds": [
+                "deploy-d1"
+              ],
+              "checkedAccountIds": [
+                "account-a1"
+              ],
+              "conclusion": "存在冲突",
+              "conflictFree": false
+            }
+          ],
+          "cumulativeView": {
+            "coveredSubjectIds": [
+              "subject-s1"
+            ],
+            "conclusion": "存在未处置冲突",
+            "conflictFree": false
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-e-003",
+      "domain": "e",
+      "docs": "v2/02-§十一",
+      "title": "E-2｜拆身份后单点「无冲突」结论（身份链合并后仍有冲突）→ 拒（累计不重置）",
+      "input": {
+        "kind": "cumulativeConflict",
+        "input": {
+          "holdings": [
+            {
+              "holderId": "holder-h1",
+              "subjectId": "subject-s1",
+              "positionRef": "position-p1",
+              "deploymentIds": [
+                "deploy-d1"
+              ],
+              "accountIds": [
+                "account-a1"
+              ],
+              "appointmentKind": "appointment"
+            },
+            {
+              "holderId": "holder-h2",
+              "subjectId": "subject-s2",
+              "positionRef": "position-p2",
+              "deploymentIds": [
+                "deploy-d2"
+              ],
+              "accountIds": [
+                "account-a2"
+              ],
+              "appointmentKind": "concurrent"
+            }
+          ],
+          "conflicts": [
+            {
+              "conflictId": "conflict-1",
+              "subjectId": "subject-s2",
+              "counterpartyId": "counterparty-x",
+              "conflictKind": "financial",
+              "disposition": "avoid"
+            }
+          ],
+          "conflictChecks": [
+            {
+              "subjectId": "subject-s1",
+              "checkedPositionRefs": [
+                "position-p1"
+              ],
+              "checkedDeploymentIds": [
+                "deploy-d1"
+              ],
+              "checkedAccountIds": [
+                "account-a1"
+              ],
+              "conclusion": "无冲突",
+              "conflictFree": true
+            }
+          ],
+          "cumulativeView": {
+            "coveredSubjectIds": [
+              "subject-s1",
+              "subject-s2"
+            ],
+            "conclusion": "无禁配",
+            "conflictFree": true
+          },
+          "identityLinks": [
+            {
+              "holderId": "holder-h2",
+              "sameSubjectAs": "holder-h1"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-w-001",
+      "domain": "w",
+      "docs": "v2/04-§十二",
+      "title": "W-13｜EX-2+ 四要件齐备＋独立收割（收割者≠交付者）→ 放行",
+      "input": {
+        "kind": "completion",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-WORK-08",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "work_ref": {
+              "refType": "REC-WORK-03",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "effect_level_ref": {
+              "refType": "REC-WORK-07",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "completion_basis": [
+              {
+                "element": "终态事件",
+                "state": "present"
+              },
+              {
+                "element": "非空输出",
+                "state": "present"
+              },
+              {
+                "element": "REPORT 落盘",
+                "state": "present"
+              },
+              {
+                "element": "闸门 exit=0",
+                "state": "present"
+              }
+            ],
+            "collector_identity": {
+              "collector": "harvester-1",
+              "independence": "收割者≠交付者（独立收割通道）",
+              "self_reported": false,
+              "harvest_batch_ref": {
+                "refType": "REC-EVD-01",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              }
+            },
+            "harvest_ref": {
+              "refType": "REC-EVD-01",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "sampling_ref": {
+              "refType": "REC-EVD-02",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "gaps": [],
+            "proof_boundary": "证明执行面终态与四要件齐备；不证明验收通过、价值为正"
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          },
+          "proofBoundary": "证明边界：本记录证明所述判断，不证明未列范围"
+        },
+        "ctx": {
+          "effectLevel": "EX-2"
+        }
+      },
+      "expected": {
+        "out": {
+          "ok": true
+        }
+      }
+    },
+    {
+      "id": "C-w-002",
+      "domain": "w",
+      "docs": "v2/04-§十二",
+      "title": "W-13｜EX-2+ 缺「非空输出」要件（state=missing 且无理由/判者）→ 拒（降档逃证）",
+      "input": {
+        "kind": "completion",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-WORK-08",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "work_ref": {
+              "refType": "REC-WORK-03",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "effect_level_ref": {
+              "refType": "REC-WORK-07",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "completion_basis": [
+              {
+                "element": "终态事件",
+                "state": "present"
+              },
+              {
+                "element": "非空输出",
+                "state": "missing"
+              },
+              {
+                "element": "REPORT 落盘",
+                "state": "present"
+              },
+              {
+                "element": "闸门 exit=0",
+                "state": "present"
+              }
+            ],
+            "collector_identity": {
+              "collector": "harvester-1",
+              "independence": "收割者≠交付者（独立收割通道）",
+              "self_reported": false,
+              "harvest_batch_ref": {
+                "refType": "REC-EVD-01",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              }
+            },
+            "harvest_ref": {
+              "refType": "REC-EVD-01",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "sampling_ref": {
+              "refType": "REC-EVD-02",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "gaps": [],
+            "proof_boundary": "证明执行面终态与四要件齐备；不证明验收通过、价值为正"
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          },
+          "proofBoundary": "证明边界：本记录证明所述判断，不证明未列范围"
+        },
+        "ctx": {
+          "effectLevel": "EX-2"
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-w-003",
+      "domain": "w",
+      "docs": "v2/04-§十二",
+      "title": "W-13｜交付方自报冒充独立收割（self_reported=true）→ 拒（自报只是线索）",
+      "input": {
+        "kind": "completion",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-WORK-08",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "work_ref": {
+              "refType": "REC-WORK-03",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "effect_level_ref": {
+              "refType": "REC-WORK-07",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "completion_basis": [
+              {
+                "element": "终态事件",
+                "state": "present"
+              },
+              {
+                "element": "非空输出",
+                "state": "present"
+              },
+              {
+                "element": "REPORT 落盘",
+                "state": "present"
+              },
+              {
+                "element": "闸门 exit=0",
+                "state": "present"
+              }
+            ],
+            "collector_identity": {
+              "collector": "holder-h1",
+              "independence": "交付方自报",
+              "self_reported": true,
+              "harvest_batch_ref": {
+                "refType": "REC-EVD-01",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              }
+            },
+            "harvest_ref": {
+              "refType": "REC-EVD-01",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "sampling_ref": {
+              "refType": "REC-EVD-02",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "gaps": [],
+            "proof_boundary": "证明执行面终态与四要件齐备；不证明验收通过、价值为正"
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          },
+          "proofBoundary": "证明边界：本记录证明所述判断，不证明未列范围"
+        },
+        "ctx": {
+          "effectLevel": "EX-2",
+          "collectorIsDeliverer": true
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-hr-001",
+      "domain": "hr",
+      "docs": "v2/02-§三",
+      "title": "HR-1｜任职迁移 active→handover（L 边内且前置/期限齐）→ 放行（§14.2）",
+      "input": {
+        "kind": "employmentTransition",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-LIFE-02",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "from_state": "active",
+            "to_state": "handover",
+            "trigger_ref": {
+              "refType": "REC-LIFE-01",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "authority_ref": {
+              "refType": "REC-AUTH-01",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "precondition_results": [
+              {
+                "item": "转岗决定已作出",
+                "satisfied": true,
+                "basis": "REC-LIFE-01"
+              }
+            ],
+            "expected_version": "2",
+            "actual_actor": "g9.internal-boss",
+            "dissent_position": "无异议",
+            "review_terms": {
+              "deadline": "2026-10-28T00:00:00Z"
+            },
+            "side_effects": [],
+            "evidence_refs": [
+              {
+                "refType": "REC-LIFE-01",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              }
+            ],
+            "produced_refs": [],
+            "decision_face": {
+              "decided_by": "g9.internal-boss",
+              "authority_ref": {
+                "refType": "REC-AUTH-01",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              },
+              "rationale": "依 v2/11 §3.1 逐条核验五条件",
+              "basis_refs": [
+                {
+                  "refType": "REC-LIFE-05",
+                  "refId": "rec-1",
+                  "refVersion": "1.0.0"
+                }
+              ],
+              "scope_judged": {
+                "judged": [
+                  "权源",
+                  "资格",
+                  "禁配"
+                ],
+                "not_judged": [
+                  "绩效归因"
+                ]
+              },
+              "dissent_position": "无异议",
+              "effective_state": "effective",
+              "effective_time": "2026-10-28T00:00:00Z"
+            }
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "out": {
+          "ok": true
+        }
+      }
+    },
+    {
+      "id": "C-hr-002",
+      "domain": "hr",
+      "docs": "v2/02-§三",
+      "title": "HR-2｜任职迁移 active→retired（表外边）→ 拒（未结清不得宣称退役）",
+      "input": {
+        "kind": "employmentTransition",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-LIFE-02",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "from_state": "active",
+            "to_state": "retired",
+            "trigger_ref": {
+              "refType": "REC-LIFE-01",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "authority_ref": {
+              "refType": "REC-AUTH-01",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "precondition_results": [
+              {
+                "item": "转岗决定已作出",
+                "satisfied": true,
+                "basis": "REC-LIFE-01"
+              }
+            ],
+            "expected_version": "2",
+            "actual_actor": "g9.internal-boss",
+            "dissent_position": "无异议",
+            "review_terms": {
+              "deadline": "2026-10-28T00:00:00Z"
+            },
+            "side_effects": [],
+            "evidence_refs": [
+              {
+                "refType": "REC-LIFE-01",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              }
+            ],
+            "produced_refs": [],
+            "decision_face": {
+              "decided_by": "g9.internal-boss",
+              "authority_ref": {
+                "refType": "REC-AUTH-01",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              },
+              "rationale": "依 v2/11 §3.1 逐条核验五条件",
+              "basis_refs": [
+                {
+                  "refType": "REC-LIFE-05",
+                  "refId": "rec-1",
+                  "refVersion": "1.0.0"
+                }
+              ],
+              "scope_judged": {
+                "judged": [
+                  "权源",
+                  "资格",
+                  "禁配"
+                ],
+                "not_judged": [
+                  "绩效归因"
+                ]
+              },
+              "dissent_position": "无异议",
+              "effective_state": "effective",
+              "effective_time": "2026-10-28T00:00:00Z"
+            }
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-hr-003",
+      "domain": "hr",
+      "docs": "v2/02-§三",
+      "title": "HR-3｜任职迁移缺期限/复审条件（review_terms 空）→ 拒（无限期暂停违反 I-11）",
+      "input": {
+        "kind": "employmentTransition",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-LIFE-02",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "from_state": "active",
+            "to_state": "handover",
+            "trigger_ref": {
+              "refType": "REC-LIFE-01",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "authority_ref": {
+              "refType": "REC-AUTH-01",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "precondition_results": [
+              {
+                "item": "转岗决定已作出",
+                "satisfied": true,
+                "basis": "REC-LIFE-01"
+              }
+            ],
+            "expected_version": "2",
+            "actual_actor": "g9.internal-boss",
+            "dissent_position": "无异议",
+            "review_terms": {},
+            "side_effects": [],
+            "evidence_refs": [
+              {
+                "refType": "REC-LIFE-01",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              }
+            ],
+            "produced_refs": [],
+            "decision_face": {
+              "decided_by": "g9.internal-boss",
+              "authority_ref": {
+                "refType": "REC-AUTH-01",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              },
+              "rationale": "依 v2/11 §3.1 逐条核验五条件",
+              "basis_refs": [
+                {
+                  "refType": "REC-LIFE-05",
+                  "refId": "rec-1",
+                  "refVersion": "1.0.0"
+                }
+              ],
+              "scope_judged": {
+                "judged": [
+                  "权源",
+                  "资格",
+                  "禁配"
+                ],
+                "not_judged": [
+                  "绩效归因"
+                ]
+              },
+              "dissent_position": "无异议",
+              "effective_state": "effective",
+              "effective_time": "2026-10-28T00:00:00Z"
+            }
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-work-001",
+      "domain": "work",
+      "docs": "v2/11-§5.2",
+      "title": "WORK-1｜任务迁移 intake→pending_start（M-01 前置记录齐）→ 放行（§14.1）",
+      "input": {
+        "kind": "workTransition",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-WORK-06",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "state_family": "work",
+            "from_state": "intake",
+            "to_state": "pending_start",
+            "producer_type": "decisive",
+            "trigger_ref": {
+              "refType": "REC-WORK-02",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "authority_ref": {
+              "refType": "REC-AUTH-01",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "precondition_results": [
+              {
+                "item": "合同五要件齐备",
+                "satisfied": true,
+                "basis": "REC-WORK-03"
+              }
+            ],
+            "expected_version": "2",
+            "actual_actor": "unit-head-1",
+            "dissent_position": "无异议",
+            "occurred_at": "2026-10-28T00:00:00Z",
+            "observed_at": "2026-10-28T00:00:00Z",
+            "recorded_at": "2026-10-28T00:00:00Z",
+            "side_effects": [],
+            "evidence_refs": [
+              {
+                "refType": "REC-WORK-02",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              },
+              {
+                "refType": "REC-WORK-03",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              }
+            ],
+            "produced_refs": [],
+            "decision_face": {
+              "decided_by": "g9.internal-boss",
+              "authority_ref": {
+                "refType": "REC-AUTH-01",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              },
+              "rationale": "依 v2/11 §3.1 逐条核验五条件",
+              "basis_refs": [
+                {
+                  "refType": "REC-LIFE-05",
+                  "refId": "rec-1",
+                  "refVersion": "1.0.0"
+                }
+              ],
+              "scope_judged": {
+                "judged": [
+                  "权源",
+                  "资格",
+                  "禁配"
+                ],
+                "not_judged": [
+                  "绩效归因"
+                ]
+              },
+              "dissent_position": "无异议",
+              "effective_state": "effective",
+              "effective_time": "2026-10-28T00:00:00Z"
+            }
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "out": {
+          "ok": true
+        }
+      }
+    },
+    {
+      "id": "C-work-002",
+      "domain": "work",
+      "docs": "v2/11-§5.2",
+      "title": "WORK-2｜任务迁移 intake→accepted（表外边）→ 拒（表外即非法）",
+      "input": {
+        "kind": "workTransition",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-WORK-06",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "state_family": "work",
+            "from_state": "intake",
+            "to_state": "accepted",
+            "producer_type": "decisive",
+            "trigger_ref": {
+              "refType": "REC-WORK-02",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "authority_ref": {
+              "refType": "REC-AUTH-01",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "precondition_results": [
+              {
+                "item": "合同五要件齐备",
+                "satisfied": true,
+                "basis": "REC-WORK-03"
+              }
+            ],
+            "expected_version": "2",
+            "actual_actor": "unit-head-1",
+            "dissent_position": "无异议",
+            "occurred_at": "2026-10-28T00:00:00Z",
+            "observed_at": "2026-10-28T00:00:00Z",
+            "recorded_at": "2026-10-28T00:00:00Z",
+            "side_effects": [],
+            "evidence_refs": [
+              {
+                "refType": "REC-WORK-02",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              },
+              {
+                "refType": "REC-WORK-03",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              }
+            ],
+            "produced_refs": [],
+            "decision_face": {
+              "decided_by": "g9.internal-boss",
+              "authority_ref": {
+                "refType": "REC-AUTH-01",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              },
+              "rationale": "依 v2/11 §3.1 逐条核验五条件",
+              "basis_refs": [
+                {
+                  "refType": "REC-LIFE-05",
+                  "refId": "rec-1",
+                  "refVersion": "1.0.0"
+                }
+              ],
+              "scope_judged": {
+                "judged": [
+                  "权源",
+                  "资格",
+                  "禁配"
+                ],
+                "not_judged": [
+                  "绩效归因"
+                ]
+              },
+              "dissent_position": "无异议",
+              "effective_state": "effective",
+              "effective_time": "2026-10-28T00:00:00Z"
+            }
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
+    },
+    {
+      "id": "C-work-003",
+      "domain": "work",
+      "docs": "v2/11-§5.2",
+      "title": "WORK-3｜任务迁移 in_progress→awaiting_review 缺 REC-EVD-03 前置 → 拒（前置记录列）",
+      "input": {
+        "kind": "workTransition",
+        "record": {
+          "recordId": "rec-0001",
+          "recordType": "REC-WORK-06",
+          "schemaRef": {
+            "schemaId": "studio-next.records.v2",
+            "schemaVersion": "1.0.0"
+          },
+          "specVersion": "2.0.0",
+          "companyRef": "company-a",
+          "producedAt": "2026-10-28T00:00:00Z",
+          "producer": {
+            "decidedBy": "g9.internal-boss",
+            "writtenBy": "daemon:records"
+          },
+          "basisRefs": [
+            {
+              "refId": "basis-1",
+              "refVersion": "1.0.0"
+            }
+          ],
+          "payload": {
+            "state_family": "work",
+            "from_state": "in_progress",
+            "to_state": "awaiting_review",
+            "producer_type": "decisive",
+            "trigger_ref": {
+              "refType": "REC-WORK-02",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "authority_ref": {
+              "refType": "REC-AUTH-01",
+              "refId": "rec-1",
+              "refVersion": "1.0.0"
+            },
+            "precondition_results": [
+              {
+                "item": "合同五要件齐备",
+                "satisfied": true,
+                "basis": "REC-WORK-03"
+              }
+            ],
+            "expected_version": "2",
+            "actual_actor": "unit-head-1",
+            "dissent_position": "无异议",
+            "occurred_at": "2026-10-28T00:00:00Z",
+            "observed_at": "2026-10-28T00:00:00Z",
+            "recorded_at": "2026-10-28T00:00:00Z",
+            "side_effects": [],
+            "evidence_refs": [
+              {
+                "refType": "REC-WORK-08",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              }
+            ],
+            "produced_refs": [],
+            "decision_face": {
+              "decided_by": "g9.internal-boss",
+              "authority_ref": {
+                "refType": "REC-AUTH-01",
+                "refId": "rec-1",
+                "refVersion": "1.0.0"
+              },
+              "rationale": "依 v2/11 §3.1 逐条核验五条件",
+              "basis_refs": [
+                {
+                  "refType": "REC-LIFE-05",
+                  "refId": "rec-1",
+                  "refVersion": "1.0.0"
+                }
+              ],
+              "scope_judged": {
+                "judged": [
+                  "权源",
+                  "资格",
+                  "禁配"
+                ],
+                "not_judged": [
+                  "绩效归因"
+                ]
+              },
+              "dissent_position": "无异议",
+              "effective_state": "effective",
+              "effective_time": "2026-10-28T00:00:00Z"
+            }
+          },
+          "effectiveState": "effective",
+          "effectiveTime": {
+            "from": "2026-10-28T00:00:00Z"
+          }
+        }
+      },
+      "expected": {
+        "err": {
+          "category": "CONFIG_INVALID"
+        }
+      }
     }
   ]
 }

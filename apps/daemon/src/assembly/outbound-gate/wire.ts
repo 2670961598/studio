@@ -64,9 +64,9 @@ export interface OutboundWiring {
   readonly wrapNotifyFace: (face: NotifyBroadcastFace) => NotifyBroadcastFace
   /** 三不入·库 wrapper（Ledger.appendEvent 写前过闸；其余方法透明转发） */
   readonly createStoreWriteGuard: (ledger: Ledger) => Ledger
-  /** 证据导出面 wrapper（catalog gap：生产装配点未落位；先备好接线面） */
+  /** 证据导出面 wrapper（第 5 出口；拒发档——runServe 经 engineConfig.evidenceExportGuard 接线） */
   readonly guardEvidenceExport: (text: string) => string
-  /** API 响应面 wrapper（catalog gap：runServe API 装配位未接线；先备好接线面） */
+  /** API 响应面 wrapper（runServe 经 wireServeApi({guardResponse}) 接 HTTP 响应面） */
   readonly guardApiResponse: (payload: unknown) => unknown
   /** 装配行（缺口/词表缺口显式；无秘密值） */
   readonly startupLine: string

@@ -256,3 +256,40 @@ const report = await runCases(manifest, { dir: loadCompanyDirectory }, { domains
 - **执行归属**：`enc`／`rule` 在 cases.json **无执行 subject**（契约不依赖 core，依赖方向=实现包→契约包）；
   `test/v2/cases/case-manifest.test.ts` 对二域只做结构／期望形态断言（VEC 表与码表为 v2/10 §七/§八 照录副本），
   执行归 core 的 V2 测试；`rec`／`sch`／`port` 三域由该测试的本地 subject 跑可执行子集（含正例对照与改坏必红反证）。
+
+### 六族 case 登记（studio-dev-553，2026-11-03；**追加不重写**）
+
+> **契约面子项（须报 Lead/制作人批）**：本节与 cases.json 新增六域 18 条属契约面变更（cases.json 是
+> `apps/daemon/src/evolve/evolve-guard.ts` `FROZEN_FRAMEWORK_ASSETS` 的冻结资产，改动恒 escalate）。
+> 本单按任务书 §3「补齐六族 case」执行并单内标注，**不自行视为已批准**；落仓由 Lead 统一 commit。
+> 依据：`docs/sentinel-logs/V2差距分析-2026-11-03.md` #28（cases.json 96 条仅 43 引 v2；I/R/E/W/HR/WORK 族无 case）
+> ｜v2/17 §一 V1 行（「新增 case 覆盖每族至少一正一负」）｜v2/17 §四（I 族=01 §三、R 族=01 §四、
+> E 族=02 §十一、W 族=04 §十二）｜v2/02 §三（任职六状态十边）、v2/11 §5.2/§14.1（任务迁移边与前置记录）
+> ｜plan/04 §1.2（V1 契约先行法：id 形／docs 形／族前缀映射）。
+
+- **新增六域**：`i`（I 族·根不变量）｜`r`（R 族·根反例）｜`e`（E 族·员工侧反例）｜`w`（W 族·工作侧反例）
+  ｜`hr`（HR 族·任职生命周期）｜`work`（WORK 族·任务族）。上方「域清单（v0）」表为冻结行，本节按先例追加登记。
+- **条数**：18 条（每域 3 条：1 正向＋2 负向；`cases.json` 96→**114**，引 v2 的 case 43→**61**）。
+- **id／docs／title 形**：`C-<域>-<三位序号>`；`docs` 为 `v2/<卷>-§<节>`（i→`v2/01-§三`、r→`v2/01-§四`、
+  e→`v2/02-§十一`、w→`v2/04-§十二`、hr→`v2/02-§三`、work→`v2/11-§5.2`）；`title` 首段为 v2 族 ID
+  （`I-n｜`／`R-n｜`／`E-n｜`／`W-nn｜`／`HR-n｜`／`WORK-n｜`），族映射机械可查。
+- **input 形与 subject 路由**（本地 subject 只消费契约包纯判定件；零 IO、不取时钟、不打桩）：
+
+| 域 | input | subject 路由 |
+|---|---|---|
+| `i` | `{kind:'rootPreflight', record, request, resolution}` | `records/auth.ts` `checkRootActionPreflight`（I-1 权源不可伪造/内部不得补位） |
+| `r` | `{kind:'changeSegment', record, ctx?}` | `records/chg.ts` `validateChangeSegment`（R-8 判据变更不覆盖原结论/三门不合并） |
+| `e` | `{kind:'cumulativeConflict', input}` | `records/emp-neg.ts` `validateCumulativeConflict`（E-2 累计禁配/拆身份不重置） |
+| `w` | `{kind:'completion', record, ctx?}` | `records/work-state.ts` `validateCompletionRecord`（W-13 降档逃证/自报不冒充独立收割） |
+| `hr` | `{kind:'employmentTransition', record}` | `records/life.ts` `validateEmploymentTransition`（§14.2 表外边/无限期暂停） |
+| `work` | `{kind:'workTransition', record, ctx?}` | `records/work-state.ts` `validateWorkTransition`（§14.1 表外边/前置记录缺） |
+
+- **覆盖闸（fail-closed）**：`test/v2/cases/family-cases.test.ts` 断言六族各 ≥3 条、每族至少一正向
+  （`expected.out`）一负向（`expected.err`）、id 形（`C-<域>-NNN`，含全局 id 复用检查）、docs 卷锚**精确锚定**
+  与族 ID 标题前缀全对；**任一族缺 case／缺正负向 ⇒ 该测试红 ⇒ `verify:v2` 不绿**（不靠人工 checklist）。
+  负向 case 另有**拒绝原因锚**表（id→判定件 issue path，如 `payload.to_state`／`payload.evidence_refs`），
+  逐条断言「拒在文档声明的条件上」，排除输入形状先行失败造成的假绿。
+  反证面：逐族删空必指名该族、docs 漂移／title 前缀断裂／id 复用必指名、改坏正/负向期望 runner 必红（6/12 条）。
+- **边界（如实登记）**：本批只落「族级拒绝条件」V1 腿；各族逐 ID 加密（I-1..17／R-1..36／E-1..13／
+  W-01..14）与 V3 编排腿归后续批次。HR/WORK 两族为记录族语义（PORT-HR/PORT-WORK 的 V1 记录面），
+  不新增端口、不改既有 12 域任何条目。

@@ -19,7 +19,9 @@
  *   - wire.ts        装配 wrapper（平台写/通知/日志/库/证据导出/API 响应）＋失败台账落点
  *
  * 生产装配点：`assembly/serve/runtime.ts`（runServe 装配序）——prompt/日志/平台写/通知/库
- * 五个点真实过闸；证据导出与 API 响应登记为显式 gap（catalog status='gap'，接线面已备）。
+ * 五个点真实过闸；证据导出（第 5 出口）经 `engineConfig.evidenceExportGuard` 接入收割归档
+ * 写出面（output-account/harvest-recon 两处，见 exits.ts）；API 响应经 wireServeApi 的
+ * guardResponse 接入。catalog 五出口 wired=5 / gap=0。
  */
 export * from './exits.ts'
 export * from './failures.ts'

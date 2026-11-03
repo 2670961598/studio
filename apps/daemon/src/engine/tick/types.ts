@@ -68,6 +68,13 @@ export interface EngineConfig {
    * 缺省不注入=面关闭（既有链路零行为变化）。
    */
   companyDir?: string
+  /**
+   * 证据导出面出站闸（docs/v2/15 §4.4 第 5 出口；serve 装配时＝`outbound.gate.guardEvidenceExport`）：
+   * 收割 GATE_PASS 岗产物收账与相位 4 尾 P3 对账补收，在**写出 company/reports 归档前**对
+   * REPORT.md/summary.json 正文过闸。命中/扫描失败＝拒绝该次归档（fail-closed，不脱敏改写、
+   * 不覆盖既有归档，P3 事件/收账 note 如实留痕）。缺省不注入＝面关（引擎直连测试零行为变化）。
+   */
+  evidenceExportGuard?: (text: string) => string
   /** events.actor（17-§3「工号+账号」编码归 store 层定——v0 'daemon' 拟稿） */
   actor: string
   /** 派工默认工号（issue.assignee 缺省时的人员索引回退位） */

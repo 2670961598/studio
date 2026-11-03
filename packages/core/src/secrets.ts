@@ -51,12 +51,37 @@ const ASSIGNMENT_RE = /\b(?:password|passwd|secret|shared_secret|token|mac|api[_
 /** 独立长随机串：≥32 位 base62/-/_ 连续段（JWT/密钥/hex64 常见形；ULID 26 位不触发） */
 const LONG_TOKEN_RE = /\b[A-Za-z0-9_-]{32,}\b/g
 
+/**
+ * 完整性引用（integrity digest）：40/64 位纯 hex 摘要（git sha / sha256 证据哈希）。
+ * 它不是自由文本承载位，而是证据链的完整性引用（与台账 `payload_hash` 同性质）；
+ * 缺省仍落 long-token 形态兜底（保守），**仅证据导出面**可显式排除——否则归档时
+ * 证据哈希会被抹成 `<redacted:N>`，毁掉证据链（docs/v2/15 §4.4 出站闸 × v2/08 证据对象）。
+ */
+const INTEGRITY_DIGEST_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i
+
+/** 是否完整性引用形（纯 40/64 位 hex，大小写不敏感） */
+export function isIntegrityDigest(value: string): boolean {
+  return INTEGRITY_DIGEST_RE.test(value)
+}
+
+/** 形状检测选项（增量开关；缺省行为与原调用逐字一致） */
+export interface SecretShapeOptions {
+  /**
+   * 排除完整性引用（40/64 hex）的 long-token 命中——只有明确知道该面携带证据哈希的
+   * 装配点（证据导出）才可开；普通出站面保持保守兜底（收口面不放宽）。
+   */
+  readonly excludeIntegrityDigests?: boolean
+}
+
 /** 形状检测（不修改；诊断/测试断言用） */
-export function findSecretShaped(text: string): SecretShapeFinding[] {
+export function findSecretShaped(text: string, options: SecretShapeOptions = {}): SecretShapeFinding[] {
   const out: SecretShapeFinding[] = []
   for (const m of text.matchAll(BEARER_RE)) out.push({ kind: 'bearer', at: m.index ?? 0 })
   for (const m of text.matchAll(ASSIGNMENT_RE)) out.push({ kind: 'assignment', at: m.index ?? 0 })
-  for (const m of text.matchAll(LONG_TOKEN_RE)) out.push({ kind: 'long-token', at: m.index ?? 0 })
+  for (const m of text.matchAll(LONG_TOKEN_RE)) {
+    if (options.excludeIntegrityDigests === true && isIntegrityDigest(m[0])) continue
+    out.push({ kind: 'long-token', at: m.index ?? 0 })
+  }
   return out
 }
 
@@ -65,7 +90,11 @@ export function findSecretShaped(text: string): SecretShapeFinding[] {
  * 先已知值替换、后形状兜底（赋值对值段、Bearer 尾、独立长串 → <redacted:N>）。
  * 使用方：daemon hr-sync 执行体（last_error/note）、serve 装配（日志行）。
  */
-export function redactOutbound(text: string, knowns: readonly string[] = []): string {
+export function redactOutbound(
+  text: string,
+  knowns: readonly string[] = [],
+  options: SecretShapeOptions = {},
+): string {
   let out = redactKnownSecrets(text, knowns)
   out = out.replace(BEARER_RE, (m) => m.replace(/[A-Za-z0-9._~+/=-]{12,}$/, (tok) => REDACT_MARK(tok.length)))
   out = out.replace(ASSIGNMENT_RE, (m) => {
@@ -75,6 +104,8 @@ export function redactOutbound(text: string, knowns: readonly string[] = []): st
     const tail = m.slice(head.length)
     return head + REDACT_MARK(tail.length)
   })
-  out = out.replace(LONG_TOKEN_RE, (tok) => REDACT_MARK(tok.length))
+  out = out.replace(LONG_TOKEN_RE, (tok) =>
+    options.excludeIntegrityDigests === true && isIntegrityDigest(tok) ? tok : REDACT_MARK(tok.length),
+  )
   return out
 }

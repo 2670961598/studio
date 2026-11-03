@@ -73,9 +73,12 @@ export const OUTBOUND_EXIT_CATALOG: readonly OutboundExitDef[] = [
   {
     id: 'evidence-export',
     label: '证据导出',
-    status: 'gap',
-    wiring: '闸侧 wrapper 已备（wireOutboundGate().guardEvidenceExport）；生产装配点未落位',
-    gap: 'evidence-export:no-export-channel',
+    status: 'wired',
+    wiring:
+      'runtime.ts engineConfig.evidenceExportGuard=outbound.gate.guardEvidenceExport：收割 GATE_PASS ' +
+      '岗产物收账（engine/jobs/output-account.ts）与相位 4 尾 P3 对账补收（jobs/harvest-recon.ts）' +
+      '在写出 company/reports 归档前对 REPORT.md/summary.json 正文过闸；处置=拒发（命中/扫描失败' +
+      '即拒绝该次归档，不脱敏改写、不覆盖既有归档；完整性引用 40/64 hex 保留）',
   },
   {
     id: 'log-egress',

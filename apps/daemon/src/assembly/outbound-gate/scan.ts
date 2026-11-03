@@ -42,6 +42,18 @@ export interface ScanOptions {
    * 只用于「不含秘密值字段位」的结构列；自由文本列（note 等）恒在扫描面内。
    */
   readonly skipKeys?: readonly string[]
+  /**
+   * 处置档（docs/v2/15 §4.4；任务书「扫描失败/命中→拒发」）：
+   *   - `redact`（缺省）：命中即脱敏后放行（平台写/通知/日志/API 等面既有语义）；
+   *   - `reject`：命中即拒，**不做任何脱敏、不返回文本**——证据导出面用（归档件必须与
+   *     工位副本逐字节一致，静默改写会毁证据链/破坏 P3 哈希幂等对账）。
+   */
+  readonly disposition?: 'redact' | 'reject'
+  /**
+   * 完整性引用（40/64 hex 证据摘要）不按 long-token 形态处理（只配 `disposition:'reject'`
+   * 的证据导出面）：归档 REPORT 常携 sha256/git sha，抹掉即毁证据链。
+   */
+  readonly preserveIntegrityDigests?: boolean
 }
 
 /** 已知值残留计数（只有 ≥MIN_KNOWN_LENGTH 的值会被 core 替换，同阈值判定残留） */
@@ -68,11 +80,24 @@ export function scanOutboundText(
   if (typeof text !== 'string') {
     return { ok: false, code: 'unknown-shape', detail: `出站文本须为字符串（实得 ${typeof text}）——不可判形态不放行` }
   }
-  const shapes = shapeFallback ? findSecretShaped(text).length : 0
+  const shapeOptions = options.preserveIntegrityDigests === true ? { excludeIntegrityDigests: true } : {}
+  // —— 拒发档（证据导出面）：命中即拒，不脱敏、不改写（归档件须与工位副本逐字节一致）——
+  if (options.disposition === 'reject') {
+    const knownHits = countRemainingKnowns(text, knowns)
+    if (knownHits > 0) {
+      return { ok: false, code: 'redaction-failed', detail: `检出 ${String(knownHits)} 个已知秘密值——证据导出拒发（不脱敏改写）` }
+    }
+    const shapeHits = shapeFallback ? findSecretShaped(text, shapeOptions).length : 0
+    if (shapeHits > 0) {
+      return { ok: false, code: 'unknown-shape', detail: `检出 ${String(shapeHits)} 处凭据形态——证据导出拒发（不脱敏改写）` }
+    }
+    return { ok: true, text, redactions: 0, shapes: 0 }
+  }
+  const shapes = shapeFallback ? findSecretShaped(text, shapeOptions).length : 0
   const knownHits = countRemainingKnowns(text, knowns)
   let redacted: string
   try {
-    redacted = shapeFallback ? redactOutbound(text, knowns) : redactKnownSecrets(text, knowns)
+    redacted = shapeFallback ? redactOutbound(text, knowns, shapeOptions) : redactKnownSecrets(text, knowns)
   } catch {
     return { ok: false, code: 'redaction-failed', detail: '脱敏执行抛错（算法异常不放行）' }
   }
@@ -81,7 +106,7 @@ export function scanOutboundText(
     return { ok: false, code: 'redaction-failed', detail: `脱敏后仍检出 ${String(residualKnowns)} 个已知秘密值` }
   }
   if (shapeFallback) {
-    const residualShapes = findSecretShaped(redacted).length
+    const residualShapes = findSecretShaped(redacted, shapeOptions).length
     if (residualShapes > 0) {
       return { ok: false, code: 'unknown-shape', detail: `脱敏后仍检出 ${String(residualShapes)} 处凭据形态` }
     }
