@@ -9,6 +9,7 @@
 import type { EventRecord, TicketId } from '@studio-next/contract'
 import type { Action, DecisionCode } from '@studio-next/core'
 import type { HrSyncTickReport } from '../hrsync/hrsync.ts'
+import type { HrGateTickReport } from '../hr-gate/employment-gate.ts'
 import type { HarvestReconResult } from '../jobs/harvest-recon.ts'
 import type { PricingStaleTickReport } from '../pricing/pricing.ts'
 import type { CostCloseTickReport } from '../cost-close/close.ts'
@@ -131,6 +132,8 @@ export interface TickReport {
       queue: TickQueueProjection
       /** 队列小模型精序（160-B·studio-dev-182：pick/interrupt 观测摘要；未注入=缺席） */
       judge?: TickQueueJudgeReport
+      /** 任职闸门（studio-dev-550；v2/02 §3.4）：闸门恒在——refused=0 表示本拍零拒 */
+      hrGate: HrGateTickReport
     }
     dispatch: { dispatched: number; approvals: number; results: readonly TickActionResult[] } &
       TickPhaseDispatchBudget & {

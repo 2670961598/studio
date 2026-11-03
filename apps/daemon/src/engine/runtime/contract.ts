@@ -20,6 +20,7 @@ import type { FlowTable } from '@studio-next/core'
 import type { ExecutorRegistry, SeatbeltGrant } from '@studio-next/adapters'
 import type { Ledger } from '@studio-next/store'
 import type { EngineSignatureDraft } from '../signature/index.ts'
+import type { HrGateOptions } from '../hr-gate/employment-gate.ts'
 import type { DirectiveGateDeps } from '../directive/index.ts'
 import type { GateRunner } from '../gate.ts'
 import type { DrainSettleResult } from '../drain/drain.ts'
@@ -110,6 +111,7 @@ export interface EngineDeps {
    * 钩异常进 tick errors 不炸拍（防御性 try/catch——收割面完整性优先于钩面）。
    */
   onWorkComplete?: (signal: RelayWorkSignal) => void
+  hrGate?: HrGateOptions // 任职闸门注入面（v2/02 §3.4）：缺省 compat（引擎直连/旧测试）；serve 恒注入 strict（缺证即拒）
   mergeRun?: MergeRunDeps // 202-P2 studio-dev-232：注入=相位 5 真单刀面开；缺省=v0 模拟轨零行为
   dispatchSeatbelt?: SeatbeltGrant // IMPL-07-09 派发域 seatbelt 圈定授权（省略=read-only 最严；放宽须显式授权并留痕；校验/留痕面见 work/dispatch-seatbelt.ts）
   derivationGuard?: DispatchDerivationGuard // GAP-V2-04 派生树撤回闸（省略=不拦；注入=phase-3 派发前拒已撤派生树，NEG-SEC-08/NEG-RUN-05）

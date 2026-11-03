@@ -82,6 +82,10 @@ export async function executeDispatch(
     const resolved = await resolveDispatchPerson(assignRuntime(), { ticket, fresh, ...(autoAssign !== undefined ? { carried: autoAssign } : {}), ...(dispatchPersons !== undefined ? { dispatchPersons } : {}) })
     if (!resolved.ok) return fail(resolved.detail)
     const person = resolved.person
+    // 任职闸门执行位兜底（v2/02 §3.4，防自动分配换人/新调用面绕过）：进入预算/装配/launch
+    // 之前再判一次——决策位（core HOLD_NOT_IN_SERVICE）已拒，此处 fail-closed、零副作用。
+    const employmentRefusal = rt.hrGate.refusalOf(person.id)
+    if (employmentRefusal !== undefined) return fail(employmentRefusal)
     // 模型档选位（studio-dev-196）：单>岗>角色三级解析（model-tier.ts）；面关（models.yaml
     // 未装载）=tierFace undefined，选位与现行为逐字节一致。档面在 resume 面前：resume 不可
     // 续的 fallback=档位适配器（降级新派不降档——接力同档）。

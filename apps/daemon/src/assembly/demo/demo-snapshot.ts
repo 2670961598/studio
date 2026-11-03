@@ -24,7 +24,9 @@ export const DEMO_SNAPSHOT: CompanySnapshot = {
     },
   ],
   people: [
-    { id: 'AGENT-1', name: '示例工程师', login: 'agent-1', level: 2, dept: 'departments/工程部' },
+    // status：任职闸门（studio-dev-550）事实面——demo 装配无公司目录时也必须有在岗事实，
+    // 否则生产 strict 面会按「缺证=拒」拦 demo/E2E（demo 员工=在岗，语义真实）。
+    { id: 'AGENT-1', name: '示例工程师', login: 'agent-1', level: 2, dept: 'departments/工程部', status: 'active' },
   ],
   jobs: [
     // v0.4 首个定时岗样例（16-§四「健康巡检」）：5 分钟巡逻——demo 模式出厂即跑通

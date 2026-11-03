@@ -35,6 +35,7 @@ import type {
   ConcurrencyLimits,
   DecisionInput,
   Diagnostic,
+  EmploymentGateSnapshot,
   EvalOutcome,
   EvaluateOptions,
   FlowTable,
@@ -101,6 +102,12 @@ export interface WorkCandidateHost {
   readonly livenessOf?: (ticket: TicketId, issue: IssueRecord) => WorkerLiveness | undefined
   /** 该单生效静默阈值（按 executor 分级；缺省回退 stallAfterMs） */
   readonly stallAfterMsOf?: (ticket: TicketId, issue: IssueRecord) => number
+  /**
+   * 任职闸门事实快照（v2/02 §3.4；studio-dev-550）：派发对象 → 在岗事实。判定面在 core
+   * `decide`（HOLD_NOT_IN_SERVICE），本件只把事实装进 decide 入参（判定零复制）。
+   * 缺省不提供＝旧调用面不带闸（字节不变）；生产链路（serve→engine）恒提供。
+   */
+  readonly employmentOf?: (personId: string | undefined) => EmploymentGateSnapshot | undefined
 }
 
 /** 一张候选的开工决策（gate 快照＋core decide 产物＋抑制面；队列/占用结算归引擎） */
@@ -115,6 +122,8 @@ export interface WorkDecision {
   readonly action: Action
   /** 回弹抑制（打回/拆单/搁置站立期不自动呈批——engine 落 WAIT_APPROVAL 观测码） */
   readonly reboundSuppressed: boolean
+  /** 任职闸门事实快照（决策时点；HOLD_NOT_IN_SERVICE 留痕/观测用） */
+  readonly employment?: EmploymentGateSnapshot
 }
 
 /**
@@ -145,11 +154,15 @@ export async function decideWorkCandidate(
   const seenIntentKeys = inWork && ownSeenKey !== null ? host.seenKeys.filter((key) => key !== ownSeenKey) : host.seenKeys
   const personId = host.personIdOf(issue)
   const personGate = host.personGateOf(personId)
+  // 任职闸门事实（v2/02 §3.4）：personId 与 decide 的人闸/派发对象同源解析；事实面在
+  // engine/hr-gate，判定面在 core（HOLD_NOT_IN_SERVICE）——本件只装参，零判定复制。
+  const employment = host.employmentOf?.(personId)
   const verbNow = host.verbNowOf(ticket)
   const input: DecisionInput = {
     issue,
     laneLease: host.laneLeaseOf(lane),
     ...(personGate !== undefined ? { personGate } : {}),
+    ...(employment !== undefined ? { employment } : {}),
     inflightCount: host.inflightCount(),
     tickActionCount: host.tickActionCount(),
     limits: host.limits,
@@ -178,6 +191,7 @@ export async function decideWorkCandidate(
     intentKey: out.intentKey,
     action: out.action,
     reboundSuppressed: reboundSuppressed(verbNow, out.action.type),
+    ...(employment !== undefined ? { employment } : {}),
   }
 }
 

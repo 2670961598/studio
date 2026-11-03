@@ -237,6 +237,7 @@ export async function stateDiffPhase(
         return lastAutoAssign !== undefined ? lastAutoAssign.personId : resolvePerson(issue)?.id
       },
       personGateOf: (personId) => personGateSnapshot(personId, dispatchPersons, inflight, rt.personLimits),
+      employmentOf: rt.hrGate.employmentOf, // 任职闸门事实（v2/02 §3.4）：与 decide 派发对象同源解析
       verbNowOf: (ticket) => directiveVerbNow.get(ticket) ?? index.directiveStandingOf(ticket),
       approvedNow: (verbNow) => config.autoApprove || verbNow === '批准',
       seenKeys: index.seenKeys,
@@ -283,6 +284,8 @@ export async function stateDiffPhase(
       }
       decisions.push({ ticket, intentKey, code: action.code, actionType: action.type, state: issue.state })
       decidedActions.push(action)
+      // 拒出工≠资源顺延；台账落 ESCALATE 锚（v2/02 §3.4，每单每事实一次）
+      if (action.type === 'hold' && action.code === 'HOLD_NOT_IN_SERVICE') ctx.mutations += rt.hrGate.noteRefusal(issue, ticket, index.attemptOf(ticket), tickEvents, decision.employment)
       switch (action.type) {
         case 'dispatch': {
           // resume 面（129-E）：本拍 resume 意图消费登记的续跑计划随派发携带（拍作用域

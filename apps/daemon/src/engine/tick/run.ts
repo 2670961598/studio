@@ -23,6 +23,7 @@ export async function runTick(rt: EngineRuntime): Promise<TickReport> {
   rt.ledger.kvSet(TICK_SEQ_KEY, String(rt.seq))
   const startedAt = rt.now()
   rt.deps.judge?.beginTick(`tick-${rt.seq}`) // 160-B：判断拍闸计数随拍清零（invoke.ts 单B 挂主循环拍）
+  rt.hrGate.beginTick() // 任职闸门观测累加器随拍清零（v2/02 §3.4：refused/samples=本拍口径）
   const ctx: TickCtx = {
     seq: rt.seq,
     startedAt,
@@ -66,6 +67,8 @@ export async function runTick(rt: EngineRuntime): Promise<TickReport> {
         rescanned: sd.rescanned,
         queue: { rows: account.todoQueueRows, persons: account.queuePersons },
         ...(sd.judgeTick !== undefined ? { judge: sd.judgeTick } : {}),
+        // hrGate=任职闸门观测面（v2/02 §3.4；逐条 ESCALATE 锚见台账）
+        hrGate: rt.hrGate.report(),
       },
       dispatch: {
         dispatched: run.dispatched,

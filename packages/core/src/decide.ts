@@ -52,6 +52,7 @@
 
 import type { IssueRecord, InvokeIntent, TicketId } from '@studio-next/contract'
 import { DEFAULT_BREAKER_COOLDOWN_MS } from './breaker.ts'
+import { employmentAllowsDispatch, type EmploymentGateSnapshot } from './employment/gate.ts'
 import {
   DEFAULT_FLOW_TABLE,
   flowAnchors,
@@ -75,6 +76,9 @@ import {
  *   HOLD_BREAKER_OPEN      断路器熔断且冷却窗未过，停重派（F1-10；DEV-46：窗过放半开试探）
  *   HOLD_INTENT_MALFORMED  意图缺 ticket 且缺 dedupKey（违反 docs/25-§3.4 契约）
  *   HOLD_INTENT_MISMATCH   意图单号与本单不符（调用方装配错误，防御性拦下）
+ *   HOLD_NOT_IN_SERVICE    任职闸门：派发对象非在岗（或任职事实缺失/不一致/未知）——拒出工
+ *                          （v2/02 §三/§3.4「非在岗态不得发起出工」；**先于并发四闸**——
+ *                          见 passGates 首步；fail-closed：不可证在岗即拒）
  *   DEDUP_NOOP             幂等去重命中（docs/22-§三.2）
  *   WAIT_APPROVAL          待批态等制作人批示（L1 前置批 / L2 交付批）
  *   EVIDENCE_PENDING       已派发在工，等证据四要件
@@ -98,6 +102,7 @@ export type DecisionCode =
   | 'HOLD_BREAKER_OPEN'
   | 'HOLD_INTENT_MALFORMED'
   | 'HOLD_INTENT_MISMATCH'
+  | 'HOLD_NOT_IN_SERVICE'
   | 'DEDUP_NOOP'
   | 'WAIT_APPROVAL'
   | 'EVIDENCE_PENDING'
@@ -153,6 +158,7 @@ export interface HoldAction extends ActionBase {
     | 'HOLD_BREAKER_OPEN'
     | 'HOLD_INTENT_MALFORMED'
     | 'HOLD_INTENT_MISMATCH'
+    | 'HOLD_NOT_IN_SERVICE'
 }
 
 export interface WaitEvidenceAction extends ActionBase {
@@ -320,6 +326,11 @@ export interface DecisionInput {
    * 提供且 inflightCount ≥ limit → HOLD_PERSON_BUSY（顺延不丢，不抢占在工）。
    */
   personGate?: PersonGateState
+  /**
+   * 任职闸门快照（v2/02 §3.4）：先于并发四闸判定，state≠in-service → HOLD_NOT_IN_SERVICE
+   * （硬拒、不占资源闸）；缺省不提供=旧调用面不带闸，生产链路恒提供（缺证=state 'missing'）。
+   */
+  employment?: EmploymentGateSnapshot
   /** 唤起意图（docs/25-§3.4 InvokeIntent；v0 只用其身份参与去重键，kind/priority 留后续刀） */
   intent: InvokeIntent
   /** 已处理意图键集合（daemon 落账后回灌；幂等去重依据） */
@@ -539,6 +550,10 @@ export function breakerCooled(b: BreakerSnapshot, now: number): boolean {
  */
 function passGates(input: DecisionInput, dispatched: string): Action {
   const { issue, laneLease, limits, breaker, now } = input
+  // 任职闸门先于并发四闸（v2/02 §3.4）：非在岗/缺证/冲突/未知=硬拒，不占泳道/人闸/额度
+  if (!employmentAllowsDispatch(input.employment)) {
+    return hold(issue.id, 'HOLD_NOT_IN_SERVICE')
+  }
   if (breakerTripped(breaker) && !breakerCooled(breaker, now)) {
     return hold(issue.id, 'HOLD_BREAKER_OPEN')
   }

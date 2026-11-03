@@ -35,6 +35,7 @@ import type { DrainController } from '../drain/drain.ts'
 import type { GateRunner } from '../gate.ts'
 import type { DirectiveAuthorizer, DirectiveGateDeps } from '../directive/index.ts'
 import type { HarvestAttemptHost, HarvestBatchLedger } from '../harvest/batch.ts'
+import type { EmploymentGateSeam } from '../hr-gate/engine-seam.ts'
 import type { LaneRegistry } from '../lanes/registry.ts'
 import type { MergeLeaseRegistry } from '../merge/merge-lease.ts'
 import type { MergeRunHost } from '../merge/merge-run.ts'
@@ -109,6 +110,8 @@ export interface EngineRuntime {
   readonly workerKeys: WorkerKeyDeps | undefined
   readonly rooms: RoomDuty | undefined
   readonly onWorkComplete: ((signal: RelayWorkSignal) => void) | undefined
+  /** 任职闸门接缝（v2/02 §3.4；create-runtime 单点装配——事实/留痕/兜底/观测） */
+  readonly hrGate: EmploymentGateSeam
   /** 最终写路径署名（SEC-FC-06：system→onBehalfOf；person/control→actorRef） */
   readonly writeActor: string
   readonly makeId: (ts: number) => string

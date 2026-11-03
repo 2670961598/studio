@@ -18,6 +18,7 @@ import type { DirectiveGateDeps } from '../directive/index.ts'
 import { createDrainController } from '../drain/drain.ts'
 import { strikeBreakerAndMaybeTrip } from '../harvest/breaker.ts'
 import { createHarvestBatchLedger } from '../harvest/batch.ts'
+import { createEmploymentGateSeam } from '../hr-gate/engine-seam.ts'
 import { createLaneRegistry } from '../lanes/registry.ts'
 import { createMergeLeaseRegistry } from '../merge/merge-lease.ts'
 import type { MergeRunHost } from '../merge/merge-run.ts'
@@ -59,6 +60,16 @@ export function createRuntime(deps: EngineDeps, seams: EngineSeams): EngineRunti
   const assembler = deps.assembler
   const people = deps.people
   const costGuard = deps.costGuard // cost_guard 绑定（132-§6.4 单C）：applyCompanyUpdate 恒换（含 undefined=关面）
+
+  // 任职闸门（v2/02 §3.4；studio-dev-550）：thunk 取活名册（L1 热重载整组换 people 后零重绑）——
+  // 缺省 compat（引擎直连/旧测试）；serve 恒注入 strict（缺证即拒）。事实读取/拍内观测/台账
+  // 留痕/执行位兜底全在 hr-gate/，相位体只各取一处单行调用（本处=唯一装配点）。
+  const hrGate = createEmploymentGateSeam({
+    people: () => rt.people,
+    ...(deps.hrGate !== undefined ? { mode: deps.hrGate.mode } : {}),
+    ledger,
+    emit: (name, issue, attempt, tickEvents, extra) => rt.makeEvent(name, issue, attempt, tickEvents, extra),
+  })
 
   // 批示归一层绑定（studio-dev-171，docs/18-§2.5）：peopleRef 闭包取活名册（L1 热替换
   // 即随换——防陈旧名册放行）；defaultAssignee 与 resolvePerson 回退链同源。
@@ -160,6 +171,7 @@ export function createRuntime(deps: EngineDeps, seams: EngineSeams): EngineRunti
     workerKeys,
     rooms,
     onWorkComplete,
+    hrGate,
     writeActor,
     makeId,
     now,

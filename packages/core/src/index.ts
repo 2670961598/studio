@@ -56,6 +56,7 @@ export * from './flows.ts'
 
 // 决策纯函数与 Action 联合（docs/17-§2；拟升 contract）
 export * from './decide.ts'
+export * from './employment/gate.ts' // 任职闸门判定面（studio-dev-550；v2/02 §3.4）
 
 // 断路器（docs/17-§6 末 / F1-10）
 export * from './breaker.ts'

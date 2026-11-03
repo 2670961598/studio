@@ -284,6 +284,9 @@ export function buildServeRuntime(
     clock,
     config: engineConfig,
     people: snapshot.people, departments: snapshot.departments, // 130-P2（studio-dev-173）：部门索引随快照注入——父单立案 leader 解析
+    // 任职闸门（studio-dev-550；v2/02 §3.4）：生产装配恒 strict——非在岗/任职事实缺失/
+    // 不一致=拒出工（HOLD_NOT_IN_SERVICE，fail-closed）；热重载经 people thunk 随快照换。
+    hrGate: { mode: 'strict' },
     ...(snapshot.costGuard !== undefined ? { costGuard: snapshot.costGuard } : {}), // cost_guard 段（132-§6.4 单C）：段不声明=面关
     // 成本警戒 notify 出口（129-D 181）：v0 接 log 行；刀B 面注入=IM 即时广播叠加
     notify: costNotifyOutlet,
@@ -301,6 +304,9 @@ export function buildServeRuntime(
       relayPublish?.(signal)
     },
   })
+
+  // 任职闸门接线留痕（启动日志；studio-dev-550）——真机验证据此 grep「任职闸门」
+  log('[serve] 任职闸门已装配：mode=strict（v2/02 §3.4：非在岗/任职事实缺失/不一致=拒出工，HOLD_NOT_IN_SERVICE，fail-closed）')
 
   // —— 唤起源注册表（22-§一）：三源按配置接入，emit 统一进 engine.ingest（runServe 接线） ——
   const sources = createSourceRegistry({ log })
