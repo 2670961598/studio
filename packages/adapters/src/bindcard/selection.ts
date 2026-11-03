@@ -11,11 +11,14 @@
  *   - plan/05 IMPL-07-05（NEG-RUN-05）；plan/02 §五-8 接口耦合（本件不改 daemon）。
  *
  * 能力边界（不冒充机制保证）：
- *   - 真正的**派生树登记网关**未建（GAP-V2-04）：本件是**代偿校验**——只拦「经本解析器」的
- *     派发路径；绕过本解析器直调适配器的路径本件看不到（无路径可拦，如实登记，不称机制保证）。
+ *   - **派生树登记网关**在独立包 `gateway/src/derivation-gateway.ts` 实现（GAP-V2-04 登记腿）；
+ *     本件不跨包 import（adapters 层位只许 contract），以**结构端口** `DerivationRevocationPort`
+ *     注入消费：注入即拦「该单该执行体落在已撤回派生树内」的派发；未注入＝本件行为零变。
+ *     绕过本解析器直调适配器的路径本件仍看不到（无路径可拦，如实登记，不称机制保证）。
  *   - 登记是证据面不是授权面：解析产物 `authorization:'not-granted-here'` 恒非「已授权」，
  *     不提供任何 granted 布尔位（选择≠授权，v2/07 §一）。
- *   - 主绑定（DSH）走缺省链，不需要登记（默认就是选择结果）；**非主绑定执行器**必须有登记链。
+ *   - 主绑定（DSH）走缺省链，不需要登记（默认就是选择结果）；**非主绑定执行器**必须有登记链；
+ *     撤回传播面优先于缺省链——已撤派生的执行体（含主绑定）一律拒。
  */
 import type { ClassifiedError, ExecutorFamily, Result } from '@studio-next/contract'
 import type { Executor } from '../../../contract/src/records/asset.ts'
@@ -68,6 +71,14 @@ export interface DispatchSelection {
 export interface DispatchRequest {
   readonly ticket: string
   readonly executor: string
+}
+
+/**
+ * 派生树撤回端口（结构类型；由 `gateway/src/derivation-gateway.ts` 的 `revocationPort()`
+ * 实现，adapters 不跨包 import）。`isRevoked` 只回答撤回传播面，不构成授权。
+ */
+export interface DerivationRevocationPort {
+  readonly isRevoked: (ticket: string, executor: string) => boolean
 }
 
 function isExecutor(value: string): value is Executor {
@@ -124,8 +135,10 @@ export function registerSelection(
 /**
  * 派发解析（NEG-RUN-05 代偿校验的唯一放行点）：
  *   1. 执行器不在 ENU-88 → dispatch/executor-unknown；
- *   2. 主绑定（DSH）→ 缺省链放行（source='default'，chainId='default:primary'）；
- *   3. **非主绑定执行器**必须在该单有登记链：
+ *   2. 注入派生撤回端口且该单该执行体落在已撤回派生树内 → dispatch/selection-revoked
+ *      （撤回父凭据后后代凭据/派生树同步失效；NEG-SEC-08 传播面，优先于缺省链）；
+ *   3. 主绑定（DSH）→ 缺省链放行（source='default'，chainId='default:primary'）；
+ *   4. **非主绑定执行器**必须在该单有登记链：
  *      - 无任何该单登记 → dispatch/selection-unregistered（未登记选择链直连被拒——NEG-RUN-05）；
  *      - 该单登记指向别家 → dispatch/selection-mismatch（登记链说的不是它）；
  *      - 命中 → 放行，chainId 记来源（ticket/position），authorization 恒 'not-granted-here'。
@@ -134,6 +147,7 @@ export function registerSelection(
 export function resolveDispatchTarget(
   chain: SelectionChain,
   request: DispatchRequest,
+  derivationRevocation?: DerivationRevocationPort,
 ): Result<DispatchSelection, ClassifiedError> {
   const parsed = ExecutorSchema.safeParse(request.executor)
   if (!parsed.success) {
@@ -143,6 +157,12 @@ export function resolveDispatchTarget(
     )
   }
   const executor = parsed.data
+  if (derivationRevocation?.isRevoked(request.ticket, executor) === true) {
+    return configErr(
+      'dispatch/selection-revoked',
+      `单据 ${JSON.stringify(request.ticket)} 的执行体 ${executor} 落在已撤回派生树内——撤回后后代凭据/派生树同步失效，不得再派发（NEG-SEC-08/NEG-RUN-05）`,
+    )
+  }
   if (executor === PRIMARY_BINDING_EXECUTOR) {
     return okResult(
       deepFreeze({
@@ -158,7 +178,7 @@ export function resolveDispatchTarget(
   if (forTicket.length === 0) {
     return configErr(
       'dispatch/selection-unregistered',
-      `单据 ${JSON.stringify(request.ticket)} 无选择链却要求直连非主绑定执行器 ${executor}——未登记选择链直连被拒（NEG-RUN-05；派生树登记网关 GAP-V2-04 未建前以本代偿校验拒）`,
+      `单据 ${JSON.stringify(request.ticket)} 无选择链却要求直连非主绑定执行器 ${executor}——未登记选择链直连被拒（NEG-RUN-05；派生树登记网关 GAP-V2-04 登记腿已建/本件消费撤回端口，未注入时仍以本代偿校验拒）`,
     )
   }
   const hit = forTicket.find((e) => e.executor === executor)

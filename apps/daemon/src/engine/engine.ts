@@ -292,7 +292,10 @@ import { decideWorkCandidate, type WorkCandidateHost } from './work/intake.ts'
 import { effectiveStallAfterMs, livenessOfActivity, probeInflightActivity, recordLiveness } from './watchdog/liveness.ts'
 import { executeStallResponse as runStallResponse, type StallResponseHost } from './watchdog/stall-response.ts'
 // 派发域 seatbelt 圈定（IMPL-07-09 / SEC-FC-05 后半）：缺省 read-only；校验/留痕见模块头注
-import { resolveWorkerDispatchSeatbelt, seatbeltNote } from './work/dispatch-seatbelt.ts'
+import { resolveWorkerDispatchSeatbelt, seatbeltNote, type DispatchDerivationGuard } from './work/dispatch-seatbelt.ts'
+// 派发前策略投影通道（GAP-V2-02 / SEC-SIG-04 信封闸）：生成→签名→落盘→回读验签→消费；
+// 失败面=不 launch、不降级（docs/v2/07 §2.2 EXEC-01；接线体=prm/dispatch-projection.ts）
+import { applyDispatchProjection } from './prm/dispatch-projection.ts'
 import {
   applyWorkTransition,
   runApprovalTransitions,
@@ -385,6 +388,7 @@ export interface EngineDeps {
   onWorkComplete?: (signal: RelayWorkSignal) => void
   mergeRun?: MergeRunDeps // 202-P2 studio-dev-232：注入=相位 5 真单刀面开；缺省=v0 模拟轨零行为
   dispatchSeatbelt?: SeatbeltGrant // IMPL-07-09 派发域 seatbelt 圈定授权（省略=read-only 最严；放宽须显式授权并留痕；校验/留痕面见 work/dispatch-seatbelt.ts）
+  derivationGuard?: DispatchDerivationGuard // GAP-V2-04 派生树撤回闸（省略=不拦；注入=phase-3 派发前拒已撤派生树，NEG-SEC-08/NEG-RUN-05）
 }
 
 // ————————————————————————— TickReport（17-§2「tick 返回结构化 actions」；各面类型驻 tick-report/types.ts） —————————————————————————
@@ -738,7 +742,7 @@ export function createEngine(deps: EngineDeps): Engine {
     let prevUmask: number | undefined
     try {
       // 派发域 seatbelt 圈定前置（SEC-FC-05 后半）：失败即抛 → 本 catch → DISPATCH_FAIL，detect/装配/launch 零调用（work/dispatch-seatbelt.ts）
-      const seatbelt = resolveWorkerDispatchSeatbelt({ ticket, executor: adapter.name, workspace, grant: deps.dispatchSeatbelt })
+      const seatbelt = resolveWorkerDispatchSeatbelt({ ticket, executor: adapter.name, workspace, grant: deps.dispatchSeatbelt, derivationGuard: deps.derivationGuard })
       // detect 前置（18-§一：launch 前必跑；不达标明报不静默降级）
       const detect = await adapter.detect()
       if (!detect.ok) return fail(`executor ${adapter.name} detect 不达标：${detect.gaps.join('；')}`)
@@ -789,7 +793,10 @@ export function createEngine(deps: EngineDeps): Engine {
       // ＋定时岗产出哨兵段（127-A R1 批示③：工单型岗单注入三元组回写义务——per-attempt
       // 操作面同位；patrol 工件/普通单结构性不注入）
       const sentinelDuty = sentinelDutyForTicket(ledger, ticket)
-      const briefParts = [assembled.brief.text]
+      // 策略投影通道（SEC-SIG-04 信封闸／GAP-V2-02）：生成→签名→落盘→**回读验签**→消费；失败＝不 launch、不降级（NEG-RUN-01；体=prm/dispatch-projection.ts，字段拼装收口在接线体，本处只留调用）。
+      const prm = applyDispatchProjection({ company: config.company, ticket, attempt, personId: person.id, personDept: person.dept, executor: adapter.name, executorVersion: detect.version, capabilities: adapter.capabilities, workspace, rootDir: config.rootDir, atMs: at })
+      if (prm.kind === 'rejected') return fail(`PRM_FAIL：${prm.detail}`)
+      const briefParts = [assembled.brief.text, prm.briefBlock]
       if (workerKeys !== undefined) briefParts.push(`${workerKeyGuidance()}\n`)
       if (sentinelDuty !== undefined) briefParts.push(sentinelBriefBlock(sentinelDuty))
       const briefText = briefParts.join('\n')
@@ -877,7 +884,7 @@ export function createEngine(deps: EngineDeps): Engine {
         size: Buffer.byteLength(assembled.agentsMd.text, 'utf8'),
         payload_hash: `sha256:${createHash('sha256').update(assembled.agentsMd.text, 'utf8').digest('hex')}`,
         ...(resumeFace !== undefined ? { causation_id: resumeFace.causationId } : {}),
-        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version}${tierFace?.noteAnchor ?? ''};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${minted !== undefined ? `;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=${minted.nonce}` : ''}${action.breakerProbe === true ? `;breaker=half-open-probe（冷却窗过——单次试探：成功即复位，失败回全开续冷却，DEV-46）` : ''};${seatbeltNote(seatbelt)}${resolved.autoAssignNote ?? ''}${queueAnchorInfo.waitAnchor}${resumeFace?.noteAnchor ?? ''}`,
+        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version}${tierFace?.noteAnchor ?? ''};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${minted !== undefined ? `;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=${minted.nonce}` : ''}${action.breakerProbe === true ? `;breaker=half-open-probe（冷却窗过——单次试探：成功即复位，失败回全开续冷却，DEV-46）` : ''};${seatbeltNote(seatbelt)}${prm.noteAnchor}${resolved.autoAssignNote ?? ''}${queueAnchorInfo.waitAnchor}${resumeFace?.noteAnchor ?? ''}`,
       })
       // 派发成功即出队（129-§6.2）：携带条删——GATE_FAIL 回滚再入队走 touchQueueCarry
       // 新钟（attempt 轮次可区分，队列等待观测口径=每誓一钟，不跨轮累计）。

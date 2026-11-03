@@ -127,6 +127,11 @@ export * from './ring/ring-scenarios.ts'
 // 在途最小者优先/同级轮转/并发帽；失败闭集四码 fail-closed，永不选在帽人。
 export * from './assign/assign.ts'
 
+// 策略投影生成器稳定导出面（PRM-G1..G8；v2/14 §六；子域件 prm/ 不构成第二语义源）
+export * from './prm/compile-projection.ts'
+// 策略投影签名封套与验签（SEC-SIG-04 机制腿；v2/15 §二；纯逻辑零 IO）
+export * from './prm/channel.ts'
+
 /** 包名常量 */
 export const PACKAGE_NAME = '@studio-next/core'
 

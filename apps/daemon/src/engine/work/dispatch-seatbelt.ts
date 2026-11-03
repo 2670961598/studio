@@ -71,6 +71,15 @@ import type { TicketId } from '@studio-next/contract'
 // 一、派发计划类型（校验产物；read-only 无留痕、workspace-write 必有留痕）
 // ---------------------------------------------------------------------------
 
+/**
+ * 派生树撤回端口（结构类型；daemon 组合根注入 derivation-gateway 的 revocationPort——
+ * 引擎层不 import gateway 类型面之外的实现，测试可注入同形桩）。`isRevoked` 只回答
+ * 「该单该执行体是否落在已撤回派生树内」，不构成授权（v2/07 §一：选择不是授权）。
+ */
+export interface DispatchDerivationGuard {
+  readonly isRevoked: (ticket: string, executor: string) => boolean
+}
+
 /** 派发圈定请求（一次派发＝一张单一次尝试；workspace 归 WS-R3 纯函数派生） */
 export interface WorkerDispatchRequest {
   readonly ticket: TicketId
@@ -85,6 +94,11 @@ export interface WorkerDispatchRequest {
   readonly grant?: SeatbeltGrant | undefined
   /** 派发期追加产出位（**仅** workspace-write 档；须逐条落在授权面内，相对路径拒收） */
   readonly extraWriteRoots?: readonly string[] | undefined
+  /**
+   * 派生树撤回闸（可选注入；缺省不注入＝行为零变更）：撤回父凭据后后代凭据/派生树同步
+   * 失效，落在已撤派生树内的执行体不得再 spawn（NEG-SEC-08/NEG-RUN-05；GAP-V2-04 登记腿）。
+   */
+  readonly derivationGuard?: DispatchDerivationGuard | undefined
 }
 
 /**
@@ -125,6 +139,8 @@ export interface WorkerDispatchSeatbelt {
 
 /**
  * 解析本 attempt 的派发圈定计划（**派发前唯一守门点**；不 spawn、不落盘、不读时钟）：
+ *   0. 派生树撤回（注入 `derivationGuard` 时）：该单该执行体落在已撤派生树内＝CONFIG_INVALID
+ *      （NEG-SEC-08/NEG-RUN-05；未注入＝零行为变更）；
  *   1. 工位：绝对路径＋（存在时）非符号链接且为目录——WS-R3 派生路径被替换即拒派；
  *   2. 档位：`resolveSeatbeltGrant`（07-08 唯一守门点）——缺省 read-only、非法档/未授权
  *      放宽/相对根/read-only 带根一律构造期 CONFIG_INVALID，本件不吞不改；
@@ -136,6 +152,14 @@ export interface WorkerDispatchSeatbelt {
  * 抛出即拒派：调用方（launchWorkerDispatch）在任何 spawn 之前收到异常。
  */
 export function resolveWorkerDispatchSeatbelt(request: WorkerDispatchRequest): WorkerDispatchSeatbelt {
+  // 派生树撤回闸（0 号闸；先于档位/工位校验）：撤回父凭据后后代凭据/派生树同步失效，
+  // 落在已撤派生树内的执行体一律不启动（NEG-SEC-08/NEG-RUN-05）。未注入＝行为零变更。
+  if (request.derivationGuard?.isRevoked(request.ticket, request.executor) === true) {
+    configInvalid(
+      'dispatch/derivation-revoked',
+      `执行体 ${request.executor} 落在单据 ${request.ticket} 的已撤回派生树内——后代凭据/派生树已失效，不得再派发（NEG-SEC-08/NEG-RUN-05）`,
+    )
+  }
   const plan = resolveSeatbeltGrant(request.grant) // 档位守门（07-08；缺省=read-only）
   const workspace = assertDispatchWorkspace(request.workspace)
   if (plan.tier === 'read-only') {
