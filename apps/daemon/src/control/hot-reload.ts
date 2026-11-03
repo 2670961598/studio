@@ -160,7 +160,9 @@ export interface HotReloadDeps {
   makeId: (ts: number) => string
   log: (line: string) => void
   /** 装载面应用（校验绿后调用；**抛错=按 apply-failed 处置**——实现内部先做幂等台账段，后做纯赋值段） */
-  apply: (snapshot: CompanySnapshot) => HotReloadApplyReport
+  // 允许 async（DOM-07；studio-dev-549/582）：资产部装载/插件同步是异步 IO，失败即抛 →
+  // 旧快照保持 + ESCALATE（fail-closed），与既有同步 apply 语义零漂移。
+  apply: (snapshot: CompanySnapshot) => HotReloadApplyReport | Promise<HotReloadApplyReport>
   /** events.dept 兜底（快照无部门时——serve 同源注入） */
   deptFallback: string
   /** 自动指纹监听开关（daemon.yaml reloadWatch；false=只剩手动通道） */
@@ -401,7 +403,7 @@ export function createHotReload(deps: HotReloadDeps): HotReload {
       }
       return { kind: 'unchanged', changes: renderStatDiff(diff), fingerprint: next.overall, event: null }
     }
-    const applyReport = deps.apply(snapshot)
+    const applyReport = await deps.apply(snapshot)
     const oldFp = baselineFingerprint.overall
     // bytes 同指纹口径（排除锚文件——账目 size 与指纹面同集，可对账）
     const bytes = Object.values(contentFiles).reduce((s, t) => s + Buffer.byteLength(t, 'utf8'), 0)

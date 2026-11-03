@@ -43,6 +43,7 @@ import type { DrainSettleResult } from '../../engine/drain/drain.ts'
 import { takeOverRunningWorkRecords } from '../../engine/harvest/inflight-takeover.ts'
 import { noopLinesOf, renderTick } from '../render/tick.ts'
 import { DEMO_SNAPSHOT } from '../demo/demo-snapshot.ts'
+import { loadCompanyAtBoot } from '../assets/boot.ts'
 import { wirePlatform } from '../platform/wire.ts'
 import type { MatrixHrFace } from '../../engine/hrsync/hrsync.ts'
 import type { NotifyBroadcastFace } from '../../engine/notify/broadcast.ts'
@@ -142,14 +143,8 @@ export async function runServe(
   let snapshot = DEMO_SNAPSHOT
   if (config.companyDir !== undefined) {
     // 公司目录装载（校验不过拒绝启动——04-§九；daemon 只读快照不写目录）
-    const { loadCompanyDirectory, readDirectoryFiles } = await import('@studio-next/company')
-    const files = await readDirectoryFiles(path.resolve(config.companyDir))
-    const mounted = loadCompanyDirectory(files)
-    if (!mounted.ok) {
-      ledger.close()
-      throw new Error(`公司目录校验不通过（拒绝启动）：\n${mounted.issues.map((i) => `  ${i.file}:${i.line} [${i.rule}] ${i.fix}`).join('\n')}`)
-    }
-    snapshot = mounted.snapshot
+    // 资产部生产接线（DOM-07；docs/17-§2 boot 装配相位；失败=拒启，v2/06 §3.4 fail-closed）
+    snapshot = await loadCompanyAtBoot({ companyDir: config.companyDir, rootDir: rootDirAbs, log: (line) => console.log(line), onRefuse: () => ledger.close(), ...(config.agentYaml !== undefined ? { agentYaml: config.agentYaml } : {}) })
   }
 
   // —— 重启检查点缺失面：restart 标记在但摘要读不回——ALARM 如实上报，不静默跳自检 ——

@@ -36,6 +36,7 @@ import { buildServeDirectiveDeps } from '../../engine/directive/index.ts'
 import { createDefaultGateRunner, createAcceptanceGateRunner } from '../../engine/gate.ts'
 import { createDefaultMergeRunDeps } from '../../engine/merge/default-deps.ts'
 import { createHotReload, type HotReload, type HotReloadApplyReport } from '../../control/hot-reload.ts'
+import { PLUGINS_DIR, executorFamiliesOf, wireCompanyAssets } from '../assets/wire.ts'
 import { wireServeOps } from '../ops/index.ts'
 import { wireServeRecords } from '../records/index.ts'
 import { makeUlid } from '../../engine/tools/id.ts'
@@ -383,8 +384,10 @@ export function buildServeRuntime(
   //    apply 段（校验绿后调用，幂等可重入）：岗播种/移除→快照替换→engine.applyCompanyUpdate→署名上下文。
   let hotReload: HotReload | undefined
   if (config.companyDir !== undefined) {
+    const companyDirAbs = path.resolve(config.companyDir)
+    const pluginRootAbs = path.join(path.resolve(config.rootDir), PLUGINS_DIR)
     hotReload = createHotReload({
-      companyDir: path.resolve(config.companyDir),
+      companyDir: companyDirAbs,
       rootDir: path.resolve(config.rootDir),
       ledger,
       company: config.company,
@@ -395,7 +398,10 @@ export function buildServeRuntime(
       watch: config.reloadWatch,
       // 显式声明无锚（SEC-FC-03；init 通道不落锚——docs/44-§2.3-4）：缺键＝未声明→无锚仍拒（fail-closed）
       ...(config.reloadAnchorAbsence !== undefined ? { anchorAbsence: config.reloadAnchorAbsence } : {}),
-      apply(next: CompanySnapshot): HotReloadApplyReport {
+      async apply(next: CompanySnapshot): Promise<HotReloadApplyReport> {
+        // 资产部生产接线先行（DOM-07；docs/17-§2 boot 装配＋热载 apply）：装载=只读校验、
+        // 插件=指纹幂等补装；抛错=apply 失败 → 保持旧快照 + ESCALATE（fail-closed，docs/38-§2）
+        await wireCompanyAssets({ companyDir: companyDirAbs, pluginRoot: pluginRootAbs, executorFamilies: executorFamiliesOf(registry.list().map((e) => e.name)), log })
         let seeded = 0
         let kept = 0
         let removed = 0

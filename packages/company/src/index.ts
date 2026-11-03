@@ -86,3 +86,8 @@ export * from './namer.ts'
 // company-{3..9}-level 七套骨架；渲染后自检（目录校验+init 占位断言）红即不落盘）
 export * from './level-specs.ts'
 export * from './gen-template.ts'
+
+// 公司资产部（DOM-07；IMPL-05-01/02；studio-dev-549/582 生产接线）：清单/装载报告/卫生扫描/
+// 定义包导入面——daemon 装配相位（boot 装载＋热载 apply）与 panel/import 报告的唯一导入口。
+// 记录面形状（REC-ASSET-01）仍归 contract，本包只提供读取口径，不复制字段表。
+export * from './assets/index.ts'
