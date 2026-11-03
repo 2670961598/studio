@@ -39,6 +39,7 @@ import type { EmploymentGateSeam } from '../hr-gate/engine-seam.ts'
 import type { LaneRegistry } from '../lanes/registry.ts'
 import type { MergeLeaseRegistry } from '../merge/merge-lease.ts'
 import type { MergeRunHost } from '../merge/merge-run.ts'
+import type { HarvestRecordingPort } from '../harvest/records-port.ts'
 import type { PromptAssembler } from '../prompt-assembly.ts'
 import type { QueueCarry } from '../todoqueue/queue.ts'
 import type { RecordWirePort } from '../records/index.ts'
@@ -173,6 +174,8 @@ export interface EngineRuntime {
   readonly lanes: LaneRegistry
   readonly mergeLeases: MergeLeaseRegistry
   readonly harvestBatches: HarvestBatchLedger
+  /** 收割证据落库端口（REC-EVD-01/02；缺省注入＝纯内存簿，见 harvest/records-port.ts） */
+  readonly harvestPort: HarvestRecordingPort
   readonly budgetDeps: BudgetGateDeps
   readonly drainCtl: DrainController
   readonly queueCarry: QueueCarry

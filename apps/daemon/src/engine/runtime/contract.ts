@@ -29,6 +29,7 @@ import type { CostThresholdNotice } from '../intents/escalate.ts'
 import type { RelayWorkSignal } from '../intents/relay-resume-sources.ts'
 import type { QueueJudgeHook } from '../judge/sites129.ts'
 import type { HarvestBatchLedger } from '../harvest/batch.ts'
+import type { HarvestRecordingDeps, HarvestRecordingObservation } from '../harvest/records-port.ts'
 import type { HrSyncTickReport } from '../hrsync/hrsync.ts'
 import type { SplitDirectiveInput } from '../split/materialize.ts'
 import type { RoomDuty } from '../rooms/room-duty.ts'
@@ -43,7 +44,7 @@ import type { TickReport } from '../tick-report/types.ts'
 
 /** 引擎依赖：全注入（platform 泳道的 @studio-next/localplatform 接入点=此处 FlowPlatform
  *  参数——v0 传 fake（src/engine/fakes.ts）；真 localfile/YouTrack 接线归 platform 泳道合龙） */
-export interface EngineDeps {
+export interface EngineDeps extends HarvestRecordingDeps {
   platform: FlowPlatform
   ledger: Ledger
   registry: ExecutorRegistry
@@ -121,7 +122,7 @@ export interface EngineDeps {
 }
 
 /** 引擎句柄：serve 循环每拍调 tick()；停机走 dispose()（在途 drain=优雅杀） */
-export interface Engine {
+export interface Engine extends HarvestRecordingObservation {
   tick(): Promise<TickReport>
   /**
    * 意图注入口（22-§一 源协议在引擎侧的落点）：唤起源（v0.4=scheduler 的 schedule 源；

@@ -256,7 +256,12 @@ export function createEngine(deps: EngineDeps): Engine {
     get config(): Engine['config'] {
       return rt.config
     },
-    harvestBatches: rt.harvestBatches,
+    get harvestBatches() {
+      return rt.harvestBatches
+    },
+    get harvestRecordings() {
+      return rt.harvestPort.recordings()
+    },
   }
   return engine
 }

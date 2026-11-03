@@ -23,6 +23,7 @@ import type { EventRecord, FlowPlatform, IssueRecord, TicketId } from '@studio-n
 import { openLedger, type Ledger } from '@studio-next/store'
 import { createEngine, ENGINE_CONFIG_DEFAULTS, type Engine, type EngineConfig, type EngineSignatureDraft, type TickReport } from '../../../../src/engine/engine.ts'
 import type { RecordWirePort } from '../../../../src/engine/records/index.ts'
+import type { HarvestRecordSink } from '../../../../src/engine/harvest/records.ts'
 import { createFakeAdapter, createFakePlatform, type FakeAdapterMode } from '../../../../src/engine/fakes.ts'
 import { createDefaultGateRunner } from '../../../../src/engine/gate.ts'
 import { createDefaultAssembler } from '../../../../src/engine/prompt-assembly.ts'
@@ -55,7 +56,12 @@ export type RecordWireFactory = (args: { readonly ledger: Ledger; readonly compa
 export async function createWorkStack(
   label: string,
   overrides: Partial<EngineConfig> = {},
-  extra: { readonly recordsOf?: RecordWireFactory; readonly signature?: EngineSignatureDraft } = {},
+  extra: {
+    readonly recordsOf?: RecordWireFactory
+    readonly signature?: EngineSignatureDraft
+    /** 收割证据落库口注入器（studio-dev-536 追加面；缺省不注入＝面关零行为，既有用例不动） */
+    readonly harvestRecordsOf?: (ledger: Ledger) => HarvestRecordSink
+  } = {},
 ): Promise<WorkTestStack> {
   const root = await mkdtemp(path.join(tmpdir(), `sn-work-${label}-`))
   roots.push(root)
@@ -72,10 +78,12 @@ export async function createWorkStack(
   const registry = createRegistry()
   registry.register(createFakeAdapter({ mode: () => mode.value, name: 'fake-work' }), { default: true })
   const records = extra.recordsOf?.({ ledger, company: DEMO_SNAPSHOT.slug })
+  const harvestRecords = extra.harvestRecordsOf?.(ledger)
   const engine = createEngine({
     platform,
     ledger,
     ...(records !== undefined ? { records } : {}),
+    ...(harvestRecords !== undefined ? { harvestRecords } : {}),
     registry,
     ...(extra.signature !== undefined ? { signature: extra.signature } : {}),
     assembler: createDefaultAssembler({

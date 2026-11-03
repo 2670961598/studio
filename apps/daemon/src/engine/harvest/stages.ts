@@ -13,6 +13,7 @@
  * （归独立验收/核验位置）。不新增记录类/端口，不做验收或结清判断。
  */
 import { HARVEST_INDEPENDENCE_DECLARATION, type HarvestBatchView } from './batch.ts'
+import type { HarvestRecordingView } from './records.ts'
 
 // ————————————————————————— 一、三判不合并（X2/X3/X4）与验收输入可用性 —————————————————————————
 
@@ -81,15 +82,21 @@ export const ACCEPTANCE_INPUT_REQUIRES =
   '独立验收位置（验者≠交付者；EX-2+ 另需独立收割最小主体——DEC-OPEN-13 未裁）'
 
 /**
- * 批次作验收输入（REC-EVD-01 不变量）：完整性存疑/幂等冲突/未封/自供关系不成立→不可用。
+ * 批次作验收输入（REC-EVD-01 不变量）：完整性存疑/幂等冲突/未封/自供关系不成立→不可用；
+ * 传入落库视图时，未落库（refused/failed/pending）同样 fail-closed 判不可用——记录面缺证
+ * 不得被读成「证据充分」（docs/17-§6 四要件＋v2/14 §1.6 唯一记录写口）。
  * 恒不产出 acceptance/settlement 判断（X2..X4 结构性拒绝——本件无验收权）。
  */
-export function acceptanceInputOf(batch: HarvestBatchView): AcceptanceInputView {
+export function acceptanceInputOf(batch: HarvestBatchView, recording?: HarvestRecordingView): AcceptanceInputView {
   const reasons: string[] = []
   if (batch.harvester.differsFromDeliverer !== true) reasons.push('收割者=交付者：关系要件不成立（自供不成独立——v2/08 §2.2）')
   if (batch.status === 'conflict') reasons.push('同键异内容（幂等冲突）：重复交付已拒，不得作验收输入')
   if (batch.status !== 'sealed') reasons.push(`批次状态=${batch.status}（未封批）：不得作验收输入`)
   if (batch.completeness !== 'complete') reasons.push(`完整性=${batch.completeness}：存疑时不得判接受（REC-EVD-01 不变量）`)
+  if (recording !== undefined && recording.state !== 'persisted') {
+    const detail = recording.reasons[0] !== undefined ? `：${recording.reasons[0]}` : ''
+    reasons.push(`证据批次未落库（state=${recording.state}${detail}）：不可作验收输入（fail-closed）`)
+  }
   return {
     usable: reasons.length === 0,
     reasons,

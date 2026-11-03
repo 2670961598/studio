@@ -69,6 +69,7 @@ import { wireWorkerKeys } from './root-delegation/worker-key-face.ts'
 import { wireDerivation } from './derivation.ts'
 import { wireExecutorFace } from './executor-face.ts'
 import { wireServeApi } from '../api/serve-face.ts'
+import { wireServeHarvestRecords } from '../harvest/records-wire.ts'
 
 import type { ServeRuntime } from './runtime-types.ts'
 
@@ -303,6 +304,8 @@ export function buildServeRuntime(
     // 成本警戒 notify 出口（129-D 181）：v0 接 log 行；刀B 面注入=IM 即时广播叠加
     notify: costNotifyOutlet,
     ...(catalog !== undefined ? { catalog } : {}),
+    // 收割证据落库口（REC-EVD-01/02 → PORT-HIST）：第 4 相位封批整批原子写（assembly/harvest/records-wire.ts）
+    harvestRecords: wireServeHarvestRecords({ ledger, guardRecord: outbound.gate.guardStoreRecord, log }),
     // 批示归一层（studio-dev-171，docs/18-§2.5）：恒注入（装配缝=engine/directive/
     // serve-config.ts——leader 表随快照，热重载整组换）
     directives: buildServeDirectiveDeps(

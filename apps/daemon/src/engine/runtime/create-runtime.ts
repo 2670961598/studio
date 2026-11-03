@@ -22,6 +22,7 @@ import { createEmploymentGateSeam } from '../hr-gate/engine-seam.ts'
 import { createLaneRegistry } from '../lanes/registry.ts'
 import { createMergeLeaseRegistry } from '../merge/merge-lease.ts'
 import type { MergeRunHost } from '../merge/merge-run.ts'
+import { wireHarvestRecordingPort } from '../harvest/records-port.ts'
 import { constructEngineSignature } from '../signature/index.ts'
 import type { SplitDirectiveInput } from '../split/materialize.ts'
 import { DEFAULT_QUEUE_AGE_STEP_MS, seedQueueCarry, type QueueCarry } from '../todoqueue/queue.ts'
@@ -92,7 +93,11 @@ export function createRuntime(deps: EngineDeps, seams: EngineSeams): EngineRunti
   const lanes = createLaneRegistry(config.laneTtlMs)
   const mergeLeases = createMergeLeaseRegistry(config.mergeLeaseTtlMs) // 202-P4 合并租约簿（per-engine——merge-run.ts 经 mergeHost 注入）
   const inflight = new Map<TicketId, Inflight>()
-  const harvestBatches = createHarvestBatchLedger() // 收割批次簿（IMPL-06-03；观测/测试只读——写口仅收割相位）
+  const harvestBook = createHarvestBatchLedger() // 收割批次簿（IMPL-06-03；观测/测试只读——写口仅收割相位）
+  // 收割证据端口（REC-EVD-01/02 → PORT-HIST）：注入落库口＝录制簿（封批整批原子写）；
+  // 缺省不注入＝纯内存簿（旧行为零变更）。簿唯一，harvestBatches 是同一实例的消费别名。
+  const harvestPort = wireHarvestRecordingPort({ book: harvestBook, sink: deps.harvestRecords, company: config.company, now: () => clock() })
+  const harvestBatches = harvestPort.batches
   const intentQueue: InvokeIntent[] = []
   const splitQueue: SplitDirectiveInput[] = []
   let seq = 0
@@ -203,6 +208,7 @@ export function createRuntime(deps: EngineDeps, seams: EngineSeams): EngineRunti
     lanes,
     mergeLeases,
     harvestBatches,
+    harvestPort,
     budgetDeps,
     drainCtl,
     queueCarry,
