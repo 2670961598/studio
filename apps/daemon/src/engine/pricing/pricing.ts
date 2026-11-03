@@ -44,7 +44,7 @@ export const PRICING_STALE_CHECK_DATE_KEY = 'pricing.stale_check_date'
 const STALE_ALARM_PREFIX = 'src=pricing-stale;'
 
 /** 本地日串 'YYYY-MM-DD'（晨间窗为本地业务时间——reportFileName 同口径取本地字段） */
-function localDateString(ms: number): string {
+export function localDateString(ms: number): string {
   const d = new Date(ms)
   const pad = (v: number): string => String(v).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`

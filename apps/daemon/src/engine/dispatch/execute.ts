@@ -36,6 +36,9 @@ import { instructionsTarget, removeInstructions, writeInstructions } from '../in
 import { resumeDispatchFace } from '../intents/relay-resume-faces.ts'
 import type { ResumeDispatchPlan } from '../intents/relay-resume.ts'
 import { applyDispatchProjection } from '../prm/dispatch-projection.ts'
+// 定价发布生成缝（studio-dev-554/rework-584）：附件生成＋失败告警收在 pricing/publish.ts，
+// 本文件只留一次调用（engine.ts 298 行不增——#556 拆件后派发体在本文件）。
+import { preparePricingAttachment } from '../pricing/publish.ts'
 import { aiwsWorkspaceOf } from '../prompt-assembly.ts'
 import { blindArtifactPaths, createView, resolveReadTier, roleOfAssignee } from '../read-tiers.ts'
 import { recordTransition } from '../records/hooks.ts'
@@ -170,6 +173,11 @@ export async function executeDispatch(
       //    兜底（HARVEST_DENIED）如实暴露，不静默】
       prevUmask = process.umask(WORKSPACE_UMASK)
       mkdirSync(workspace, { recursive: true })
+      // 定价发布附件（studio-dev-554，docs/17-§2 派发相位）：type='pricing' 单在 launch 前由
+      // daemon 从 models.yaml 三档确定性生成 deliverables/pricing.yaml；坏价目源头即拒
+      // （抛错→DISPATCH_FAIL，不 transition 不 launch）并同前缀去重发 DAILY_ALARM。
+      const pricingBrief = preparePricingAttachment({ ledger, company: config.company, issueType: fresh.type, ticket, workspace, at,
+        tiers: rt.catalog !== undefined ? rt.catalog.tiers() : undefined, emitAlarm: (note) => makeEvent('DAILY_ALARM', fresh, attempt, tickEvents, { note }) })
       if (nativeAgents) {
         writeFileSync(agentsTarget, assembled.agentsMd.text, 'utf8')
       } else {
@@ -189,6 +197,7 @@ export async function executeDispatch(
       const briefParts = [assembled.brief.text, prm.briefBlock]
       if (workerKeys !== undefined) briefParts.push(`${workerKeyGuidance()}\n`)
       if (sentinelDuty !== undefined) briefParts.push(sentinelBriefBlock(sentinelDuty))
+      if (pricingBrief !== '') briefParts.push(pricingBrief)
       const briefText = briefParts.join('\n')
       writeFileSync(briefPath, briefText, 'utf8')
       const taskBrief = assembled.brief.taskBrief

@@ -30,6 +30,22 @@ import {
 import { createDataChangeConsumer, createMentionConsumer, createWebhookConsumer } from './taxonomy.ts'
 import { createEscalateConsumer, type CostThresholdNotice } from './escalate.ts'
 import { wireRelayResumeFaces, type RelayResumeFaces } from './relay-resume-faces.ts'
+import { pricingTicketDescription } from '../pricing/publish.ts'
+
+/**
+ * 定时岗 payload.type → 物化单据类型（studio-dev-554 供给面缺口的最小收口；
+ * rework studio-dev-584 保持同一分型口）。
+ * 旧口径只认 patrol 特例、其余统一 'task'——定价岗因此永远物化成 task，收割后置步
+ * consumePricingPublish 的 issueType==='pricing' 判定结构性不命中（price_snapshots 恒 0）。
+ * 本函数是唯一分型口（drain 与测试同源）：patrol/pricing 显式透传，其余保持 'task' 不动。
+ * 事件词表零新增（docs/17-§3）；pricing 不声明 T: 流→落 L0 标准流，四要件链路不变。
+ */
+export function jobMaterializeType(payload: unknown): 'task' | 'patrol' | 'pricing' {
+  const type = (payload as { type?: unknown } | undefined)?.type
+  if (type === 'patrol') return 'patrol'
+  if (type === 'pricing') return 'pricing'
+  return 'task'
+}
 
 /** drain 依赖（engine tick 作用域注入——本件零引擎内部状态持有，回写全走引址面） */
 export interface DrainDeps {
@@ -99,13 +115,18 @@ export async function drainIntents(deps: DrainDeps): Promise<RelayResumeFaces> {
       //     结构性不含巡查工件（spike-② 判负线）。T:patrol 未声明→L0 delivered 兜底
       //     （现状行为原样；装载警告面 jobContractLoadWarnings 让退化可见，不炸既有配置）。
       //     巡查工件不是工单——落终态锚点结构性不可派发，decide 恒走回收 CLOSE。
-      const isPatrolArtifact = ((job.payload as { type?: unknown } | undefined)?.type) === 'patrol'
+      const materializeType = jobMaterializeType(job.payload)
+      const isPatrolArtifact = materializeType === 'patrol'
+      const isPricingPublish = materializeType === 'pricing'
       // 岗单物化流：resolveTicketFlow 同函数同序（与 decide/flowOf 永不漂移）——工单型走
-      // 'task'（W-9 不收 T:task，恒落 L0 回退=现状）；巡查型走 'patrol'（T 优先 L 回退）
-      const materializeType = isPatrolArtifact ? 'patrol' : 'task'
+      // 'task'（W-9 不收 T:task，恒落 L0 回退=现状）；巡查型走 'patrol'（T 优先 L 回退）；
+      // 定价型走 'pricing'（T:pricing 未声明=落 L0 标准流，四要件链路不变）
       const artifactFlow = resolveTicketFlow(config.flows ?? DEFAULT_FLOW_TABLE, materializeType, 0)
       const created = await platform.issues.create({
-        title: `[定时岗] ${job.job_id} ${new Date(deps.startedAt).toISOString()}`,
+        title: isPricingPublish
+          ? `[定时岗] 每日定价发布 ${job.job_id} ${new Date(deps.startedAt).toISOString()}`
+          : `[定时岗] ${job.job_id} ${new Date(deps.startedAt).toISOString()}`,
+        ...(isPricingPublish ? { description: pricingTicketDescription() } : {}),
         type: materializeType,
         dept: job.dept,
         level: 0,
