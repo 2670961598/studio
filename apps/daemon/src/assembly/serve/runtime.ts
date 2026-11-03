@@ -62,6 +62,7 @@ import {
 import { reEnsureChannels, startChannelSupply, wireRoomFace } from '../channels/channels.ts'
 import { seedJobs, removeMissingJobs } from '../jobs-seed/jobs-seed.ts'
 import { daemonIdentity, type ServeConfig } from './config.ts'
+import { authorityEvidenceGateOptions } from '../serveconfig/authority.ts'
 import { wireAiwsFace } from './aiws-face.ts'
 import { buildServeEngineConfig } from './engine-config.ts'
 import { loadRootDelegationFace } from './root-delegation/root-face.ts'
@@ -284,9 +285,8 @@ export function buildServeRuntime(
   // 平台写出站闸（exits.ts platform-write）：gated 代理外再包出站扫描（写文本过闸后才出站）
   const enginePlatform = outbound.wrapPlatform(
     wireGatedPlatform(rawPlatform, config, identity, clock, log, {
-      // #528 授权链闸与派生树面共用同一实例（同一 grants 快照，不双源）
       authority: derivation.authority,
-      ...(rootDelegation !== undefined ? { root: rootDelegation.options } : {}),
+      ...authorityEvidenceGateOptions({ root: rootDelegation?.options, ledger, company: config.company, actor: identity.author, dept: identity.ctx.dept, level: identity.ctx.level, config }),
     }),
   )
   const engine = createEngine({

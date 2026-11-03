@@ -115,7 +115,7 @@ export interface GatedPlatformOptions {
    * gw-authority-*，底层 platform 零调用（fail-closed）。
    */
   authority?: AuthorityGate
-  /** 授权证据的单号锚（缺省 CONTROL_TICKET——控制面实例口径） */
+  /** 授权证据的单号锚（缺省＝args.issue，再缺省 CONTROL_TICKET——控制面实例口径） */
   ticket?: TicketId
 }
 
@@ -175,7 +175,12 @@ export function createGatedPlatform(platform: FlowPlatform, gateway: Gateway, op
     }
     // 0) 授权链判定（先于铸造 token：拒绝不烧 nonce；证据由闸内 record 落点留痕）
     if (opts.authority !== undefined) {
-      const decision = opts.authority.authorize({ action: entryAction, args, ticket: opts.ticket ?? CONTROL_TICKET })
+      // 证据单号锚：显式 ticket > args.issue（真单）> 控制面哨兵——不把全部判定都记到控制面
+      const issueArg = args['issue']
+      const ticket =
+        opts.ticket ??
+        (typeof issueArg === 'string' && issueArg.trim() !== '' ? issueArg.trim() : CONTROL_TICKET)
+      const decision = opts.authority.authorize({ action: entryAction, args, ticket })
       if (!decision.allowed) {
         throw gatewayRejected(
           decision.reason ?? 'gw-authority-prohibited',

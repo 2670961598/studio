@@ -16,6 +16,16 @@ import { createLocalPlatform } from '@studio-next/localplatform'
 import { createTaigaPlatform, type TaigaAuth, type TaigaEntity } from '@studio-next/taiga'
 import { createFakePlatform } from '../../engine/fakes.ts'
 import { createAuthorityGate, type AuthorityGate } from '../../engine/tools/authority-gate.ts'
+import {
+  AUTHORITY_EVIDENCE_EVENT,
+  createAuthorityLedgerSink,
+  type AuthorityEvidenceLedgerFace,
+} from '../../engine/tools/authority-evidence.ts'
+import {
+  authorityModeOf,
+  assertAuthorityModeNotOverdue,
+  parseAuthorityEnforceByMs,
+} from '../../engine/tools/authority-policy.ts'
 import { createGatedPlatform } from '../../engine/tools/gated-platform.ts'
 // 类型环破口（IMPL-06-05）：ServeConfig 归位 assembly/serve/config.ts（本件只做平台接线，
 // 不经 serve.ts 门面取型——门面只保留公共导出/转发）
@@ -56,6 +66,24 @@ export interface WireGatedPlatformDeps {
    * `gw-root-no-delegation`，不误放行）。与 `gateway` 互斥语义：显式注入实例优先（测试面）。
    */
   root?: RootDelegationOptions
+  /**
+   * 判定证据落账面（studio-dev-579；docs/v2/08 §1.9 / v2/15 §一 SEC-FC-08）：给出即把
+   * `AuthorityEvidence` 作为 `events/GW_AUTHORITY_DECISION` 行落账（可 SQL 复算，非仅日志）。
+   * 生产装配由 `buildServeRuntime` 注入同一台账句柄（三不入·库闸后）；缺省＝log-only
+   * **测试/对照装配面**（生产缺省不成立：runtime 恒传）。
+   */
+  authorityEvidence?: {
+    readonly ledger: AuthorityEvidenceLedgerFace
+    readonly company: string
+    readonly actor: string
+    readonly dept: string
+    readonly level: number
+    readonly attempt?: number
+  }
+  /** 授权模式开关（daemon.yaml `authorityRequireClaim`；缺省 false=shadow） */
+  requireClaim?: boolean
+  /** shadow 失效日（daemon.yaml `authorityEnforceBy`；ISO YYYY-MM-DD，过期待 shadow 启动即拒） */
+  enforceBy?: string
 }
 
 export function wireGatedPlatform(
@@ -95,20 +123,48 @@ export function wireGatedPlatform(
   if (identity.signatureOrigin === 'migration') {
     log('[serve] 署名决定人=迁移期常量【降级标记】无公司目录 demo 装配（生产必配 daemon.yaml signatureOnBehalfOf 或公司目录在册人员——SEC-FC-06）')
   }
-  // 授权链闸（studio-dev-528）：core/authority 五函数经本闸接进写路径。默认 grants 为空＝
+  // 授权链闸（studio-dev-528／579）：core/authority 五函数经本闸接进写路径。默认 grants 为空＝
   // 授予记录生产者未建（差距 #4），故无主张的存量写走 shadow（放行＋留痕），有主张强制核验。
-  // 证据落 daemon 日志（值无密钥；形状=AuthorityEvidence，后续可原样进台账/面板）。
+  // **证据落账（studio-dev-579）**：生产装配把 AuthorityEvidence 写 events/GW_AUTHORITY_DECISION
+  // （SQL 可复算，非仅日志）；缺省 log-only 仅测试/对照装配。落账失败→gate 的 decide() 转
+  // `gw-authority-evidence-failed` 拒绝本次写（无留痕不放行，fail-closed）。
+  const requireClaim = deps?.requireClaim === true
+  const enforceByMs = deps?.enforceBy === undefined ? undefined : parseAuthorityEnforceByMs(deps.enforceBy)
+  const mode = authorityModeOf(requireClaim)
+  assertAuthorityModeNotOverdue({
+    requireClaim,
+    ...(enforceByMs !== undefined ? { enforceByMs } : {}),
+    nowMs: clock(),
+  })
+  const enforceByLine =
+    enforceByMs !== undefined
+      ? ` enforceBy=${new Date(enforceByMs).toISOString().slice(0, 10)}`
+      : requireClaim
+        ? ' enforceBy=不适用（已 enforce）'
+        : ' enforceBy=未声明【欠账：shadow 不得无限期，落地后须设 authorityEnforceBy】'
+  const evidenceLine =
+    deps?.authorityEvidence === undefined
+      ? 'evidence=log-only【降级：非生产装配，证据不落账】'
+      : `evidence=events/${AUTHORITY_EVIDENCE_EVENT}`
+  log(
+    `[serve] 授权链闸已接：mode=${mode} requireClaim=${requireClaim ? 'true' : 'false'}` +
+      ` ${evidenceLine}${enforceByLine}`,
+  )
   const authority =
     deps?.authority ??
     createAuthorityGate({
       grants: () => [],
       now: clock,
-      record: (evidence) => {
-        log(
-          `[authority] ${evidence.mode}/${evidence.state} action=${evidence.action} ticket=${evidence.ticket} evidence=${evidence.evidenceId}` +
-            `${evidence.detail !== undefined ? ` detail=${evidence.detail}` : ''}`,
-        )
-      },
+      ...(requireClaim ? { requireClaim: true } : {}),
+      record:
+        deps?.authorityEvidence === undefined
+          ? (evidence) => {
+              log(
+                `[authority] ${evidence.mode}/${evidence.state} action=${evidence.action} ticket=${evidence.ticket} evidence=${evidence.evidenceId}` +
+                  `${evidence.detail !== undefined ? ` detail=${evidence.detail}` : ''}`,
+              )
+            }
+          : createAuthorityLedgerSink({ ...deps.authorityEvidence, log, clock }),
     })
   return createGatedPlatform(raw, gateway, { ctx, author, authority })
 }

@@ -40,6 +40,7 @@ import { crossValidateMatrixChannels } from '../channels/channels.ts'
 import { coerceRestartServeKey, isRestartKey, validateRestartCross } from '../serveconfig/restart.ts'
 import { coerceAnchorAbsenceDeclaration, type AnchorAbsenceRaw } from './anchor-absence.ts'
 import { coerceSignatureServeKey } from '../serveconfig/signature.ts'
+import { coerceAuthorityServeKey } from '../serveconfig/authority.ts'
 import { DEFAULT_SERVE_CONFIG, type ServeConfig } from './config-types.ts'
 
 // 配置形状/缺省面拆至 config-types.ts（docs/20-§十五.三 600 行阈；拆后原文件余量 ≥50）；
@@ -264,6 +265,7 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
           coerceRestartServeKey(cfg, key, value, { str, num, bool })
           break
         }
+        if (coerceAuthorityServeKey(cfg, key, value)) break // 授权模式键（SEC-FC-08）：shadow/enforce 与期限
         if (!coerceSignatureServeKey(cfg, key, value)) throw new Error(`daemon.yaml：未知配置键 ${key}（v0 最小面，见 serve.ts 头注）`) // 署名决定人键（SEC-FC-06）：键面判定＋值域收窄归 serveconfig/signature.ts，未命中＝未知键
     }
   }

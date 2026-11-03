@@ -12,6 +12,7 @@ import { ENGINE_CONFIG_DEFAULTS } from '../../engine/engine.ts'
 import { HR_SERVE_DEFAULTS, type HrServeConfig } from '../hrsync/config.ts'
 import { RESTART_SERVE_DEFAULTS, type RestartServeConfig } from '../serveconfig/restart.ts'
 import type { SignatureServeConfig } from '../serveconfig/signature.ts'
+import type { AuthorityServeConfig } from '../serveconfig/authority.ts'
 import type { AnchorAbsenceDeclaration } from '../../control/hot-reload.ts'
 
 
@@ -19,7 +20,7 @@ import type { AnchorAbsenceDeclaration } from '../../control/hot-reload.ts'
  * serve 配置（v0 最小面；引擎子配置并入扁平键）。hr* 人事同步器键子面在
  * assembly/hrsync/config.ts 的 HrServeConfig（DEV-48，docs/52-§九——此处 extends 收平）。
  */
-export interface ServeConfig extends HrServeConfig, RestartServeConfig, SignatureServeConfig {
+export interface ServeConfig extends HrServeConfig, RestartServeConfig, SignatureServeConfig, AuthorityServeConfig {
   /** 台账库路径（不存在则建库+migrate——store openLedger 语义） */
   db: string
   /** 协作平台：fake（demo）| localfile（docs/23 LocalFile 平台）| taiga（docs/30 推荐 + docs/32 真机试点；接入点见 wirePlatform） */

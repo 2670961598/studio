@@ -22,15 +22,16 @@
  *   - **准入策略**（真机不回归硬约束）：授予记录生产者当前为 0，存量控制面写没有授权主张可带。
  *     故：有主张 → 强制核验（fail-closed：非 permitted 一律拒）；无主张 → 默认影子观测
  *     （mode=shadow、state=uncovered，放行但如实留痕），`requireClaim: true` 可一键硬切为拒绝。
- *     详见 deliverables/plan.md §四。
+ *   - **证据落账**（studio-dev-579；docs/v2/08 §1.9、v2/15 §一 SEC-FC-08）：生产 sink 把本件
+ *     AuthorityEvidence 写 `events/GW_AUTHORITY_DECISION`（非仅日志；SQL 可复算）；落账失败＝
+ *     拒绝（无留痕不放行）。shadow→enforce 的开关/期限见 engine/tools/authority-policy.ts。
+ *     施工方案见 deliverables/plan.md §四。
  */
 import {
-  canonicalizeJson,
   checkWithdrawalCompleteness,
   descendantGrants,
   isEffectivelyWithdrawn,
   rootDelegationFailure,
-  sha256Hex,
   verifyGrantChain,
 } from '@studio-next/core'
 import type {
@@ -43,6 +44,11 @@ import type {
   WithdrawalRequestInput,
 } from '@studio-next/core'
 import type { GatewayActionWord } from '@studio-next/gateway'
+import { buildAuthorityEvidence, evidenceIdOf } from './authority-evidence.ts'
+
+// 证据 id 复算面（先拆后增：studio-dev-623 Q6 适配——实现搬入 authority-evidence.ts，
+// 导出路径保持在本件以兼容既有读面/测试导入；口径逐字不变）
+export { recomputeAuthorityEvidenceId } from './authority-evidence.ts'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 一、动作词 → 判定函数映射（冻结表；deliverables/plan.md §三 的机器可读形态）
@@ -132,7 +138,7 @@ export interface AuthorityEvidence {
   readonly detail?: string
 }
 
-/** 证据落点（生产=daemon 日志/后续台账；测试=捕获数组）。抛出=拒绝（无留痕不放行） */
+/** 证据落点（生产=events 台账行，见 authority-evidence.ts；测试=捕获数组）。抛出=拒绝（无留痕不放行） */
 export type AuthorityEvidenceSink = (evidence: AuthorityEvidence) => void
 
 export interface AuthorityAuthorizeInput {
@@ -219,13 +225,6 @@ function parseClaim(args: Record<string, unknown>): ClaimParse {
   return { kind: 'ok', claim: { grantId, exercisedBy, withheldScope } }
 }
 
-/** evidenceId＝规范化内容的 SHA-256 前 16 位（同判定同 id；可复算、不含密钥） */
-function evidenceIdOf(seed: unknown): string {
-  const canonical = canonicalizeJson(seed)
-  const text = canonical.ok ? canonical.value : JSON.stringify(seed)
-  return `AUTH-${sha256Hex(text).slice(0, 16)}`
-}
-
 function refusalOf(kind: AuthorityRefusal['kind'], grantId: string, detail: string): AuthorityRefusal {
   return { kind, grantId, detail }
 }
@@ -254,28 +253,8 @@ function decide(
   },
   verdict: { readonly allowed: boolean; readonly reason?: AuthorityRejectReason },
 ): AuthorityDecision {
-  const evidenceId = evidenceIdOf({
-    ticket: base.ticket,
-    action: base.action,
-    atMs: base.atMs,
-    state: base.state,
-    chain: base.chain,
-    refusals: base.refusals,
-    ...(base.grantId !== undefined ? { grantId: base.grantId } : {}),
-  })
-  const evidence: AuthorityEvidence = {
-    evidenceId,
-    atMs: base.atMs,
-    ticket: base.ticket,
-    action: base.action,
-    mode: base.mode,
-    state: base.state,
-    chain: base.chain,
-    refusals: base.refusals,
-    ...(base.grantId !== undefined ? { grantId: base.grantId } : {}),
-    ...(base.exercisedBy !== undefined ? { exercisedBy: base.exercisedBy } : {}),
-    ...(base.detail !== undefined ? { detail: base.detail } : {}),
-  }
+  const { evidence, evidenceId } = buildAuthorityEvidence(base)
+
   try {
     record(evidence)
   } catch {
