@@ -27,6 +27,7 @@ import { configInvalid } from '@studio-next/contract'
 import type { CompanySnapshot } from '@studio-next/contract'
 import type { SignatureContext } from '@studio-next/gateway'
 import { ENGINE_CONFIG_DEFAULTS } from '../../engine/engine.ts'
+import { resolveSignatureIdentity, type SignatureIdentity } from './signature.ts'
 import type { ServeConfig } from '../serve/config.ts'
 
 /** 键值须为非空字符串（缺省回填后的显式键校验） */
@@ -278,11 +279,10 @@ export function assertPlatformBinding(
 }
 
 /** daemon 侧网关身份（控制面与 worker-key 签发共用的签根/署名上下文/工号） */
-export interface DaemonIdentity {
+export interface DaemonIdentity extends SignatureIdentity {
   /** HMAC 签根材料（只进 gateway；永不入日志/台账/错误消息） */
   secret: Uint8Array
   ctx: SignatureContext
-  author: string
   /** 签根来源（装配日志降级标记判读面；值/材料永不出现） */
   secretSource: GatewaySecretOrigin
 }
@@ -293,9 +293,12 @@ export interface DaemonIdentity {
  * 启动序（任一步失败＝拒启，不降级）：
  *   ①SEC-WD-02 绑定比对（org-config platform vs daemon.yaml platform）→ 不一致拒；
  *   ②签根解析（env `STUDIO_GATEWAY_SECRET` ＞ 无公司目录 demo 临时随机；否则拒——SEC-FC-02）。
+ *   ③署名决定人解析（显式键 ＞ 快照最高责任人 ＞ demo 迁移期常量；否则拒——SEC-FC-06；
+ *     解析件=./signature.ts，本件只做身份组装）。
  * 签根长度/弱形态二道门在 `createGateway`（gateway 包，构造期 CONFIG_INVALID）。
  *
  * 签名上下文取快照首部门+公司级（控制面无人员档案，拟稿待批）。
+ * `author`/`signature` 改为**决定人**面（不再恒 'daemon'——studio-dev-529 P0 接线）。
  * **L1 热重载活对象**（docs/38-§2）：gateway 逐调用读 ctx 字段——reload 时 mutate
  * company/dept/level 三字段即全 daemon 署名跟随新组织（hot-reload apply 段唯一写者）。
  */
@@ -311,6 +314,6 @@ export function daemonIdentity(config: ServeConfig, snapshot: CompanySnapshot, s
       role: 'daemon',
       level: Math.max(1, snapshot.level),
     },
-    author: ENGINE_CONFIG_DEFAULTS.actor,
+    ...resolveSignatureIdentity(config, snapshot),
   }
 }

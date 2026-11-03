@@ -41,13 +41,14 @@ import { coerceHrServeKey, HR_SERVE_DEFAULTS, validateHrServeCross, type HrServe
 import { crossValidateMatrixChannels } from '../channels/channels.ts'
 import { coerceRestartServeKey, isRestartKey, RESTART_SERVE_DEFAULTS, validateRestartCross, type RestartServeConfig } from '../serveconfig/restart.ts'
 import { coerceAnchorAbsenceDeclaration, type AnchorAbsenceRaw } from './anchor-absence.ts'
+import { coerceSignatureServeKey, type SignatureServeConfig } from '../serveconfig/signature.ts'
 import type { AnchorAbsenceDeclaration } from '../../control/hot-reload.ts'
 
 /**
  * serve 配置（v0 最小面；引擎子配置并入扁平键）。hr* 人事同步器键子面在
  * assembly/hrsync/config.ts 的 HrServeConfig（DEV-48，docs/52-§九——此处 extends 收平）。
  */
-export interface ServeConfig extends HrServeConfig, RestartServeConfig {
+export interface ServeConfig extends HrServeConfig, RestartServeConfig, SignatureServeConfig {
   /** 台账库路径（不存在则建库+migrate——store openLedger 语义） */
   db: string
   /** 协作平台：fake（demo）| localfile（docs/23 LocalFile 平台）| taiga（docs/30 推荐 + docs/32 真机试点；接入点见 wirePlatform） */
@@ -540,7 +541,7 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
           coerceRestartServeKey(cfg, key, value, { str, num, bool })
           break
         }
-        throw new Error(`daemon.yaml：未知配置键 ${key}（v0 最小面，见 serve.ts 头注）`)
+        if (!coerceSignatureServeKey(cfg, key, value)) throw new Error(`daemon.yaml：未知配置键 ${key}（v0 最小面，见 serve.ts 头注）`) // 署名决定人键（SEC-FC-06）：键面判定＋值域收窄归 serveconfig/signature.ts，未命中＝未知键
     }
   }
   // —— 无锚显式声明（SEC-FC-03；docs/44-§2.3-4）：两键成对收口——只给理由/无 companyDir

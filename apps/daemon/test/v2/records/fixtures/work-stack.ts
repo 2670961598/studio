@@ -21,7 +21,7 @@ import path from 'node:path'
 import { createRegistry } from '@studio-next/adapters'
 import type { EventRecord, FlowPlatform, IssueRecord, TicketId } from '@studio-next/contract'
 import { openLedger, type Ledger } from '@studio-next/store'
-import { createEngine, ENGINE_CONFIG_DEFAULTS, type Engine, type EngineConfig, type TickReport } from '../../../../src/engine/engine.ts'
+import { createEngine, ENGINE_CONFIG_DEFAULTS, type Engine, type EngineConfig, type EngineSignatureDraft, type TickReport } from '../../../../src/engine/engine.ts'
 import type { RecordWirePort } from '../../../../src/engine/records/index.ts'
 import { createFakeAdapter, createFakePlatform, type FakeAdapterMode } from '../../../../src/engine/fakes.ts'
 import { createDefaultGateRunner } from '../../../../src/engine/gate.ts'
@@ -55,7 +55,7 @@ export type RecordWireFactory = (args: { readonly ledger: Ledger; readonly compa
 export async function createWorkStack(
   label: string,
   overrides: Partial<EngineConfig> = {},
-  extra: { readonly recordsOf?: RecordWireFactory } = {},
+  extra: { readonly recordsOf?: RecordWireFactory; readonly signature?: EngineSignatureDraft } = {},
 ): Promise<WorkTestStack> {
   const root = await mkdtemp(path.join(tmpdir(), `sn-work-${label}-`))
   roots.push(root)
@@ -77,6 +77,7 @@ export async function createWorkStack(
     ledger,
     ...(records !== undefined ? { records } : {}),
     registry,
+    ...(extra.signature !== undefined ? { signature: extra.signature } : {}),
     assembler: createDefaultAssembler({
       fwkVersion: 'v0.5-test',
       frameworkPrompts: '你是 demo worker：按任务书产出 REPORT 与 summary。',

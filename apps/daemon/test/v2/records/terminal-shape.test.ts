@@ -134,6 +134,41 @@ describe('SEC-FC-06 系统代写署名：无 onBehalfOf 的 system 署名＝构�
   })
 })
 
+// ————————————————————————— 二·续、署名三值接线（studio-dev-529 P0） —————————————————————————
+
+/**
+ * 红→绿（studio-dev-529）：改前 `writeActor = writeSignature?.actorRef ?? config.actor`——
+ * 注入 system 署名也只取 actorRef（通道位 'daemon'），最终署名恒 'daemon'；
+ * 改后 system 取 onBehalfOf（决定人），events.actor / ticket_mirror.dispatcher 落决定人。
+ */
+describe('SEC-FC-06 署名三值接线：createEngine 注入 system 署名 → 最终署名=决定人（不再恒 daemon）', () => {
+  it('未注入=迁移期常量（零行为变更）；注入后 events.actor=onBehalfOf、镜像派单人同源', async () => {
+    // 基线（未注入）：写路径 actor 仍是迁移期常量——证明「缺省不注入=零行为变更」
+    const baseline = await createWorkStack('sig-baseline')
+    const baselineTicket = await createTicket(baseline)
+    await runTicks(baseline, 3)
+    const baselineDispatch = eventsNamed(baseline.ledger, baselineTicket, 'DISPATCH')
+    expect(baselineDispatch.length).toBeGreaterThanOrEqual(1)
+    expect(baselineDispatch[0]?.actor).toBe(ENGINE_CONFIG_DEFAULTS.actor)
+
+    // 绿面：system 代写（actorRef=通道位 daemon，onBehalfOf=决定人 AGENT-1）
+    const wired = await createWorkStack(
+      'sig-system',
+      {},
+      { signature: { actorKind: 'system', actorRef: ENGINE_CONFIG_DEFAULTS.actor, onBehalfOf: 'AGENT-1' } },
+    )
+    const wiredTicket = await createTicket(wired)
+    await runTicks(wired, 3)
+    const wiredDispatch = eventsNamed(wired.ledger, wiredTicket, 'DISPATCH')
+    expect(wiredDispatch.length).toBeGreaterThanOrEqual(1)
+    // 决定人落台账：常量 'daemon' 不得充当最终署名（SEC-FC-06）
+    expect(wiredDispatch[0]?.actor).toBe('AGENT-1')
+    expect(wiredDispatch[0]?.actor).not.toBe(ENGINE_CONFIG_DEFAULTS.actor)
+    // 镜像派单人（ticket_mirror.dispatcher）与事件 actor 同源（同一写路径署名）
+    expect(wired.ledger.getTicketMirror(wiredTicket)?.dispatcher).toBe('AGENT-1')
+  })
+})
+
 // ————————————————————————— 三、G-PORT-OPS 落口（REC-WORK-18 记录/证据面） —————————————————————————
 
 const FIXED_AT = '2026-11-01T00:00:00.000Z'

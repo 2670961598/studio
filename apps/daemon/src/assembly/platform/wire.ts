@@ -85,6 +85,16 @@ export function wireGatedPlatform(
   log(
     `[serve] 网关已接：平台写路径全收口（17-§7；platform=${config.platform}；控制面 control key，一调用一签发）；${secretLine}`,
   )
+  // —— 署名三值接线证据行（SEC-FC-06 / SEC-SIG-01；studio-dev-529 P0，studio-dev-567 rebase #528）——
+  //   actorRef=通道位（daemon 进程），onBehalfOf=决定人；最终署名取决定人（engine writeActor
+  //   与 SignedBody.author 同源 identity.author）——不再恒 'daemon'。
+  log(
+    `[serve] 写路径署名已接：system;actorRef=${identity.signature.actorRef};onBehalfOf=${identity.author}` +
+      `（决定人来源=${identity.signatureOrigin}；SignedBody.author=决定人）`,
+  )
+  if (identity.signatureOrigin === 'migration') {
+    log('[serve] 署名决定人=迁移期常量【降级标记】无公司目录 demo 装配（生产必配 daemon.yaml signatureOnBehalfOf 或公司目录在册人员——SEC-FC-06）')
+  }
   // 授权链闸（studio-dev-528）：core/authority 五函数经本闸接进写路径。默认 grants 为空＝
   // 授予记录生产者未建（差距 #4），故无主张的存量写走 shadow（放行＋留痕），有主张强制核验。
   // 证据落 daemon 日志（值无密钥；形状=AuthorityEvidence，后续可原样进台账/面板）。

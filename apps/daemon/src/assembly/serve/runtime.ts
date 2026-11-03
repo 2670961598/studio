@@ -321,6 +321,7 @@ export function buildServeRuntime(
   const engine = createEngine({
     // 写路径网关收口（17-§7）：raw platform 包一层 gated 代理——engine 写调用签名不变（透明）
     platform: enginePlatform,
+    signature: identity.signature, // 署名三值注入（SEC-FC-06/SEC-SIG-01；studio-dev-529）：system＋onBehalfOf=决定人——engine 写路径 actor 取决定人，构造期校验先行
     ...(workerKeys !== undefined ? { workerKeys } : {}),
     ...(hrDigester !== undefined ? { hrSync: hrDigester } : {}),
     ...(roomFace !== undefined ? { rooms: roomFace } : {}),

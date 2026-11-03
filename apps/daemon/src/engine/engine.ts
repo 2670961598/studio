@@ -490,7 +490,16 @@ export function createEngine(deps: EngineDeps): Engine {
   // 未注入＝迁移期常量（ENGINE_CONFIG_DEFAULTS.actor='daemon' 直用；缺口登记见 v2/17，
   // 审计断言归 IMPL-07-10）。全部写路径的 actor 只从 writeActor 取，不再散读 config.actor。
   const writeSignature = deps.signature === undefined ? undefined : constructEngineSignature(deps.signature)
-  const writeActor = writeSignature?.actorRef ?? config.actor
+  // 最终署名取**决定人**（SEC-FC-06/SEC-SIG-01）：system 代写取 onBehalfOf（可还原决定人，
+  // 与 assembly/ops/envelope.ts `decidedByOf` 同口径）；person/control 取 actorRef。
+  // actorRef 只是通道位——常量 'daemon' 因此不再作为最终署名落到任何写路径（events.actor /
+  // ticket_mirror.dispatcher）；未注入＝迁移期常量直用（零行为变更）。
+  const writeActor =
+    writeSignature === undefined
+      ? config.actor
+      : writeSignature.actorKind === 'system'
+        ? writeSignature.onBehalfOf
+        : writeSignature.actorRef
   const makeId = deps.makeId ?? makeUlid
 
   // 公司面可替换绑定（docs/38-§2 L1）：applyCompanyUpdate 整组换（拍边界）——

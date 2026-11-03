@@ -106,7 +106,10 @@ describe('SEC-FC-02 签根只从秘密源注入（无仓内缺省）', () => {
       env: { [GATEWAY_SECRET_ENV]: SECRET_TEXT },
     })
     expect(identity.secretSource).toBe('env')
-    expect(identity.author).toBe('daemon')
+    // 署名决定人＝快照在册最高责任人（ORG_LOCALFILE 仅 AGENT-1）——不再恒 'daemon'（SEC-FC-06）
+    expect(identity.author).toBe('AGENT-1')
+    expect(identity.signatureOrigin).toBe('snapshot')
+    expect(identity.signature).toEqual({ actorKind: 'system', actorRef: 'daemon', onBehalfOf: 'AGENT-1' })
     expect(identity.ctx.company).toBe('Demo 公司')
     expect(identity.ctx.level).toBe(2)
     expect(Buffer.from(identity.secret).toString('utf8')).toBe(SECRET_TEXT)
@@ -147,5 +150,57 @@ describe('SEC-WD-02 绑定唯一源与一致性校验（org-config platform vs d
   it('无公司目录（demo/夹具装配）＝无 org-config 声明面，绑定比对跳过（不错绑即不误伤）', () => {
     expect(() => assertPlatformBinding({ ...FAKE_CONFIG, platform: 'localfile' }, ORG_DEFAULT_YOUTRACK)).not.toThrow()
     expect(() => daemonIdentity(FAKE_CONFIG, DEMO_SNAPSHOT, { env: {}, random: (n: number): Uint8Array => new Uint8Array(n).fill(7) })).not.toThrow()
+  })
+})
+
+// ————————————————————————— 署名决定人（SEC-FC-06/SEC-SIG-01；studio-dev-529 P0） —————————————————————————
+
+describe('SEC-FC-06 署名决定人接线：author 不再恒 daemon（显式 > 快照最高责任人 > demo 迁移期常量）', () => {
+  it('daemon.yaml signatureOnBehalfOf 显式 → author/onBehalfOf 取显式值（origin=config）', () => {
+    const config = parseDaemonConfig(['db: ./var/x.sqlite', 'company: demo', 'platform: fake', 'signatureOnBehalfOf: PRIME-0', ''].join('\n'))
+    expect(config.signatureOnBehalfOf).toBe('PRIME-0')
+    const identity = daemonIdentity(config, DEMO_SNAPSHOT, { env: {}, random: (n: number): Uint8Array => new Uint8Array(n).fill(3) })
+    expect(identity.author).toBe('PRIME-0')
+    expect(identity.signatureOrigin).toBe('config')
+    expect(identity.signature).toEqual({ actorKind: 'system', actorRef: 'daemon', onBehalfOf: 'PRIME-0' })
+  })
+
+  it('显式配非人占位主体（daemon/system/tool/company）→ CONFIG_INVALID/sig-placeholder-decision-maker（不得洗白）', () => {
+    for (const placeholder of ['daemon', 'system', 'tool', 'company', ' Daemon ']) {
+      const config = parseDaemonConfig(
+        ['db: ./var/x.sqlite', 'company: demo', 'platform: fake', `signatureOnBehalfOf: ${JSON.stringify(placeholder)}`, ''].join('\n'),
+      )
+      expect(catchError(() => daemonIdentity(config, DEMO_SNAPSHOT, { env: {}, random: (n: number): Uint8Array => new Uint8Array(n).fill(3) }))).toMatch(
+        /CONFIG_INVALID\/sig-placeholder-decision-maker/,
+      )
+    }
+  })
+
+  it('缺省 → 组织快照在册最高责任人（active，G 档最高，同档按工号定序；origin=snapshot）', () => {
+    const org: CompanySnapshot = {
+      ...ORG_LOCALFILE,
+      people: [
+        { id: 'AGENT-1', name: '工程师', login: 'agent-1', level: 2, dept: 'departments/工程部', status: 'active' },
+        { id: 'PRIME-0', name: '最高宰相', login: 'prime-0', level: 9, dept: 'departments/工程部', status: 'active' },
+        { id: 'RETIRED-0', name: '离任', login: 'retired-0', level: 9, dept: 'departments/工程部', status: 'retired' },
+      ],
+    }
+    const identity = daemonIdentity(withCompanyDir(FAKE_CONFIG, { platform: 'localfile' }), org, { env: { [GATEWAY_SECRET_ENV]: SECRET_TEXT } })
+    expect(identity.author).toBe('PRIME-0') // retired 同档不参与；最高责任人在册可还原
+    expect(identity.signatureOrigin).toBe('snapshot')
+  })
+
+  it('真实平台 + 无在册人员 + 未配显式键 → CONFIG_INVALID/sig-no-decision-maker 拒启（常量 daemon 不得兜底）', () => {
+    const noPeople: CompanySnapshot = { ...ORG_LOCALFILE, people: [] }
+    expect(
+      catchError(() => daemonIdentity(withCompanyDir(FAKE_CONFIG, { platform: 'localfile' }), noPeople, { env: { [GATEWAY_SECRET_ENV]: SECRET_TEXT } })),
+    ).toMatch(/CONFIG_INVALID\/sig-no-decision-maker/)
+  })
+
+  it('无公司目录 demo 装配 + 无人员档案 → 迁移期常量并标 origin=migration（降级标记可判读）', () => {
+    const demoNoPeople: CompanySnapshot = { ...DEMO_SNAPSHOT, people: [] }
+    const identity = daemonIdentity(FAKE_CONFIG, demoNoPeople, { env: {}, random: (n: number): Uint8Array => new Uint8Array(n).fill(3) })
+    expect(identity.author).toBe('daemon')
+    expect(identity.signatureOrigin).toBe('migration')
   })
 })
