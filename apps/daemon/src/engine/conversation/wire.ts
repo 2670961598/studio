@@ -93,5 +93,5 @@ export function wireConversation(input: WireConversationInput): WiredConversatio
     `[serve] 制作人-岗位持久对话已装配：dir=${dir} rooms=${String(input.roomIds.length)} ` +
       `default=${input.defaultPerson} window=${String(input.window)}/${String(input.maxChars)}字（docs/21-§七，studio-dev-646）`,
   )
-  return { store, tick: { store, config: cfg, log }, relay }
+  return { store, tick: { store, config: cfg, statePath, log }, relay }
 }

@@ -122,9 +122,17 @@
   经 notify 面 `targets.room` 发回该工号绑定 DM 房（**daemon 读面随文件签名变化重载——面板进程
   写入立即可见**）；成功推进游标、失败积压重试不丢；同一 seq 只发一次；重启从游标恢复不重发；
   只处理 panel 源（Matrix 入站/员工回复绝不进此路，防回环）。
-- **中继游标（运行期状态）**：每工号持久化 `relayedSeq` 于
-  `<companyDir>/var/conversations/.relay-state.json` `{v:1,persons:{<工号>:{relayedSeq}}}`——运行期状态，
-  不进公司 git 契约包/不入 Taiga；原子写（tmp+rename）；发送失败只记日志/计数、不阻主循环（下一拍重试）。
+- **面板→岗位派单（C，studio-dev-654b）**：拍边界 watcher 读 `source='panel'` 的 `msg`（合成 seq>
+  该工号 `dispatchedSeq`）→ 调用 Phase 1 同一 **轮次物化**（建 `[对话]` 单→`syncMirror`→`recordTurn`→
+  PATROL 审计锚→`candidates/onMutation`）唤醒绑定岗位；**不重复 appendMessage**（面板已落盘）、只处理
+  panel 源（Matrix 入站/员工回复不派，防回环/防双派）；拍内**每工号最多派 1 轮**（其余下拍，防洪峰）。
+  派单成功推进 `dispatchedSeq`、失败保留重试不丢；重启从游标恢复不重派；面板消息 API 返回成功=
+  已落盘（派单异步，失败面在 daemon 日志/tick errors，不回改面板写结果）。
+- **运行期游标（双游标、字段独立）**：每工号持久化于
+  `<companyDir>/var/conversations/.relay-state.json` `{v:1,persons:{<工号>:{relayedSeq,dispatchedSeq}}}`——
+  `relayedSeq`=B 中继（回 Matrix 房）、`dispatchedSeq`=C 派单（唤醒岗位），两路**各自失败独立重试**；
+  运行期状态，不进公司 git 契约包/不入 Taiga；**读-改-写**更新（每次合并最新文件、tmp+rename 原子写，
+  两路互不覆盖）；失败只记日志/计数、不阻主循环（下一拍重试）。
 - 端点/页面/轮询/失败标记详见 `docs/v2/14` §8.1。
 
 ### 7.5 验收口径

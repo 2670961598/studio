@@ -15,7 +15,7 @@
 import type { Notification } from '@studio-next/contract'
 import type { NotifyBroadcastFace } from '../notify/broadcast.ts'
 import { panelSourceOf, panelVisibleRows } from './panel-map.ts'
-import { loadRelayState, relayedSeqOf, saveRelayState, withRelayedSeq, type RelayState } from './relay-state.ts'
+import { createRelayStateStore } from './relay-state.ts'
 import type { ConversationStore } from './store.ts'
 
 export interface PanelRelayDeps {
@@ -43,14 +43,14 @@ export interface PanelRelay {
 
 export function createPanelRelay(deps: PanelRelayDeps): PanelRelay {
   const log = deps.log ?? ((): void => {})
-  let state: RelayState = loadRelayState(deps.statePath, log)
+  const stateStore = createRelayStateStore(deps.statePath, log)
   const stats = { sent: 0, failed: 0 }
 
   return {
     stats,
     async relay(): Promise<void> {
       for (const person of deps.store.personIds()) {
-        let cursor = relayedSeqOf(state, person)
+        let cursor = stateStore.relayedSeq(person)
         const rows = panelVisibleRows(deps.store.visibleRecords(person))
         for (const { seq, row } of rows) {
           if (seq <= cursor) continue
@@ -70,8 +70,7 @@ export function createPanelRelay(deps: PanelRelayDeps): PanelRelay {
             const report = await deps.notify.send(message, { room: row.room })
             if (report.sent.includes('room')) {
               cursor = seq
-              state = withRelayedSeq(state, person, seq)
-              saveRelayState(deps.statePath, state)
+              stateStore.updateRelayed(person, seq)
               stats.sent += 1
               continue
             }

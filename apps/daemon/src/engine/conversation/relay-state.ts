@@ -85,6 +85,27 @@ export function relayedSeqOf(state: RelayState, person: string): number {
   return state.persons[person]?.relayedSeq ?? 0
 }
 
+/** 取某工号已派单游标（缺省 0；与 relayedSeq 独立） */
+export function dispatchedSeqOf(state: RelayState, person: string): number {
+  const value = state.persons[person]?.dispatchedSeq
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : 0
+}
+
+/** 推进某工号已派单游标（保留既有 relayedSeq，不覆盖；两路游标独立） */
+export function withDispatchedSeq(state: RelayState, person: string, dispatchedSeq: number): RelayState {
+  const current = state.persons[person]
+  return {
+    v: RELAY_STATE_VERSION,
+    persons: {
+      ...state.persons,
+      [person]: {
+        ...(current?.relayedSeq !== undefined ? { relayedSeq: current.relayedSeq } : { relayedSeq: 0 }),
+        dispatchedSeq,
+      },
+    },
+  }
+}
+
 /** 推进某工号已中继游标（保留既有 dispatchedSeq 字段位，不覆盖） */
 export function withRelayedSeq(state: RelayState, person: string, relayedSeq: number): RelayState {
   const current = state.persons[person]
@@ -96,6 +117,35 @@ export function withRelayedSeq(state: RelayState, person: string, relayedSeq: nu
         ...(current?.dispatchedSeq !== undefined ? { dispatchedSeq: current.dispatchedSeq } : {}),
         relayedSeq,
       },
+    },
+  }
+}
+
+
+/**
+ * 游标状态存储（B 中继 + C 派单共用一个状态文件）：每次 update 都**读-改-写**最新文件，
+ * 两路各自推进自己的字段互不覆盖（单线程顺序调用；tmp+rename 原子写）。
+ */
+export interface RelayStateStore {
+  relayedSeq(person: string): number
+  dispatchedSeq(person: string): number
+  updateRelayed(person: string, seq: number): void
+  updateDispatched(person: string, seq: number): void
+}
+
+export function createRelayStateStore(file: string, log?: (line: string) => void): RelayStateStore {
+  return {
+    relayedSeq(person: string): number {
+      return relayedSeqOf(loadRelayState(file, log), person)
+    },
+    dispatchedSeq(person: string): number {
+      return dispatchedSeqOf(loadRelayState(file, log), person)
+    },
+    updateRelayed(person: string, seq: number): void {
+      saveRelayState(file, withRelayedSeq(loadRelayState(file, log), person, seq))
+    },
+    updateDispatched(person: string, seq: number): void {
+      saveRelayState(file, withDispatchedSeq(loadRelayState(file, log), person, seq))
     },
   }
 }

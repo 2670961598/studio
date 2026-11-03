@@ -29,6 +29,7 @@ import {
 } from '@studio-next/core'
 import { createDataChangeConsumer, createMentionConsumer, createWebhookConsumer } from './taxonomy.ts'
 import { createConversationConsumer, type ConversationTickDeps } from '../conversation/consume.ts'
+import { dispatchPanelPending } from '../conversation/panel-dispatch.ts'
 import { isConversationPayload } from '../conversation/protocol.ts'
 import { createEscalateConsumer, type CostThresholdNotice } from './escalate.ts'
 import { wireRelayResumeFaces, type RelayResumeFaces } from './relay-resume-faces.ts'
@@ -245,6 +246,21 @@ export async function drainIntents(deps: DrainDeps): Promise<RelayResumeFaces> {
     // 重投不得重跑）或本拍重复键，只物化一次
     if (deps.patrolKeys.has(intentKey) || drainSeen.has(intentKey)) continue
     await handler(intent, intentKey)
+  }
+  // 面板源派单（studio-dev-654b，docs/21-§七.4）：会话面+游标状态齐备时，拍边界每工号最多派 1 条
+  // （复用同一轮次物化；只处理 source='panel'，Matrix 入站路径零影响）
+  if (deps.conversation !== undefined && deps.conversation.statePath !== undefined) {
+    await dispatchPanelPending({
+      conversation: { ...deps.conversation, statePath: deps.conversation.statePath },
+      platform,
+      syncMirror,
+      makeEvent,
+      tickEvents,
+      errors,
+      candidates,
+      onMutation: deps.onMutation,
+      people,
+    })
   }
   return relayResume // resumePlans 登记面读口（engine dispatch 段携带——拍作用域）
 }

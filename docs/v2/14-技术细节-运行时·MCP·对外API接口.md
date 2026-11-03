@@ -366,9 +366,11 @@ interface ConversationSessionFace {
   append-only 单行原子），面板写入 daemon 视图立即可见（中继/上下文一致）。
 - **环境变量**：`STUDIO_PANEL_PRODUCER_TOKEN`（写面凭据；未配置=写 503）；`STUDIO_PANEL_PRODUCER_ID`
   （署名工号，缺省 `PRIME-0`；缺省/非法=写面 503 fail-closed；不接受客户端自报身份）。
-- **中继失败面**：面板写成功（已落盘）后由 daemon 拍边界 watcher 消费——B 回 Matrix 绑定房
-  （notify `targets.room`）；游标状态 `<companyDir>/var/conversations/.relay-state.json`（运行期，
-  不入仓）；发送失败积压/重试、不丢不重发（seq 游标幂等）；失败只记日志/计数，不反向改面板写结果。
+- **中继/派单失败面**：面板写成功（已落盘）后由 daemon 拍边界 watcher 两路消费——B 回 Matrix 绑定房
+  （notify `targets.room`）、C 派单唤醒绑定岗位（复用轮次物化，不重复 append）；游标状态
+  `<companyDir>/var/conversations/.relay-state.json`（运行期，不入仓；`relayedSeq`/`dispatchedSeq`
+  双游标独立、读-改-写原子更新）；发送/派单失败积压/重试、不丢不重发；失败只记日志/计数，不反向改
+  面板写结果（写成功=已落盘，派单异步）。
 - 依赖：Phase 1 `#646` 的会话存储与装配注入；本卷不重复实现存储层（`docs/21-§7.1/§7.4`）。
 
 ## 九、审计处置表

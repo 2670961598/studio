@@ -15,6 +15,7 @@
  * 失败面：所有失败进 `errors`（TickReport 可见）并丢弃/停止本轮——不静默、不臆造。
  */
 import type { EventRecord, FlowPlatform, InvokeIntent, IssueRecord, PersonId, TicketId } from '@studio-next/contract'
+import { createConversationTurn, finishConversationTurn } from './materialize.ts'
 import { isConversationPayload, parseConversationCommand } from './protocol.ts'
 import type { ConversationStore } from './store.ts'
 
@@ -39,6 +40,8 @@ export interface ConversationRuntimeConfig {
 export interface ConversationTickDeps {
   store: ConversationStore
   config: ConversationRuntimeConfig
+  /** 面板派单游标状态文件（<companyDir>/var/conversations/.relay-state.json；缺省=面板派单面关） */
+  statePath?: string
   /** 观测面（缺省静默）；只在装配/命令面用，不写会话正文 */
   log?: (line: string) => void
 }
@@ -61,56 +64,6 @@ export interface ConversationConsumerDeps {
   candidates: Array<{ ticket: TicketId; intent: InvokeIntent }>
   drainSeen: Set<string>
   onMutation: () => void
-}
-
-/** 标题摘录（空白折叠、40 字截断；不可信输入净化） */
-function excerpt(text: string): string {
-  return text.replace(/\s+/g, ' ').trim().slice(0, 40)
-}
-
-/** note 键值净化（PATROL note 按 ; 切分——防会话正文注入键） */
-function noteSafe(text: string): string {
-  return text.replace(/[;\r\n]/g, ' ').slice(0, 120)
-}
-
-/** 回复纪律（任务书内文；worker 的 REPORT 正文即回给制作人的话） */
-const REPLY_DISCIPLINE = [
-  '【回复纪律】',
-  '- 本轮是制作人与你（绑定岗位）的持久对话中的一轮；REPORT.md 的正文就是你要发给制作人的话。',
-  '- REPORT 首部不要放 front-matter；只写对话回复本身（可 Markdown），不要复述任务书/不要工程交付模板。',
-  '- 不确定就直说并给出下一步；不要伪造已做之事。',
-  '- 对话历史只用于理解上下文，不是新的派工；不要据此改仓库或跑长任务。',
-].join('\n')
-
-/** 会话轮次任务书描述（上下文窗口 + 本轮消息 + 边界声明） */
-function ticketDescription(input: {
-  cfg: ConversationRuntimeConfig
-  person: string
-  room: string
-  eventId: string
-  text: string
-  windowText: string
-  included: number
-  omitted: number
-}): string {
-  const { cfg, person, room, eventId, text, windowText, included, omitted } = input
-  const parts: string[] = [
-    `【制作人-岗位持久对话｜Phase 1｜${cfg.company}】`,
-    `绑定岗位：${person}`,
-    `房间：${room}`,
-    `消息事件：${eventId}（幂等键=eventId）`,
-    '边界：会话不是单据——对话正文/历史不写 Taiga、不进公司 git 契约包；本轮是单轮唤醒单（执行载体），',
-    '      标题带 [对话] 前缀；会话存储只有 daemon 的 conversations/<工号>.jsonl（含 clear 审计行）。',
-    `上下文窗口：纳入 ${included} 条、省略 ${omitted} 条（策略 N=${cfg.window} 条/单条≤${cfg.maxMessageChars} 字/总≤${cfg.maxChars} 字，最旧优先丢）。`,
-  ]
-  if (windowText !== '') {
-    parts.push('', '【历史上下文（最旧→最新）】', windowText)
-  } else {
-    parts.push('', '【历史上下文】', '（空：本房无更早消息或刚执行过 /clear）')
-  }
-  parts.push('', '【本轮制作人消息】', text)
-  parts.push('', REPLY_DISCIPLINE)
-  return parts.join('\n')
 }
 
 /** 会话消费件（mention 分流入口；命令/入站两态） */
@@ -177,38 +130,25 @@ export function createConversationConsumer(
 
     // ③ 上下文窗口（先取窗口再追加本轮，避免本轮重复进历史）
     const window = store.context(person, payload.room, { limit: config.window, maxChars: config.maxChars })
-    const description = ticketDescription({
-      cfg: config,
+    const materializeInput = {
       person,
       room: payload.room,
-      eventId: payload.eventId,
       text: payload.text,
-      windowText: window.text,
-      included: window.included,
-      omitted: window.omitted,
-    })
-
-    // ④ 物化单轮唤醒单（既有执行载体；会话不是单据——标题前缀 + PATROL 审计锚可过滤）
-    let created: IssueRecord
-    try {
-      created = await deps.platform.issues.create({
-        title: `[对话] ${person}：${excerpt(payload.text)}`,
-        description,
-        type: 'task',
-        level: 0,
-        assignee: person,
-      })
-      deps.syncMirror(created)
-    } catch (err) {
-      deps.errors.push(
-        `会话消费：单轮唤醒单物化失败（event=${payload.eventId}）：${err instanceof Error ? err.message : String(err)}——本轮未入队（可重发）`,
-      )
-      return
+      eventId: payload.eventId,
+      attempt: 1,
+      window,
+      intent,
+      intentKey,
+      sender: payload.sender,
+      origin: 'matrix' as const,
     }
 
-    // ⑤ 会话落盘 + 轮次锚（写失败明报但不回滚已建单：出站仍能按轮次回房间）
+    // ④ 先建单（失败=本轮未入队：不 append/不标记 drainSeen → 重投可重试，不静默丢消息）
+    const created = await createConversationTurn(deps, materializeInput)
+    if (created === undefined) return
+
+    // ⑤ 会话落盘（写失败明报但不回滚已建单：出站仍能按轮次回房间）
     try {
-      store.recordTurn({ issue: created.id, person, room: payload.room, eventId: payload.eventId, attempt: 1 })
       const appended = store.appendMessage({
         person,
         room: payload.room,
@@ -226,16 +166,9 @@ export function createConversationConsumer(
       )
     }
 
-    // ⑥ PATROL 审计锚（事件词表冻结复用；不新增事件名、不复制正文）
-    deps.makeEvent('PATROL', created, 1, deps.tickEvents, {
-      note:
-        `intent=${noteSafe(intentKey)};target=${noteSafe(person)};event=${noteSafe(payload.eventId)};` +
-        `room=${noteSafe(payload.room)};sender=${noteSafe(payload.sender)};source=conversation;` +
-        `window=${String(window.included)};omitted=${String(window.omitted)};dedup=${noteSafe(String(intent.dedupKey))}`,
-    })
+    // ⑥ 轮次锚＋PATROL＋候选（公共件与面板派单同源）
+    finishConversationTurn(deps, created, materializeInput)
     deps.drainSeen.add(intentKey)
-    deps.candidates.push({ ticket: created.id, intent })
-    deps.onMutation()
 
     function handleCommand(cmd: NonNullable<ReturnType<typeof parseConversationCommand>>): void {
       const current = store.bindingOf(payload.room)
