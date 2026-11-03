@@ -14,7 +14,7 @@
  * 配置解析/身份派生在 config.ts，主循环与停机编排在 run.ts，executor 注册面在
  * executor-face.ts——拆出件与本文均 <600 行（尺寸阈即拆件依据）。
  */
-import { AIWS_DIR, ensureAiwsTree } from '@studio-next/company'
+import { ensureAiwsTree } from '@studio-next/company'
 import { DEFAULT_FLOW_TABLE } from '@studio-next/core'
 import type {
   CompanySnapshot,
@@ -61,6 +61,7 @@ import {
 import { reEnsureChannels, startChannelSupply, wireRoomFace } from '../channels/channels.ts'
 import { seedJobs, removeMissingJobs } from '../jobs-seed/jobs-seed.ts'
 import { daemonIdentity, type ServeConfig } from './config.ts'
+import { wireAiwsFace } from './aiws-face.ts'
 import { buildServeEngineConfig } from './engine-config.ts'
 import { loadRootDelegationFace } from './root-delegation/root-face.ts'
 import { wireWorkerKeys } from './root-delegation/worker-key-face.ts'
@@ -174,24 +175,9 @@ export function buildServeRuntime(
   //     「没配」≠「不用验」）；载体坏/缺证明＝CONFIG_INVALID 拒启（禁先起来后补）。
   const rootDelegation = loadRootDelegationFace({ log })
 
-  // —— .AIWS 员工工作区树（DEV-28，docs/43-§五+§十9）：建司即建+存量对账——根推导
-  //    单一规则：显式 aiwsRoot > dirname(companyDir)/.AIWS > <rootDir>/.AIWS；per-company
-  //    不并树（异 slug 拒启动）；增量同步=扩编建目录/缩编归档不删（aiws.ts）+热重载增量。
-  const aiwsRoot = path.resolve(
-    config.aiwsRoot ??
-      (config.companyDir !== undefined
-        ? path.join(path.dirname(path.resolve(config.companyDir)), AIWS_DIR)
-        : path.join(path.resolve(config.rootDir), AIWS_DIR)),
-  )
-  const aiwsClock = (): Date => new Date(clock())
-  const aiwsTree = ensureAiwsTree(aiwsRoot, snapshot.departments, snapshot.people, {
-    slug: snapshot.slug,
-    now: aiwsClock,
-  })
-  log(
-    `[serve] .AIWS 员工工作区树：${aiwsRoot}（部门 ${snapshot.departments.length}、工位 ${aiwsTree.personDirs.length}` +
-      `${aiwsTree.created > 0 ? `、新建 ${aiwsTree.created}` : ''}${aiwsTree.archived.length > 0 ? `、归档 ${aiwsTree.archived.length}` : ''}）——派发 cwd=<部门>/<工号>/tickets/<单号>/att<N>，家保留（docs/43-§五；per-company 不并树 §十9）`,
-  )
+  // .AIWS 员工工作区树（DEV-28，docs/43-§五+§十9）：体=aiws-face.ts（20-§十五.三 拆件；
+  // 热重载 apply 段复用同一 aiwsRoot/aiwsClock 活引用，不双源）
+  const { aiwsRoot, aiwsClock } = wireAiwsFace(config, snapshot, clock, log)
 
   // —— executor 面装配（注册表/桥接 overlay/价目表与档位/judge 两址）——体=runtime-executor（20-§十五.三 先拆再增：本段零 engine 实例依赖，构造结果供下方 engine 注入与启动日志）
   const { registry, catalog, modelRoles, modelTierTickets, judgeHook, acceptance, realGate, restartProbe, capabilitySupply } = wireExecutorFace(config, {

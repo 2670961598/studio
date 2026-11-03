@@ -79,7 +79,6 @@
  *     轨7 装备令；机制依据与「只此一面注入」的边界见 spawnHeadless env 位注）
  */
 import { randomUUID } from 'node:crypto'
-import { spawnSync } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -94,204 +93,45 @@ import type {
   ResultStats,
   StreamEvent,
   TaskBrief,
-  TokenCounts,
 } from '@studio-next/contract'
 import { configInvalid } from '@studio-next/contract'
 import { parseLine, extractDshSessionId } from './streams.ts'
 import {
-  SEATBELT_BIN,
   buildWorkerSeatbeltProfile,
   seatbeltArgv,
   seatbeltProfileFileName,
 } from './seatbelt.ts'
-import type { SeatbeltEndpoint } from './seatbelt.ts'
 
-/** 缺省命令（docs/17-§6 dsh 行）：`dsh --profile headless --json` */
-export const DSH_DEFAULT_CMD: readonly string[] = ['dsh', '--profile', 'headless', '--json']
+import {
+  detectSeatbeltBackend,
+  DSH_DEFAULT_CMD,
+  DETECT_TIMEOUT_MS,
+  filterWorkerEnv,
+  LOCKED_VERSION,
+  requireState,
+  sessions,
+  type DshAdapterOptions,
+  type DshSeatbeltOptions,
+  type SessionState,
+} from './dsh/basics.ts'
+import {
+  agentsMdEnv,
+  aggregateUsage,
+  asError,
+  checkedCredentials,
+  errMsg,
+  isENOENT,
+  readTaskText,
+} from './dsh/helpers.ts'
 
-/** 锁定版本（docs/16-§二：锁版本升级走回归——2026-10-30 升 0.2.1-rc.5，P-05 四断言复验 PASS） */
-const LOCKED_VERSION = '0.2.1-rc.5'
-
-/** detect() 版本探测超时（毫秒）：挂死的 CLI 不许挡调度 */
-const DETECT_TIMEOUT_MS = 5_000
-
-// ---------------------------------------------------------------------------
-// seatbelt 写域圈定（DEV-29 原型 attempt3 接线，docs/43-§五 派发权限圈 ②）
-// ---------------------------------------------------------------------------
-
-/**
- * dsh 适配器的 seatbelt 启用面（原型档，DEV-29——先行接线：生成器见 seatbelt.ts，
- * 本面只决定「派发时怎么参数化」）：
- *   - mode：'auto'=darwin 且后端可用才圈定（detect 前置探测，不可用=明报 gap 不派）；
- *     'off'=不圈定（缺省——不影响既有行为与测试）
- *   - dshHomeRedirect：per-attempt DSH_HOME 重定向目标（**须在写域内**，如
- *     <workspace>/.dsh-home——dsh boot 必写 $DSH_HOME/profiles/<name>/…，真机实测见
- *     验证记录；不重定向则 DSH_HOME 须由 extraWriteRoots 显式入白名单）
- *   - writeRootsOverride：**覆写整个写域**（给定后 task.workspace/extraWriteRoots/
- *     dshHomeRedirect 全不并入——judge 派发面置 [一次性 DSH_HOME 重定向目录]：workspace
- *     只读、跨目录产出位一并无——studio-dev-164 红队 2 的机制位，任务派工面勿用）
- *   - profileDir：profile 落盘目录（缺省 workspace/.seatbelt/——证据随单走，docs/17-§6；
- *     judge 派发面置一次性工作区外目录，配合 writeRootsOverride 保「调用毕目录空」断言面）
- *   - rpcEndpoints：回环宿主 RPC 白名单（缺省=DSH_HOST_RPC_DEFAULT 127.0.0.1:13800；
- *     空数组=禁回环）/ outboundTcp：模型 API 出口白名单（缺省空=禁远程出口；host 仅认
- *     localhost/*，域名出口=daemon 侧本地代理——见 seatbelt.ts 头注局限）
- *   - （attempt3 处置 (a)：无读域参数——读域宽放，再引入红线见 seatbelt.ts 头注）
- */
-export interface DshSeatbeltOptions {
-  mode: 'auto' | 'off'
-  dshHomeRedirect?: string
-  extraWriteRoots?: readonly string[]
-  writeRootsOverride?: readonly string[]
-  profileDir?: string
-  rpcEndpoints?: readonly SeatbeltEndpoint[]
-  outboundTcp?: readonly SeatbeltEndpoint[]
-}
-
-/** DshAdapter 构造选项（v0 仅 seatbelt 面；cmd 仍第一位保持既有调用点零改动） */
-export interface DshAdapterOptions {
-  seatbelt?: DshSeatbeltOptions
-  /**
-   * 模型归一形 `provider/model`（132-§6.1 单A·C3，studio-dev-168）：dsh 无 `--model`
-   * 旗标，模型=profile `agent-default-model` 插件配置——daemon 侧的部署声明镜像
-   * （agent.yaml executors.dsh.patches，agentconfig.ts 解析注入）。构造期注入、
-   * resultStats 原样回传；未给=不填（无从可知，不猜——存量收割 model 列 NULL）。
-   */
-  model?: string
-}
-
-/**
- * seatbelt 后端可用性探测（detect 前置面）：以最小 profile 跑 `sandbox-exec -p … true`。
- * macOS 拒绝嵌套 sandbox_apply——**本会话自身已在 seatbelt 内时探测必败**（实测
- * EPERM exit 71），据此 fail-closed：mode='auto' 但后端不可用 = 明报 gap 不派
- * （写域圈定是安全面，「圈不住就照跑」不是选项）。应用点正确形态=未沙箱的派发方
- * （daemon）持 profile 应用到 worker 子进程——适配器 spawn 在 daemon 进程内，天然满足。
- * 嵌套环境（如本仓测试会话）预期=ok:false + gap 'seatbelt-nested-sandbox'——测试
- * 按环境自适应断言，两种环境都证 fail-closed 语义（不伪造绿）。
- */
-function detectSeatbeltBackend(): DetectResult {
-  const probe = `(version 1)(allow default)(deny network*)` // 最小可用面：无网+全放行基线
-  const r = spawnSyncProbe(SEATBELT_BIN, ['-p', probe, '/usr/bin/true'])
-  if (r.status === 0) return { name: 'seatbelt', version: '', ok: true, gaps: [] }
-  const detail =
-    r.status === 71
-      ? 'seatbelt-nested-sandbox' // 编译过但 apply 被拒（EPERM）=本进程已在沙箱内
-      : `seatbelt-backend-failed:exit=${String(r.status ?? r.signal ?? 'null')}`
-  return { name: 'seatbelt', version: '', ok: false, gaps: [detail] }
-}
-
-/** detectSeatbeltBackend 的 spawn 面（独立小函数：测试不可注入也不必注入——真机面） */
-function spawnSyncProbe(bin: string, argv: readonly string[]): { status: number | null; signal: string | null } {
-  const r = spawnSync(bin, argv, { timeout: DETECT_TIMEOUT_MS })
-  return { status: r.status, signal: r.signal ?? null }
-}
-
-// ---------------------------------------------------------------------------
-// worker env 白名单（docs/43-附录A-1 安全基线；spike 验证 docs/44-§二 条款1）
-// ---------------------------------------------------------------------------
-
-/**
- * 宿主 env 封闭允许集（docs/43-附录A-1）：子进程只继承这些键，其余一律不透传
- * （deny-by-default——不是「黑名单剔除」，是「白名单收录」）。
- *   - PATH/HOME/TMPDIR/TZ/LANG/LC_*：进程运行必需键与本地化（executor 运行面）
- *   - DSH_*：executor 自有配置命名空间（DSH_PROFILE / DSH_TELEMETRY_MODE 等——dsh 侧
- *     凭证与配置均从该命名空间读，docs/31-§3.5「进程 env 最高层」）
- * 框架注入键（STUDIO_NEXT_INSTRUCTIONS、TaskBrief.credentials、DSH_TELEMETRY_MODE 覆盖）
- * 不经此集——它们在白名单之后按固定顺序追加（见 spawnHeadless）。
- */
-const ENV_KEY_ALLOWLIST: readonly string[] = ['PATH', 'HOME', 'LANG', 'TZ', 'TMPDIR']
-const ENV_PREFIX_ALLOWLIST: readonly string[] = ['LC_', 'DSH_']
-
-/**
- * credentials 键名封闭枚举（docs/43-附录A-1 凭据键域）：
- *   - DEEPSEEK_API_KEY（类别 model-key）：dsh 的 provider route 凭证（docs/31-A4 真机
- *     错误面指名「export DEEPSEEK_API_KEY in the launching environment」）
- *   - STUDIO_TOOLS_WKEY（类别 platform-write）：worker 级平台写凭据（worker-key.ts，17-§7）
- * 白名单外的键——尤其 PATH / NODE_OPTIONS / LD_* / DYLD_* / SHELL / HOME 类注入键——
- * 结构拒收（CONFIG_INVALID），绝不静默剔除后放行其余。
- */
-const CREDENTIAL_KEY_ENUM: readonly string[] = ['DEEPSEEK_API_KEY', 'STUDIO_TOOLS_WKEY']
-
-/** 注入高危键点名表（报错信息用——命中即明说这是注入面拒收，不是普通未知键） */
-const INJECTION_KEY_PATTERNS: readonly (readonly [RegExp, string])[] = [
-  [/^PATH$/, 'PATH 覆盖可劫持可执行解析'],
-  [/^NODE_OPTIONS$/, 'NODE_OPTIONS 可注入预载脚本'],
-  [/^LD_/, 'LD_* 动态链接器注入'],
-  [/^DYLD_/, 'DYLD_* macOS 动态链接器注入'],
-  [/^SHELL$/, 'SHELL 可指定任意解释器'],
-  [/^HOME$/, 'HOME 可劫持配置/凭证发现路径'],
-]
-
-/** 宿主 env → 子进程 env（只收录封闭允许集；deny-by-default，导出供测试直证） */
-export function filterWorkerEnv(base: Record<string, string | undefined>): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const [key, value] of Object.entries(base)) {
-    if (value === undefined) continue
-    if (ENV_KEY_ALLOWLIST.includes(key) || ENV_PREFIX_ALLOWLIST.some((p) => key.startsWith(p))) {
-      out[key] = value
-    }
-  }
-  return out
-}
-
-/**
- * credentials 键域闸（封闭枚举）：白名单外键结构拒收并抛 CONFIG_INVALID。
- * 值不校验不打印（红名单纪律不变——本闸只看键名）。
- */
-export function assertCredentialKeys(creds: Record<string, string>): void {
-  for (const key of Object.keys(creds)) {
-    if (CREDENTIAL_KEY_ENUM.includes(key)) continue
-    const hit = INJECTION_KEY_PATTERNS.find(([re]) => re.test(key))
-    configInvalid(
-      'dsh/credential-key-rejected',
-      hit !== undefined
-        ? `credentials 键 ${JSON.stringify(key)} 属注入高危键（${hit[1]}）——封闭枚举外键结构拒收（docs/43-附录A-1；合法键：${CREDENTIAL_KEY_ENUM.join('、')}）`
-        : `credentials 键 ${JSON.stringify(key)} 不在封闭枚举内——结构拒收（docs/43-附录A-1；合法键：${CREDENTIAL_KEY_ENUM.join('、')}）`,
-    )
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Handle 伴生状态（模块内私有）
-// ---------------------------------------------------------------------------
-
-interface SessionState {
-  readonly subprocess: Subprocess
-  readonly startedAt: number
-  /** stream() 消费时累积的归一事件（resultStats 的账目来源） */
-  readonly events: StreamEvent[]
-  /** 逐行 stdout 原文缓冲（证据留痕，未解析；台账落盘归 daemon） */
-  readonly rawLines: string[]
-  streamConsumed: boolean
-  killed: boolean
-  /**
-   * dsh 侧会话 id（session-<uuid>）：stream() 从流首 session 事件捕获（P1 收存面
-   * docs/31-§5-6；契约 Handle.executorSessionId v1.5——同步写进 Handle 供续跑/对账）
-   */
-  executorSessionId?: string
-  /** 子进程 promise 已落定（退出或 spawn 失败）——由 launch 的派生观察器置位（头注 10.x 项） */
-  settled: boolean
-  /** promise 落定时留档的退出码（null=被信号杀死；未落定/spawn 失败时 undefined） */
-  settledExitCode?: number | null
-  /** spawn 层失败（如 ENOENT）——stdout 不可用时 stream() 如实抛出 */
-  spawnError?: Error
-  /** 流收尾时刻（kill 或自然退出后）；未收尾时 undefined */
-  endedAt?: number
-  /** stream() 收尾时记录的退出码（null=被信号杀死） */
-  exitCode?: number | null
-}
-
-/** sessionId（UUID 全局唯一）→ 伴生状态；多实例共享不冲突，见文件头注 */
-const sessions = new Map<string, SessionState>()
-
-function requireState(h: Handle): SessionState {
-  const state = sessions.get(h.sessionId)
-  if (state === undefined) {
-    throw new Error(
-      `dsh: 未知的 sessionId=${h.sessionId}（伴生状态缺失——launch 未发生或 daemon 已重启）`,
-    )
-  }
-  return state
-}
+// 基座/纯函数面拆至 dsh/{basics,helpers}.ts（docs/20-§十五.三）；此处再出口保持既有导入面零改行。
+export {
+  assertCredentialKeys,
+  DSH_DEFAULT_CMD,
+  filterWorkerEnv,
+  type DshAdapterOptions,
+  type DshSeatbeltOptions,
+} from './dsh/basics.ts'
 
 // ---------------------------------------------------------------------------
 // 适配器
@@ -682,100 +522,3 @@ export class DshAdapter implements ExecutorAdapter {
 // ---------------------------------------------------------------------------
 // 内部工具（纯函数）
 // ---------------------------------------------------------------------------
-
-/**
- * credentials 键域检查 + 原样透传（值不打印不记录——红名单纪律不变）。
- * 枚举外键在此结构拒收（CONFIG_INVALID）——launch 前置失败如实上报，不带病起进程。
- */
-function checkedCredentials(creds: TaskBrief['credentials']): Record<string, string> {
-  if (creds === undefined) return {}
-  assertCredentialKeys(creds)
-  return { ...creds }
-}
-
-/**
- * AGENTS.md 通道 env 映射——插件通道（2026-10-19 三件套之一落地，docs/25-§3.1 v1.5 裁决#1）：
- * user_level / append_system_prompt 两通道改注 `STUDIO_NEXT_INSTRUCTIONS=<target>`，由
- * studio-next-bridge 宿主插件（packages/dsh-bridge）在 agent 创建时读文件注入系统提示
- * persona 前缀段（docs/31-§5-5 真方案：真机无任何 DSH_* 注入 env——旧变量
- * DSH_AGENTS_MD / DSH_APPEND_SYSTEM_PROMPT_FILE 全配置面零命中，已证伪移除 docs/31-A1）。
- * 前提：插件已挂载（per-company profile patch insert 条目或 --patch overlay）——未挂载时
- * 该 env 无消费者（无害空注，注入不发生）。dsh 侧两通道在此汇成一个注入面（无 append 专道）。
- * native → 不注入（与真机原生发现吻合：launch cwd 向上扫 AGENTS.md>CLAUDE.md，P-07 实证）。
- * target 落点由 L5 装配决定、适配器只透传（docs/25-§二 TaskBrief 注释；docs/04-§六）。
- */
-function agentsMdEnv(a: TaskBrief['AGENTS_MD']): Record<string, string> {
-  switch (a.channel) {
-    case 'native':
-      return {}
-    case 'user_level':
-    case 'append_system_prompt':
-      return { STUDIO_NEXT_INSTRUCTIONS: a.target }
-  }
-}
-
-/**
- * 任务串读取：briefPath 全文即任务文本（字节如实，不裁不拼——dsh headless 单位置参数）。
- * 不可读 → 抛错（装配管线缺件，launch 前置失败如实上报，不静默传空）。
- */
-async function readTaskText(briefPath: string): Promise<string> {
-  try {
-    return await readFile(briefPath, 'utf8')
-  } catch (e) {
-    throw new Error(`dsh: 任务书不可读（briefPath=${briefPath}）：${errMsg(e)}`)
-  }
-}
-
-/**
- * usage 账目归并：只认 step_end usage 求和（docs/31-§3.2：真机 turn_end 恒无 usage，
- * 旧 turn_end 兜底分支已删）；四桶直译（132-§6.1 单A）——cache_read/cache_creation
- * 各自求和，**任一 step_end 携带该桶才落键**（真值直录，不编造 0 桶；判负线⑤：真机流
- * 含 cacheWriteTokens 时 cache_creation 不得归零/丢失）。无任何 step usage → 零账
- * （kill 面/预运行失败面，不编造）。写侧一律新键——本函数与 toUsageDsh 均不产 `cached`。
- */
-function aggregateUsage(events: readonly StreamEvent[]): TokenCounts {
-  let input = 0
-  let output = 0
-  let cacheRead = 0
-  let cacheCreation = 0
-  let seen = false
-  let seenRead = false
-  let seenCreation = false
-  for (const e of events) {
-    if (e.type === 'step_end' && e.usage !== undefined) {
-      seen = true
-      input += e.usage.input
-      output += e.usage.output
-      if (e.usage.cache_read !== undefined) {
-        seenRead = true
-        cacheRead += e.usage.cache_read
-      }
-      if (e.usage.cache_creation !== undefined) {
-        seenCreation = true
-        cacheCreation += e.usage.cache_creation
-      }
-    }
-  }
-  if (!seen) return { input: 0, output: 0 }
-  return {
-    input,
-    output,
-    ...(seenRead ? { cache_read: cacheRead } : {}),
-    ...(seenCreation ? { cache_creation: cacheCreation } : {}),
-  }
-}
-
-/** ENOENT 判定（未安装）：execa reject:false 下 spawn 失败挂在 result.cause（实测 9.6.1→10.1 同形） */
-function isENOENT(cause: unknown): boolean {
-  const code = (cause as { code?: unknown } | undefined)?.code
-  return code === 'ENOENT' || asError(cause).message.includes('ENOENT')
-}
-
-function asError(e: unknown): Error {
-  return e instanceof Error ? e : new Error(String(e))
-}
-
-function errMsg(e: unknown): string {
-  const msg = asError(e).message
-  return msg === '' ? String(e) : msg
-}

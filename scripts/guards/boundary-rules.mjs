@@ -156,28 +156,23 @@ export const maxLinesPerFile = 600;
  * 基线内件超基线值=违例；降至 ≤600 可随任意提交除名；上调/新增=提案流（§十五.三.3）。
  * 清偿义务：每里程碑对账点核对净变化——只许净减（§十五.三.4）。
  */
+// 2026-11-03 studio-dev-556：engine/ledger/dsh/repo-validate/dependencies/views/hot-reload
+// 拆件后均 ≤600，基线条目除名（基线净降；§十五.三.3「基线值下降与条目除名随任意提交顺带办理」）。
 export const lineBaseline = {
-  "apps/daemon/src/engine/engine.ts":     1998, // IMPL-06-02/03/04 拆分后净降（收割域/工作域/署名构造收口；原 2337→1990 由 06-02/03 达成）；2026-11-03 studio-dev-409/471：+9 cursor 回退环防护——制作人批示基线上调（§十五.三.三提案流留痕），后续拆分单回归净降
   "apps/boot/src/boot.test.ts": 645, // 217+219 双面测试叠加（新超限件随批示波次入基线）
   "packages/store/src/records.ts": 606,
-  "packages/store/src/ledger.ts": 1684, // 179 132-D 定型面缝并入（叠加态实测 2026-10-23）
   // apps/daemon/src/assembly/serve.ts：IMPL-06-05 拆 config/runtime/run/executor-face 后
   // 1627 → 45 行（薄壳只留公共导出/转发）——降至 ≤600 按 §十五.三.3 除名（基线净降登记）。
-  "packages/company/src/repo-validate.ts": 1021,
   "apps/daemon/test/control/hot-reload.test.ts": 930,
   "apps/daemon/test/engine/scheduler.test.ts": 785,
-  "packages/company/src/dependencies.ts": 775,
   "packages/company/test/repo-validate.test.ts": 766,
   "apps/daemon/test/engine/sources.test.ts": 768, // 105-刀A 唤醒源测试(+19)
-  "packages/adapters/src/dsh.ts": 781, // 132-§6.1 单A 账目面(+32：aggregateUsage 四桶真值直录+DshAdapterOptions.model 归一注入——studio-dev-168 过审落位；前值 726)；2026-11-03 透传修复 +23（功能约 3 行＋注释引用——制作人批示上调 758→781，§十五.三.三 提案流留痕）
   "packages/taiga/src/testutil.ts": 723,
   "packages/adapters/test/dsh.test.ts": 785, // 132-§6.1 单A 判负线⑤(+70：四桶归并/model 注入/无缓存桶三测试——studio-dev-168；前值 715)
-  "packages/panel/src/views.ts": 662,
   "packages/adapters/test/kimi.test.ts": 662, // 132-§6.1 单A 桶键统一(+1：cached→cache_read 断言注释——studio-dev-168；前值 661)
   "apps/daemon/test/evolve/evolution-e2e.test.ts": 652,
   "packages/company/src/validator.ts": 655, // 130-P1 类型收件态(+1：接线行——规则体=type-inbox.ts 拆出) // 170 127-C 州表卫生(+7：接线行) // 前值 654/647
   "apps/daemon/test/evolve/gray.test.ts": 625,
-  "apps/daemon/src/control/hot-reload.ts": 624,
   "packages/panel/src/overview/views.ts": 629, // 170 127-C 州表卫生映射层(+11：stateMapping 形参+口径注) // 前值 618=DEV-12 刀二
   "packages/store/test/v5-candidates.test.ts": 602,
 };

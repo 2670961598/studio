@@ -33,131 +33,51 @@
  *       name 字段所指（docs/34-§3.1 dsh 插件形态的声明面）
  *   R7 A-4/E-3 两面同禁 .AIWS；.studio-next/ 源面禁、产物面豁免
  */
-import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readdir, rm, stat } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
-import { LineCounter, parse as parseYaml, parseDocument } from 'yaml'
-import { simpleGit } from 'simple-git'
+import { parse as parseYaml } from 'yaml'
 import type { CompanySnapshot, DirectoryIssue, MountResult } from '@studio-next/contract'
 import { loadCompanyDirectory } from './validator.ts'
-import { lineOfPath } from './multifile.ts'
-import {
-  extractPersonAttrs,
-  parsePlainVersion,
-  planPluginInstalls,
-  safeParseDependencies,
-  type CompanyDependencies,
-  type PluginInstallItem,
-} from './dependencies.ts'
 import { readDirectoryFiles } from './init.ts'
 
-// ————————————————————————— 0. 规则号/常量（docs/51-§一..§六） —————————————————————————
+// 判定器分域拆件（docs/20-§十五.三；原文件余量 ≥50，行为零漂移）：
+// model=规则号/常量/结果形状；layer-extras=增补面；deps-face=D 组；input-render=输入物化/渲染。
+import {
+  AIWS_DIR,
+  ANCHOR_DIR,
+  CLOSED_TOP_DIRS,
+  CLOSED_TOP_FILES,
+  DEPENDENCIES_FILE,
+  ORG_CONFIG_FILE,
+  REPO_FILE_COUNT_MAX,
+  REPO_SINGLE_FILE_MAX_BYTES,
+  WALK_SKIP_NAMES,
+  type RepoFace,
+  type RepoRuleId,
+  type RepoValidateOptions,
+  type RepoValidateResult,
+  type RepoValidateSummary,
+  type RepoViolation,
+  type RepoWarning,
+} from './repo-validate/model.ts'
+import { layerExtras } from './repo-validate/layer-extras.ts'
+import { depsFace } from './repo-validate/deps-face.ts'
+import { RepoInputError } from './repo-validate/input-render.ts'
 
-export type RepoRuleId =
-  | 'A-1' | 'A-2' | 'A-3' | 'A-4' | 'A-5'
-  | 'B-1' | 'B-2' | 'B-3' | 'B-4' | 'B-5' | 'B-6'
-  | 'C-1' | 'C-2' | 'C-3' | 'C-4' | 'C-5' | 'C-6' | 'C-7' | 'C-8'
-  | 'D-1' | 'D-2' | 'D-3' | 'D-4'
-  | 'E-1' | 'E-2' | 'E-3' | 'E-4'
-
-/** 判定面：source=源仓（含 git-url 的克隆产物）；product=导入镜像+重建后的产物（锚豁免） */
-export type RepoFace = 'source' | 'product'
-
-/**
- * 顶层封闭集（docs/51-§二 枚举 + 框架自管两员 R2）：
- *   - 文件位：org-config.yaml / charter.md / dependencies.yaml / .gitignore / README.md /
- *     .studio-next.yaml（docs/44-§v1.1 挂载元信息随行）
- *   - 目录位：charter/ departments/ prompts/ docs/ plugins/ reports/（B-4 output 锚定的
- *     产出根；templates 与 DEV-27 允许集先例）
- */
-const CLOSED_TOP_FILES: readonly string[] = [
-  'org-config.yaml', 'charter.md', 'dependencies.yaml', '.gitignore', 'README.md', '.studio-next.yaml',
-]
-const CLOSED_TOP_DIRS: readonly string[] = ['charter', 'departments', 'prompts', 'docs', 'plugins', 'reports']
-
-/** 锚目录与员工工作区（A-4/A-5/E-3 面语义见头注 R7） */
-const ANCHOR_DIR = '.studio-next'
-const AIWS_DIR = '.AIWS'
-
-/** walk 排除面：.git=版本库非契约（A-3，克隆/解包同理跳过）；.DS_Store=系统杂音（与 DEV-27 同口径） */
-const WALK_SKIP_NAMES: readonly string[] = ['.git', '.DS_Store']
-
-/** E-4 资源护栏（docs/51-§六：实现期参数，拟稿可调——常量单源） */
-export const REPO_SINGLE_FILE_MAX_BYTES = 8 * 1024 * 1024
-export const REPO_FILE_COUNT_MAX = 5000
-
-/** B-1 slug 语法域（docs/51-§三：小写字母/数字/连字符，3-64 字符，两端不断字） */
-export const DOCS51_SLUG_RE = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/
-
-/** R3：工号/部门段=slug 语法形状域（大小写/中文随全司惯例：AGENT-1 / 工程部 均合法） */
-const ID_SEGMENT_RE = /^[A-Za-z0-9\u4e00-\u9fff]+(?:-[A-Za-z0-9\u4e00-\u9fff]+)*$/
-
-/** R5：semver 三元组（x.y.z） */
-const SEMVER_RE = /^\d+\.\d+\.\d+$/
-
-const ORG_CONFIG_FILE = 'org-config.yaml'
-const DEPENDENCIES_FILE = 'dependencies.yaml'
-const TARBALL_RE = /\.(?:tar|tar\.gz|tgz|tar\.bz2|tar\.xz)$/i
-
-// ————————————————————————— 1. 结果形状（docs/51-§七 输出契约） —————————————————————————
-
-/** 单条违规：规则号 + 文件 + 位置（行号 L<n> 或键路径）+ 违规描述 + 修复建议 */
-export interface RepoViolation {
-  rule: RepoRuleId
-  file: string
-  location: string
-  problem: string
-  fix: string
-  /** 共享核内层规则号（org-config/missing-field:company.slug 等——DEV-27 既有断言面） */
-  via?: string
-  /** DEV-27 结构闸别名（import/unknown-entry、import/aiws-present、import/anchor-present 等——新旧规则号共存，测试与运维双面可读） */
-  alias?: string
-}
-
-/** 合法但须明示的面（D-2 冲突警示；缺 meta 的迁移期提示等——不阻断） */
-export interface RepoWarning {
-  rule: string
-  file: string
-  location: string
-  problem: string
-}
-
-/** PASS 摘要（docs/51-§七：公司/部门/人数/jobs/插件/能力缺失面） */
-export interface RepoValidateSummary {
-  name: string
-  slug: string
-  level: number
-  departments: number
-  people: number
-  jobs: number
-  plugins: number
-  platform: string
-  /** D-3 能力缺失面（绑定插件无仓内源——合法，安装面另行处理） */
-  capabilityMissing: { name: string; required: string[]; detail: string }[]
-  /** D-2 约束并集无解面（冲突警示——合法不装错） */
-  conflicts: { name: string; required: string[]; detail: string }[]
-}
-
-export interface RepoValidateResult {
-  ok: boolean
-  face: RepoFace
-  violations: RepoViolation[]
-  warnings: RepoWarning[]
-  /** --allow-extra 豁免留痕（A-1 封闭集外路径逐条列出，不豁免其他组） */
-  exempted: string[]
-  summary?: RepoValidateSummary
-  /** org 面合法即给出（导入流/摘要共用同一快照——单一事实源） */
-  snapshot?: CompanySnapshot
-}
-
-export interface RepoValidateOptions {
-  /** 缺省 source；DEV-27 产物面跑 product（锚豁免） */
-  face?: RepoFace
-  /** --allow-extra：A-1 封闭集外路径豁免并留痕（不豁免 B/C/D/E） */
-  allowExtra?: boolean
-}
+// 公开面再出口（packages/company/src/index.ts 的 `export *` 与既有导入面零改行）。
+export type {
+  RepoFace,
+  RepoRuleId,
+  RepoValidateOptions,
+  RepoValidateResult,
+  RepoValidateSummary,
+  RepoViolation,
+  RepoWarning,
+} from './repo-validate/model.ts'
+export { DOCS51_SLUG_RE, REPO_FILE_COUNT_MAX, REPO_SINGLE_FILE_MAX_BYTES } from './repo-validate/model.ts'
+export { RepoInputError, materializeCompanyRepoInput } from './repo-validate/input-render.ts'
+export { renderRepoValidation, repoValidationJson } from './repo-validate/input-render.ts'
 
 // ————————————————————————— 2. 物理 walk（A 组 + E-1/E-3/E-4 输入） —————————————————————————
 
@@ -433,309 +353,6 @@ function mapSharedIssue(issue: DirectoryIssue): RepoViolation | null {
   }
 }
 
-/** 判定器增补面：共享核未覆盖的 docs/51 值域/交叉引用（slug/version/dist/唯一性/C-4 锚定/C-5/C-6/B-6） */
-function layerExtras(files: Record<string, string>, orgSrc: string, charterRef: string): RepoViolation[] {
-  // 索引本位检查（形状/唯一性/值域/锚定）只依赖 org-config 可解析——不挂全局面成败：
-  // 共享核先行指认结构/交叉问题，增补面照常补位（B-3 形状不因 C-4 先发而被吞）
-  const lc = new LineCounter()
-  let doc: ReturnType<typeof parseDocument>
-  try {
-    doc = parseDocument(orgSrc, { lineCounter: lc })
-  } catch {
-    return [] // YAML 语法崩坏已由共享核 B-1 指认——增补面无从挂点
-  }
-  const raw = doc.toJS()
-  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return [] // 同上：结构面已指认
-  const out: RepoViolation[] = []
-  const lineAt = (keyPath: (string | number)[]): number => lineOfPath(doc, lc, keyPath)
-  const company = ((raw as Record<string, unknown>)['company'] ?? {}) as Record<string, unknown>
-
-  // B-1 slug 语法域（docs/51 小写正则；R4：判定器按规范正则收，严于 init 通道）
-  const slug = typeof company['slug'] === 'string' ? company['slug'] : ''
-  if (!DOCS51_SLUG_RE.test(slug)) {
-    out.push({
-      rule: 'B-1', file: ORG_CONFIG_FILE, location: `L${lineAt(['company', 'slug'])}`,
-      problem: `company.slug="${slug}" 不在 slug 语法域（^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$——小写字母/数字/连字符，3-64 字符，两端不断字）`,
-      fix: '改为全小写连字符 slug（例：demo-corp）',
-    })
-  }
-  // R5 version：在场必须 semver 三元组
-  if (company['version'] !== undefined && (typeof company['version'] !== 'string' || !SEMVER_RE.test(company['version']))) {
-    out.push({
-      rule: 'B-1', file: ORG_CONFIG_FILE, location: `L${lineAt(['company', 'version'])}`,
-      problem: `company.version=${JSON.stringify(company['version'])} 不是 semver 三元组（x.y.z）`,
-      fix: '改为形如 1.0.0 的 semver（迁移期可缺省该键）',
-    })
-  }
-  // B-1 level_distribution：值=非负整数（docs/51-§三）
-  const dist = (company['level_distribution'] ?? {}) as Record<string, unknown>
-  for (const [k, v] of Object.entries(dist)) {
-    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) {
-      out.push({
-        rule: 'B-1', file: ORG_CONFIG_FILE, location: `company.level_distribution.${k}`,
-        problem: `level_distribution["${k}"]=${JSON.stringify(v)}（值须为非负整数）`,
-        fix: '改为非负整数（该档人数）',
-      })
-    }
-  }
-
-  const departments = Array.isArray(raw['departments']) ? (raw['departments'] as Record<string, unknown>[]) : []
-  const people = Array.isArray(raw['people']) ? (raw['people'] as Record<string, unknown>[]) : []
-  const jobs = Array.isArray(raw['jobs']) ? (raw['jobs'] as Record<string, unknown>[]) : []
-  const deptPaths = new Set(departments.map((d) => String(d['path'] ?? '')))
-
-  // B-3 工号：形状 + 全司唯一
-  const seenIds = new Map<string, number>()
-  people.forEach((p, i) => {
-    const id = typeof p['id'] === 'string' ? p['id'] : ''
-    if (!ID_SEGMENT_RE.test(id)) {
-      out.push({
-        rule: 'B-3', file: ORG_CONFIG_FILE, location: `L${lineAt(['people', i, 'id'])}`,
-        problem: `people[${i}].id="${id}" 不在工号语法形状域（字母/数字/连字符段，两端不断字——R3：大小写随全司惯例）`,
-        fix: '改为 AGENT-1 形态工号',
-      })
-    }
-    const first = seenIds.get(id)
-    if (first !== undefined) {
-      out.push({
-        rule: 'B-3', file: ORG_CONFIG_FILE, location: `L${lineAt(['people', i, 'id'])}`,
-        problem: `工号 ${id} 重复（全司唯一；首见 people[${first}]）`,
-        fix: `改 people[${i}].id 为未用工号`,
-      })
-    } else {
-      seenIds.set(id, i)
-    }
-  })
-
-  // B-4 jobs id 全司唯一
-  const seenJobs = new Map<string, number>()
-  jobs.forEach((j, i) => {
-    const id = typeof j['id'] === 'string' ? j['id'] : ''
-    const first = seenJobs.get(id)
-    if (first !== undefined) {
-      out.push({
-        rule: 'B-4', file: ORG_CONFIG_FILE, location: `L${lineAt(['jobs', i, 'id'])}`,
-        problem: `jobs[${i}].id="${id}" 重复（全司唯一；首见 jobs[${first}]）`,
-        fix: '定时岗 id 改为全司唯一串',
-      })
-    } else {
-      seenJobs.set(id, i)
-    }
-  })
-
-  // C-4 file 路径锚定：在场必须恰为 <dept>/people/<工号>.md（docs/51-§三 B-3/C-4）
-  people.forEach((p, i) => {
-    if (p['file'] === undefined) return // 缺省由共享核推导（M2.2-②）
-    const dept = String(p['dept'] ?? '')
-    const id = String(p['id'] ?? '')
-    if (p['file'] !== `${dept}/people/${id}.md`) {
-      out.push({
-        rule: 'C-4', file: ORG_CONFIG_FILE, location: `L${lineAt(['people', i, 'file'])}`,
-        problem: `people[${i}].file=${JSON.stringify(p['file'])} 与锚定位 ${dept}/people/${id}.md 不一致`,
-        fix: `改为 ${dept}/people/${id}.md（或删 file 键走缺省推导）`,
-      })
-    }
-  })
-
-  // C-6 parent：悬空（不在 departments[].path 索引）或成环（链走不终于 null）
-  departments.forEach((d, i) => {
-    const parent = d['parent']
-    if (parent === null || parent === undefined) return
-    const parentPath = String(parent)
-    if (!deptPaths.has(parentPath)) {
-      out.push({
-        rule: 'C-6', file: ORG_CONFIG_FILE, location: `L${lineAt(['departments', i, 'parent'])}`,
-        problem: `departments[${i}].parent="${parentPath}" 悬空（不在 departments[].path 索引）`,
-        fix: '改为已登记部门 path，或 null（根部门）',
-      })
-      return
-    }
-    const visited = new Set<string>([String(d['path'] ?? '')])
-    let cursor: unknown = parent
-    while (typeof cursor === 'string') {
-      if (visited.has(cursor)) {
-        out.push({
-          rule: 'C-6', file: ORG_CONFIG_FILE, location: `L${lineAt(['departments', i, 'parent'])}`,
-          problem: `departments[${i}].parent 链成环（${[...visited, cursor].join(' → ')}）`,
-          fix: '部门树 parent 链必须终于 null（根部门）——断环',
-        })
-        return
-      }
-      visited.add(cursor)
-      const node = departments.find((x) => String(x['path'] ?? '') === cursor)
-      if (node === undefined) break // 悬空由上方单检指认
-      cursor = node['parent']
-    }
-  })
-
-  // C-5 双清单互检：org-config jobs ↔ 部门 config jobs（双向）
-  const rootDept = departments.find((d) => d['parent'] === null) ?? departments[0]
-  const orgJobIds = new Set(jobs.map((j) => String(j['id'] ?? '')))
-  const configJobs = new Map<string, string[]>()
-  for (const d of departments) {
-    const p = String(d['path'] ?? '')
-    const src = files[`${p}/config.yaml`]
-    if (src === undefined) continue // dept/dangling 由共享核指认（A-2）
-    try {
-      const parsed = parseYaml(src) as Record<string, unknown>
-      if (Array.isArray(parsed['jobs'])) {
-        configJobs.set(p, parsed['jobs'].filter((x): x is string => typeof x === 'string'))
-      }
-    } catch {
-      continue // dept config YAML 语法错由共享核指认
-    }
-  }
-  for (const j of jobs) {
-    const id = String(j['id'] ?? '')
-    const dept = typeof j['dept'] === 'string' ? j['dept'] : String(rootDept?.['path'] ?? '')
-    const list = configJobs.get(dept)
-    if (list === undefined || !list.includes(id)) {
-      out.push({
-        rule: 'C-5', file: `${dept}/config.yaml`, location: 'jobs',
-        problem: `org-config jobs 岗位 "${id}" 挂靠 ${dept}，但其部门 config jobs 清单未收录（${list === undefined ? '清单缺失' : `现清单 [${list.join(', ')}]`}）`,
-        fix: `在 ${dept}/config.yaml jobs 清单补 "${id}"（双清单必须一致）`,
-      })
-    }
-  }
-  for (const [dept, list] of configJobs) {
-    for (const id of list) {
-      if (!orgJobIds.has(id)) {
-        out.push({
-          rule: 'C-5', file: `${dept}/config.yaml`, location: 'jobs',
-          problem: `部门 config jobs 清单含 "${id}"，但 org-config.yaml jobs 段无此岗`,
-          fix: `补 org-config jobs 段该岗，或从 ${dept}/config.yaml 清单移除`,
-        })
-      }
-    }
-  }
-
-  // B-6 charter 与 prompts/ 非空文本
-  const charterSrc = files[charterRef]
-  if (charterSrc !== undefined && charterSrc.trim() === '') {
-    out.push({
-      rule: 'B-6', file: charterRef, location: 'L1',
-      problem: `章程文件 ${charterRef} 为空（charter 与 prompts/ 须非空文本）`,
-      fix: '补章程正文（空文件不算章程）',
-    })
-  }
-  for (const [rel, src] of Object.entries(files)) {
-    if (rel.startsWith('prompts/') && src.trim() === '') {
-      out.push({
-        rule: 'B-6', file: rel, location: 'L1',
-        problem: `prompts/ 片段 ${rel} 为空文件`,
-        fix: '补提示词片段正文或删除该文件',
-      })
-    }
-  }
-  return out
-}
-
-// ————————————————————————— 5. D 组（依赖面） —————————————————————————
-
-interface DepsFace {
-  violations: RepoViolation[]
-  conflicts: RepoValidateSummary['conflicts']
-  capabilityMissing: RepoValidateSummary['capabilityMissing']
-  deps: CompanyDependencies | null
-}
-
-function depsFace(
-  files: Record<string, string>,
-  pluginEntries: readonly string[],
-  orgSrcForPersons: string,
-): DepsFace {
-  const violations: RepoViolation[] = []
-  const conflicts: RepoValidateSummary['conflicts'] = []
-  const capabilityMissing: RepoValidateSummary['capabilityMissing'] = []
-
-  // D-4：plugins/* 逐目录形态检查（不限于被绑定者——入仓插件必须个个成型）
-  for (const name of pluginEntries) {
-    const base = `plugins/${name}`
-    const d4 = (location: string, problem: string, fix: string): void => {
-      violations.push({ rule: 'D-4', file: base, location, problem, fix })
-    }
-    const pkgSrc = files[`${base}/package.json`]
-    if (pkgSrc === undefined) {
-      d4('package.json', '插件目录缺 package.json（dsh 插件形态——docs/34-§3.1）', `补 ${base}/package.json（name/version/main/dsh.bundle）或整目录移出 plugins/`)
-      continue
-    }
-    let pkg: unknown
-    try {
-      pkg = JSON.parse(pkgSrc)
-    } catch (err) {
-      d4('package.json', `package.json 不是合法 JSON（${err instanceof Error ? err.message : String(err)}）`, '修 JSON 语法')
-      continue
-    }
-    if (pkg === null || typeof pkg !== 'object') {
-      d4('package.json', 'package.json 顶层须为对象', '改为 {"name","version","main","dsh.bundle"} 形态')
-      continue
-    }
-    const rec = pkg as Record<string, unknown>
-    if (typeof rec['name'] !== 'string' || rec['name'] === '') d4('package.json:name', '缺 name（非空串）', `补 "name"（约定=插件目录名 ${name}）`)
-    if (typeof rec['version'] !== 'string' || parsePlainVersion(String(rec['version'])) === null) {
-      d4('package.json:version', `version=${JSON.stringify(rec['version'])} 不是精确 x.y.z 版本`, '改为形如 1.0.0')
-    }
-    const dshRef = rec['dsh']
-    const bundle = dshRef !== null && typeof dshRef === 'object' ? (dshRef as Record<string, unknown>)['bundle'] : undefined
-    const patchRef = bundle !== null && typeof bundle === 'object' ? (bundle as Record<string, unknown>)['patch'] : undefined
-    if (typeof patchRef !== 'string' || patchRef === '') {
-      d4('package.json:dsh.bundle.patch', '缺 dsh.bundle.patch（字符串，指向仓内 patch 文件——嵌套 dsh.bundle 形态）', '补 "dsh": {"bundle": {"patch": "<file>.patch.yml"}} 并落盘该文件')
-    } else {
-      const patchRel = `${base}/${patchRef.replace(/^\.\//, '')}`
-      if (files[patchRel] === undefined) d4(patchRel, 'dsh.bundle.patch 所指 patch 文件不在仓内', `补 ${patchRel}（含 insert 条目与 name: ./src/<入口>）`)
-    }
-  }
-
-  // B-5/C-7/D-1/D-2/D-3：dependencies.yaml（可选件——缺场零绑定面，B-5 不违规）
-  const depsSrc = files[DEPENDENCIES_FILE]
-  if (depsSrc === undefined) return { violations, conflicts, capabilityMissing, deps: null }
-  const parsed = safeParseDependencies(depsSrc)
-  if (!parsed.ok) {
-    for (const issue of parsed.issues) {
-      const isAttr = issue.path.endsWith('.when.attr')
-      const isVersion = issue.path.endsWith('.version')
-      violations.push({
-        rule: isAttr ? 'C-7' : isVersion ? 'D-1' : 'B-5',
-        file: DEPENDENCIES_FILE,
-        location: issue.path,
-        problem: isAttr
-          ? `when.attr 非法（${issue.message}——绑定域只收 role/dept/level/skills/executor/status）`
-          : isVersion
-            ? `version 约束非法（${issue.message}——只收 ^x.y(.z) 与精确两形态）`
-            : `dependencies.yaml schema 违规（${issue.message}）`,
-        fix: isAttr
-          ? '改 when.attr 为六属性之一（role/dept/level/skills/executor/status）'
-          : isVersion
-            ? '改 version 为 ^1.2.3 或 1.2.3 形态（无 ~/>=/通配/*）'
-            : '按 schema 修正 dependencies.yaml（strictObject——未知字段拒收）',
-        via: `deps/invalid:${issue.path}`,
-      })
-    }
-    return { violations, conflicts, capabilityMissing, deps: null }
-  }
-
-  // D-2 冲突警示 / D-3 能力缺失面（planPluginInstalls 决策面——installed 空=全新装视角；
-  // org 面未过时传空串——persons 留空，B/C 组已先行指认，此处不重复报）
-  const persons = orgSrcForPersons.trim() === '' ? [] : extractPersonAttrs(orgSrcForPersons)
-  const sources: Record<string, { origin: 'package'; version: string }> = {}
-  for (const name of pluginEntries) {
-    const pkgSrc = files[`plugins/${name}/package.json`]
-    if (pkgSrc === undefined) continue
-    try {
-      const pkg = JSON.parse(pkgSrc) as Record<string, unknown>
-      if (typeof pkg['version'] === 'string') sources[name] = { origin: 'package', version: pkg['version'] }
-    } catch {
-      // D-4 已指认
-    }
-  }
-  const items: PluginInstallItem[] = planPluginInstalls({ deps: parsed.data, persons, installed: {}, sources })
-  for (const item of items) {
-    if (item.action === 'conflict') conflicts.push({ name: item.name, required: item.required, detail: item.detail })
-    else if (item.action === 'missing') capabilityMissing.push({ name: item.name, required: item.required, detail: item.detail })
-  }
-  return { violations, conflicts, capabilityMissing, deps: parsed.data }
-}
-
 // ————————————————————————— 6. 判定入口 —————————————————————————
 
 /**
@@ -872,150 +489,4 @@ export async function validateCompanyRepo(dir: string, opts?: RepoValidateOption
     ...(summary !== undefined ? { summary } : {}),
     ...(snapshot !== undefined ? { snapshot } : {}),
   }
-}
-
-// ————————————————————————— 7. CLI 面：输入物化（路径 / git-url / tarball） —————————————————————————
-
-/** 判定器自身错误（退出码 2 面：路径不存在/网络失败/解包失败——与「不合法」exit 1 严格区分） */
-export class RepoInputError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'RepoInputError'
-  }
-}
-
-export type RepoInputKind = 'path' | 'git-url' | 'tarball'
-
-export interface MaterializedRepoInput {
-  kind: RepoInputKind
-  /** 物化后的仓库目录（路径通道=原目录；git-url=克隆产物；tarball=解包产物） */
-  dir: string
-  cleanup: () => Promise<void>
-}
-
-function looksLikeGitUrl(input: string): boolean {
-  if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(input)) return true // https:// / file:// / ssh://
-  if (input.startsWith('git@')) return true // git@host:path
-  return /^[A-Za-z0-9._-]+:[A-Za-z0-9._/-]+$/.test(input) // scp 形态 host:path
-}
-
-/**
- * 输入物化：目录→直用；tarball（.tar/.tar.gz/.tgz/…）→系统 tar 解包（条目先消毒：拒绝对
- * 路径与 .. 段）；git-url→simple-git 克隆到暂存。失败抛 RepoInputError（CLI 层 exit 2）。
- */
-export async function materializeCompanyRepoInput(input: string): Promise<MaterializedRepoInput> {
-  const trimmed = input.trim()
-  if (trimmed === '') throw new RepoInputError('输入为空（用法：studio-next company validate <git-url|路径|tarball> [--json] [--allow-extra]）')
-
-  let st: Awaited<ReturnType<typeof stat>> | undefined
-  try {
-    st = await stat(trimmed)
-  } catch {
-    st = undefined
-  }
-  if (st?.isDirectory() === true) {
-    return { kind: 'path', dir: path.resolve(trimmed), cleanup: async () => undefined }
-  }
-  if (st?.isFile() === true && TARBALL_RE.test(trimmed)) {
-    return extractTarball(trimmed)
-  }
-  if (st !== undefined) {
-    throw new RepoInputError(`输入是文件但不是 tarball 形态（.tar/.tar.gz/.tgz）：${trimmed}`)
-  }
-  if (looksLikeGitUrl(trimmed)) {
-    const staging = await mkdtemp(path.join(tmpdir(), 'studio-next-validate-'))
-    const cloneDir = path.join(staging, 'src')
-    try {
-      await simpleGit().clone(trimmed, cloneDir)
-    } catch (err) {
-      await rm(staging, { recursive: true, force: true })
-      throw new RepoInputError(`git 克隆失败（网络/权限/仓库不存在）：${err instanceof Error ? err.message : String(err)}`)
-    }
-    return { kind: 'git-url', dir: cloneDir, cleanup: async () => rm(staging, { recursive: true, force: true }) }
-  }
-  throw new RepoInputError(`路径不存在且不是 git-url：${trimmed}`)
-}
-
-async function extractTarball(tarPath: string): Promise<MaterializedRepoInput> {
-  const dir = await mkdtemp(path.join(tmpdir(), 'studio-next-tar-'))
-  const fail = async (reason: string): Promise<never> => {
-    await rm(dir, { recursive: true, force: true })
-    throw new RepoInputError(reason)
-  }
-  const list = spawnSync('tar', ['-tf', tarPath], { encoding: 'utf8' })
-  if (list.status !== 0) return fail(`tarball 无法读取（${(list.stderr ?? '').trim() || `tar -tf 退出码 ${list.status}`}）`)
-  for (const rawEntry of list.stdout.split('\n')) {
-    const entry = rawEntry.trim()
-    if (entry === '') continue
-    const normalized = entry.replace(/^\.\//, '')
-    if (normalized.startsWith('/') || normalized.split('/').includes('..')) {
-      return fail(`tarball 条目不安全（${entry}——绝对路径或 .. 逃逸段，拒解包）`)
-    }
-  }
-  const extract = spawnSync('tar', ['-xf', tarPath, '-C', dir], { encoding: 'utf8' })
-  if (extract.status !== 0) return fail(`tarball 解包失败（${(extract.stderr ?? '').trim() || `tar -xf 退出码 ${extract.status}`}）`)
-  // 常见形态：单根目录包裹（foo-1.0/…）→ 下探；org-config 在根则直用
-  if (!existsSync(path.join(dir, ORG_CONFIG_FILE))) {
-    const top = await readdir(dir, { withFileTypes: true })
-    const only = top.length === 1 ? top[0] : undefined
-    if (only !== undefined && only.isDirectory() && existsSync(path.join(dir, only.name, ORG_CONFIG_FILE))) {
-      return { kind: 'tarball', dir: path.join(dir, only.name), cleanup: async () => rm(dir, { recursive: true, force: true }) }
-    }
-  }
-  return { kind: 'tarball', dir, cleanup: async () => rm(dir, { recursive: true, force: true }) }
-}
-
-// ————————————————————————— 8. 渲染面（人读 + JSON；apps/daemon bin 消费） —————————————————————————
-
-/** 人读输出（PASS=摘要+可初始化；FAIL=逐条违规——不许只说校验失败） */
-export function renderRepoValidation(result: RepoValidateResult, input?: string): string {
-  const lines: string[] = []
-  const head = input !== undefined ? `（输入：${input}）` : ''
-  if (result.ok) {
-    const s = result.summary
-    lines.push(`PASS${head}`)
-    if (s !== undefined) {
-      lines.push(`  ${s.name}（slug=${s.slug}，${s.level} 级公司，platform=${s.platform}）`)
-      lines.push(`  部门 ${s.departments} · 人数 ${s.people} · jobs ${s.jobs} · 插件 ${s.plugins}（仓内）`)
-      lines.push(`  能力面：${s.capabilityMissing.length === 0 ? '齐备' : `缺失 ${s.capabilityMissing.map((m) => `${m.name}（需求 ${m.required.join('|')}，无仓内源）`).join('；')}`}`)
-    }
-    if (result.exempted.length > 0) lines.push(`  豁免（--allow-extra）：${result.exempted.join('、')}`)
-    lines.push('可初始化（company add 前置=validate PASS——docs/51-§七）')
-  } else {
-    lines.push(`FAIL${head} ${result.violations.length} 条违规（docs/51 五契约；退出码 1）`)
-    for (const v of result.violations) {
-      const alias = v.alias !== undefined ? `（${v.alias}）` : ''
-      lines.push(`  [${v.rule}]${alias} ${v.file} @ ${v.location}：${v.problem}；修法：${v.fix}`)
-    }
-    if (result.exempted.length > 0) lines.push(`  豁免（--allow-extra）：${result.exempted.join('、')}`)
-  }
-  for (const warn of result.warnings) {
-    lines.push(`  警示 [${warn.rule}] ${warn.file} @ ${warn.location}：${warn.problem}`)
-  }
-  return lines.join('\n')
-}
-
-/** JSON 输出（--json；结构=RepoValidateResult 投影，违规逐条四元组+via/alias） */
-export function repoValidationJson(result: RepoValidateResult, input?: string): string {
-  return JSON.stringify(
-    {
-      ok: result.ok,
-      face: result.face,
-      ...(input !== undefined ? { input } : {}),
-      violations: result.violations.map((v) => ({
-        rule: v.rule,
-        file: v.file,
-        location: v.location,
-        problem: v.problem,
-        fix: v.fix,
-        ...(v.via !== undefined ? { via: v.via } : {}),
-        ...(v.alias !== undefined ? { alias: v.alias } : {}),
-      })),
-      warnings: result.warnings,
-      exempted: result.exempted,
-      ...(result.summary !== undefined ? { summary: result.summary } : {}),
-    },
-    null,
-    2,
-  )
 }

@@ -25,8 +25,6 @@ import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { appendFile, cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { parse as parseYaml } from 'yaml'
-import { z } from 'zod'
 import { configInvalid } from '@studio-next/contract'
 import type {
   RequiredAssetDecision,
@@ -34,318 +32,23 @@ import type {
   RequiredAssetUnavailable,
 } from './assets/types.ts'
 
-// ————————————————————————— 1. dependencies.yaml schema（strictObject——docs/43-§四） —————————————————————————
-
-/** 属性名=人事档案已知键封闭枚举（docs/43-§十-5 / 51-C-7；01-C2 人事档案索引键；开放扩展归后续单） */
-const PERSON_ATTRS = ['role', 'dept', 'level', 'skills', 'executor', 'status'] as const
-export type PersonAttrName = (typeof PERSON_ATTRS)[number]
-
-/** 版本约束两种形态（docs/43-§十-6 / 51-D-1：`^x.y`（caret）与 `x.y[.z]`（精确——缺 patch 按 .0）） */
-const VERSION_SPEC_RE = /^(?:\^?)(\d+)\.(\d+)(?:\.(\d+))?$/
-const VersionSpecSchema = z.string().min(1).refine((s) => VERSION_SPEC_RE.test(s.trim()), {
-  message: 'version 须形如 ^1.2（caret）或 2.0.1 / 1.2（精确——缺 patch 按 .0），docs/43-§十-6',
-})
-
-/** 插件引用（strictObject：未知键拒收） */
-const PluginRefSchema = z.strictObject({
-  name: z.string().min(1),
-  version: VersionSpecSchema,
-})
-
-/** 绑定条目：when（属性=值）→ plugins（至少一个） */
-const BindingSchema = z.strictObject({
-  when: z.strictObject({
-    attr: z.enum(PERSON_ATTRS),
-    is: z.string().min(1),
-  }),
-  plugins: z.array(PluginRefSchema).min(1),
-})
-
-/** dependencies.yaml 全形（strictObject 顶层——未知字段一律拒收） */
-export const DependenciesSchema = z.strictObject({
-  schema: z.literal('studio-next/dependencies@1'),
-  bindings: z.array(BindingSchema).min(1),
-})
-
-export type PluginRef = z.infer<typeof PluginRefSchema>
-export type DependencyBinding = z.infer<typeof BindingSchema>
-export type CompanyDependencies = z.infer<typeof DependenciesSchema>
-
-/** 依赖清单在公司目录的固定落点 */
-export const DEPENDENCIES_FILE = 'dependencies.yaml'
-
-/** 解析 dependencies.yaml（YAML 语法/结构错误 → CONFIG_INVALID deps/*，带 zod 定位） */
-export function parseDependencies(src: string): CompanyDependencies {
-  let raw: unknown
-  try {
-    raw = parseYaml(src)
-  } catch (err) {
-    configInvalid('deps/yaml-syntax', `dependencies.yaml YAML 语法错误：${err instanceof Error ? err.message : String(err)}`)
-  }
-  const parsed = DependenciesSchema.safeParse(raw)
-  if (!parsed.success) {
-    const issues = parsed.error.issues.map((i) => `  [${i.path.join('.') || '(root)'}] ${i.message}`).join('\n')
-    configInvalid('deps/invalid', `dependencies.yaml 结构不合法（strictObject——未知字段拒收）：\n${issues}`)
-  }
-  return parsed.data
-}
-
-/**
- * 非抛解析面（DEV-32 公司仓库判定器消费）：返回逐条 `{path, message}` issue（不抛
- * CONFIG_INVALID），判定器据此把 C-7/D-1/B-5 违规定位到键路径；schema 仍单源。
- */
-export interface DepsParseIssue {
-  path: string
-  message: string
-}
-
-export function safeParseDependencies(
-  src: string,
-): { ok: true; data: CompanyDependencies } | { ok: false; issues: DepsParseIssue[] } {
-  let raw: unknown
-  try {
-    raw = parseYaml(src)
-  } catch (err) {
-    return { ok: false, issues: [{ path: '(root)', message: `YAML 语法错误：${err instanceof Error ? err.message : String(err)}` }] }
-  }
-  const parsed = DependenciesSchema.safeParse(raw)
-  if (parsed.success) return { ok: true, data: parsed.data }
-  return {
-    ok: false,
-    issues: parsed.error.issues.map((i) => ({
-      path: i.path.filter((p) => typeof p === 'string' || typeof p === 'number').join('.') || '(root)',
-      message: i.message,
-    })),
-  }
-}
-
-/** 读公司目录的依赖清单（在装插件前调；缺失 → null=无绑定面，空报告语义——依赖清单是可选契约文件） */
-export async function readDependencies(companyDir: string): Promise<CompanyDependencies | null> {
-  const file = path.join(path.resolve(companyDir), DEPENDENCIES_FILE)
-  if (!existsSync(file)) return null
-  return parseDependencies(await readFile(file, 'utf8'))
-}
-
-// ————————————————————————— 2. 员工属性与绑定求值（docs/43-§十-5：绑定域与匹配面） —————————————————————————
-
-/** 员工档案已知键投影（org-config.yaml people 段；01-C2 索引键——绑定只认这些键） */
-export interface PersonAttrs {
-  id: string
-  dept: string
-  level: number
-  role?: string
-  skills?: string[]
-  executor?: string
-  status?: string
-}
-
-/** 从 org-config.yaml 源文抽取员工属性面（people 段逐人 id/dept/level/role/skills/executor/status） */
-export function extractPersonAttrs(orgConfigSrc: string): PersonAttrs[] {
-  let raw: unknown
-  try {
-    raw = parseYaml(orgConfigSrc)
-  } catch {
-    configInvalid('deps/yaml-syntax', 'org-config.yaml YAML 语法错误（extractPersonAttrs）')
-  }
-  const people = (raw as { people?: unknown })['people']
-  if (!Array.isArray(people)) return []
-  const out: PersonAttrs[] = []
-  for (const p of people) {
-    if (typeof p !== 'object' || p === null) continue
-    const rec = p as Record<string, unknown>
-    const id = rec['id']
-    const dept = rec['dept']
-    const level = rec['level']
-    if (typeof id !== 'string' || typeof dept !== 'string' || typeof level !== 'number') continue
-    const attrs: PersonAttrs = { id, dept, level }
-    if (typeof rec['role'] === 'string') attrs.role = rec['role']
-    if (Array.isArray(rec['skills'])) attrs.skills = rec['skills'].filter((s): s is string => typeof s === 'string')
-    if (typeof rec['executor'] === 'string') attrs.executor = rec['executor']
-    if (typeof rec['status'] === 'string') attrs.status = rec['status']
-    out.push(attrs)
-  }
-  return out
-}
-
-/** 属性候选值（docs/43-§十-5）：dept=path 全量+末段名双候选；skills 逐元素；其余单值 */
-export function attributeCandidates(person: PersonAttrs): Partial<Record<PersonAttrName, string[]>> {
-  const out: Partial<Record<PersonAttrName, string[]>> = {}
-  if (person.role !== undefined) out.role = [person.role]
-  out.dept = person.dept.includes('/') ? [person.dept, person.dept.split('/').at(-1) ?? person.dept] : [person.dept]
-  out.level = [String(person.level)]
-  if (person.skills !== undefined) out.skills = [...person.skills]
-  if (person.executor !== undefined) out.executor = [person.executor]
-  if (person.status !== undefined) out.status = [person.status]
-  return out
-}
-
-/** 单条绑定对单人是否命中（when.attr 的候选值含 when.is 即命中） */
-export function bindingHits(person: PersonAttrs, binding: DependencyBinding): boolean {
-  const candidates = attributeCandidates(person)[binding.when.attr]
-  return candidates !== undefined && candidates.includes(binding.when.is)
-}
-
-/** 单人启用集：命中绑定的插件去重（首见为代表——并集约束归 demandedPlugins） */
-export function enabledPluginsFor(person: PersonAttrs, deps: CompanyDependencies): PluginRef[] {
-  const byName = new Map<string, PluginRef>()
-  for (const binding of deps.bindings) {
-    if (!bindingHits(person, binding)) continue
-    for (const ref of binding.plugins) {
-      if (!byName.has(ref.name)) byName.set(ref.name, ref) // 首见为代表
-    }
-  }
-  return [...byName.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-}
-
-/** 全员需求汇总（docs/43-§十-6）：插件名 → 全部命中约束原文（去重保序——约束并集输入） */
-export function demandedPlugins(deps: CompanyDependencies, persons: readonly PersonAttrs[]): Map<string, string[]> {
-  const byName = new Map<string, string[]>()
-  for (const person of persons) {
-    for (const binding of deps.bindings) {
-      if (!bindingHits(person, binding)) continue
-      for (const ref of binding.plugins) {
-        const list = byName.get(ref.name) ?? []
-        if (!list.includes(ref.version)) list.push(ref.version)
-        byName.set(ref.name, list)
-      }
-    }
-  }
-  return byName
-}
-
-// ————————————————————————— 3. 最小语义化版本（docs/43-§十-6 / 51-D-1：两形态，无 ~>/>=/通配） —————————————————————————
-
-/** 解析后的版本约束：kind=caret（^x.y——含 ^0.x 锁 minor / ^0.0 锁 patch）或 exact（精确） */
-export interface VersionSpec {
-  kind: 'caret' | 'exact'
-  major: number
-  minor: number
-  patch: number
-}
-
-/** 解析版本约束原文（两形态之外 → null；schema 层已挡，此处防御性二验） */
-export function parseVersionSpec(src: string): VersionSpec | null {
-  const m = VERSION_SPEC_RE.exec(src.trim())
-  if (m === null) return null
-  return {
-    kind: src.trim().startsWith('^') ? 'caret' : 'exact',
-    major: Number(m[1]),
-    minor: Number(m[2]),
-    patch: m[3] !== undefined ? Number(m[3]) : 0,
-  }
-}
-
-/** 精确版本原文解析（「1.2」归一 1.2.0——缺 patch 按 .0；非精确形态 → null） */
-export function parsePlainVersion(src: string): VersionSpec | null {
-  const spec = parseVersionSpec(src)
-  return spec !== null && spec.kind === 'exact' ? spec : null
-}
-
-/** 版本判定：exact=三项等值；caret=同 major 下界闭开区间，^0.x 锁 minor、^0.0 锁 patch（51-D-1） */
-export function satisfiesSpec(spec: VersionSpec, version: string): boolean {
-  const v = parsePlainVersion(version)
-  if (v === null) return false
-  if (spec.kind === 'exact') return spec.major === v.major && spec.minor === v.minor && spec.patch === v.patch
-  if (spec.major > 0) {
-    return v.major === spec.major && (v.minor > spec.minor || (v.minor === spec.minor && v.patch >= spec.patch))
-  }
-  if (spec.minor > 0) return v.major === 0 && v.minor === spec.minor && v.patch >= spec.patch
-  return v.major === 0 && v.minor === 0 && v.patch === spec.patch
-}
-
-// ————————————————————————— 4. 安装决策纯面（零 IO——契约 deps 域消费；docs/08 纯逻辑纪律） —————————————————————————
-
-/** 源快照条目（plan 面注入；IO 面由 installCompanyPlugins 解析公司包 plugins/ 与外部源后组装） */
-export interface PluginPlanSource {
-  origin: 'package' | 'external'
-  version: string
-}
-
-/** planPluginInstalls 入参（全快照，零 IO） */
-export interface PluginPlanInput {
-  deps: CompanyDependencies
-  persons: readonly PersonAttrs[]
-  /** 已装面快照：插件名 → 版本（registry.json 投影） */
-  installed: Record<string, string>
-  /** 可得源快照：插件名 → 源版本（公司包 plugins/ 优先解析后的投影；无键=缺源） */
-  sources: Record<string, PluginPlanSource>
-}
-
-/** 安装动作（决策面输出：install/replace/satisfied/conflict/missing；confirm 拒装的执行面改写为 skipped） */
-export type PluginInstallAction = 'install' | 'replace' | 'satisfied' | 'conflict' | 'missing' | 'skipped'
-
-/** 单插件安装判定（决策与执行共形——执行面回填 installedVersion） */
-export interface PluginInstallItem {
-  name: string
-  /** 命中约束并集原文（docs/43-§十-6） */
-  required: string[]
-  origin: 'package' | 'external' | 'none'
-  action: PluginInstallAction
-  sourceVersion?: string
-  installedVersion?: string
-  detail: string
-}
-
-/** 安装决策（纯函数）：missing=无源；conflict=源版本不满足全部约束（不装错）；satisfied=幂等；install/replace=装/换 */
-export function planPluginInstalls(input: PluginPlanInput): PluginInstallItem[] {
-  const demanded = demandedPlugins(input.deps, input.persons)
-  const planned: PluginInstallItem[] = []
-  for (const [name, required] of [...demanded.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
-    const source = input.sources[name]
-    if (source === undefined) {
-      planned.push({
-        name,
-        required,
-        origin: 'none',
-        action: 'missing',
-        detail: '缺源：公司包 plugins/ 无此插件且无外部源（PluginSource 接口已留位——docs/43-§十-7）',
-      })
-      continue
-    }
-    const specs = required.map(parseVersionSpec)
-    const allValid = specs.every((s) => s !== null)
-    const sourceOk = allValid && specs.every((s) => s !== null && satisfiesSpec(s, source.version))
-    if (!sourceOk) {
-      const currentVersion = input.installed[name]
-      planned.push({
-        name,
-        required,
-        origin: source.origin,
-        action: 'conflict',
-        sourceVersion: source.version,
-        ...(currentVersion !== undefined ? { installedVersion: currentVersion } : {}),
-        detail: `源版本 ${source.version} 不满足约束 ${required.join('、')}——不装错版本，如实上报（约束并集语义 docs/43-§十-6）`,
-      })
-      continue
-    }
-    const current = input.installed[name]
-    if (current !== undefined && allValid && specs.every((s) => s !== null && satisfiesSpec(s, current))) {
-      planned.push({
-        name,
-        required,
-        origin: source.origin,
-        action: 'satisfied',
-        sourceVersion: source.version,
-        installedVersion: current,
-        detail: `已装 ${current} 满足全部约束——零动作`,
-      })
-      continue
-    }
-    planned.push({
-      name,
-      required,
-      origin: source.origin,
-      action: current === undefined ? 'install' : 'replace',
-      sourceVersion: source.version,
-      ...(current !== undefined ? { installedVersion: current } : {}),
-      detail:
-        current === undefined
-          ? `从${source.origin === 'package' ? '公司包 plugins/' : '外部源'}安装 ${source.version}`
-          : `已装 ${current} 不合约束，替换为 ${source.version}`,
-    })
-  }
-  return planned
-}
+// 解析/绑定/版本面拆至 dependencies/parse.ts（docs/20-§十五.三；原文件余量 ≥50，行为零漂移）。
+// 公开面用 `export *` 再出口，packages/company/src/index.ts 与既有导入面零改行。
+export * from './dependencies/parse.ts'
+export * from './dependencies/plan.ts'
+import { planPluginInstalls, type PluginInstallAction, type PluginInstallItem, type PluginPlanSource } from './dependencies/plan.ts'
+import {
+  DEPENDENCIES_FILE,
+  demandedPlugins,
+  enabledPluginsFor,
+  parseVersionSpec,
+  readDependencies,
+  satisfiesSpec,
+  type CompanyDependencies,
+  type PersonAttrs,
+  type PluginRef,
+  parseDependencies,
+} from './dependencies/parse.ts'
 
 // ————————————————————————— 5. 安装执行面（隔离根落位+registry+log+confirm——docs/43-§四） —————————————————————————
 
@@ -726,33 +429,6 @@ export function depsSubject(input: unknown): unknown {
 // ————————————————————————— 8. V2 资产依赖面（IMPL-05-02；v2/06 §3.4 必备资产二选一） —————————————————————————
 
 export type { RequiredAssetDecision, RequiredAssetPolicy, RequiredAssetUnavailable } from './assets/types.ts'
-
-/** 版本并集判定（零 IO）：多约束求交，只给满足全部约束的候选——绝不隐式选「最新」 */
-export interface VersionUnionResolution {
-  ok: boolean
-  satisfying: string[]
-  conflict?: string
-}
-
-/** 版本并集：任一约束无解/无候选即 conflict 如实上报（不装错版本——51-D-1/D-2） */
-export function resolveVersionUnion(specs: readonly string[], available: readonly string[]): VersionUnionResolution {
-  const parsed = specs.map(parseVersionSpec)
-  const invalid = specs.filter((_, index) => parsed[index] === null)
-  if (invalid.length > 0) return { ok: false, satisfying: [], conflict: `版本约束形态不支持：${invalid.join('、')}` }
-  const satisfying = [...new Set(available)]
-    .filter((version) => parsed.every((spec) => spec !== null && satisfiesSpec(spec, version)))
-    .sort(compareVersions)
-  return satisfying.length > 0
-    ? { ok: true, satisfying }
-    : { ok: false, satisfying: [], conflict: `无候选满足全部约束 ${specs.join('、')}（候选：${available.join('、') || '无'}）` }
-}
-
-function compareVersions(a: string, b: string): number {
-  const pa = parsePlainVersion(a)
-  const pb = parsePlainVersion(b)
-  if (pa === null || pb === null) return a < b ? -1 : a > b ? 1 : 0
-  return pa.major - pb.major || pa.minor - pb.minor || pa.patch - pb.patch
-}
 
 /**
  * 必备资产判定（v2/06 §3.4）：缺则二选一，无第三态。缺省拒绝（fail-closed）；降级须接收方

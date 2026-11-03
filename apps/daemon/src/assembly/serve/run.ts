@@ -35,22 +35,9 @@ import {
   toRestartOrgSnapshot,
   validateRestartAuthorization,
   writeRestartResult,
-  type RestartRequest,
 } from '../../control/restart/channel.ts'
-import {
-  authorizerOf,
-  checkpointPathOf,
-  readCheckpoint,
-  readLastExit,
-  sha256,
-  writeExitMarkOnStop,
-  writeLastExit,
-  writeRestartCheckpoint,
-  type RestartCheckpoint,
-  type RestartSettledItem,
-} from '../../control/restart/checkpoint.ts'
+import { authorizerOf, readCheckpoint, readLastExit, writeExitMarkOnStop, writeLastExit } from '../../control/restart/checkpoint.ts'
 import { alarmRestartCheckpointMissing, runRestartSelfcheckAtBoundary } from '../../control/restart/selfcheck-run.ts'
-import { makeUlid } from '../../engine/tools/id.ts'
 import type { TickReport } from '../../engine/tick-report/types.ts'
 import type { DrainSettleResult } from '../../engine/drain/drain.ts'
 import { takeOverRunningWorkRecords } from '../../engine/harvest/inflight-takeover.ts'
@@ -63,6 +50,7 @@ import type { MatrixRoomFace, MatrixRoomFaceContext } from '../../engine/rooms/r
 import { parseDaemonConfig, type ServeConfig } from './config.ts'
 import { parseRestartAuthorizers } from '../serveconfig/restart.ts'
 import { buildServeRuntime } from './runtime.ts'
+import { writeRestartCheckpointStep, type RestartRunCtx } from './restart-checkpoint.ts'
 
 /** runServe 启动日志的闸门形态（buildServeRuntime 同判据：acceptance 配置给定=真单模式） */
 function realGateMode(config: ServeConfig): boolean {
@@ -208,17 +196,7 @@ export async function runServe(
   // —— 受权重启编排态（studio-dev-504 S3）：idle → draining → checkpointing → exit(0) ——
   let restartLastSeenId: string | null = ledger.kvGet(RESTART_LAST_SEEN_KV_KEY)
   let restartState: 'idle' | 'draining' | 'checkpointing' = 'idle'
-  let restartCtx:
-    | {
-        request: RestartRequest
-        authorizationRef: string
-        authorizer: { personId: string; role: string; level: number }
-        deadline: number
-        inflightAtRequest: number
-        startRunningIds: readonly string[]
-        inconsistent: boolean
-      }
-    | undefined
+  let restartCtx: RestartRunCtx | undefined
   let selfcheckDone = priorCheckpoint === undefined
   const processStartedAt = Date.now()
   let cursorLoopSeen = false
@@ -437,62 +415,15 @@ export async function runServe(
         const meta = eventMetaOf(snapshot, ctx.authorizer.personId, config.company)
         try {
           // 检查点第 5 步先行（WAL 收干；失败=检查点失败，不静默）——随后事件/摘要/close/exit 标记
-          const wal = ledger.checkpoint()
-          const tickSeq = Number(ledger.kvGet('tick.seq') ?? '0')
-          const cursorRaw = ledger.kvGet('activity.cursor')
-          const cursor = cursorRaw === null || cursorRaw === '' ? null : cursorRaw
-          const interrupted: RestartSettledItem[] = (settle?.interrupted ?? []).map((i) => ({ issue: i.ticket, attempt: i.attempt, status: 'interrupted' }))
-          const interruptedIds = new Set((settle?.interrupted ?? []).map((i) => i.workRecordId))
-          const settled: RestartSettledItem[] = []
-          for (const id of ctx.startRunningIds) {
-            if (interruptedIds.has(id)) continue // 超时收口单只进 interrupted 清单，不重复计 settled
-            const rec = ledger.getWorkRecord(id)
-            if (rec !== undefined && rec.status !== 'running') settled.push({ issue: rec.issue, attempt: rec.attempt, status: rec.status })
-          }
-          const eventId = makeUlid(Date.now())
-          const checkpoint: RestartCheckpoint = {
-            schema: 1,
-            requestId: ctx.request.id,
-            at: Date.now(),
+          const step = writeRestartCheckpointStep({
+            ledger,
             company: config.company,
-            reason: ctx.request.reason,
-            authorizer: ctx.authorizer,
-            authorizationRef: ctx.authorizationRef,
-            exitClass: 'restart',
-            tickSeq,
-            cursor,
-            inflightBefore: ctx.inflightAtRequest,
-            settled,
-            interrupted,
-            inconsistent: ctx.inconsistent,
-            ledger: { path: path.resolve(config.db), walBefore: wal.walBefore, walAfter: wal.walAfter },
-            repoHead: null,
-            assetFingerprint: null,
-            eventId,
-          }
-          const checkpointPath = checkpointPathOf(rootDirAbs, ctx.request.id)
-          const checkpointHash = sha256(`${JSON.stringify(checkpoint, null, 2)}\n`)
-          appendRestartEvent(ledger, {
-            company: config.company,
-            ...meta,
-            now: Date.now(),
-            eventId,
-            note: restartNote('done', [
-              ['cause', ctx.request.reason],
-              ['authorizer', ctx.authorizer.personId],
-              ['authorization_ref', ctx.authorizationRef],
-              ['inflight_before', ctx.inflightAtRequest],
-              ['settled', settled.length],
-              ['interrupted', interrupted.length],
-              ['checkpoint', `${path.relative(rootDirAbs, checkpointPath)}@${checkpointHash}`],
-              ['exit_class', 'restart'],
-              ['request_id', ctx.request.id],
-            ]),
+            dbPath: path.resolve(config.db),
+            rootDir: rootDirAbs,
+            ctx,
+            settle,
+            snapshot,
           })
-          const written = writeRestartCheckpoint(rootDirAbs, checkpoint)
-          if (written.hash !== checkpointHash) throw new Error(`检查点哈希不一致：写盘=${written.hash} 事件=${checkpointHash}`)
-          ledger.kvSet('restart.lastCheckpoint', JSON.stringify({ path: written.path, hash: written.hash }))
-          ledger.kvSet(`${RESTART_USED_KV_PREFIX}${ctx.authorizationRef}`, ctx.request.id)
           await stop()
           writeLastExit(rootDirAbs, {
             schema: 1,
@@ -500,18 +431,18 @@ export async function runServe(
             exitClass: 'restart',
             requestId: ctx.request.id,
             at: Date.now(),
-            checkpoint: { path: written.path, hash: written.hash },
-            interrupted: interrupted.length,
+            checkpoint: { path: step.written.path, hash: step.written.hash },
+            interrupted: step.interrupted.length,
           })
           console.log(
-            `[serve] 受权重启检查点完成（id=${ctx.request.id} tick=${tickSeq} settled=${settled.length} interrupted=${interrupted.length} exit=0 authorized=true）——等待 supervisor 拉起`,
+            `[serve] 受权重启检查点完成（id=${ctx.request.id} tick=${step.tickSeq} settled=${step.settled.length} interrupted=${step.interrupted.length} exit=0 authorized=true）——等待 supervisor 拉起`,
           )
           process.off('SIGINT', onSignal)
           process.off('SIGTERM', onSignal)
           return {
             ticks,
             stopReason: 'restart',
-            restart: { requestId: ctx.request.id, checkpointPath: written.path, checkpointHash: written.hash, interrupted: interrupted.length },
+            restart: { requestId: ctx.request.id, checkpointPath: step.written.path, checkpointHash: step.written.hash, interrupted: step.interrupted.length },
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
