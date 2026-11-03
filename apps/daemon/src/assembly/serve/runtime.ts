@@ -14,8 +14,7 @@
  * 配置解析/身份派生在 config.ts，主循环与停机编排在 run.ts，executor 注册面在
  * executor-face.ts——拆出件与本文均 <600 行（尺寸阈即拆件依据）。
  */
-import { ensureAiwsTree } from '@studio-next/company'
-import { DEFAULT_FLOW_TABLE } from '@studio-next/core'
+import { loadCompanyDirectory, readDirectoryFiles } from '@studio-next/company'
 import type {
   CompanySnapshot,
   CostGuardConfig,
@@ -51,7 +50,7 @@ import type { MatrixRoomFace, MatrixRoomFaceContext } from '../../engine/rooms/r
 import { wireNotifyAssembly } from '../notify/notify.ts'
 import { wireServeOutboundGate } from '../outbound-gate/wire.ts'
 import type { NotifyBroadcastFace } from '../../engine/notify/broadcast.ts'
-import { assembleHrSync, hrApplySegment } from '../hrsync/assemble.ts'
+import { assembleHrSync } from '../hrsync/assemble.ts'
 import { wireGatedPlatform, wirePlatform } from '../platform/wire.ts'
 import {
   createFileWatchSource,
@@ -60,8 +59,8 @@ import {
   FILE_WATCH_MANIFEST,
   SCHEDULER_SOURCE_MANIFEST,
 } from '../../engine/sources.ts'
-import { reEnsureChannels, startChannelSupply, wireRoomFace } from '../channels/channels.ts'
-import { seedJobs, removeMissingJobs } from '../jobs-seed/jobs-seed.ts'
+import { startChannelSupply, wireRoomFace } from '../channels/channels.ts'
+import { seedJobs } from '../jobs-seed/jobs-seed.ts'
 import { daemonIdentity, type ServeConfig } from './config.ts'
 import { authorityEvidenceGateOptions } from '../serveconfig/authority.ts'
 import { wireAiwsFace } from './aiws-face.ts'
@@ -73,6 +72,8 @@ import { wireExecutorFace } from './executor-face.ts'
 import { wireServeEvolveSelfCheck } from './evolve-face.ts'
 import { wireServeApi } from '../api/serve-face.ts'
 import { wireServeHarvestRecords } from '../harvest/records-wire.ts'
+import { createCompanyWriteFace, type CompanyWriteFace } from '../../engine/company-write/runtime.ts'
+import { createCompanyApplySegment } from './company-apply.ts'
 
 import type { ServeRecordsOptions, ServeRuntime } from './runtime-types.ts'
 import type { ObjectRecordPositions } from '../../engine/records/object-wire.ts'
@@ -288,11 +289,17 @@ export function buildServeRuntime(
       ...authorityEvidenceGateOptions({ root: rootDelegation?.options, ledger, company: config.company, actor: identity.author, dept: identity.ctx.dept, level: identity.ctx.level, config }),
     }),
   )
+  // 公司目录写面端口（studio-dev-541）：相位 7 尾只依赖端口；真装配在应用段/hotReload 就绪后赋值
+  let companyWriteFace: CompanyWriteFace | undefined
+  const companyWritePort: CompanyWriteFace = {
+    submit: (order: unknown) => (companyWriteFace === undefined ? Promise.reject(new Error('company-write 未装配')) : companyWriteFace.submit(order)),
+  }
   const engine = createEngine({
     platform: enginePlatform,
     signature: identity.signature, // 署名三值注入（SEC-FC-06/SEC-SIG-01；studio-dev-529）：system＋onBehalfOf=决定人——engine 写路径 actor 取决定人，构造期校验先行
     ...(workerKeys !== undefined ? { workerKeys } : {}),
     ...(hrDigester !== undefined ? { hrSync: hrDigester } : {}),
+    ...(config.companyDir !== undefined ? { companyWrite: companyWritePort } : {}), // 公司目录写面（studio-dev-541；DOM-01 唯一写入者）
     ...(roomFace !== undefined ? { rooms: roomFace } : {}),
     ledger, // 已在装配序开头过三不入·库闸（appendEvent 写前扫描）
     records: recordsFace.records, // 记录族生产写面（docs/17-§2「记录族生产写面」段）
@@ -418,12 +425,36 @@ export function buildServeRuntime(
   //    不阻主循环（执行体拆至 assembly/channels/；报告/problems/failures 逐条落日志）
   if (roomFace !== undefined) startChannelSupply(roomFace, log)
 
-  // —— L1 配置热重载执行体（docs/38-§2 L1 / §4 R-A；companyDir 给定时装配）——
-  //    apply 段（校验绿后调用，幂等可重入）：岗播种/移除→快照替换→engine.applyCompanyUpdate→署名上下文。
+  // —— 公司快照应用段（L1 热重载与运行期挂单共用唯一 apply 体；studio-dev-541 先拆再增）——
+  //    apply 段（校验绿后调用，幂等可重入）：资产接线→岗播种/移除→快照替换→
+  //    engine.applyCompanyUpdate→署名上下文；本件只留装配（600 行阈）。
   let hotReload: HotReload | undefined
+
+  // —— L1 配置热重载执行体（docs/38-§2 L1 / §4 R-A；companyDir 给定时装配）——
   if (config.companyDir !== undefined) {
     const companyDirAbs = path.resolve(config.companyDir)
     const pluginRootAbs = path.join(path.resolve(config.rootDir), PLUGINS_DIR)
+    const applyBase = createCompanyApplySegment({
+      config,
+      ledger,
+      clock,
+      log,
+      companyState,
+      engine,
+      identity,
+      makeAssembler,
+      aiwsRoot,
+      aiwsClock,
+      roomFace: () => roomFace,
+      ...(peopleChangePublish !== undefined ? { publish: peopleChangePublish } : {}),
+    })
+    // 资产部生产接线先行（DOM-07；docs/17-§2 boot 装配＋热载 apply）：装载=只读校验、
+    // 插件=指纹幂等补装；抛错=apply 失败 → 保持旧快照 + ESCALATE（fail-closed，docs/38-§2）。
+    // 热重载与运行期挂单共用本包装（提交成立后的生效段同路，防两条 apply 路径语义漂移）。
+    const applySegment = async (next: CompanySnapshot): Promise<HotReloadApplyReport> => {
+      await wireCompanyAssets({ companyDir: companyDirAbs, pluginRoot: pluginRootAbs, executorFamilies: executorFamiliesOf(registry.list().map((e) => e.name)), log })
+      return applyBase(next)
+    }
     hotReload = createHotReload({
       companyDir: companyDirAbs,
       rootDir: path.resolve(config.rootDir),
@@ -436,75 +467,32 @@ export function buildServeRuntime(
       watch: config.reloadWatch,
       // 显式声明无锚（SEC-FC-03；init 通道不落锚——docs/44-§2.3-4）：缺键＝未声明→无锚仍拒（fail-closed）
       ...(config.reloadAnchorAbsence !== undefined ? { anchorAbsence: config.reloadAnchorAbsence } : {}),
-      async apply(next: CompanySnapshot): Promise<HotReloadApplyReport> {
-        // 资产部生产接线先行（DOM-07；docs/17-§2 boot 装配＋热载 apply）：装载=只读校验、
-        // 插件=指纹幂等补装；抛错=apply 失败 → 保持旧快照 + ESCALATE（fail-closed，docs/38-§2）
-        await wireCompanyAssets({ companyDir: companyDirAbs, pluginRoot: pluginRootAbs, executorFamilies: executorFamiliesOf(registry.list().map((e) => e.name)), log })
-        let seeded = 0
-        let kept = 0
-        let removed = 0
-        // .AIWS 增量同步先行（DEV-28，docs/43-§五「人事变树变」）：新员工得文件夹、
-        // 离司/下线归档不删——**先于**一切持有者替换（本步抛错=apply 整体失败 → 旧配置
-        // 保持的既有 RELOAD_APPLY_FAILED 面，fail-closed；树与配置不半换）
-        const synced = ensureAiwsTree(aiwsRoot, next.departments, next.people, { slug: next.slug, now: aiwsClock })
-        if (synced.created > 0 || synced.archived.length > 0) {
-          log(
-            `[serve] .AIWS 增量同步（reload）：新建 ${synced.created}、归档 ${synced.archived.length}${synced.archived.length > 0 ? `（${synced.archived.join('、')}——内容保留不删）` : ''}`,
-          )
-        }
-        // —— 人事同步入队（DEV-48，docs/52-§5.2 步2-3/§9.1）：diff 分类→三面任务入队
-        //    （哨兵票；diff 基=台账镜像现值零平台 IO；hrSync 关=零动作）——体=hrApplySegment；
-        //    抛错=apply 整体失败保持旧态（fail-closed）。
-        const hr = hrApplySegment({ enabled: config.hrSync, ledger, prev: companyState.snapshot, next, company: config.company, clock, makeId: makeUlid, log, ...(peopleChangePublish !== undefined ? { publish: peopleChangePublish } : {}) })
-        if (config.jobs) {
-          // 台账段先行（幂等可重入——seedJobs 逐岗独立 upsert；失败重试下一形态自愈）
-          const s = seedJobs(ledger, next.jobs, clock())
-          seeded = s.seeded
-          kept = s.kept
-          removed = removeMissingJobs(ledger, next)
-        }
-        // 台账镜像（DEV-48，docs/52-§5.2 步4）：people/departments 直覆（status 列归
-        // 任务执行写面 setPersonStatus，镜像不动——ledger.ts 头注口径）；幂等可重入。
-        // store v2 面本单前从未接 daemon——hrSync 开=启动+reload 双点接线
-        if (config.hrSync) {
-          ledger.syncCompany(next)
-        }
-        // 纯赋值段（不抛）：快照持有者 → 引擎整组换 → 署名上下文
-        companyState.snapshot = next
-        // 频道地图重供给（130-P3 §6.7.3-③）：apply 段同步推进、供给异步收敛（执行体
-        // 拆至 assembly/channels/——ensure 幂等只补差集；不入 apply 事务面）
-        if (roomFace !== undefined) reEnsureChannels(roomFace, log)
-        // 类型流热换（N1，DEV-43）：拍边界换表——在途单下拍 decide 对新表重解析
-        //（resolveTicketFlow 同函数；跨边界遇未知态=既有 L1 热重载纪律 NOOP_UNKNOWN_STATE，
-        //  状态权威在平台侧、不猜不动）；无 workflows=flows:undefined=回内置缺省表
-        const nextTypeFlows = flowsFromWorkflows(next.workflows)
-        // 岗契约装载警告（127-A）：热重载 apply 同面——拍边界随新快照重算，不阻断
-        logJobContractWarnings(next.jobs, nextTypeFlows, log, '（reload）')
-        engine.applyCompanyUpdate({
-          people: next.people,
-          assembler: makeAssembler(),
-          defaultPersonId: (next.people[0] as PersonRef | undefined)?.id ?? '',
-          deptFallback: next.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback,
-          defaultLane: next.departments[0]?.lanes[0] ?? ENGINE_CONFIG_DEFAULTS.defaultLane,
-          ...(nextTypeFlows !== undefined ? { flows: { ...DEFAULT_FLOW_TABLE, ...nextTypeFlows } } : {}),
-          // 州表卫生白名单热换（127-C）：恒显式（摘声明=空数组=哨兵回全灵敏度——
-          // 白名单滞留会静默吞告警，安全面须热换即时生效）
-          knownForeignStates: next.knownForeignStates ?? [],
-          // 批示归一层 leader 表热换（studio-dev-171）：组织变动 fail-closed（换 leader/
-          // 撤部即生效——防离任 leader 批示面残留）
-          directives: new Map(next.departments.map((d) => [d.path, d.leader])),
-          // cost_guard 段热换（132-§6.4 单C）：恒传（摘段=undefined=闸四联动+源评估面关）
-          costGuard: next.costGuard,
-        })
-        identity.ctx.company = next.name
-        identity.ctx.dept = next.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback
-        identity.ctx.level = Math.max(1, next.level)
-        return { jobsSeeded: seeded, jobsKept: kept, jobsRemoved: removed, hr }
-      },
+      apply: applySegment,
     })
     log(
       `[serve] L1 热重载已接：公司目录指纹监听${config.reloadWatch ? '开（每拍 stat+mtime，稳定后拍边界重装载）' : '关（reloadWatch: false——只剩手动通道）'}；手动通道 studio-next reload（<rootDir>/control/，docs/38-§2）`,
     )
+    // —— 公司目录运行期写面（studio-dev-541；docs/v2/05-§三 DOM-01）：daemon 唯一写入者 ——
+    //    提交成立→重装载（校验）→共用应用段→hotReload.adopt（承认自写，不重复装载）；
+    //    fail-closed：审计零发现才写、失败回滚留痕、已提交未生效如实分列（company-write/runtime.ts）
+    companyWriteFace = createCompanyWriteFace({
+      companyDir: companyDirAbs,
+      company: config.company,
+      dept: engineConfig.deptFallback,
+      ledger,
+      clock,
+      makeId: makeUlid,
+      log,
+      apply: async (): Promise<void> => {
+        const mounted = loadCompanyDirectory(await readDirectoryFiles(companyDirAbs))
+        if (!mounted.ok) {
+          throw new Error(`公司目录重装载校验不通过：${mounted.issues.map((i) => `${i.file}:${i.line} [${i.rule}]`).join('；')}`)
+        }
+        await applySegment(mounted.snapshot)
+        await hotReload?.adopt()
+      },
+    })
+    log(`[serve] 公司目录写面已接：daemon 唯一写入者＝挂单 commit（phase 7 tail，每拍 ≤1 单；审计零发现才写/失败回滚/已提交≠已生效）——${companyDirAbs}`)
   }
 
   // —— 进化管线判负闸·启动自检（v0 观察模式，src/evolve/evolve-guard.ts；20-§九 无 candidate id
@@ -528,6 +516,7 @@ export function buildServeRuntime(
     evolveSelfCheck,
     restartProbe,
     ...(hotReload !== undefined ? { hotReload } : {}),
+    ...(companyWriteFace !== undefined ? { companyWrite: companyWriteFace } : {}),
     // 129-E（184）：续命意图推送面露头（resume: true 时；调用面归 B4 CLI resume——另批）
     ...(resumePublish !== undefined ? { resumePublish } : {}),
     // 105-刀B（219）：拍边界事件中继露头（notifyBroadcast 注入时；runServe 主循环接线）

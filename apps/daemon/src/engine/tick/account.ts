@@ -8,6 +8,7 @@
  *（近 50 次 SQL 读回）→ 定价 stale（一日一跑）→ 日终收口。变体计数经 ctx.mutations 写回。
  */
 import type { TicketId } from '@studio-next/contract'
+import type { CompanyWriteTickReport } from '../company-write/runtime.ts'
 import { costCloseDeps, runCostCloseTick } from '../cost-close/close.ts'
 import type { HrSyncTickReport } from '../hrsync/hrsync.ts'
 import { runPricingStaleCheck, type PricingStaleTickReport } from '../pricing/pricing.ts'
@@ -62,6 +63,19 @@ export async function accountPhase(
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         errors.push(`hr-sync drain 失败：${msg}`)
+      }
+    }
+
+    // —— 相位 7 尾·公司目录挂单队列消化（studio-dev-541；docs/17-§2/§6）：每拍至多 1 单 ——
+    // 写面协议（唯一写入者审计→挂单→复核→生效→留痕）全在 company-write/runtime.ts；
+    // engine 只留相位缝。异常进 tick errors 不炸拍（与 hrSync 同款防御面）。
+    let companyWrite: CompanyWriteTickReport | undefined
+    if (rt.companyWriteQueue !== undefined) {
+      try {
+        companyWrite = await rt.companyWriteQueue.drain()
+        ctx.mutations += companyWrite.drained
+      } catch (err) {
+        errors.push(`company-write drain 失败：${err instanceof Error ? err.message : String(err)}`)
       }
     }
 
@@ -160,6 +174,7 @@ export async function accountPhase(
   return {
     heartbeat,
     hrSync,
+    companyWrite,
     pricingStale,
     costClose,
     scheduleToStart,

@@ -9,6 +9,7 @@
  */
 import type { EventRecord, TicketId } from '@studio-next/contract'
 import type { Engine } from '../../engine/engine.ts'
+import type { CompanyWriteFace } from '../../engine/company-write/runtime.ts'
 import type { Scheduler } from '../../engine/scheduler.ts'
 import type { SourceRegistry } from '../../engine/sources.ts'
 import type { EvolveSelfCheckReport } from '../../evolve/evolve-guard.ts'
@@ -38,6 +39,12 @@ export interface ServeRecordsOptions {
 
 export interface ServeRuntime extends ServeOpsFace, RestartProbeFace {
   engine: Engine
+  /**
+   * 公司目录运行期写面（studio-dev-541；docs/v2/05-§三 DOM-01）：companyDir 未挂＝undefined
+   * （面关零行为）。生产调用位=engine.ingestCompanyUpdate（相位 7 尾消化）；
+   * 控制面亦可直调 submit（同一 fail-closed 协议）。
+   */
+  companyWrite?: CompanyWriteFace
   scheduler: Scheduler | null
   /** 唤起源注册表（22-§一）：startAll 的 emit 统一进 engine.ingest（runServe 接线） */
   sources: SourceRegistry

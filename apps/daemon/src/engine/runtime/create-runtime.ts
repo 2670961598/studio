@@ -35,6 +35,7 @@ import type { AssignRuntime } from '../assign/auto-assign.ts'
 import type { EngineDeps } from './contract.ts'
 import { harvestHostOf, stallHostOf } from './hosts.ts'
 import type { EngineRuntime, EngineSeams } from './types.ts'
+import { createCompanyWriteQueue } from '../company-write/runtime.ts'
 
 /** 装配引擎运行时宿主（构造期一次性；零拍内副作用） */
 export function createRuntime(deps: EngineDeps, seams: EngineSeams): EngineRuntime {
@@ -100,6 +101,8 @@ export function createRuntime(deps: EngineDeps, seams: EngineSeams): EngineRunti
   const harvestBatches = harvestPort.batches
   const intentQueue: InvokeIntent[] = []
   const splitQueue: SplitDirectiveInput[] = []
+  // 公司目录挂单队列（studio-dev-541）：注入才开面；相位 7 尾 drain（同 hrSync 先例，不增删相位）
+  const companyWriteQueue = deps.companyWrite === undefined ? undefined : createCompanyWriteQueue(deps.companyWrite)
   let seq = 0
   /** 镜像 GC 首拍强制位（studio-dev-511：部署后首拍即清残行；完成一次判断后置 false） */
   let mirrorGcFirstRun = true
@@ -208,6 +211,7 @@ export function createRuntime(deps: EngineDeps, seams: EngineSeams): EngineRunti
     lastProjectedTodoQueue,
     intentQueue,
     splitQueue,
+    companyWriteQueue,
     inflight,
     lanes,
     mergeLeases,

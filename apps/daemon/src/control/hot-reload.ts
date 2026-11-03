@@ -192,6 +192,12 @@ export interface HotReloadReport {
 export interface HotReload {
   /** 恒不抛（内部全捕获、如实落账/回执）——serve 拍边界直调 */
   check(): Promise<HotReloadReport | null>
+  /**
+   * 承认「当前盘面＝daemon 自写」（studio-dev-541）：重算 stat/内容指纹基线并清待稳定窗。
+   * 挂单 commit 成立后由运行期写面调用——避免把己写当外部漂移再走一遍重装载（重复
+   * SCHEMA_EVOLVE/双应用）。只前移观测基线：不装载、不落事件（生效段归写面）。
+   */
+  adopt(): Promise<void>
   readonly stats: {
     checks: number
     reloads: number
@@ -340,6 +346,17 @@ export function createHotReload(deps: HotReloadDeps): HotReload {
       note: `RELOAD_TRUST_ANCHOR_INVALID：坏锚（不可读/坏 JSON/形状不符）——拒绝自动应用，保持旧配置（接收者=制作人）；${why}`,
       detail: why,
     }
+  }
+
+  /** 见接口注：daemon 自写提交成立后的基线前移（不装载/不落事件；读失败抛给调用方）。 */
+  async function adopt(): Promise<void> {
+    const files = excludeNonContentFiles(await readFiles(deps.companyDir))
+    baselineStats = scanStats(deps.companyDir)
+    baselineFingerprint = fingerprintDirectory(files)
+    stats.lastFingerprint = baselineFingerprint.overall
+    lastRejectedStats = null
+    pending = null
+    deps.log(`[hot-reload] 承认 daemon 自写：基线上移 ${baselineFingerprint.overall.slice(0, 19)}…（不重复装载，studio-dev-541）`)
   }
 
   /**
@@ -513,6 +530,7 @@ export function createHotReload(deps: HotReloadDeps): HotReload {
 
   return {
     check,
+    adopt,
     get stats(): HotReload['stats'] {
       return { ...stats }
     },

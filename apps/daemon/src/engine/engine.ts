@@ -239,6 +239,14 @@ export function createEngine(deps: EngineDeps): Engine {
     get pendingSplits(): number {
       return rt.splitQueue.length
     },
+    ingestCompanyUpdate(order: unknown): boolean {
+      if (rt.companyWriteQueue === undefined) return false
+      rt.companyWriteQueue.enqueue(order)
+      return true
+    },
+    get pendingCompanyUpdates(): number {
+      return rt.companyWriteQueue?.pending ?? 0
+    },
     applyCompanyUpdate(update: CompanyRuntimeUpdate): void {
       applyCompanyUpdate(rt, update)
     },

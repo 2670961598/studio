@@ -52,6 +52,7 @@ import type { WorkerDispatchSeatbelt } from '../work/dispatch-seatbelt.ts'
 import type { WorkTransitionHost } from '../work/transition.ts'
 import type { EngineConfig, Inflight } from '../tick/types.ts'
 import type { EngineDeps } from './contract.ts'
+import type { CompanyWriteQueue } from '../company-write/runtime.ts'
 
 /** 事件落账附加列（EventRecord 既有可选列；填列非加列——F1-15 causation_id 同面） */
 export interface EngineEventExtra {
@@ -175,6 +176,8 @@ export interface EngineRuntime {
   lastProjectedTodoQueue: string | undefined
   readonly intentQueue: InvokeIntent[]
   readonly splitQueue: SplitDirectiveInput[]
+  /** 公司目录挂单队列（studio-dev-541）：注入写面才存在；相位 7 尾 drain（同 hrSync 先例） */
+  readonly companyWriteQueue: CompanyWriteQueue | undefined
   readonly inflight: Map<TicketId, Inflight>
   readonly lanes: LaneRegistry
   readonly mergeLeases: MergeLeaseRegistry

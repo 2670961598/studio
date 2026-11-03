@@ -88,6 +88,7 @@ export async function runTick(rt: EngineRuntime): Promise<TickReport> {
         eventsAppended: ctx.tickEvents.length + (account.hrSync?.eventsAppended ?? 0),
         heartbeat: account.heartbeat,
         ...(account.hrSync !== undefined ? { hrSync: account.hrSync } : {}),
+        ...(account.companyWrite !== undefined ? { companyWrite: account.companyWrite } : {}),
         ...(account.pricingStale !== undefined ? { pricingStale: account.pricingStale } : {}),
         ...(account.costClose.ran ? { costClose: account.costClose } : {}),
       },

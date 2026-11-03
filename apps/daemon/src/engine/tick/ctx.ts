@@ -18,6 +18,7 @@ import type { MirrorGcTickReport } from '../mirror-gc/step.ts'
 import type { ObsTickReport } from '../observe/types.ts'
 import type { PricingStaleTickReport } from '../pricing/pricing.ts'
 import type { EventIndex } from '../sentinel/events-index.ts'
+import type { CompanyWriteTickReport } from '../company-write/runtime.ts'
 import type { TickActionResult, TickDecisionEntry, TickPhaseHarvest, TickReport } from '../tick-report/types.ts'
 import type { WorkPhaseHost, WorkRecycleHost } from '../work/transition.ts'
 
@@ -105,6 +106,7 @@ export interface RunOutcome {
 export interface AccountOutcome {
   heartbeat: boolean
   hrSync: HrSyncTickReport | undefined
+  companyWrite: CompanyWriteTickReport | undefined
   pricingStale: PricingStaleTickReport | undefined
   costClose: CostCloseTickReport
   scheduleToStart: { count: number; avgMs: number; maxMs: number }

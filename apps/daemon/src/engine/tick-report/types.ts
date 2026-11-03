@@ -9,6 +9,7 @@
 import type { EventRecord, TicketId } from '@studio-next/contract'
 import type { Action, DecisionCode } from '@studio-next/core'
 import type { HrSyncTickReport } from '../hrsync/hrsync.ts'
+import type { CompanyWriteTickReport } from '../company-write/runtime.ts'
 import type { HrGateTickReport } from '../hr-gate/employment-gate.ts'
 import type { HarvestReconResult } from '../jobs/harvest-recon.ts'
 import type { PricingStaleTickReport } from '../pricing/pricing.ts'
@@ -158,6 +159,8 @@ export interface TickReport {
       eventsAppended: number
       heartbeat: boolean
       hrSync?: HrSyncTickReport
+      /** 公司目录挂单队列消化（studio-dev-541；docs/17-§2 相位 7 尾）：面关＝缺省不出现 */
+      companyWrite?: CompanyWriteTickReport
       /** 定价 stale 检查（132-§6.2 单B：相位 7 尾日锚步——一日一跑，checked=0 未到窗/已跑） */
       pricingStale?: PricingStaleTickReport
       /** 日终收口工序（132-§6.3 单D·studio-dev-179：19:55 后收 D-1——ran=false 未到窗/已收讫） */

@@ -41,6 +41,7 @@ import type { DispatchDerivationRegistry } from '../work/derivation-registration
 import type { DispatchSelectionDeps } from '../work/dispatch-selection.ts'
 import type { EngineConfig, MergeRunDeps } from '../tick/types.ts'
 import type { TickReport } from '../tick-report/types.ts'
+import type { CompanyWriteFace } from '../company-write/runtime.ts'
 
 // ————————————————————————— 依赖注入 —————————————————————————
 
@@ -83,6 +84,12 @@ export interface EngineDeps extends HarvestRecordingDeps {
    * 装配与配置门（hrSync/hrMatrix 开关、known-secrets 脱敏闭包）见 serve.ts。
    */
   hrSync?: { drain(): Promise<HrSyncTickReport> }
+  /**
+   * 公司目录运行期写面（studio-dev-541；docs/17-§2 相位 7 尾消化，DOM-01 唯一写入者）：
+   * 缺省不注入＝面关零行为；注入后 engine.ingestCompanyUpdate 入队、相位 7 尾每拍消化
+   * maxPerTick 单（挂单 commit 与生效段全在写面内，engine 只留相位缝）。
+   */
+  companyWrite?: CompanyWriteFace
   /**
    * 批示归一层（可选注入；缺省=面关行为零变更——studio-dev-171，docs/18-§2.5）：
    * 相位 1 采集尾拉评论→词表 v1 解析→角色校验→站立/打回，实现=engine/directive/
@@ -146,6 +153,13 @@ export interface Engine extends HarvestRecordingObservation {
   /** 拆单指令注入口（130-P2 studio-dev-173：P0 归一层接线位；源零直驱同 ingest）＋队列深度观测 */
   ingestSplit(directives: readonly SplitDirectiveInput[]): void
   readonly pendingSplits: number
+  /**
+   * 公司目录变更注入口（studio-dev-541；DOM-01 唯一写入者＝daemon 挂单 commit）：
+   * 订单入相位 7 尾挂单队列（每拍至多 1 单）；写面未注入＝false 拒收（面关零行为）。
+   */
+  ingestCompanyUpdate(order: unknown): boolean
+  /** 挂单队列深度（观测/测试断言：未消化单数） */
+  readonly pendingCompanyUpdates: number
   /**
    * 公司面热替换（docs/38-§2 L1 配置级热重载的引擎侧落点）：**拍边界调用**
    * （serve 主循环在 tick() 收口后调——单线程下无并发 tick，结构性不中断在途单/
