@@ -30,7 +30,7 @@
  *   5. **目录仍由目录实现持有**：`createCredentialCatalog().revoke` 的三动作＋枚举闸不变，
  *      本件在其上做派生树并集与传播，不复制目录拒绝码、不改契约记录形状。
  */
-import type { CredentialCategory, FailureCategory, PortFailure, PortResult } from '@studio-next/contract'
+import type { PortResult } from '@studio-next/contract'
 import { createCredentialCatalog, reconcileRevocation } from './catalog.ts'
 import type {
   CatalogEntryView,
@@ -40,6 +40,18 @@ import type {
   RevocationReconciliation,
 } from './catalog.ts'
 import { deepFreeze, readRevocationProof } from './catalog-entry.ts'
+import {
+  accept,
+  isRecord,
+  readCredential,
+  readIso,
+  readText,
+  reject,
+  viewMapOf,
+  withinAncestorClosure,
+  DERIVATION_ID_PATTERN,
+  type DerivationCredentialRef,
+} from './derivation-shape.ts'
 
 // ————————————————————————— 值集投影（不新立枚举；字面量唯一主表在 v2/09） —————————————————————————
 
@@ -53,15 +65,8 @@ export type DerivationDispatchState = (typeof DERIVATION_DISPATCH_STATES)[number
 
 // ————————————————————————— 登记形状（v2/07 §四；只收引用侧） —————————————————————————
 
-/** 后代持有凭据（逻辑引用；值永不入本件——v2/15 §4.5 三不入） */
-export interface DerivationCredentialRef {
-  /** 目录中的凭据逻辑 id（`SEC-<域>-<slug>`；与 REC-AUTH-04 同一引用面） */
-  readonly secretId: string
-  /** 凭据类别（ENU-136：root|scoped；派生执行体只准 scoped——SEC-ROOT-03） */
-  readonly credentialClass: CredentialCategory
-  /** 逻辑引用（非值非路径；须与目录登记逐字一致，防登记面与目录面漂移） */
-  readonly logicalReference: string
-}
+/** 凭据引用形状（S6 拆件后归 derivation-shape.ts；此处再导出保持既有导入面） */
+export type { DerivationCredentialRef } from './derivation-shape.ts'
 
 /** 凭据继承的显式批准（v2/07 §四规则 3：缺省不继承；子集继承须批准并记入登记） */
 export interface DerivationInheritance {
@@ -161,92 +166,8 @@ export interface DerivationGateway {
   ): PortResult<DerivationRevocationReceipt>
   /** 派发闸端口（结构类型；注入选择链） */
   revocationPort(): DerivationRevocationPort
-}
-
-// ————————————————————————— 形状工具（零 IO；不复制目录的值形态判据） —————————————————————————
-
-const DERIVATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/
-const TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/
-
-function failure(category: FailureCategory, subcause: string, detail: string): PortFailure {
-  return {
-    category,
-    subcause,
-    detail,
-    retryable: false,
-    sideEffectPossible: false,
-    reconcile: { required: false, reason: '派生登记为内存账本；状态判定无外部副作用' },
-    responsiblePosition: 'daemon',
-  }
-}
-
-function reject<T>(category: FailureCategory, subcause: string, detail: string): PortResult<T> {
-  return { kind: 'err', error: failure(category, subcause, detail) }
-}
-
-function accept<T>(value: T): PortResult<T> {
-  return { kind: 'ok', value }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-/** 非空、无首尾空白、无内部空白的标识文本（拒绝用空白冒充已登记） */
-function readText(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined
-  if (value === '' || value !== value.trim() || /\s/.test(value)) return undefined
-  return value
-}
-
-function readIso(value: unknown): string | undefined {
-  if (typeof value !== 'string' || !TIMESTAMP_PATTERN.test(value)) return undefined
-  return Number.isFinite(Date.parse(value)) ? value : undefined
-}
-
-/** 目录视图索引（secretId → 视图；目录是凭据状态的唯一算面） */
-function viewMapOf(views: readonly CatalogEntryView[]): ReadonlyMap<string, CatalogEntryView> {
-  return new Map(views.map((view) => [view.secretId, view] as const))
-}
-
-/** secretId 的父链是否经过给定祖先集（含自身；父链断/环＝不在面内，fail-closed） */
-function withinAncestorClosure(
-  views: ReadonlyMap<string, CatalogEntryView>,
-  secretId: string,
-  ancestors: ReadonlySet<string>,
-): boolean {
-  let cursor: string | undefined = secretId
-  const seen = new Set<string>()
-  while (cursor !== undefined) {
-    if (seen.has(cursor)) return false
-    seen.add(cursor)
-    if (ancestors.has(cursor)) return true
-    cursor = views.get(cursor)?.parentCredentialRef
-  }
-  return false
-}
-
-/** 读一个后代持有凭据（只收引用侧；未知键/值形态不经本件解释） */
-function readCredential(raw: unknown): PortResult<DerivationCredentialRef> {
-  if (!isRecord(raw)) {
-    return reject('rejected_precondition', 'derivation/invalid', 'credentials[] 项须为对象 {secretId,credentialClass,logicalReference}')
-  }
-  const allowed = ['secretId', 'credentialClass', 'logicalReference']
-  for (const key of Object.keys(raw)) {
-    if (!allowed.includes(key)) {
-      return reject('rejected_precondition', 'derivation/invalid', `credentials[] 出现未声明字段 \`${key}\`（只收引用侧；值/路径不入登记）`)
-    }
-  }
-  const secretId = readText(raw['secretId'])
-  const logicalReference = readText(raw['logicalReference'])
-  const credentialClass = raw['credentialClass']
-  if (secretId === undefined || logicalReference === undefined) {
-    return reject('rejected_precondition', 'derivation/invalid', 'credentials[].secretId/logicalReference 须为非空引用（空白视为未登记）')
-  }
-  if (credentialClass !== 'root' && credentialClass !== 'scoped') {
-    return reject('rejected_precondition', 'derivation/invalid', 'credentials[].credentialClass 须为 ENU-136 的 root|scoped')
-  }
-  return accept(deepFreeze({ secretId, credentialClass, logicalReference }))
+  /** 启动重建：恢复已撤回派生 id（持久账本回放；只置撤回位，不重放证据/目录动作） */
+  restoreRevoked(derivationIds: readonly string[]): void
 }
 
 // ————————————————————————— 登记网关实现 —————————————————————————
@@ -594,6 +515,12 @@ export function createDerivationGateway(options: DerivationGatewayOptions = {}):
       return deepFreeze({
         isRevoked: (ticket: string, executor: string): boolean => gateway.dispatchState(ticket, executor) === 'revoked',
       })
+    },
+
+    restoreRevoked(derivationIds: readonly string[]): void {
+      for (const derivationId of derivationIds) {
+        if (typeof derivationId === 'string' && derivationId !== '') revokedDerivations.add(derivationId)
+      }
     },
   }
   return gateway

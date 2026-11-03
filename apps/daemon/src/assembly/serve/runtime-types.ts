@@ -17,6 +17,7 @@ import type { ServeApiWiring } from '../api/serve-face.ts'
 import type { ServeConfig } from './config.ts'
 import type { RestartProbeFace } from './executor-face.ts'
 import type { ServeOpsFace } from '../ops/index.ts'
+import type { DerivationServeFace } from './derivation.ts'
 import type { RootDelegationTrace } from './root-delegation/root-face.ts'
 
 /** serve 运行栈（engine + 唤起源注册表 + PORT-OPS 面 + 统一停机面；runServe 与测试共用装配） */
@@ -55,6 +56,8 @@ export interface ServeRuntime extends ServeOpsFace, RestartProbeFace {
   rootDelegation?: RootDelegationTrace
   /** daemon.yaml seatbelt 解析产物（IMPL-07-09 配置通道；与 EngineDeps.dispatchSeatbelt 同引用，undefined=read-only 缺省） */
   dispatchSeatbelt: ServeConfig['seatbelt']
+  /** 派生树面（GAP-V2-04 S6）：PORT-AUTH.withdraw／控制面 ctl- 撤回入口＋REC 行写面 */
+  derivation: DerivationServeFace
   /** 优雅停：先关 API→stopAll 唤起源→在途 drain→关台账（SIGINT/SIGTERM 同一收口，可重入；未消费意图停机即弃，at-most-once——engine.ts 头注）。 */
   stop(): Promise<void>
 }

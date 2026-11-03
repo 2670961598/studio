@@ -83,9 +83,9 @@ afterAll(async () => {
 
 describe('v16 迁移与链表在库（I-17 哈希链腿的机制面）', () => {
   it('LATEST_VERSION=16；events_chain 表与两枚 append-only 触发器在库', () => {
-    expect(LATEST_VERSION).toBe(16)
+    expect(LATEST_VERSION).toBe(17)
     expect(eventsChainMigration.version).toBe(16)
-    expect(ledger.version()).toBe(16)
+    expect(ledger.version()).toBe(17)
     const table = ledger.db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'events_chain'")
       .get() as unknown as { name: string } | undefined
@@ -227,7 +227,7 @@ describe('篡改必被校验面判负且拒读（fail-closed，NEG-SEC-03 哈希
 })
 
 describe('升级路径：v15 存量库首次打开时锚定存量事件（空链→补齐，锚定前历史不可证）', () => {
-  it('v15 库（events 有行、无链表）→ 打开迁移到 v16 并补齐链', async () => {
+  it('v15 库（events 有行、无链表）→ 打开迁移到 v17 并补齐链', async () => {
     const dbPath = path.join(root, 'legacy-v15.db')
     const legacy = new DatabaseSync(dbPath)
     migrate(legacy, { upTo: 15 })
@@ -241,7 +241,7 @@ describe('升级路径：v15 存量库首次打开时锚定存量事件（空链
 
     const upgraded = openLedger(dbPath)
     try {
-      expect(upgraded.version()).toBe(16)
+      expect(upgraded.version()).toBe(17)
       expect(chainCount(upgraded.db)).toBe(eventCount(upgraded.db))
       const rows = chainRows(upgraded.db)
       expect(rows[0]?.event_id).toBe(e.id)
@@ -262,7 +262,7 @@ describe('rebuild 兼容：dump → 重建后链可由 events 再生（哈希与
     expect(dumped.lines).toBe(eventCount(ledger.db))
 
     const result = rebuild(source, target)
-    expect(result.version).toBe(16)
+    expect(result.version).toBe(17)
     expect(result.events).toBe(dumped.lines)
 
     const rebuilt = openLedger(target)

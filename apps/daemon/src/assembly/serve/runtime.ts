@@ -66,6 +66,7 @@ import { wireAiwsFace } from './aiws-face.ts'
 import { buildServeEngineConfig } from './engine-config.ts'
 import { loadRootDelegationFace } from './root-delegation/root-face.ts'
 import { wireWorkerKeys } from './root-delegation/worker-key-face.ts'
+import { wireDerivation } from './derivation.ts'
 import { wireExecutorFace } from './executor-face.ts'
 import { wireServeApi } from '../api/serve-face.ts'
 
@@ -152,6 +153,11 @@ export function buildServeRuntime(
   const log = outbound.guardLog(rawLog)
   // 三不入·库（docs/v2/15 §4.5）：台账写口一处收口（失败落账 sink 持原件，避免自噬）
   ledger = outbound.createStoreWriteGuard(ledger)
+
+  // —— 派生树面（GAP-V2-04 S6）：持久网关重建＋派发 0 号闸＋spawn 前登记＋撤回入口 ——
+  //    装配期失败即抛（run.ts 不吞）＝启动 fail-closed，不静默关闸。写入口经已持 202-P4
+  //    写者租约的 ledger 句柄，不另开库/不另建锁。
+  const derivation = wireDerivation({ ledger, clock, company: config.company, log })
 
   // —— PORT-OPS 面（OPS 补形 A；v2/14 §1.8）：装配体在 assembly/ops/serve-face.ts；不自动触发。
   const opsFace = wireServeOps({ ledger, clock, guardRecord: outbound.gate.guardStoreRecord, log })
@@ -261,7 +267,11 @@ export function buildServeRuntime(
   const costNotifyOutlet = wiredNotify?.costNoticeOutlet ?? createCostNotifyOutlet(log)
   // 平台写出站闸（exits.ts platform-write）：gated 代理外再包出站扫描（写文本过闸后才出站）
   const enginePlatform = outbound.wrapPlatform(
-    wireGatedPlatform(rawPlatform, config, identity, clock, log, rootDelegation === undefined ? undefined : { root: rootDelegation.options }),
+    wireGatedPlatform(rawPlatform, config, identity, clock, log, {
+      // #528 授权链闸与派生树面共用同一实例（同一 grants 快照，不双源）
+      authority: derivation.authority,
+      ...(rootDelegation !== undefined ? { root: rootDelegation.options } : {}),
+    }),
   )
   const engine = createEngine({
     // 写路径网关收口（17-§7）：raw platform 包一层 gated 代理——engine 写调用签名不变（透明）
@@ -273,6 +283,8 @@ export function buildServeRuntime(
     ledger, // 已在装配序开头过三不入·库闸（appendEvent 写前扫描）
     records: recordsFace.records, // 记录族生产写面（docs/17-§2「记录族生产写面」段）
     ...(config.seatbelt !== undefined ? { dispatchSeatbelt: config.seatbelt } : {}), capabilitySupply, // IMPL-07-09 配置通道＋CAP 记录/五出口决策（studio-dev-540）
+    derivationGuard: derivation.guard, // GAP-V2-04 派发 0 号闸（撤回面）
+    derivationRegistry: derivation.registry, // GAP-V2-04 S6 spawn 前登记（失败即不派）
     registry,
     ...(judgeHook !== undefined ? { judge: judgeHook } : {}), // 160-B 两址精序（缺省不注入=规则缺省档）
     assembler: makeAssembler(),
@@ -499,6 +511,7 @@ export function buildServeRuntime(
     sources,
     api,
     dispatchSeatbelt: config.seatbelt,
+    derivation,
     ...(rootDelegation !== undefined ? { rootDelegation: rootDelegation.trace } : {}),
     ...opsFace,
     evolveSelfCheck,

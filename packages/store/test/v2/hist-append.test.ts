@@ -44,10 +44,10 @@ afterAll(async () => {
 
 // —— 迁移与面构造 ——
 
-describe('迁移到 v16 与面构造', () => {
-  it('临时库 migrate 到 v16（v14 records 表在库）', () => {
-    expect(LATEST_VERSION).toBe(16)
-    expect(currentVersion(h.db)).toBe(16)
+describe('迁移到 v17 与面构造', () => {
+  it('临时库 migrate 到 v17（v14/v15/v16 表在库）', () => {
+    expect(LATEST_VERSION).toBe(17)
+    expect(currentVersion(h.db)).toBe(17)
     expect(h.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'records'").get()).toBeTruthy()
   })
 

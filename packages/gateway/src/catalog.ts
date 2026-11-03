@@ -89,6 +89,11 @@ export interface CredentialCatalog {
   supply(secretId: string, window: TtlWindow): PortResult<ShortLivedHandle>
   /** 吊销：三动作证据齐＋后代枚举逐项相等才落状态（幂等）；回执带回对账 */
   revoke(secretId: string, proof: RevocationProof): PortResult<RevocationReceipt>
+  /**
+   * 启动重建：按持久账本恢复「已吊销」状态（只接受已登记 secretId；未知 id 忽略并返回）。
+   * 这是持久投影回放面，不是新的撤回入口——撤回证据/回执仍须由 `revoke` 产生并落账。
+   */
+  restoreRevoked(secretIds: readonly string[]): readonly string[]
 }
 
 function iso(ms: number): string {
@@ -275,6 +280,17 @@ export function createCredentialCatalog(options: CredentialCatalogOptions = {}):
         reconciliation: reconcileRevocation(allViews(), secretId),
       })
       return { kind: 'ok', value: receipt }
+    },
+
+    restoreRevoked(secretIds: readonly string[]): readonly string[] {
+      const restored: string[] = []
+      for (const secretId of secretIds) {
+        if (typeof secretId !== 'string' || secretId === '') continue
+        if (!entries.has(secretId)) continue
+        revokedIds.add(secretId)
+        restored.push(secretId)
+      }
+      return restored
     },
   }
 }

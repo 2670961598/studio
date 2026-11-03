@@ -309,6 +309,16 @@ export {
   type HistTxReceipt,
 } from './hist.ts'
 
+// v17 派生树登记账本（GAP-V2-04 S6）：append-only 读写面（daemon 组合根经 ledger.db 消费）
+export { createDerivationLedger } from './derivation/derivation-ledger.ts'
+export type {
+  DerivationAppendResult,
+  DerivationCatalogRow,
+  DerivationLedgerFace,
+  DerivationRegistrationRow,
+  DerivationRevocationRow,
+} from './derivation/derivation-ledger.ts'
+
 // 记忆访问审计面（PORT-HIST 记忆子面；docs/v2/08 §3.3 / v2/11 §十三 / v2/14 §1.6）
 // REC-MEM-02：每次记忆读/写留痕＋scope 精确等值＋越权/缺证/到期 fail-closed。
 // 生产装配面：daemon assembly/ops（assembleOps 建面并注入 makeId/now/log）经本出口取用。

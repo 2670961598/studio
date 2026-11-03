@@ -143,6 +143,22 @@ export async function executeDispatch(
       // 调用）；detect 前置 launch 前必跑，不达标明报不静默降级
       const { detect, seatbeltSegment } = await rt.dispatchPreflight(adapter, ticket, workspace)
       if (!detect.ok) return fail(`executor ${adapter.name} detect 不达标：${detect.gaps.join('；')}`, { kind: 'degraded', capabilityRef: `executor:${adapter.name}`, probe: { executor: adapter.name, version: detect.version, ok: false, gaps: detect.gaps } })
+      // 派生即登记（v2/07 §四规则 1；GAP-V2-04 S6）：detect 通过后、任何 spawn/预算/落盘之前落登记，
+      // 失败即不派（EXEC-01 fail-closed）。只记身份/后端/能力子集/时点；wkey 是 local-mint 例外，
+      // 不进静态 catalogue（78-§7.4.1），凭据继承默认无（v2/07 §四规则 3）。
+      const registration = rt.deps.derivationRegistry?.register({
+        derivationId: `${ticket}:att${attempt}:${adapter.name}`,
+        ticket,
+        executor: adapter.name,
+        backend: 'external-cli',
+        capabilitySubset: `executor:${adapter.name}@${detect.version}`,
+        derivedAt: new Date(at).toISOString(),
+      })
+      if (registration !== undefined && registration.kind !== 'ok') {
+        return fail(
+          `derivation-registration ${registration.error.category}/${registration.error.subcause}：${registration.error.detail ?? ''}`,
+        )
+      }
       // 读面分级（17-§7）：dispatch 装配时按岗选档（装配期选择非运行期闸——daemon 自身
       // 读不拦，见 src/engine/read-tiers.ts 头注与写闸的区别）。Blind 档在此补齐冻结验收命令
       //（config 同源）+ 本工位证据面路径；缺验收 → CONFIG_INVALID fail-closed（无验收

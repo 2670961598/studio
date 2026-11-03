@@ -10,6 +10,7 @@
  *   条目体落本文件，`migrations.ts` 只 import 摊入；版本序列仍按 14／15／16 单调 +1，sha8 由条目自身 SQL
  *   决定（与内联在 `migrations.ts` 等价，`schema_version.sha8` 防漂移口径不变）。
  */
+import { derivationMigrations } from './derivation/derivation-migrations.ts'
 import { eventsChainMigration } from './events-chain.ts'
 import type { Migration } from './migrations.ts'
 
@@ -91,12 +92,14 @@ export const eventsTriggersMigration: Migration = {
 }
 
 /**
- * 摊入 `migrations.ts` 的条目序列（**升序**：14 → 15 → 16；v16 events 哈希链条目体在
- * events-chain.ts；`LATEST_VERSION` 取末条 version，故运行时＝16）。
+ * 摊入 `migrations.ts` 的条目序列（**升序**：14 → 15 → 16 → 17；v16 events 哈希链条目体在
+ * events-chain.ts；v17 派生树登记账本条目体在 derivation/derivation-migrations.ts；
+ * `LATEST_VERSION` 取末条 version，故运行时＝17）。
  * 后续 MIG 波次新增迁移条目时按同法追加（版本单调 +1，禁跳号）。
  */
 export const recordsMigrations: readonly Migration[] = [
   recordsMigration,
   eventsTriggersMigration,
   eventsChainMigration,
+  ...derivationMigrations,
 ]

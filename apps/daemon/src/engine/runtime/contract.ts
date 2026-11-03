@@ -35,6 +35,7 @@ import type { RoomDuty } from '../rooms/room-duty.ts'
 import type { WorkerKeyDeps } from '../worker-key.ts'
 import type { RecordWirePort } from '../records/index.ts'
 import type { DispatchDerivationGuard } from '../work/dispatch-seatbelt.ts'
+import type { DispatchDerivationRegistry } from '../work/derivation-registration.ts'
 import type { EngineConfig, MergeRunDeps } from '../tick/types.ts'
 import type { TickReport } from '../tick-report/types.ts'
 
@@ -115,6 +116,7 @@ export interface EngineDeps {
   mergeRun?: MergeRunDeps // 202-P2 studio-dev-232：注入=相位 5 真单刀面开；缺省=v0 模拟轨零行为
   dispatchSeatbelt?: SeatbeltGrant // IMPL-07-09 派发域 seatbelt 圈定授权（省略=read-only 最严；放宽须显式授权并留痕；校验/留痕面见 work/dispatch-seatbelt.ts）
   derivationGuard?: DispatchDerivationGuard // GAP-V2-04 派生树撤回闸（省略=不拦；注入=phase-3 派发前拒已撤派生树，NEG-SEC-08/NEG-RUN-05）
+  derivationRegistry?: DispatchDerivationRegistry // GAP-V2-04 S6 派发时登记（省略=不登记；注入=spawn 前 register，失败即派发失败）
   capabilitySupply?: import('../capability/index.ts').CapabilitySupplyFace // CAP 记录＋五出口决策（studio-dev-540；缺省＝面关零行为）
 }
 

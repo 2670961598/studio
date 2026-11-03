@@ -11,7 +11,7 @@
  * 测试只对文档冻结口径负责（真 SQLite 文件，不用 :memory:；不 mock 引擎）：
  *   1. 只读可读、query_only=1、INSERT/UPDATE/DELETE/DDL 被引擎拒；
  *   2. 缺库拒绝且**不建库**；路径畸形/非文件 CONFIG_INVALID；
- *   3. 未迁移（无 schema_version / 空表）、落后 v14、领先 v16 各自拒绝且不升级；
+ *   3. 未迁移（无 schema_version / 空表）、落后 v14、领先 v17 各自拒绝且不升级；
  *   4. 打开/读/写尝试前后主库文件字节不变、schema_version 与 sqlite_master 全列不变
  *      （不跑 DDL 的机械证据）；SQLite 只读 WAL 连接可能生成 -shm/-wal 引擎侧文件，
  *      本测试只锚**主库文件**（db 文件）不被创建/修改；
