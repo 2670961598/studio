@@ -15,7 +15,8 @@
  *      `Err(unsupported)`（不伪造投影），`health` 可用性取 `unverified`（未核验不等于可用）；
  *   ② **PORT-GATE gated 入口**（`buildFailClosedGate`）：意图保留/回执投影/通知出口三面
  *      未装配＝一律 `Err(unsupported)`（不伪造 queued 回执；「查不到」不以 Ok(undefined)
- *      冒充无行）。注入面保留 `gate` 槽：PORT-GATE 落位后由装配单元传入替换；
+ *      冒充无行）。`gate` 槽缺省＝本 fail-closed 面（拒绝而非静默）；生产由 runServe 注入
+ *      `assembly/intent/gate.ts`（studio-dev-542）——默认拒面保留为未注入时的唯一合法形态；
  *   ③ **readers/auth 供给**：readers＝公司快照投影（L1 热重载后取新快照），auth＝fail-closed
  *      认证器（partner/signed 未装配⇒拒；root 拒）；
  *   ④ **装配＋监听生命周期**：`assembleApi`（gated-only 不变）→ `start()`＝真监听
@@ -35,6 +36,7 @@ import type {
   HealthReport,
   IntentKey,
   IntentReceipt,
+  InvokeIntent,
   NotificationEnvelope,
   PortFailure,
   PortResult,
@@ -48,6 +50,7 @@ import { buildApiReaders, API_READ_FACE_GAPS, API_READ_FACE_GAP_REASONS, API_REA
 import { buildApiIntakeAuth } from './auth.ts'
 import { startApiServer, type ApiServerHandle } from './live.ts'
 import type { ApiObservationReadFace } from './inject.ts'
+import { createIntentGate } from '../intent/gate.ts'
 
 /** 失败分类（Err 必答副作用可能/可否重试/对账入口/责任位置；v2/11 §0.4-6） */
 function unsupported(subcause: string, detail: string, responsiblePosition: string): PortFailure {
@@ -166,6 +169,12 @@ export interface ServeApiArgs {
   readonly log: (line: string) => void
   /** PORT-GATE 面（缺省＝fail-closed 面；PORT-GATE 落位后由装配单元注入替换） */
   readonly gate?: GatePort
+  /**
+   * 引擎入队接缝（studio-dev-542：runServe 交 `(i) => engine.ingest([i])`，不交引擎本体）。
+   * 给定且未显式注入 gate ⇒ 装配生产 PORT-GATE（assembly/intent/gate.ts）；缺省＝默认拒面
+   * （fail-closed：拒绝而非静默，不伪造 queued 回执）。
+   */
+  readonly enqueueIntent?: (intent: InvokeIntent) => void
   /** API 响应面出站闸 wrapper（第 5 出口；缺省不扫描——启动行显式登记缺口） */
   readonly guardResponse?: (payload: unknown) => unknown
   /** 监听地址（缺省 127.0.0.1 环回；LAN 暴露未落位＝缺口） */
@@ -203,7 +212,18 @@ function liveReaders(readSnapshot: () => CompanySnapshot, obs: ApiObservationRea
  */
 export function wireServeApi(args: ServeApiArgs): ServeApiWiring {
   const obs = buildServeObsFace({ clock: args.clock })
-  const gate = args.gate ?? buildFailClosedGate()
+  const gateWired = args.gate !== undefined || args.enqueueIntent !== undefined
+  const gate =
+    args.gate ??
+    (args.enqueueIntent !== undefined
+      ? createIntentGate({ company: args.company, clock: args.clock, enqueue: args.enqueueIntent, log: args.log })
+      : buildFailClosedGate())
+  if (args.gate === undefined && args.enqueueIntent !== undefined) {
+    args.log(
+      '[serve] PORT-GATE 已接线：receiveIntent→engine.ingest（只落单不派工；四槽幂等；' +
+        '回执投影=本进程快照）；落单物化经 gated platform；notify 仍 fail-closed（未接线）',
+    )
+  }
   const assembly = assembleApi({
     company: args.company,
     obs,
@@ -227,7 +247,7 @@ export function wireServeApi(args: ServeApiArgs): ServeApiWiring {
       args.log(
         `[serve] 对外 API 已监听：${handle.url}（同进程装配；绑定=${handle.host}；` +
           `只读面=${API_READ_FACE_SERVED.join('/')}；缺口=${gaps}→503 不补 0；` +
-          `触发面=fail-closed 401/403（凭据目录/签名验签未装配）；写面=PORT-GATE gated-only；` +
+          `触发面=fail-closed 401/403（凭据目录/签名验签未装配）；写面=PORT-GATE ${gateWired ? '已接线（receiveIntent→engine.ingest；只落单不派工）' : 'fail-closed（未注入——拒绝而非静默）'}；` +
           `响应面出站闸=${args.guardResponse !== undefined ? '已接 guardApiResponse' : '未接（缺口）'}）`,
       )
       return handle

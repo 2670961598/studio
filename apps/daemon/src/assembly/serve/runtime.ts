@@ -501,9 +501,9 @@ export function buildServeRuntime(
     ...(opts?.evolveSelfCheck ?? {}),
   })
 
-  // —— 对外 API 同进程装配（MIG-06 欠账收口；v2/14 §四；装配体=assembly/api/serve-face.ts）——
-  //    app 在装配期构造（同步），监听由 runServe await api.start()（apiPort 缺省 0=ephemeral）
-  const api = wireServeApi({ company: { companyId: config.company, slug: config.company }, readSnapshot: () => companyState.snapshot, port: config.apiPort ?? 0, clock, log, guardResponse: outbound.guardApiResponse })
+  // —— PORT-GATE 生产装配（studio-dev-542）：交给 serve-face 装配腿的窄接缝只有
+  //    engine.ingest（不交引擎本体）——intent 入队后由主循环下一拍消费（docs/17-§2/§6）
+  const api = wireServeApi({ company: { companyId: config.company, slug: config.company }, readSnapshot: () => companyState.snapshot, port: config.apiPort ?? 0, clock, log, enqueueIntent: (intent) => engine.ingest([intent]), guardResponse: outbound.guardApiResponse })
 
   return {
     engine,
