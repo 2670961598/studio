@@ -19,6 +19,7 @@ export const ISSUE_CODES = {
   parentCycle: 'projection/parent-cycle',
   // —— 结构面：一级单元（GAP-V2-17）——
   emptyUnits: 'projection/empty-units',
+  unitFieldShape: 'projection/unit-field-shape',
   unitDomainMissing: 'projection/unit-domain-missing',
   unitDomainOverlap: 'projection/unit-domain-overlap',
   unitHeadUnresolved: 'projection/unit-head-unresolved',

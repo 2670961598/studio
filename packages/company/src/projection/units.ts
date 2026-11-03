@@ -9,6 +9,10 @@
  *   - 空编声明收口（同则）＋空编对象 id 前缀（`vacancy:<kind>:<ref>`）；
  *   - 单元 N 的投影载形常量（`unitCount`/`units[]` 的 `unitId`/`domain`/`headRef`/
  *     `vacancyState`/`reviewAt`——GAP-V2-17；本件不新增 YAML 键/记录类）；
+ *   - 单元字段运行时**形状闸**（`unitFieldShapeViolations`：domain/headRef/vacancyState/
+ *     reviewAt 非法形状一律拒——不静默强转、不按字符拆域、不把未知态退化成默认形态；
+ *     仍在投影输入边界内加固，不改 SCH-ORG-01 schema/契约面，
+ *     登记见 docs/baselines/split-plan-company.md §六）；
  *   - `reviewAt` ISO 8601 形状闸（是否逾期归消费方按时钟判，投影不取时钟）。
  */
 import { compareText, ISSUE_CODES, projectionIssue } from './issues.ts'
@@ -58,6 +62,36 @@ export interface VacancyReconciliation {
   authority: StructureAuthority
 }
 
+/**
+ * 单元字段运行时形状违规清单（fail-closed：非法形状=拒，不静默强转/丢弃/退化）。
+ * 纯函数、零 IO；判的是**已解析输入**的运行时不变量——TS 类型之外，YAML/JSON 直入的
+ * 值仍可能越形（如 `domain: 研发` 会被按字符迭代），本闸先拒再投影（不猜不补）。
+ */
+export function unitFieldShapeViolations(unit: ParsedUnit): string[] {
+  const violations: string[] = []
+  const domain: unknown = unit.domain
+  if (domain !== undefined) {
+    if (!Array.isArray(domain)) {
+      violations.push(`domain 须为字符串数组（实际 ${typeof domain}）——非数组不得按字符/键迭代成域`)
+    } else if (domain.some((token) => typeof token !== 'string' || token.trim() === '')) {
+      violations.push('domain 含非字符串/空串 token——域划分须逐项为非空字符串')
+    }
+  }
+  const headRef: unknown = unit.headRef
+  if (headRef !== undefined && headRef !== null && (typeof headRef !== 'string' || headRef.trim() === '')) {
+    violations.push(`headRef=${JSON.stringify(headRef)} 非法——须为非空工号字符串或 null（空串不得当缺省）`)
+  }
+  const vacancyState: unknown = unit.vacancyState
+  if (vacancyState !== undefined && vacancyState !== 'staffed' && vacancyState !== 'head-vacant') {
+    violations.push(`vacancyState=${JSON.stringify(vacancyState)} 不在值集 {staffed, head-vacant}——未知态不得退化成默认形态`)
+  }
+  const reviewAt: unknown = unit.reviewAt
+  if (reviewAt !== undefined && reviewAt !== null && (typeof reviewAt !== 'string' || !ISO_8601_RE.test(reviewAt))) {
+    violations.push(`reviewAt=${JSON.stringify(reviewAt)} 非 ISO 8601——复审期限不得静默置空`)
+  }
+  return violations
+}
+
 export function reconcileUnits(input: OrganizationProjectionInput, issues: ProjectionIssue[]): UnitReconciliation {
   const buckets = new Map<string, { legacy?: ParsedUnit; definition?: ParsedUnit }>()
   const seen = new Set<string>()
@@ -65,6 +99,18 @@ export function reconcileUnits(input: OrganizationProjectionInput, issues: Proje
     const unitId = typeof unit.unitId === 'string' ? unit.unitId : ''
     if (unitId.trim() === '') {
       issues.push(projectionIssue('authority', ISSUE_CODES.declarationShape, 'unit:(empty)', `一级单元声明缺 unitId（来源=${source}）——对象身份不明，投影拒绝`))
+      return
+    }
+    const shapeViolations = unitFieldShapeViolations(unit)
+    if (shapeViolations.length > 0) {
+      issues.push(
+        projectionIssue(
+          'structure',
+          ISSUE_CODES.unitFieldShape,
+          `unit:${unitId}`,
+          `一级单元 ${unitId} 字段形状非法（来源=${source}）：${shapeViolations.join('；')}——拒绝，不猜不补`,
+        ),
+      )
       return
     }
     const key = `${source}\u0000${unitId}`
@@ -78,8 +124,26 @@ export function reconcileUnits(input: OrganizationProjectionInput, issues: Proje
     else bucket.legacy = unit
     buckets.set(unitId, bucket)
   }
-  for (const unit of input.org.units ?? []) register('legacy-index', unit)
-  for (const unit of input.definition?.units ?? []) register('definition', unit)
+  const declaredSources: readonly { source: OrganizationDeclarationSource; value: unknown }[] = [
+    { source: 'legacy-index', value: input.org.units },
+    { source: 'definition', value: input.definition?.units },
+  ]
+  for (const { source, value } of declaredSources) {
+    if (value === undefined) continue
+    if (!Array.isArray(value)) {
+      // 声明面本身越形（对象/标量）：拒，不得迭代/强转（否则抛 TypeError=失败出口不可读）
+      issues.push(
+        projectionIssue(
+          'structure',
+          ISSUE_CODES.unitFieldShape,
+          'units',
+          `${source} 的 units 声明须为数组（实际 ${typeof value}）——非数组不得迭代/强转，投影拒绝（不猜不补）`,
+        ),
+      )
+      continue
+    }
+    for (const unit of value as readonly ParsedUnit[]) register(source, unit)
+  }
 
   const canonical: CanonicalUnit[] = []
   const legacyObjects: string[] = []
