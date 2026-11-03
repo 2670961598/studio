@@ -32,6 +32,7 @@ import type { NotifyBroadcastFace } from '../../engine/notify/broadcast.ts'
 import type { MatrixRoomFace, MatrixRoomFaceContext } from '../../engine/rooms/room-duty.ts'
 import { parseDaemonConfig, type ServeConfig } from './config.ts'
 import { buildServeRuntime } from './runtime.ts'
+import type { SecretDeclarationInput } from '../trust/wire.ts'
 import { RestartOrchestrator, readRestartStartupFace } from './restart/orchestrator.ts'
 
 /** runServe 启动日志的闸门形态（buildServeRuntime 同判据：acceptance 配置给定=真单模式） */
@@ -70,6 +71,8 @@ export interface RunServeOpts {
   hrMatrixFace?: () => MatrixHrFace
   /** 对外 API 监听开关（缺省 true；隔离实例 E2E/无面板形态注入 false——不改变生产缺省） */
   apiStart?: boolean
+  /** PORT-TRUST 凭据目录声明（组合根注入；缺省=目录空置，伙伴档/供给 fail-closed） */
+  secretDeclarations?: readonly SecretDeclarationInput[]
 }
 
 /**
@@ -155,6 +158,7 @@ export async function runServe(
     ...(opts?.matrixRoomFace !== undefined ? { matrixRoomFace: opts.matrixRoomFace } : {}),
     ...(opts?.notifyBroadcast !== undefined ? { notifyBroadcast: opts.notifyBroadcast } : {}),
     ...(opts?.hrMatrixFace !== undefined ? { hrMatrixFace: opts.hrMatrixFace } : {}),
+    ...(opts?.secretDeclarations !== undefined ? { secretDeclarations: opts.secretDeclarations } : {}),
   })
   // PORT-OPS 装配面（OPS 补形 A）：runtime 已把 emergencyStop/circuitBreak 接到
   // REC-WORK-18 → PORT-HIST（assembly/ops）。runServe **只持有装配面、不自动触发**

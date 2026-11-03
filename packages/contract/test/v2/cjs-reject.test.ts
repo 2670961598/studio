@@ -10,7 +10,7 @@
  *      `require` 全部指向包根同一 `require-reject.cjs`；`main`/`type` 保持不动；
  *   2. 15 包 CJS 子进程 `require('@studio-next/<pkg>')` 全部抛 Error，
  *      `code='ERR_ESM_ONLY'`，消息含包名与 「use import」；
- *   3. panel/studio-tools 的每个导出子路径（overview/inbox/judge/stdio）同样拒绝；
+ *   3. panel/studio-tools 的每个导出子路径（overview/inbox/judge/conversation/stdio）同样拒绝；
  *   4. 正例：ESM 子进程 `import('@studio-next/contract')` 仍按 exports.import 加载（PACKAGE_NAME）；
  *   5. 边界如实登记：**只保证包名 exports 条件**；子路径深路径由 Node exports 封装拒绝
  *      （ERR_PACKAGE_PATH_NOT_EXPORTED，非本 stub 的 ERR_ESM_ONLY）；绕过 exports 的
@@ -61,6 +61,7 @@ const SUBPATH_SPECIFIERS = [
   '@studio-next/panel/overview',
   '@studio-next/panel/inbox',
   '@studio-next/panel/judge',
+  '@studio-next/panel/conversation',
   '@studio-next/studio-tools/stdio',
 ] as const
 
@@ -176,12 +177,13 @@ describe('NEG-ENG-01 CJS 拒绝面（15 包）', () => {
       }
     }
 
-    // 子路径完整枚举：panel 4 条、studio-tools 2 条（不以 "./*" 通配）。
+    // 子路径完整枚举：panel 5 条、studio-tools 2 条（不以 "./*" 通配）。
     expect(Object.keys(readManifest('panel').exports)).toEqual([
       '.',
       './overview',
       './inbox',
       './judge',
+      './conversation',
     ])
     expect(Object.keys(readManifest('studio-tools').exports)).toEqual(['.', './stdio'])
   })

@@ -36,6 +36,8 @@ export {
   type ServeConfig,
 } from './serve/config.ts'
 export { buildServeRuntime, type ServeRuntime } from './serve/runtime.ts'
+export { wireSecretTrust, readSecretDeclarations, type SecretDeclarationInput } from './trust/wire.ts'
+export type { SecretTrust } from '@studio-next/gateway'
 export { runServe, type RunServeOpts, type ServeResult } from './serve/run.ts'
 
 // —— 既有公共面再出口（路径/名字冻结；实现件按 20-§十五「先拆再增」早已拆出）——

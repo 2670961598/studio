@@ -25,8 +25,9 @@ import type {
 
 // ————————————————————————— 值集投影与拒绝码 —————————————————————————
 
-/** 五型运行时投影（值集唯一主表 v2/09 ENU-117，本体=contract `SecretType`；本件不新立值集） */
-const SECRET_TYPES: ReadonlySet<string> = new Set<SecretType>([
+/** 五型运行时投影（值集唯一主表 v2/09 ENU-117，本体=contract `SecretType`；本件不新立值集；
+ *  目录登记闸与 PORT-TRUST 核验闸共用本常量——五型值集只此一处投影） */
+export const SECRET_TYPES: ReadonlySet<string> = new Set<SecretType>([
   'platform_credential',
   'model_key',
   'signing_root_control',
@@ -52,6 +53,8 @@ const CREDENTIAL_CATEGORIES: ReadonlySet<string> = new Set<CredentialCategory>([
  *   - `catalog-no-descendant-confirmation` 无后代时缺显式确认方法（不得留空视为零）
  *   - `catalog-descendants-incomplete`   后代枚举缺项（差异非空即判负——NEG-SEC-08 前腿）
  *   - `catalog-descendants-unknown`      后代枚举出现目录外引用（不猜、不静默接受）
+ *   - `catalog-rotation-invalid`         轮换改 id/类别/型/逻辑引用或版本未递增（轮换≠换 id）
+ *   - `catalog-rotation-has-descendants` 有后代时轮换父凭据（先处置后代再轮换）
  */
 export type CatalogRejectReason =
   | 'catalog-entry-invalid'
@@ -67,6 +70,8 @@ export type CatalogRejectReason =
   | 'catalog-no-descendant-confirmation'
   | 'catalog-descendants-incomplete'
   | 'catalog-descendants-unknown'
+  | 'catalog-rotation-invalid'
+  | 'catalog-rotation-has-descendants'
 
 // ————————————————————————— 条目形状（只有引用侧，无值位） —————————————————————————
 

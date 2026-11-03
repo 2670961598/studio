@@ -47,6 +47,7 @@ import type {
   PortResult,
   Projection,
   ReadContext,
+  TrustPort,
 } from '@studio-next/contract'
 import type { ApiReadSources } from '@studio-next/api'
 import { makeUlid } from '../../engine/tools/id.ts'
@@ -182,6 +183,8 @@ export interface ServeApiArgs {
   readonly enqueueIntent?: (intent: InvokeIntent) => void
   /** API 响应面出站闸 wrapper（第 5 出口；缺省不扫描——启动行显式登记缺口） */
   readonly guardResponse?: (payload: unknown) => unknown
+  /** 凭据目录（PORT-TRUST 生产实现；缺省＝伙伴档不可核验＝拒，不回落匿名） */
+  readonly trust?: TrustPort
   /** 监听地址（缺省 127.0.0.1 环回；LAN 暴露未落位＝缺口） */
   readonly host?: string
   /** 启动只读探活选项（超时缺省 5s；fetch 可注入——测试面不触网；缺省＝生产全局 fetch） */
@@ -236,7 +239,10 @@ export function wireServeApi(args: ServeApiArgs): ServeApiWiring {
     obs,
     gate,
     readers: liveReaders(args.readSnapshot, obs),
-    auth: buildApiIntakeAuth({ log: args.log }),
+    auth: buildApiIntakeAuth({
+      log: args.log,
+      ...(args.trust !== undefined ? { trust: args.trust, company: args.company } : {}),
+    }),
     log: args.log,
   })
   let server: ApiServerHandle | undefined
@@ -253,7 +259,7 @@ export function wireServeApi(args: ServeApiArgs): ServeApiWiring {
       args.log(
         `[serve] 对外 API 已监听：${handle.url}（同进程装配；绑定=${handle.host}；` +
           `只读面=${API_READ_FACE_SERVED.join('/')}；缺口=${gaps}→503 不补 0；` +
-          `触发面=fail-closed 401/403（凭据目录/签名验签未装配）；写面=PORT-GATE ${gateWired ? '已接线（receiveIntent→engine.ingest；只落单不派工）' : 'fail-closed（未注入——拒绝而非静默）'}；` +
+          `触发面=fail-closed 401/403（凭据目录=${args.trust !== undefined ? '已接 partner 核验' : '未装配'}；签名验签未装配）；写面=PORT-GATE ${gateWired ? '已接线（receiveIntent→engine.ingest；只落单不派工）' : 'fail-closed（未注入——拒绝而非静默）'}；` +
           `响应面出站闸=${args.guardResponse !== undefined ? '已接 guardApiResponse' : '未接（缺口）'}）`,
       )
       // 监听成功≠对外可用：以公开只读面自探活（200∧ok∧同公司维）才放行；失败先关监听再抛，

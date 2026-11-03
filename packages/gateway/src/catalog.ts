@@ -89,6 +89,8 @@ export interface CredentialCatalog {
   supply(secretId: string, window: TtlWindow): PortResult<ShortLivedHandle>
   /** 吊销：三动作证据齐＋后代枚举逐项相等才落状态（幂等）；回执带回对账 */
   revoke(secretId: string, proof: RevocationProof): PortResult<RevocationReceipt>
+  /** 轮换：同 `secretId` 版本递增＋有效期单调后移；改类/换 id/有后代＝拒（轮换不是换文件/换 id） */
+  rotate(secretId: string, draft: CatalogEntryDraft): PortResult<CredentialReferenceRow>
   /**
    * 启动重建：按持久账本恢复「已吊销」状态（只接受已登记 secretId；未知 id 忽略并返回）。
    * 这是持久投影回放面，不是新的撤回入口——撤回证据/回执仍须由 `revoke` 产生并落账。
@@ -98,6 +100,27 @@ export interface CredentialCatalog {
 
 function iso(ms: number): string {
   return new Date(ms).toISOString()
+}
+
+/** semver 数值段（prerelease 不入轮换比较：轮换只认 major.minor.patch 递增） */
+function semverTriple(version: string): readonly [number, number, number] | undefined {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version)
+  if (match === null) return undefined
+  const major = Number(match[1])
+  const minor = Number(match[2])
+  const patch = Number(match[3])
+  if (!Number.isSafeInteger(major) || !Number.isSafeInteger(minor) || !Number.isSafeInteger(patch)) return undefined
+  return [major, minor, patch]
+}
+
+/** 轮换版本严格大于旧版本（同值/回退一律拒——「当前最新」不是引用） */
+function isVersionGreater(next: string, prev: string): boolean {
+  const a = semverTriple(next)
+  const b = semverTriple(prev)
+  if (a === undefined || b === undefined) return false
+  if (a[0] !== b[0]) return a[0] > b[0]
+  if (a[1] !== b[1]) return a[1] > b[1]
+  return a[2] > b[2]
 }
 
 // ————————————————————————— 目录实现 —————————————————————————
@@ -254,6 +277,45 @@ export function createCredentialCatalog(options: CredentialCatalogOptions = {}):
         singleUse: true,
       }
       return { kind: 'ok', value: handle }
+    },
+
+    rotate(secretId: string, draft: CatalogEntryDraft): PortResult<CredentialReferenceRow> {
+      if (typeof secretId !== 'string' || secretId === '') {
+        return rejected('rejected_precondition', 'catalog-entry-invalid', 'rotate 须给非空 secretId')
+      }
+      const previous = entries.get(secretId)
+      if (previous === undefined) {
+        return rejected('rejected_precondition', 'catalog-entry-missing', `secretId ${secretId} 未登记（轮换只能作用于已登记凭据）`)
+      }
+      const now = clock()
+      const read = readCatalogEntry(draft, now)
+      if (!read.ok) return { kind: 'err', error: read.error }
+      const next = read.value
+      if (next.secretId !== secretId || next.credentialClass !== previous.credentialClass) {
+        return rejected('rejected_precondition', 'catalog-rotation-invalid', '轮换不得改 secretId/credentialClass（轮换≠换 id/换类）')
+      }
+      if (next.secretType !== previous.secretType || next.logicalReference !== previous.logicalReference) {
+        return rejected('rejected_precondition', 'catalog-rotation-invalid', '轮换不得改 secretType/logicalReference（同一条目只换值代次）')
+      }
+      if (next.parentCredentialRef !== previous.parentCredentialRef) {
+        return rejected('rejected_precondition', 'catalog-rotation-invalid', '轮换不得改父链（父链变更＝重新签发，不是轮换）')
+      }
+      if (!isVersionGreater(next.boundGrant.refVersion, previous.boundGrant.refVersion)) {
+        return rejected('rejected_precondition', 'catalog-rotation-invalid', `轮换版本须递增（旧 ${previous.boundGrant.refVersion}；轮换不换 id 只升版本）`)
+      }
+      if (revokedIds.has(secretId)) {
+        return rejected('rejected_authority', 'catalog-revoked', `secretId ${secretId} 已撤回——轮换不能复活已撤凭据（须重新登记并走授权）`)
+      }
+      if (descendantsOf(secretId).length > 0) {
+        return rejected('rejected_precondition', 'catalog-rotation-has-descendants', `secretId ${secretId} 有后代——先处置/撤销后代再轮换父凭据（否则旧值仍沿后代可用）`)
+      }
+      const previousFrom = Date.parse(previous.validWindow.from)
+      const previousTo = Date.parse(previous.validWindow.to)
+      if (Date.parse(next.validWindow.from) <= previousFrom || Date.parse(next.validWindow.to) <= previousTo) {
+        return rejected('rejected_precondition', 'catalog-window-invalid', '轮换有效期须单调后移（from/to 都晚于旧窗）——不缩短、不回拨')
+      }
+      entries.set(secretId, next)
+      return { kind: 'ok', value: rowOf(next) }
     },
 
     revoke(secretId: string, proof: RevocationProof): PortResult<RevocationReceipt> {

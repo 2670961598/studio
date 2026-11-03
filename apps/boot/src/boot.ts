@@ -13,7 +13,8 @@
  *       matrixDeptMap JSON 装载 + matrixProducerMxid 缺省神号；ctx.snapshot 活取公司快照）
  *       + createMatrixBroadcastFace（105-刀B notify 广播面：#alert/部门频道/总览——
  *       事件中继+escalate 警戒 IM 出口+惊动计量，studio-dev-219）
- *     → runServe(configPath, { matrixSource?, matrixRoomFace?, notifyBroadcast? })（源/面工厂注入）
+ *     → runServe(configPath, { matrixSource?, matrixRoomFace?, notifyBroadcast?, secretDeclarations? }）
+ *       （源/面工厂注入；秘密声明经 env STUDIO_SECRET_DECLARATIONS_FILE 读引用侧 JSON——值不入仓）
  *
  * 不做什么（105-刀A 边界＋130-P3 边界）：
  *   - 不做 E2EE/应用服务（matrix 包 README 未做事项同源）
@@ -25,10 +26,12 @@ import path from 'node:path'
 import type { InvokeSource, PersonId } from '@studio-next/contract'
 import {
   parseDaemonConfig,
+  readSecretDeclarations,
   runServe,
   type MatrixRoomFace,
   type MatrixRoomFaceContext,
   type NotifyBroadcastFace,
+  type SecretDeclarationInput,
   type ServeConfig,
   type ServeResult,
 } from '@studio-next/daemon/serve'
@@ -41,6 +44,7 @@ import {
   type FetchLike,
   createMatrixHrFace,
   type MatrixHrTarget,
+  BOT_PASSWORD_SECRET,
 } from '@studio-next/matrix'
 
 /** bot 密码 env 名（红名单：值永不入 daemon.yaml/日志/台账） */
@@ -57,6 +61,46 @@ export const MATRIX_HR_SHARED_SECRET_ENV = 'MATRIX_HR_SHARED_SECRET'
 /** 制作人 MXID 缺省（神号全知，130 §6.7.2；21A-§2.2 冻结锚） */
 export const DEFAULT_PRODUCER_MXID = '@opengames:localhost'
 
+/** 秘密声明文件 env 名（JSON 引用侧数组；**不含值**——值仍经 env/短时句柄通道，v2/15 §4.1） */
+export const SECRET_DECLARATIONS_ENV = 'STUDIO_SECRET_DECLARATIONS_FILE'
+
+/**
+ * 读部署秘密声明（`PORT-TRUST` 登记输入；studio-dev-544 / rework studio-dev-624 差距项 #18）。
+ * fail-closed：文件不可读/非 JSON/形状非法＝CONFIG_INVALID 拒启；值形态字段由 gateway
+ * 形状闸二次拒收。`SEC-MX-BOT-PASSWORD` 的 allowedUses 以 `BOT_PASSWORD_SECRET` 为唯一源
+ * （provision.ts）——声明与它不符＝配置漂移，拒启（不静默取一边）。
+ */
+export function readSecretDeclarationsFromEnv(
+  env: Record<string, string | undefined>,
+  log: (line: string) => void = (): void => {},
+): readonly SecretDeclarationInput[] | undefined {
+  const file = env[SECRET_DECLARATIONS_ENV]
+  if (file === undefined || file === '') return undefined
+  let raw: unknown
+  try {
+    raw = JSON.parse(readFileSync(path.resolve(file), 'utf8')) as unknown
+  } catch (err) {
+    throw new Error(
+      `CONFIG_INVALID：秘密声明文件不可读/非 JSON（${file}）：${err instanceof Error ? err.message : String(err)}` +
+        '——fail-closed 拒启（不回落空目录/不猜声明）',
+    )
+  }
+  const declarations = readSecretDeclarations(raw)
+  const bot = declarations.find((declaration) => declaration.secretId === BOT_PASSWORD_SECRET.secretId)
+  if (bot !== undefined) {
+    const declared = [...bot.allowedUses].sort()
+    const expected = [...BOT_PASSWORD_SECRET.allowedUses].sort()
+    if (declared.length !== expected.length || declared.some((use, index) => use !== expected[index])) {
+      throw new Error(
+        `CONFIG_INVALID：${BOT_PASSWORD_SECRET.secretId} 的 allowedUses 与 provision.ts BOT_PASSWORD_SECRET 不一致` +
+          '（用途白名单唯一源=provision.ts；漂移即拒，不静默取一边）',
+      )
+    }
+  }
+  log(`[boot] 秘密声明已装载：${String(declarations.length)} 条（引用侧；五型/用途约束交 PORT-TRUST；值不入仓/日志/提示词）`)
+  return declarations
+}
+
 export interface BootOptions {
   /** daemon.yaml 路径（透传 runServe——配置由 daemon 解析面收口，boot 不重造） */
   configPath: string
@@ -71,6 +115,7 @@ export interface BootOptions {
       matrixSource?: () => InvokeSource
       matrixRoomFace?: (ctx: MatrixRoomFaceContext) => MatrixRoomFace
       notifyBroadcast?: NotifyBroadcastFace
+      secretDeclarations?: readonly SecretDeclarationInput[]
     },
   ) => Promise<ServeResult>
   /** 日志出口（缺省 console.log） */
@@ -335,10 +380,11 @@ export async function bootServe(options: BootOptions): Promise<ServeResult> {
   const log = options.log ?? ((line: string): void => console.log(line))
   const config = parseDaemonConfig(readFileSync(path.resolve(options.configPath), 'utf8'))
   const serve = options.serve ?? runServe
+  const secretDeclarations = readSecretDeclarationsFromEnv(options.env ?? process.env, log)
   const hrFaceNeeded = config.hrSync === true && config.hrMatrix === true // studio-dev-217：hr 面独立灰度形态（matrix/matrixChannels 关也不早退）
   if (!config.matrix && !config.matrixChannels && !hrFaceNeeded) {
     log('[boot] matrix: false、matrixChannels: false——@唤醒源/频道供给面/notify 广播面均未装配（组合根透传 runServe）')
-    return serve(options.configPath)
+    return serve(options.configPath, secretDeclarations !== undefined ? { secretDeclarations } : undefined)
   }
   // 同一 bot 账号多面共用一次登录（token 只留进程内存；两开关的必配键校验已由
   // parseDaemonConfig 交叉校验面收口——serve.ts coerceServeConfig）；两开关独立
@@ -372,5 +418,6 @@ export async function bootServe(options: BootOptions): Promise<ServeResult> {
     ...(matrixRoomFace !== undefined ? { matrixRoomFace } : {}),
     ...(notifyBroadcast !== undefined ? { notifyBroadcast } : {}),
     ...(hrMatrixFace !== undefined ? { hrMatrixFace } : {}),
+    ...(secretDeclarations !== undefined ? { secretDeclarations } : {}),
   })
 }

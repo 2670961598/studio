@@ -71,6 +71,7 @@ import { wireDerivation } from './derivation.ts'
 import { wireExecutorFace } from './executor-face.ts'
 import { wireServeEvolveSelfCheck } from './evolve-face.ts'
 import { wireServeApi } from '../api/serve-face.ts'
+import { wireSecretTrust, type SecretDeclarationInput } from '../trust/wire.ts'
 import { wireServeHarvestRecords } from '../harvest/records-wire.ts'
 import { createCompanyWriteFace, type CompanyWriteFace } from '../../engine/company-write/runtime.ts'
 import { createCompanyApplySegment } from './company-apply.ts'
@@ -141,6 +142,8 @@ export function buildServeRuntime(
       hashFile?: (assetPath: string) => string
       fileExists?: (assetPath: string) => boolean
     }
+    /** PORT-TRUST 凭据目录声明（组合根注入；缺省=目录空置，伙伴档/供给 fail-closed） */
+    secretDeclarations?: readonly SecretDeclarationInput[]
   } & ServeRecordsOptions,
 ): ServeRuntime {
   const rawLog = opts?.log ?? ((line: string): void => console.log(line))
@@ -502,7 +505,10 @@ export function buildServeRuntime(
 
   // —— PORT-GATE 生产装配（studio-dev-542）：交给 serve-face 装配腿的窄接缝只有
   //    engine.ingest（不交引擎本体）——intent 入队后由主循环下一拍消费（docs/17-§2/§6）
-  const api = wireServeApi({ company: { companyId: config.company, slug: config.company }, readSnapshot: () => companyState.snapshot, port: config.apiPort ?? 0, clock, log, enqueueIntent: (intent) => engine.ingest([intent]), guardResponse: outbound.guardApiResponse })
+  //    PORT-TRUST 生产装配（studio-dev-544/rework-624）：声明经组合根注入；未注入＝目录
+  //    空置（伙伴档/供给 fail-closed），注入非法/缺证＝构造期 CONFIG_INVALID 拒启。
+  const secretTrust = wireSecretTrust({ ...(opts?.secretDeclarations !== undefined ? { declarations: opts.secretDeclarations } : {}), clock, log })
+  const api = wireServeApi({ company: { companyId: config.company, slug: config.company }, readSnapshot: () => companyState.snapshot, port: config.apiPort ?? 0, clock, log, enqueueIntent: (intent) => engine.ingest([intent]), guardResponse: outbound.guardApiResponse, ...(secretTrust !== undefined ? { trust: secretTrust } : {}) })
 
   return {
     engine,

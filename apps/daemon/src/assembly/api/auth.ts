@@ -9,9 +9,11 @@
  *   - docs/v2/16 §三 api 行 / plan/05 IMPL-06-06（认证器由装配侧实现；api 包只收认证结果）。
  *
  * 现状（如实，不冒充）：
- *   - 本进程**没有**凭据目录（PORT-TRUST / REC-AUTH-04 逻辑引用）与 HMAC 验签实现——
- *     因此 partner（Bearer 凭据引用）与 signed（HMAC＋时间戳＋nonce）两档**一律拒绝**：
- *     「无法核验」不等于「匿名可用」，缺口以 401 可判定 subcause 显式外露；
+ *   - **凭据目录已接**（studio-dev-544 / rework studio-dev-624）：装配注入 `TrustPort`（PORT-TRUST
+ *     生产实现，`packages/gateway/src/trust.ts`）时，partner（Bearer 逻辑引用）按目录条目核验
+ *     scope/用途/TTL/吊销——越权/缺证/过期/已撤一律拒；**未注入**时保持旧口径
+ *     `partner-credential-unwired`（不可核验＝拒，不回落匿名）。
+ *   - signed（HMAC＋时间戳＋nonce）验签仍未实现——一律拒绝，缺口以 401 可判定 subcause 外露；
  *   - root 档：凭据类别自报 `root`（头 `x-studio-credential-class`）或 `Authorization: Root …`
  *     一律 **403** 拒（子因 `root-credential-forbidden`）——root key 不入接口面；
  *   - 缺凭据＝401 `credential-missing`；凭据形态坏/方案未知＝401 可判定子因；
@@ -21,6 +23,7 @@
  * 边界：本件不读库、不读平台、不存秘密值表；只读请求头做分类（头值不回显、不进日志）。
  */
 import type { ApiAuthInput, ApiIntakeAuthResult, ApiIntakeAuthenticator } from '@studio-next/api'
+import type { CallerRef, CompanyRef, ReadContext, SecretType, TrustPort } from '@studio-next/contract'
 
 /** 凭据类别自报头（root 声明的唯一接口面入口；值不落日志/回执） */
 export const CREDENTIAL_CLASS_HEADER = 'x-studio-credential-class'
@@ -32,6 +35,18 @@ export const SIGNATURE_HEADERS = ['x-studio-signature', 'x-studio-timestamp', 'x
 export interface ApiIntakeAuthOptions {
   /** 拒绝审计出口（缺省 no-op；**不得**写凭据值，只写 subcause） */
   readonly log?: (line: string) => void
+  /** 凭据目录（PORT-TRUST 生产实现；缺省＝伙伴档不可核验＝拒——不回落匿名） */
+  readonly trust?: TrustPort
+  /** 入口公司维（目录核验的读上下文；缺省＝不核验＝拒） */
+  readonly company?: CompanyRef
+  /** 入口用途（写进 ReadScope.purpose；须在该凭据 allowedUses 内——缺省 trigger-intake） */
+  readonly intakePurpose?: string
+  /**
+   * 入口凭据的五型类别（SEC-T1..T5；须与该目录条目的 `secretType` 一致）。
+   * 缺省 `platform_credential`（SEC-T1）；外部伙伴出站凭据（SEC-T5）等部署形态显式覆盖，
+   * 不以「猜条目类型」放行（类别不符仍拒）。
+   */
+  readonly intakeSecretType?: SecretType
 }
 
 /** 拒绝分类（全部 fail-closed；状态码三档之内：401 未认证／403 已识别但禁止） */
@@ -43,6 +58,37 @@ function reject(
 ): ApiIntakeAuthResult {
   log?.(`[api] 触发面认证拒绝：status=${String(status)} subcause=${subcause}（凭据值不入日志）`)
   return { ok: false, status, subcause, detail }
+}
+
+/** partner 档目录核验（fail-closed：未知/越权/过期/已撤一律拒；凭据值不入日志） */
+function verifyPartner(
+  credentialRef: string,
+  trust: TrustPort,
+  company: CompanyRef,
+  purpose: string,
+  secretType: SecretType,
+  log?: (line: string) => void,
+): ApiIntakeAuthResult {
+  const caller: CallerRef = { callerId: 'gateway/api-intake', kind: 'program', programRef: 'assembly/api/auth' }
+  const readContext: ReadContext = {
+    readScope: {
+      company,
+      fields: ['credential_reference', 'scope', 'valid_window', 'revocation_state'],
+      purpose,
+    },
+    caller,
+  }
+  const verified = trust.verifySource({ handleId: credentialRef, tokenKind: secretType }, readContext)
+  if (verified.kind === 'err') {
+    const status = verified.error.category === 'rejected_forbidden' || verified.error.category === 'rejected_authority' ? 403 : 401
+    return reject(status, verified.error.subcause, verified.error.detail ?? '凭据目录核验未通过（fail-closed，不回落匿名）', log)
+  }
+  return {
+    ok: true,
+    auth: { tier: 'partner', credentialRef },
+    caller: verified.value,
+    credentialClass: 'scoped',
+  }
 }
 
 /**
@@ -115,10 +161,23 @@ export function buildApiIntakeAuth(options: ApiIntakeAuthOptions = {}): ApiIntak
       if (credentialRef === '') {
         return reject(401, 'credential-malformed', 'Bearer 后缺凭据引用（空引用不可核验）', log)
       }
-      return reject(
-        401,
-        'partner-credential-unwired',
-        '凭据目录（PORT-TRUST/REC-AUTH-04 逻辑引用）未装配——伙伴档不可核验＝拒；接入后按条目 scope/TTL/吊销核验（不回落匿名）',
+      if (options.trust === undefined) {
+        return reject(
+          401,
+          'partner-credential-unwired',
+          '凭据目录（PORT-TRUST/REC-AUTH-04 逻辑引用）未装配——伙伴档不可核验＝拒；接入后按条目 scope/TTL/吊销核验（不回落匿名）',
+          log,
+        )
+      }
+      if (options.company === undefined) {
+        return reject(401, 'partner-credential-context-missing', '凭据目录已装配但入口公司维缺失——读上下文不完整＝拒（不猜公司）', log)
+      }
+      return verifyPartner(
+        credentialRef,
+        options.trust,
+        options.company,
+        options.intakePurpose ?? 'trigger-intake',
+        options.intakeSecretType ?? 'platform_credential',
         log,
       )
     }
