@@ -1,0 +1,85 @@
+# PRB-08 投影摘要/签名校验（digest 篡改腿 + 验签通道静态面）
+DATE=2026-11-03T05:02:47.473Z
+FINGERPRINT=sha256:daccda4e3385594c6a07b3c63fd79aa13f40f9c3100bbf83d4605fef43ad545a
+REPO=<repo>
+
+TS=2026-11-03T05:01:07.860Z
+$ mise exec -- bun scripts/probe/prb08-digest-tamper.mjs --repo <repo>
+CASE=build RESULT=ok
+ORIGINAL_DIGEST=sha256:a9e4e9c507e5c2b2c781a40f1bcf2867590a5758c1e2576ec848084454de2373
+ORIGINAL_GATE_LAUNCHABLE=1
+TAMPER_FIELD=segments.identity.sourceRefs[0]
+TAMPER_BEFORE=company:probe
+TAMPER_AFTER=company:probf
+TAMPERED_DIGEST_RESULT=ok
+TAMPERED_DIGEST=sha256:4469f9aecbe4224070a3c2286e1afa901c0b839c21d0d4b21bf49086f640201a
+DIGEST_MATCH=0
+TAMPERED_GATE_LAUNCHABLE=1
+SIGNATURE_VERIFIER_INVOKED=0（SEC-SIG-04 通道未建；本脚本不伪造验签）
+EXIT=0
+
+TS=2026-11-03T05:01:08.911Z
+$ grep -rn "verifySignature\|verifyProjection\|SEC-SIG-04" packages/core/src packages/gateway/src apps/daemon/src --include=*.ts | grep -v "/test/"
+packages/core/src/prm/compile-projection.ts:30: *     （SEC-SIG-04 通道未建，PRB-08 未执行）；
+packages/core/src/prm/compile-projection.ts:305: * （SEC-SIG-04 未建）由启动器另判；本函数只回答「清单本身是否缺策略面」。
+EXIT=0
+
+TS=2026-11-03T05:01:11.385Z
+$ grep -rn "compileProjection\|projectionGate\|projectionDigest" apps packages --include=*.ts | grep -v "/test/"
+packages/contract/src/ports/exec.ts:15: *   compileProjection）与 v0 面并存，不互相冒充。
+packages/contract/src/ports/exec.ts:260:  compileProjection(input: ProjectionInput): PortResult<PolicyProjection>
+packages/core/src/prm/compile-projection.ts:4: * 依据（MIG-07 / IMPL-07-04；G-PORT-EXEC.compileProjection；GAP-V2-02 生成器腿）：
+packages/core/src/prm/compile-projection.ts:48: * 本件导出面：`compileProjection`（生成）、`projectionDigest`（复算）、`projectionGate`
+packages/core/src/prm/compile-projection.ts:224:export function compileProjection(input: CompileProjectionInput): PortResult<PolicyProjection> {
+packages/core/src/prm/compile-projection.ts:293:export function projectionDigest(projection: PolicyProjection): PortResult<string> {
+packages/core/src/prm/compile-projection.ts:307:export function projectionGate(projection: PolicyProjection): ProjectionGateResult {
+EXIT=0
+
+TS=2026-11-03T05:01:17.608Z
+$ grep -rn "loadProjection\|ProjectionLoader\|verifyProjection" apps packages --include=*.ts
+EXIT=1
+
+TS=2026-11-03T05:01:25.056Z
+$ grep -rn "signature" packages/gateway/src packages/core/src --include=*.ts | grep -v "/test/"
+packages/gateway/src/wkey.test.ts:77:  test('篡改 payload（同签名换正文）→ bad-signature', () => {
+packages/gateway/src/wkey.test.ts:82:    expect(auth.verify(`${forged}.${m}`, { now: 1_000_000_000_001, ticket: '2-999' })).toEqual({ ok: false, reason: 'bad-signature' })
+packages/gateway/src/wkey.test.ts:86:  test('篡改 mac → bad-signature；异密签发 → bad-signature', () => {
+packages/gateway/src/wkey.test.ts:91:    expect(auth.verify(`${p}.${flipped}`, { now: 1_000_000_000_001, ticket: '2-100' })).toEqual({ ok: false, reason: 'bad-signature' })
+packages/gateway/src/wkey.test.ts:93:    expect(createWkeyAuthority(SECRET2, clock.clock).verify(token, { now: 1_000_000_000_001, ticket: '2-100' })).toEqual({ ok: false, reason: 'bad-signature' })
+packages/gateway/src/signature.ts:5: *   - signature = `[公司·部门·岗位·级别]` 四段全填充，`·`（U+00B7）分隔——与提示词/文档口径一字不差
+packages/gateway/src/signature.ts:8: *   - gateway 只组装结构（author/body/signature 三字段），不改写正文；
+packages/gateway/src/signature.ts:10: *   - 形状非法（空公司/部门/岗位/工号、级别非正整数）抛 CONFIG_INVALID/gw-signature-*（对齐 errors.ts 通道）
+packages/gateway/src/signature.ts:15: *   - 本件是**审计判定**不是构造拒绝：contract v1.2 的 SignedBody 形状（author/body/signature）
+packages/gateway/src/signature.ts:43:  if (author === '') throw configInvalid('gw-signature-empty-author', '署名工号不得为空')
+packages/gateway/src/signature.ts:44:  return { author, body, signature: composeSignature(ctx) }
+packages/gateway/src/signature.ts:48:  if (ctx.company === '') throw configInvalid('gw-signature-empty-field', '署名公司不得为空')
+packages/gateway/src/signature.ts:49:  if (ctx.dept === '') throw configInvalid('gw-signature-empty-field', '署名部门不得为空')
+packages/gateway/src/signature.ts:50:  if (ctx.role === '') throw configInvalid('gw-signature-empty-field', '署名岗位不得为空')
+packages/gateway/src/signature.ts:51:  if (!Number.isInteger(ctx.level) || ctx.level < 1) throw configInvalid('gw-signature-bad-level', `署名级别须为 >=1 的整数，收到 ${String(ctx.level)}`)
+packages/gateway/src/root-delegation.ts:182:    hasExternalProof: asObject(payload['external_signature']) !== undefined || asObject(payload['offline_approval_ref']) !== undefined,
+packages/gateway/src/signature.test.ts:5:import { composeSignature, signedBody } from './signature.ts'
+packages/gateway/src/signature.test.ts:6:import type { SignatureContext } from './signature.ts'
+packages/gateway/src/signature.test.ts:22:  test('空字段抛 CONFIG_INVALID/gw-signature-*（公司/部门/岗位任一为空）', () => {
+packages/gateway/src/signature.test.ts:23:    expect(() => composeSignature({ ...CTX, company: '' })).toThrowError(/CONFIG_INVALID\/gw-signature-empty-field/)
+packages/gateway/src/signature.test.ts:24:    expect(() => composeSignature({ ...CTX, dept: '' })).toThrowError(/CONFIG_INVALID\/gw-signature-empty-field/)
+packages/gateway/src/signature.test.ts:25:    expect(() => composeSignature({ ...CTX, role: '' })).toThrowError(/CONFIG_INVALID\/gw-signature-empty-field/)
+packages/gateway/src/signature.test.ts:28:  test('级别非法抛 CONFIG_INVALID/gw-signature-bad-level（0/负/小数/NaN）', () => {
+packages/gateway/src/signature.test.ts:30:      expect(() => composeSignature({ ...CTX, level })).toThrowError(/CONFIG_INVALID\/gw-signature-bad-level/)
+packages/gateway/src/signature.test.ts:36:  test('返回三字段：author/body 原文/signature 落款（正文不改写）', () => {
+packages/gateway/src/signature.test.ts:38:    expect(sb).toEqual({ author: 'P-001', body: '证据已落盘：REPORT.md', signature: '[指尖游戏·平台部·工程师·3]' })
+packages/gateway/src/signature.test.ts:41:  test('空工号抛 CONFIG_INVALID/gw-signature-empty-author；空正文放行（正文语义归上层）', () => {
+packages/gateway/src/signature.test.ts:42:    expect(() => signedBody(CTX, '', 'x')).toThrowError(/CONFIG_INVALID\/gw-signature-empty-author/)
+packages/gateway/src/wkey.ts:44:  | 'bad-signature' // 签名不符（篡改/伪造/异密）
+packages/gateway/src/wkey.ts:161:        return { ok: false, reason: 'bad-signature' }
+packages/gateway/src/gateway.test.ts:10:import type { SignatureContext } from './signature.ts'
+packages/gateway/src/gateway.test.ts:33:      signed: { author: 'P-001', body: '@action comment {"body":"完成，证据已落盘"}', signature: '[指尖游戏·平台部·工程师·3]' },
+packages/gateway/src/index.ts:7: *   - signature.ts 署名注入 [公司·部门·岗位·级别]（SignedBody v1.2，author=工号）
+packages/gateway/src/index.ts:23:export * from './signature.ts'
+packages/gateway/src/gateway.ts:39:import { signedBody } from './signature.ts'
+packages/gateway/src/gateway.ts:40:import type { SignatureContext } from './signature.ts'
+packages/core/src/authority.ts:161:  if (!hasAttestation) return refusal('root-proof-invalid', grant.grantId, 'external signature and offline approval both missing')
+packages/core/src/breaker.ts:48:  signature: string
+packages/core/src/breaker.ts:72:  return state.get(ticket)?.signature ?? null
+packages/core/src/breaker.ts:105:  const sameSignature = prev !== undefined && prev.signature === errorSignature
+packages/core/src/breaker.ts:110:    signature: errorSignature,
+EXIT=0

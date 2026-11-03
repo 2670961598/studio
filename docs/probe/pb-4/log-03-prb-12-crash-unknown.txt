@@ -1,0 +1,128 @@
+# PRB-12 崩溃后未知不重试（字段面 vs 运行期写口）
+DATE=2026-11-03T05:02:47.509Z
+FINGERPRINT=sha256:daccda4e3385594c6a07b3c63fd79aa13f40f9c3100bbf83d4605fef43ad545a
+REPO=<repo>
+
+TS=2026-11-03T05:01:47.955Z
+$ grep -rn "sideEffectPossible\|retryable\|reconcile" packages/adapters/src packages/core/src apps/daemon/src/engine --include=*.ts
+packages/core/src/prm/spec.ts:55:    retryable: false,
+packages/core/src/prm/spec.ts:56:    sideEffectPossible: false,
+packages/core/src/prm/spec.ts:57:    reconcile: { required: false, reason: '纯函数编译：无外部副作用，无需对账' },
+packages/core/src/costclose.ts:7: *   - reconcileDate：Σcost_daily(X) vs ΣGATE_PASS(X) 对账段（132-§6.4 R4）；
+packages/core/src/costclose.ts:306:export function reconcileDate(
+packages/core/src/capability-gap.ts:232:      retryable: false,
+packages/core/src/capability-gap.ts:233:      sideEffectPossible: false,
+packages/core/src/capability-gap.ts:234:      reconcile: { required: false, reason: '纯函数判定：未写任何事实源，无需对账' },
+apps/daemon/src/engine/records/projection.ts:74:export function reconcileProjection(
+apps/daemon/src/engine/records/index.ts:59:  reconcileProjection,
+apps/daemon/src/engine/cost-close/close.ts:45:  reconcileDate,
+apps/daemon/src/engine/cost-close/close.ts:341:  const recon: ReconSegment = reconcileDate(x, costRows, gatePass)
+EXIT=0
+
+TS=2026-11-03T05:01:49.236Z
+$ grep -rn "crash\|kill.*tool\|unknown.*result\|result.*unknown" apps/daemon/src packages/core/src --include=*.ts
+apps/daemon/src/assembly/serve/run.ts:528:                ['exit_class', 'crash'],
+apps/daemon/src/assembly/serve/run.ts:547:            writeLastExit(rootDirAbs, { schema: 1, authorized: false, exitClass: 'crash', requestId: ctx.request.id, at: Date.now() })
+apps/daemon/src/assembly/serve/run.ts:549:            // 退出标记写失败：无标记=supervisor 按 crash 处理（不冒充 authorized）
+apps/daemon/src/assembly/serve/run.ts:565:      // ① 去重位先落台账（crash 窗口兜底：②改名前崩——重启后 kv 读回即去重）
+apps/daemon/src/evolve/sandbox.ts:22: *   - 子进程管理对齐 test/engine/crash-injection.test.ts / crash-points.ts 的 spawn 面（真子进程、
+apps/daemon/src/evolve/cutover.ts:85: * 同款纪律——本文件不复制判定面）；probes 注入面（afterWrite/afterMigrate）沿 crash-points
+apps/daemon/src/evolve/cutover.ts:129:  /** 失败面注入探针（crash-points 先例；生产不传——见头注「纯 IO 纪律」） */
+apps/daemon/src/index.ts:140:      // 检查点失败：exit 1 + 不写 authorized 标记（supervisor 按 crash 退避拉起）
+apps/daemon/src/engine/company-commit/git.ts:88:    if (result.stderr.includes('does not have any commits yet') || result.stderr.includes('unknown revision')) return []
+apps/daemon/src/engine/engine.ts:185:import { crashHook } from './crash-points.ts'
+apps/daemon/src/engine/engine.ts:823:      crashHook('dispatch-reserved') // 崩溃注入①（F3-11）：reserve 双行已落账、launch 前——受控测试缝，默认零行为（src/engine/crash-points.ts）
+apps/daemon/src/engine/engine.ts:840:      crashHook('dispatch-launched') // 崩溃注入②（F3-11）：launch 已返回、work_records 在途落账前——受控测试缝，默认零行为
+apps/daemon/src/engine/engine.ts:974:    crashHook('harvest-verdict') // 崩溃注入③（F3-11）：收割四要件判定后、GATE_PASS 落账前——受控测试缝，默认零行为
+apps/daemon/src/engine/engine.ts:1764:      crashHook('heartbeat-write') // 崩溃注入④（F3-11）：零动作拍心跳事件写入前（落账/心跳相位缝）——受控测试缝，默认零行为
+apps/daemon/src/engine/engine.ts:1928:    crashHook('shutdown-drain') // 崩溃注入⑤（F3-11）：SIGINT 停机 drain 中途（kill 已跑、在途注销前）——受控测试缝，默认零行为
+apps/daemon/src/engine/harvest/inflight-takeover.ts:8: * 语义转正为生产面——crash-injection ③ 的重启恢复语义即本函数；此前冻结边界
+apps/daemon/src/engine/harvest/inflight-takeover.ts:19: *     → 预算沿用未结预留（adopt 不双落，crash-injection ③ 冻结语义原样）。
+apps/daemon/src/engine/crash-points.ts:2: * crash-points —— 崩溃注入九点受控测试缝（F3-11 五点，v0.10＋MIG-04 第 6 点＋MIG-06 第 7/8/9 点）
+apps/daemon/src/engine/crash-points.ts:5: * 本文件是崩溃注入回归集的注入机制：旧五点回归集＝apps/daemon/test/engine/crash-injection.test.ts
+apps/daemon/src/engine/crash-points.ts:6: * （只登记不扩展），记录面第 6 点＝apps/daemon/test/v2/crash/records-crash.test.ts，
+apps/daemon/src/engine/crash-points.ts:7: * 第 7/8/9 点＝apps/daemon/test/v2/crash/surfaces-crash.test.ts（MIG-06 波门欠账补登；
+apps/daemon/src/engine/crash-points.ts:8: * 三者均为 V2 crash 腿）：`SN_CRASH_POINT=<点名>` 环境变量开启后，crashHook(point) 在命中点
+apps/daemon/src/engine/crash-points.ts:12: * 生产侧不 import 这些写面），只作注册名由 V2 crash 子进程以 store 模块写路径（backup.ts /
+apps/daemon/src/engine/crash-points.ts:27: * | # | 点名 | 相位（①-⑤ 17-§2；⑥-⑨ 记录面） | 注入位置（①-⑤ engine.ts；⑥-⑨ V2 crash 子进程） | 缝隙语义（F3-11 三段） |
+apps/daemon/src/engine/crash-points.ts:34: * | ⑥ | records-commit | 记录面（DOM-05；非主循环七相位） | records 表事务：INSERT 后、COMMIT 前调 crashHook('records-commit')（**无生产调用点**——记录提交归属 store，daemon 侧不 import；V2 crash 子进程以 node:sqlite 直写 v14 列） | **记录事务已写未提交**（提交前/后缝隙）：重启即回滚，records 无半截行；events/cost_daily 零副作用；同 recordId 重放只落一行（不重复副作用） |
+apps/daemon/src/engine/crash-points.ts:35: * | ⑦ | backup-snapshot | 记录面（DOM-04 备份快照；非主循环七相位） | cost_daily 备份写入：JSONL 半写＋`<out>.sha256` 侧车后、rename 完成屏障前调 crashHook('backup-snapshot')（**无生产调用点**——备份写面归属 store backup.ts；V2 crash 子进程 staging 半写） | **备份件已半写、完成屏障未过**：重启后 canonical 备份不成立，半 JSONL／孤儿侧车不得被当有效备份（行数不足/摘要不符可判）；重跑 backupCostDaily 产完整备份且 sha 一致 |
+apps/daemon/src/engine/crash-points.ts:36: * | ⑧ | projection-rebuild | 记录面（DOM-03 投影重建；非主循环七相位） | events 重放重建单事务：重放一半（replayed=⌊N/2⌋）后、COMMIT 前调 crashHook('projection-rebuild')（**无生产调用点**——重建写面归属 store rebuild.ts；V2 crash 子进程以 appendEvent 同写路径重放） | **投影重建事务已写未提交**：重启即回滚，目标库无半投影；重跑 rebuild 幂等（不重复不丢）；排除域仍零重放 |
+apps/daemon/src/engine/crash-points.ts:37: * | ⑨ | exclusion-report | 记录面（DOM-04 排除域报告；非主循环七相位） | rebuild 报告写入：报告 staging 文件半写后、rename 前调 crashHook('exclusion-report')（**无生产调用点**——报告渲染归属 store rebuild.ts，文件写面由调用方承载；V2 crash 子进程 staging 半写） | **排除域报告已半写、rename 未过**：重启后半报告不得被当有效（须含排除域/理由/备份声明）；重跑产完整报告含排除域，且不得称钱账已重建 |
+apps/daemon/src/engine/crash-points.ts:59: * 落 apps/daemon/test/engine/crash-injection.test.ts（旧测试只登记）；⑥ 属 V2 crash 腿，
+apps/daemon/src/engine/crash-points.ts:60: * 落 apps/daemon/test/v2/crash/records-crash.test.ts；⑦-⑨ 属 MIG-06 补登，落
+apps/daemon/src/engine/crash-points.ts:61: * apps/daemon/test/v2/crash/surfaces-crash.test.ts。契约面（恢复判据的纯函数部分）已在
+apps/daemon/src/engine/crash-points.ts:85: * 调用点：engine.ts 五处（①-⑤）＋V2 crash 子进程四处（⑥-⑨，测试侧；无生产调用点）；
+apps/daemon/src/engine/crash-points.ts:88:export function crashHook(point: CrashPoint): void {
+apps/daemon/src/control/restart/checkpoint.ts:56:  exitClass: 'restart' | 'signal' | 'crash'
+apps/daemon/src/control/restart/checkpoint.ts:112: * 非受权重启的正常/信号退出标记（#497 §4.7 supervisor 契约：exitClass ∈ restart|signal|crash）。
+apps/daemon/src/control/restart/checkpoint.ts:114: * 仅在 restartEnabled 开面时由 runServe 调用；写失败不阻断停机（无标记=supervisor 按 crash 处理）。
+apps/daemon/src/control/restart/checkpoint.ts:121:      exitClass: stopReason === 'error' ? 'crash' : 'signal',
+apps/daemon/src/control/restart/checkpoint.ts:125:    // 无标记=supervisor 按 crash/退避处理（不冒充 authorized）
+apps/daemon/src/control/restart/checkpoint.ts:129:/** 读 last-exit.json（无文件/坏 JSON=undefined——supervisor 按 crash/无标记处理） */
+apps/daemon/src/control/restart/checkpoint.ts:135:    if (exitClass !== 'restart' && exitClass !== 'signal' && exitClass !== 'crash') return undefined
+EXIT=0
+
+TS=2026-11-03T05:01:51.831Z
+$ grep -rn "REC-EVT-03\|unknown" packages/contract/src --include=*.ts | head -60
+packages/contract/src/artifacts/cli.ts:91:/** 来源提交：git HEAD（不写本机路径；失败记 unknown，不阻断离线生成） */
+packages/contract/src/artifacts/cli.ts:95:    return /^[0-9a-f]{40}$/.test(out) ? out : 'unknown'
+packages/contract/src/artifacts/cli.ts:97:    return 'unknown'
+packages/contract/src/artifacts/generate.ts:199:export function generateRecordSchema(recordType: string, schema: ZodType): Record<string, unknown> {
+packages/contract/src/artifacts/generate.ts:208:  const plain = JSON.parse(JSON.stringify(generated)) as Record<string, unknown>
+packages/contract/src/artifacts/generate.ts:221:  $defs: Record<string, Record<string, unknown>>
+packages/contract/src/artifacts/generate.ts:238:  const defs: Record<string, Record<string, unknown>> = {}
+packages/contract/src/artifacts/generate.ts:255:export function serializeArtifact(doc: unknown): string {
+packages/contract/src/artifacts/generate.ts:366:/** 当前 zod 版本（经 CJS require 读包元数据；读不到记 `unknown`，不阻断离线生成） */
+packages/contract/src/artifacts/generate.ts:370:    const pkg: unknown = require('zod/package.json')
+packages/contract/src/artifacts/generate.ts:372:      const version = (pkg as { version?: unknown }).version
+packages/contract/src/artifacts/generate.ts:375:    return 'unknown'
+packages/contract/src/artifacts/generate.ts:377:    return 'unknown'
+packages/contract/src/artifacts/check.ts:99:function isRecord(value: unknown): value is Record<string, unknown> {
+packages/contract/src/artifacts/check.ts:104:function parseJsonObject(text: string): Record<string, unknown> | undefined {
+packages/contract/src/artifacts/check.ts:106:    const value: unknown = JSON.parse(text)
+packages/contract/src/artifacts/check.ts:114:function countKeyOccurrences(value: unknown, key: string, depth = 0): number {
+packages/contract/src/artifacts/check.ts:118:  for (const [member, memberValue] of Object.entries(value as Record<string, unknown>)) {
+packages/contract/src/records/acc.ts:160:export function validateAccountabilityCase(record: unknown, ctx: AccountabilityCaseContext = {}): RecordValidationOutcome {
+packages/contract/src/records/acc.ts:185:export function validateRemedyDecision(record: unknown, ctx: RemedyDecisionContext = {}): RecordValidationOutcome {
+packages/contract/src/records/chg.ts:201:export function validateChangeSegment(record: unknown, ctx: ChangeSegmentContext = {}): RecordValidationOutcome {
+packages/contract/src/records/envelope.ts:284:export interface RecordEnvelope<T = unknown> {
+packages/contract/src/records/envelope.ts:302:export type AnyRecordEnvelope = RecordEnvelope<unknown>
+packages/contract/src/records/envelope.ts:311:  payload: unknown
+packages/contract/src/records/envelope.ts:391:  const bag = payload as Record<string, unknown>
+packages/contract/src/records/envelope.ts:392:  const face = typeof bag['decision_face'] === 'object' && bag['decision_face'] !== null ? (bag['decision_face'] as Record<string, unknown>) : undefined
+packages/contract/src/records/work-intent.ts:19: *      （null＝不可知；unknown≠充足、缺省≠0）。
+packages/contract/src/records/work-intent.ts:248:/** 资源基线只读派生快照（`sufficient=null`＝不可知；unknown≠充足、缺省≠0——§5.2） */
+packages/contract/src/records/work-intent.ts:336:export function validateWorkIntake(record: unknown, ctx: { usedAsBasis?: boolean } = {}): RecordValidationOutcome {
+packages/contract/src/records/work-intent.ts:357:export function validateIntakeDecision(record: unknown, ctx: IntakeDecisionContext = {}): RecordValidationOutcome {
+packages/contract/src/records/work-intent.ts:396:export function validateWorkContract(record: unknown, ctx: { workType?: WorkType } = {}): RecordValidationOutcome {
+packages/contract/src/records/work-intent.ts:424: *   ⑤ 资源门判可开工须逐项 sufficient=true（unknown≠充足）；⑥ 信息门核对主类型非「未分类」；
+packages/contract/src/records/work-intent.ts:427:export function validateStartDecision(record: unknown, ctx: StartDecisionContext = {}): RecordValidationOutcome {
+packages/contract/src/records/work-intent.ts:461:    checks.push(recordReject('payload.resource_baseline', '额度或占用不可知即不判充足（unknown≠充足、缺省≠0——§5.2）'))
+packages/contract/src/records/work-intent.ts:479:export function validatePlanLock(record: unknown): RecordValidationOutcome {
+packages/contract/src/records/work-exec.ts:212:export function validateReworkRecord(record: unknown): RecordValidationOutcome {
+packages/contract/src/records/work-exec.ts:231:export function validateReopenRecord(record: unknown, ctx: ReopenRecordContext = {}): RecordValidationOutcome {
+packages/contract/src/records/work-exec.ts:249:export function validateCollaborationRequest(record: unknown): RecordValidationOutcome {
+packages/contract/src/records/work-exec.ts:272:export function validateExceptionRecord(record: unknown, ctx: { treatedAsClosed?: boolean } = {}): RecordValidationOutcome {
+packages/contract/src/records/work-exec.ts:300:export function validateEmergencyStop(record: unknown, ctx: { entersForbiddenOrReserved?: boolean } = {}): RecordValidationOutcome {
+packages/contract/src/records/eval.ts:97:export function validateStructuralEvaluation(record: unknown, ctx: StructuralEvaluationContext = {}): RecordValidationOutcome {
+packages/contract/src/records/obs.ts:14: *      `unknown`／`damaged`（两值，不扩集）。
+packages/contract/src/records/obs.ts:44:export const PROJECTION_VIEW_STATES = ['observed', 'derived', 'unknown', 'stale', 'conflicted', 'gapped'] as const
+packages/contract/src/records/obs.ts:56:export const DISPLAY_EFFECTS = ['unknown', 'damaged'] as const
+packages/contract/src/records/obs.ts:200:export function validateProjectionSnapshot(record: unknown, ctx: ProjectionSnapshotContext = {}): RecordValidationOutcome {
+packages/contract/src/records/obs.ts:227:export function validateMonitoringFailure(record: unknown, ctx: MonitoringFailureContext = {}): RecordValidationOutcome {
+packages/contract/src/records/obs.ts:250:export function validateContinuousObservation(record: unknown, ctx: ContinuousObservationContext = {}): RecordValidationOutcome {
+packages/contract/src/records/obs.ts:271:export function validateObservationClosure(record: unknown, ctx: { endedWithoutBasis?: boolean } = {}): RecordValidationOutcome {
+packages/contract/src/records/life.ts:441:export function validateAppointment(record: unknown, ctx: AppointmentContext): RecordValidationOutcome {
+packages/contract/src/records/life.ts:479:export function validateEmploymentTransition(record: unknown): RecordValidationOutcome {
+packages/contract/src/records/life.ts:507:export function validateEmploymentSettlement(record: unknown): RecordValidationOutcome {
+packages/contract/src/records/life.ts:520:export function validateIdentityTransition(record: unknown): RecordValidationOutcome {
+packages/contract/src/records/life.ts:539:export function validateOrgEvent(record: unknown): RecordValidationOutcome {
+packages/contract/src/records/life.ts:546:export function validateContinuityDecision(record: unknown): RecordValidationOutcome {
+packages/contract/src/records/common.ts:38:  'REC-CMD-01', 'REC-CMD-02', 'REC-DEC-01', 'REC-RCP-01', 'REC-COR-01', 'REC-EVT-01', 'REC-EVT-02', 'REC-EVT-03',
+packages/contract/src/records/common.ts:50:export const SOURCE_VERIFICATIONS = ['verified', 'unverified', 'verification_failed', 'source_unknown'] as const
+packages/contract/src/records/common.ts:58:export const ACK_KINDS = ['received', 'rejected', 'executed', 'partially_executed', 'unknown'] as const
+packages/contract/src/records/common.ts:69:export const COMPLETENESS_VALUES = ['complete', 'incomplete', 'unknown'] as const
+packages/contract/src/records/common.ts:236:  unknown_scope: z.string().min(1),
+packages/contract/src/records/common.ts:245:export const UnknownRegistryRecordSchema = recordEnvelopeSchema(UnknownRegistryPayloadSchema, 'REC-EVT-03')
+EXIT=0

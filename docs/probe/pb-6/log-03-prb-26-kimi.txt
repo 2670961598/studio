@@ -1,0 +1,87 @@
+# PRB-26 Kimi 拟稿点（-S 形态/wire 路径/模式互斥）
+DATE=2026-11-03T05:02:47.672Z
+FINGERPRINT=sha256:daccda4e3385594c6a07b3c63fd79aa13f40f9c3100bbf83d4605fef43ad545a
+REPO=<repo>
+
+TS=2026-11-03T05:02:47.060Z
+$ which kimi
+EXIT=1
+
+TS=2026-11-03T05:02:47.092Z
+$ kimi --version
+EXIT=null ERROR=ENOENT
+
+TS=2026-11-03T05:02:47.098Z
+$ grep -n "resume\|-S\|wire" packages/adapters/src/kimi.ts | head -80
+6: *     与 claude 同构但**无 usage——usage 读 session wire.jsonl**（已知坑）；
+8: *   - docs/25-§3.1：session_resume 即「--resume/--session-id/-S 家族」；CLI 泳道首刀
+9: *     反馈裁决#4——wire 的 usage「逐轮求和=turn 总账」是**假设**，v0.6 探针前必须对
+10: *     真实 wire 证实（本适配器照此假设落地，探针结论到来前不改口径）
+11: *   - docs/02-§F1-13 / V4-V7 附A-2：kimi usage 不落 stdout 而在 session wire.jsonl
+20: *   - **wire 路径约定未知**：真 kimi 把 session wire.jsonl 落哪里无文档口径。构造器可注入
+21: *     wirePathResolver(sessionId, workspace)，缺省拟稿
+22: *     `<workspace>/.kimi/sessions/<sessionId>/wire.jsonl`（sessionId=框架 Handle UUID，
+24: *   - 续跑旗标 `-S <sessionId>`：取旗标形（docs/25-§3.1 的「-S 家族」记法）；真 CLI 的
+32: *   - usage 合流时序：wire.jsonl 在**会话结束后**读取（stdout EOF + 子进程退出之后）——
+33: *     fake CLI 在退出前落 wire（FAKE_WIRE_DIR 旋钮），无竞态；真 kimi 是否在退出前
+34: *     写完 wire 待探针
+35: *   - 合流行为对齐 streams.parseKimi 冻结口径（不静默降级）：wire 缺失/不可读 → 追加
+36: *     log 明示；wire 无 usage 记录 → 追加 log 明示；求和结果挂到**最后一个** turn_end
+39: *   - 流式固有不对称：turn_end 在 wire 读取前已 yield 给消费方，合流挂载的 usage 只反映在
+52: *     （docs/27-§4.3 案 A，细节见 dsh 头注）；被杀会话 wire 多半缺失——明示 log +
+80: * wire.jsonl 路径解析器：sessionId（框架 Handle UUID）+ workspace → 绝对路径。
+95:  /** stream() 消费时累积的归一事件（resultStats 的账目来源；wire 合流在流尾就地挂载） */
+99:  /** 会话结束后要读的 wire.jsonl 路径（launch 时解析，拟稿约定见文件头注） */
+100:  readonly wirePath: string
+138:    session_resume: true, // `-S <sessionId>`（拟稿旗标形，docs/25-§3.1「-S 家族」；待探针）
+140:    cost_native: false, // 17-§6：tokens 有（wire 合流），成本无原生字段→价目表折算
+144:  private readonly wirePathResolver: WirePathResolver
+148:   * wirePathResolver 可注入（真 kimi 的 session 目录约定未知——拟稿缺省待探针，头注）。
+152:    wirePathResolver: WirePathResolver = defaultWirePath,
+155:    this.wirePathResolver = wirePathResolver
+194:   * resultStats 实测 tokens（wire 合流总账）× 价目表为准（折算待批）。
+209:   * 拉起 kimi（execa）：`kimi -p --output-format stream-json` + 续跑 `-S <sessionId>`
+219:    if (task.resume !== undefined) {
+220:      args.push('-S', task.resume.sessionId)
+240:      wirePath: this.wirePathResolver(sessionId, task.workspace),
+269:   * （claude 同构 stdout——单行入口不做 wire 合并，streams.ts 头注）→ yield；事件与
+271:   * stdout EOF 后 await 子进程拿退出码（reject:false 不抛），**随后读 wire.jsonl 合流**
+272:   * （本家独有难点）：sumWireUsage 求和挂最后一个 turn_end；缺 wire/无 usage 记录/
+316:    // wire 合流（会话结束后）：usage 求和挂 turn_end / 缺件明示 log——详见文件头注
+321:   * 账目汇总（只统计伴生状态里已消费的事件；wire 合流已在 stream() 尾完成）：
+322:   *   tokens：turn_end.usage（wire 逐轮求和总账——25-§3.1 裁决#4 假设口径）；缺 wire/
+341:   * 被杀会话 wire 多半缺失——流尾明示 log + tokens 零值（kill 后 result 未到即无终态）。
+367:   * 退出码与 wire 皆不参与判定——wire 只影响账目（tokens），不影响完成面。
+385:// 内部工具（纯函数 + wire 合流）
+388:/** 缺省 wire 路径拟稿：<workspace>/.kimi/sessions/<sessionId>/wire.jsonl（待探针，头注） */
+390:  return join(workspace, '.kimi', 'sessions', sessionId, 'wire.jsonl')
+414: * wire 合流（会话结束后调用；对齐 streams.parseKimi 冻结口径，不静默降级）：
+424:    text = await readFile(state.wirePath, 'utf8')
+428:        ? `wire.jsonl not found at ${state.wirePath}`
+429:        : `wire.jsonl read failed: ${errMsg(e)}`
+434:    return appendLog(state, '[kimi] no usage record in wire.jsonl; usage unavailable')
+443:  return appendLog(state, '[kimi] wire usage found but stdout has no turn_end to attach')
+453:/** 最后一个带 usage 的 turn_end（kimi 的 usage 只在 wire 合流后出现——即 wire 总账） */
+EXIT=0
+
+TS=2026-11-03T05:02:47.364Z
+$ grep -n "kimi" packages/adapters/src/agentconfig.ts | head -40
+52: *   - 接线面：dsh 家唯一有 seatbelt 端子；claude/codex/kimi 无端子——**显式放宽一律拒收**
+57: * 未证能力对齐（IMPL-07-05；v2/12 §2.1 铁律／v2/17 §五 PB-6）：codex/kimi 的 session_resume
+61: *   不再选中 codex/kimi；② checkCapabilityDrift 以对齐值为镜像真值——配置写 true 得
+63: * （当前恰 codex/kimi 续跑）；dsh/claude 声明原样、agents_md 只登记不改值、运行时零改动。
+65: * 「kimi session_resume:true 镜像一致」按设计转红（断言的正是本次对齐的拟稿），已随单登记。
+75:import { KimiAdapter } from './kimi.ts'
+198: * 未证能力对齐（IMPL-07-05）：漂移以 `effectiveCapabilities` 对齐值为真值——配置写 codex/kimi
+227:    // 能力镜像以未证对齐值为真值（codex/kimi session_resume 拟稿→按不支持）；注册面同向投影
+248: * 四家内置注册捷径：dsh（default）/ claude / codex / kimi 一行接入
+251: * 注册面能力投影：未证能力按不支持（当前恰 codex/kimi 的 `session_resume`——PB-6 拟稿点，
+263:    // 注册面能力投影：未证按不支持（codex/kimi session_resume；合法面返回原适配器）
+273:const BUILTIN_ORDER: readonly ExecutorFamily[] = ['dsh', 'claude', 'codex', 'kimi']
+302:  kimi: (cmd, _patches, seatbelt) => {
+303:    assertSeatbeltTerminal('kimi', seatbelt ?? DEFAULT_SEATBELT_PLAN)
+371:  kimi: (cmd, patches) => BUILTIN_FACTORIES.kimi(cmd, patches, DEFAULT_SEATBELT_PLAN),
+507: * （合法面零改动）。对齐源＝bindcard/cli-cards.ts `PB6_DRAFT_POINTS`（当前 codex/kimi 续跑→false）。
+549: * 无 seatbelt 端子的家族（claude/codex/kimi）：**显式放宽一律拒收**——没有端子就没有 profile
+563: * 未证能力 over-claim（codex/kimi session_resume 写 true）→ cap-unproven（指名 PB-6 探针）。
+EXIT=0

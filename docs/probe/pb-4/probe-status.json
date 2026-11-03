@@ -1,0 +1,83 @@
+{
+  "batch": "PB-4",
+  "title": "派生与审批",
+  "generatedAt": "2026-11-03T05:12:00.000Z",
+  "environment": {
+    "fingerprint": "sha256:daccda4e3385594c6a07b3c63fd79aa13f40f9c3100bbf83d4605fef43ad545a",
+    "head": "675192cfe1862ff65787b609d1e2d5b90da4c0b9",
+    "host": "Darwin 25.3.0 arm64 / macOS 26.3 (25D125)",
+    "node": "v24.21.0",
+    "bun": "1.4.3",
+    "dsh": "0.2.1-rc.5",
+    "codex": "codex-cli 0.162.1",
+    "claude": "missing",
+    "kimi": "missing"
+  },
+  "entry": {
+    "status": "partial",
+    "present": ["MIG-06 engine/assembly 文件面"],
+    "absent": ["子 agent 衰减运行期", "审批端口/运行期审批流", "工具执行崩溃未知/不重试运行期", "HCL-3 换宿主交接/旧段围栏", "PTC native/ptc/both 三档运行期"]
+  },
+  "rows": [
+    {
+      "id": "PRB-10",
+      "status": "not-executed",
+      "direction": "static-declaration-only",
+      "missing": "只有 dsh-card.ts:75,80,227 的 in-process-subagent-decay 声明/载体注记；dsh --help 无 subagent/tool-filter/max-depth 旗标；无真实宿主插件/会话，父2工具子3工具的拒 spawn/裁剪不可执行。",
+      "evidence": ["log-01-prb-10-subagent-decay.txt"],
+      "commands": [
+        "grep -rn \"subagent\\|attenuat\" packages/adapters/src apps/daemon/src packages/core/src --include=*.ts",
+        "dsh --help"
+      ],
+      "target": "DSH 最小插件（preset/toolFilter/maxDepth）＋真实宿主会话＋父2/子3工具集对照＋子越界拒绝；结论只入 BIND-CLI-* 卡"
+    },
+    {
+      "id": "PRB-11",
+      "status": "not-executed",
+      "direction": "static-flow-contract-only",
+      "missing": "审批端口零命中（PORT-APPROVAL/approvalPort/requestApproval/approvalTimeout）；approval 只在流程状态词、dsh-card 声明、contract 类型；无 ask 超时拒绝/应答者身份核验运行期。",
+      "evidence": ["log-02-prb-11-approval.txt"],
+      "commands": [
+        "grep -rn \"approval\" packages/adapters/src/bindcard packages/core/src apps/daemon/src/engine --include=*.ts",
+        "grep -rn \"PORT-APPROVAL\\|approvalPort\\|requestApproval\\|approval-timeout\\|approvalTimeout\" apps packages --include=*.ts"
+      ],
+      "target": "审批端口实现＋ask 超时拒绝路径＋应答者身份可核＋无人应答负向对照；审批流未接"
+    },
+    {
+      "id": "PRB-12",
+      "status": "not-executed",
+      "direction": "static-fields-crashpoints-only",
+      "missing": "无工具执行运行期；无法在工具执行中 kill 并观察结果「不明」＋不重试。crashHook 九点是主循环/记录面崩溃注入测试缝，不是工具执行崩溃；reconcileProjection 是记录面↔事件面对账，不得代证。",
+      "evidence": ["log-03-prb-12-crash-unknown.txt"],
+      "commands": [
+        "grep -rn \"sideEffectPossible\\|retryable\\|reconcile\" packages/adapters/src packages/core/src apps/daemon/src/engine --include=*.ts",
+        "grep -rn \"crash\\|kill.*tool\\|unknown.*result\\|result.*unknown\" apps/daemon/src packages/core/src --include=*.ts"
+      ],
+      "target": "工具执行运行期＋kill 注入＋结果 unknown（owner+复查期）＋不自动重试＋对账后结清（EXEC-03/05）"
+    },
+    {
+      "id": "PRB-15",
+      "status": "not-executed",
+      "direction": "static-contract-resume-only",
+      "missing": "HCL-3 换宿主交接/旧段围栏运行期未建；HCL-3/handover 命中 contract 记录、测试夹具、merge/relay 续跑；resumeWithSession 是同宿主原会话续跑，不是换宿主保任职。",
+      "evidence": ["log-04-prb-15-host-switch.txt"],
+      "commands": [
+        "grep -rn \"HCL-3\\|handover\\|switchHost\\|host-switch\" apps packages --include=*.ts",
+        "grep -rn \"HCL-3\" docs/v2 --include=*.md"
+      ],
+      "target": "HCL-3 段间替换运行期（旧段结束/暂停→交接包→新段锁计划→旧段围栏→迟到副作用对账）＋同一任职换 CLI 真机出工"
+    },
+    {
+      "id": "PRB-16",
+      "status": "not-executed",
+      "direction": "static-declaration-only",
+      "missing": "只有 dsh-card.ts:213-217 的 dsh-agent-tool-presentation（native/ptc/both）声明与 compile-projection.ts 的 PTC 注记；dsh --help 无 presentation/ptc 旗标；无三档 profile 运行期与越界工具/直读文件/联网/子进程探测。",
+      "evidence": ["log-05-prb-16-ptc.txt"],
+      "commands": [
+        "grep -rn \"PTC\\|ptc\\|tool-presentation\" packages apps --include=*.ts",
+        "dsh --help | grep -in \"presentation\\|ptc\\|profile\""
+      ],
+      "target": "native/ptc/both 三档 profile 真实启动＋越界工具/文件/网络/子进程负向探测＋both 策略互覆观测；未证前按不支持"
+    }
+  ]
+}

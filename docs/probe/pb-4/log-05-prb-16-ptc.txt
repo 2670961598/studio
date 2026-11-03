@@ -1,0 +1,41 @@
+# PRB-16 工具呈现三档与 PTC 可达面（配置/声明面）
+DATE=2026-11-03T05:02:47.515Z
+FINGERPRINT=sha256:daccda4e3385594c6a07b3c63fd79aa13f40f9c3100bbf83d4605fef43ad545a
+REPO=<repo>
+
+TS=2026-11-03T05:02:00.855Z
+$ grep -rn "PTC\|ptc\|tool-presentation" packages apps --include=*.ts
+packages/core/src/prm/compile-projection.ts:36: *   - PTC 默认 forbidden（78-§3.2.4），本件只以段注记声明，不因宿主能力自动放开；
+packages/core/src/prm/compile-projection.ts:131:          // 空集＝无工具，不是全部（78-§3.2.3 规则 2）；PTC 缺省 forbidden（§3.2.4）
+packages/core/src/prm/compile-projection.ts:135:            toolRefs.length === 0 ? 'ptc:forbidden;allowlist:empty(no-tools)' : 'ptc:forbidden',
+packages/adapters/test/v2/bindcard.test.ts:105:  it('载体映射：§1.4 全表；「不可表达」单列 unmappable（不硬塞现状四值）；PTC 未证', () => {
+packages/adapters/test/v2/bindcard.test.ts:113:    expect(card.carrierMap.find((r) => r.semantic === '工具呈现/PTC')?.status).toBe('未证')
+packages/adapters/src/bindcard/dsh-card.ts:213:    semantic: '工具呈现/PTC',
+packages/adapters/src/bindcard/dsh-card.ts:214:    carrier: 'dsh-agent-tool-presentation（native/ptc/both）',
+packages/adapters/src/bindcard/dsh-card.ts:217:    note: '默认档 native（＝ptc 禁用）；启用须单列可达工具子集与 OS 级边界取证（PRB-16）',
+EXIT=0
+
+TS=2026-11-03T05:02:07.540Z
+$ dsh --help | grep -in "presentation\|ptc\|profile"
+1:Usage: dsh [--profile] <name> [options] [app-args...]
+2:       dsh plugin --profile <name> <pnpm-args...>
+4:dsh: boot a DeepSeek Harness profile — an ordered stack of plugin-bundle patch
+8:  args                           arguments for the booted profile's app (see:
+9:                                 dsh --profile <name> --help)
+13:  --profile <name>               the profile under $DSH_HOME/profiles to boot
+14:  --from-default-profile <name>  replace a custom profile with a fresh copy of a
+15:                                 shipped profile template
+17:                                 profile layer (repeatable)
+18:  --dump-config                  print the composed profile tree and exit
+19:  --dump-config-schema           print JSON Schema for profile entries and
+21:  --dump-default-config          print the profile tree without its user layer
+25:  dsh web                                   boot the web profile (same as: dsh --profile web)
+26:  dsh rescue --from-default-profile web
+29:  dsh tui --patch ./extra.yml               boot a custom profile with one extra overlay
+32:  dsh plugin --profile tui add <package>    install a plugin into the tui profile
+EXIT=0
+
+TS=2026-11-03T05:02:10.224Z
+$ grep -rn "dsh-agent-tool-presentation" . --include=*.ts --include=*.json --include=*.yaml --include=*.yml
+./packages/adapters/src/bindcard/dsh-card.ts:214:    carrier: 'dsh-agent-tool-presentation（native/ptc/both）',
+EXIT=0

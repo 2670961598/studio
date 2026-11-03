@@ -1,0 +1,113 @@
+# PRB-15 换宿主保任职（HCL-3 交接/旧段围栏）
+DATE=2026-11-03T05:02:47.511Z
+FINGERPRINT=sha256:daccda4e3385594c6a07b3c63fd79aa13f40f9c3100bbf83d4605fef43ad545a
+REPO=<repo>
+
+TS=2026-11-03T05:01:52.022Z
+$ grep -rn "HCL-3\|handover\|switchHost\|host-switch" apps packages --include=*.ts
+apps/daemon/test/v2/neg/work-gates.test.ts:474:    expect(hit(reject(validateWorkSettlement(envelope('REC-WORK-12', settlementPayload()), { workTerminated: true })), 'payload.handover_ref', '必含承接记录与接收确认')).toBe(true)
+packages/contract/test/v2/records/fixtures.ts:200:    fencing_mode: 'exclusive_handover',
+packages/contract/test/v2/records/fixtures.ts:365:      handover: { satisfied: true },
+packages/contract/test/v2/records/fixtures.ts:382:    to_state: 'handover',
+packages/contract/test/v2/records/rec-work-exec.test.ts:12:import { reworkPayload, reopenPayload, settlementPayload, handoverPayload, commitmentChangePayload, collaborationPayload, obligationPayload, commitmentPayload, fulfillmentPayload, exceptionPayload, emergencyStopPayload, maintPayload, PROOF } from './fixtures-work.ts'
+packages/contract/test/v2/records/rec-work-exec.test.ts:65:    expect(validateHandoverPackage(envelope('REC-WORK-HANDOVER', handoverPayload()))).toEqual({ ok: true })
+packages/contract/test/v2/records/rec-work-exec.test.ts:84:    expect(issuePaths(outcome)).toContain('payload.handover_ref')
+packages/contract/test/v2/records/rec-work-exec.test.ts:132:    const payload = handoverPayload({ items: HANDOVER_ITEMS.slice(0, 9).map((item) => ({ item, present: true })) })
+packages/contract/test/v2/records/fixtures-work.ts:67:    collaboration_and_handover: '无协作；换人走交接包',
+packages/contract/test/v2/records/fixtures-work.ts:252:export function handoverPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+packages/contract/test/v2/records/rec-life.test.ts:88:        handover: { satisfied: true },
+packages/contract/test/v2/neg-emp.test.ts:55:  handover: boolean
+packages/contract/test/v2/neg-emp.test.ts:62:    handover: { satisfied: satisfied.handover },
+packages/contract/test/v2/neg-emp.test.ts:74:        handover: true,
+packages/contract/test/v2/neg-emp2.test.ts:288:function handover(overrides: Partial<HandoverFaceDeclaration> = {}): HandoverFaceDeclaration {
+packages/contract/test/v2/neg-emp2.test.ts:303:    handover: handover(),
+packages/contract/test/v2/neg-emp2.test.ts:317:    expect(issuePaths(outcome)).toContain('handover')
+packages/contract/test/v2/neg-emp2.test.ts:323:      settlement({ handover: handover({ completeness: 'partial', coveredItems: ['权源', '关键输入'], gaps: ['承诺未交接', '风险未移交'] }) }),
+packages/contract/test/v2/neg-emp2.test.ts:326:    expect(issuePaths(outcome)).toContain('handover.completeness')
+packages/contract/test/v2/neg-emp2.test.ts:327:    expect(issuePaths(outcome)).toContain('handover.coveredItems')
+packages/contract/test/v2/neg-emp2.test.ts:328:    expect(issuePaths(outcome)).toContain('handover.gaps')
+packages/contract/test/v2/neg-emp2.test.ts:333:    const outcome = validateHandoverBeforeSettlement(settlement({ handover: handover({ verifiedByReceiver: false }) }))
+packages/contract/test/v2/neg-emp2.test.ts:335:    expect(issuePaths(outcome)).toContain('handover.verifiedByReceiver')
+packages/contract/test/v2/neg-emp2.test.ts:339:    const outcome = validateHandoverBeforeSettlement(settlement({ handover: handover({ recordRef: ref('REC-LIFE-03', '') }) }))
+packages/contract/test/v2/neg-emp2.test.ts:341:    expect(issuePaths(outcome)).toContain('handover.recordRef')
+packages/contract/test/v2/neg-emp2.test.ts:494: *   EMP-07｜L425 `handover.completeness !== 'complete'` 前置 `false &&`
+packages/contract/test/v2/ports/port-signatures-core.ts:194:  hrPortSurface.settleEmployment('handover', [{ item: 'artifact', state: 'closed' }], ctx)
+packages/contract/src/records/work-intent.ts:84:export const ACCEPTANCE_KINDS = ['artifact', 'state', 'learning_delivery', 'fact_chain', 'no_residue', 'handover_confirmation'] as const
+packages/contract/src/records/work-intent.ts:220:  collaboration_and_handover: z.string().min(1),
+packages/contract/src/records/work-exec.ts:41:  'handover_move', 'relay', 'countersign', 'objection', 'request_arbitration',
+packages/contract/src/records/work-exec.ts:143:  handover_ref: RecordRefSchema.optional(),
+packages/contract/src/records/work-exec.ts:257:  if ((payload.action_kind === 'handover_move' || payload.action_kind === 'relay') && payload.handover_ref === undefined) {
+packages/contract/src/records/work-exec.ts:258:    checks.push(recordReject('payload.handover_ref', '移交/接力须引交接包（REC-WORK-HANDOVER——§5.3）'))
+packages/contract/src/records/life.ts:45:export const EMPLOYMENT_STATES = ['candidate', 'active', 'suspended', 'handover', 'settling', 'retired'] as const
+packages/contract/src/records/life.ts:75:export const SETTLEMENT_FACES = ['handover_face', 'settlement_face'] as const
+packages/contract/src/records/life.ts:88:  { edge: 'L-05', from: 'suspended', to: 'active' }, { edge: 'L-06', from: 'suspended', to: 'handover' },
+packages/contract/src/records/life.ts:89:  { edge: 'L-07', from: 'active', to: 'handover' }, { edge: 'L-08', from: 'handover', to: 'settling' },
+packages/contract/src/records/life.ts:104:  'candidate->active': ['REC-LIFE-01'], 'handover->settling': ['REC-LIFE-03'],
+packages/contract/src/records/life.ts:166:    handover: EntryGateResultSchema, acceptance: EntryGateResultSchema,
+packages/contract/src/records/life.ts:169:  handover_ref: RecordRefSchema.optional(),
+packages/contract/src/records/life.ts:170:  handover_completion: z.string().min(1).optional(),
+packages/contract/src/records/work-close.ts:117:  handover_ref: RecordRefSchema.optional(),
+packages/contract/src/records/work-close.ts:118:  handover_acceptance: z.strictObject({ accepted: z.boolean(), accepted_by: z.string().min(1), at: TimestampSchema }).optional(),
+packages/contract/src/records/work-close.ts:361:  if (needsHandover && (payload.handover_ref === undefined || payload.handover_acceptance === undefined)) {
+packages/contract/src/records/work-close.ts:362:    checks.push(recordReject('payload.handover_ref', '转入清算/已终止必含承接记录与接收确认（未决事项有指派≠承接已被接受——L3E-01）'))
+packages/contract/src/records/work-close.ts:364:  if (payload.handover_acceptance !== undefined && !payload.handover_acceptance.accepted) {
+packages/contract/src/records/work-close.ts:365:    checks.push(recordReject('payload.handover_acceptance.accepted', '接收确认未接受不得称已承接（§5.2）'))
+packages/contract/src/records/emp-neg.ts:384:/** 交接面声明（REC-LIFE-03 face=handover_face 解析；无交接记录＝undefined） */
+packages/contract/src/records/emp-neg.ts:401:  readonly handover?: HandoverFaceDeclaration
+packages/contract/src/records/emp-neg.ts:417:  const handover = input.handover
+packages/contract/src/records/emp-neg.ts:419:  if (handover === undefined) {
+packages/contract/src/records/emp-neg.ts:420:    checks.push(recordReject('handover', `未完成交接不得结清（两段式：交接核验通过→离岗待结清）；${temporary ? `临时/代行任职（${input.appointmentKind}）必须交接记录，不因临时减免（E-7）` : '须有交接面记录（REC-LIFE-03）'}`))
+packages/contract/src/records/emp-neg.ts:422:    if (!isUsableRef(handover.recordRef)) {
+packages/contract/src/records/emp-neg.ts:423:      checks.push(recordReject('handover.recordRef', '交接须有记录承载（REC-LIFE-03 交接面）；无记录＝无交接（E-7）'))
+packages/contract/src/records/emp-neg.ts:425:    if (handover.completeness !== 'complete') {
+packages/contract/src/records/emp-neg.ts:426:      checks.push(recordReject('handover.completeness', `交接完成度须为 complete（实得「${handover.completeness}」）——未完成不得进入离岗待结清（02 §3.4）`))
+packages/contract/src/records/emp-neg.ts:428:    if (!handover.verifiedByReceiver) {
+packages/contract/src/records/emp-neg.ts:429:      checks.push(recordReject('handover.verifiedByReceiver', '交接须接收者核验确认，不得单方宣告（02 §六/§3.4）'))
+packages/contract/src/records/emp-neg.ts:431:    const missing = HANDOVER_MIN_SET.filter((item) => !handover.coveredItems.includes(item))
+packages/contract/src/records/emp-neg.ts:433:      checks.push(recordReject('handover.coveredItems', `交接最小集缺「${missing.join('」「')}」（九项：权源/关键输入/决定依据/已采取行动/结果/未决事项/承诺/已知不能/风险——02 §六）`))
+packages/contract/src/records/emp-neg.ts:435:    if (handover.gaps.length > 0) {
+packages/contract/src/records/emp-neg.ts:436:      checks.push(recordReject('handover.gaps', `交接记录缺口逐项登记：${handover.gaps.join('/')}（缺口不得以结清覆盖——02 §3.4/E-7）`))
+packages/contract/src/records/auth.ts:74:export const FENCING_MODES = ['mutual_fence', 'common_arbiter', 'exclusive_handover'] as const
+packages/contract/src/ports/ws.ts:22:  | 'handover_zone'
+packages/contract/src/ports/ws.ts:37:export type ArtifactZone = Extract<WorkspaceZone, 'artifact_staging' | 'handover_zone'>
+packages/contract/src/ports/hr.ts:30:  | 'handover'
+packages/contract/src/ports/hr.ts:94:export type SettlementFace = 'handover' | 'settlement'
+packages/studio-tools/src/tools.ts:482:        names: ['work.handoverSubmit'],
+EXIT=0
+
+TS=2026-11-03T05:01:59.414Z
+$ grep -rn "HCL-3" docs/v2 --include=*.md | head -30
+docs/v2/07-技术抽象-执行能力与工作运行.md:183:主表分工：**级别语义/可否声称/闭合判据在本卷**；宿主绑定档案、**探针清单与步骤、探针编号唯一主表 v2/12**；验证行 v2/17。**每级闭合判据在 v2/12 必须有对应登记探针行——无登记行即不得宣称该级可闭合**（治 V8-P1-2：四行锚缺、HCL-2 双差分无探针）。**编号说明（2026-10-28 改号，17 待修 #10）**：本族规范 ID 由原 H0a/H0b/H1/H2/H3/H4 改为 **HCL-0A/HCL-0B/HCL-1/HCL-2/HCL-3/HCL-4**（Capability Closure Level；消除与 GLM 链条审计号 H0a/H0b…H3b 的撞形——K11 同型）；各级语义与判据不变；本卷审计处置表内引用审计报告代号的 H0a/H0b 系外部文件名，保留原形。
+docs/v2/07-技术抽象-执行能力与工作运行.md:191:| HCL-3 段间替换 | 当前段安全结束/暂停并交接，新段用新能力 | 可称段间受控替换 | 段结束/暂停与交接确认＋新段锁定新计划＋旧段围栏写入＋在途副作用对账 | v2/12（段边界探针） |
+docs/v2/07-技术抽象-执行能力与工作运行.md:194:**版本批准不新增权限、不夹带秘密**：新增/扩大权限或秘密类别不是版本升级的附带效果，须另经激活批准与部署供给确认。默认目标＝**HCL-2/HCL-3**；HCL-4 是可选宿主能力，不是公司理论前提。
+docs/v2/07-技术抽象-执行能力与工作运行.md:211:| HCL-2 上线/HCL-3 替换 | （不驱动迁移；触发重判） | — | 执行配置变更触发开工五门重判（v2/04 §四）；在途钉旧计划 |
+docs/v2/17-验证矩阵与追溯.md:141:| 10 | 07/12/15 多处 | 能力闭合级别 `H0a..H4` 裸写 46 token，与 GLM 审计号 `H0a/H0b/H1a…` 撞形，机器不可分辨 | 定前缀式（如 `HB-0a..HB-4`）并登记 09；过渡期至少在审计表中用「审计 H0a」消歧 | F6/K11 | ✅已修 2026-10-28·按宰相终裁定 `HCL-0A/HCL-0B/HCL-1/HCL-2/HCL-3/HCL-4`（Capability Closure Level，族登记 09 §一-14）；07 §六/§七、11 §一/§九、12 §五/§六、15 §四/§五、本卷 §三/§五 正文全部改号；各卷审计处置表内引用审计报告代号的 `H0a/H0b` 保留原形（外部文件名，09 §1.3）；审计表内引述级别语义处以 HCL 并写（不删审计原文） |
+docs/v2/17-验证矩阵与追溯.md:334:**能力闭合级别 6（HCL 族）**——语义定义 07 §六（HCL-0A/HCL-0B/HCL-1/HCL-2/HCL-3/HCL-4；2026-10-28 由 H0a/H0b/H1/H2/H3/H4 改号——待修 #10 清偿，族登记 09 §一-14；**探针锚纪律**：每级至少一行 PRB——12 §5.1）：无 REC（级别=判据）；锚=PRB-17/01/18/19+20/15/21；NEG=NEG-RUN-04（逃逸面）；V 级=V6（真机）；规范已立、**探针 0/6 executed**（HCL 锚总表见 12 §5.3）。
+docs/v2/09-技术细节-总纲与工程决策·主表总册.md:42:| 14 | `HCL` | 能力替换级别（Capability Closure Level） | v2/07 §六（判据）；v2/12 §五（探针锚） | HCL-0A/HCL-0B/HCL-1/HCL-2/HCL-3/HCL-4 | 6 | **2026-10-28 改号**（原 H0a/H0b/H1/H2/H3/H4 与 GLM 链条审计号 H0a/H0b/H1b…H3b 撞形，17 待修 #10/K11 同型）；默认目标 HCL-2/HCL-3；审计处置表引用审计报告代号的 H0a/H0b 保留原形（§1.3） | ✓ |
+docs/v2/12-技术细节-宿主平台与工作区绑定.md:371:| PRB-15 | 换宿主保任职 | 同一任职换 CLI 出工 | 任职/责任链不断、新段 | 旧段围栏写入生效 | **HCL-3 段间替换** | 未执行 |
+docs/v2/12-技术细节-宿主平台与工作区绑定.md:384:**HCL 锚总表**（每级≥一行；级别 ID＝09 §一-14）：HCL-0A→PRB-17；HCL-0B→PRB-01；HCL-1→PRB-18；HCL-2→PRB-19+20（+PRB-08 前置）；HCL-3→PRB-15；HCL-4→PRB-21。
+docs/v2/12-技术细节-宿主平台与工作区绑定.md:412:平台侧损失随各卡（§2.2，按七能力逐项可报）；换宿主交接义务＝HCL-3 段间替换（PRB-15）：旧段安全结束/暂停→交接包（在途/未结义务/证据引用/副作用对账）→新段锁新计划→旧段围栏→迟到副作用对账。
+EXIT=0
+
+TS=2026-11-03T05:01:59.576Z
+$ grep -rn "resumeWithSession\|session_resume" apps/daemon/src --include=*.ts
+apps/daemon/src/engine/merge/merge-run.ts:5: * 在场+触发条件全齐 → daemon 在相位 5 以 resume 唤起**原工位原会话**（resumeWithSession
+apps/daemon/src/engine/merge/merge-run.ts:23: *      sidecar 可读+executor 在册且 session_resume=true+工位 repo rev-parse HEAD 可解析
+apps/daemon/src/engine/merge/merge-run.ts:145:/** 合并跑断点：resolveResumePlan 同源 + executor_session_id（v13 列——resumeWithSession 唤起凭据）+ reviewTip */
+apps/daemon/src/engine/merge/merge-run.ts:186:  if (!adapter.capabilities.session_resume) {
+apps/daemon/src/engine/merge/merge-run.ts:187:    return { degrade: `executor ${resume.executor} 声明 session_resume=false（合并跑需原生续跑唤起原会话）` }
+apps/daemon/src/engine/merge/merge-run.ts:189:  if (typeof (adapter as { resumeWithSession?: unknown }).resumeWithSession !== 'function') {
+apps/daemon/src/engine/merge/merge-run.ts:190:    return { degrade: `executor ${resume.executor} 无 resumeWithSession 面（契约 v1.5 唤起口缺位——结构探测不过）` }
+apps/daemon/src/engine/merge/merge-run.ts:281:/** resumeWithSession 结构面（dsh 实现=类方法；契约接口外——结构探测，不 import 适配器包） */
+apps/daemon/src/engine/merge/merge-run.ts:369:    const resumeFn = (adapter as { resumeWithSession?: unknown }).resumeWithSession
+apps/daemon/src/engine/fakes.ts:297:  session_resume: false,
+apps/daemon/src/engine/engine.ts:656:   * 任务书续跑版（前情摘要注入，17-§5）；executor 除名/声明 session_resume=false →
+apps/daemon/src/engine/work/dispatch-seatbelt.ts:199:  /** 真 spawn（适配器 launch/resumeWithSession）；**只在留痕之后**被调用 */
+apps/daemon/src/engine/intents/relay-resume.ts:38: *     executor 不在注册表/声明 session_resume=false → 派发面明报（DISPATCH note
+apps/daemon/src/engine/intents/relay-resume.ts:186: * 指名解析（原生续跑用同一家）→ 命中且 session_resume=true → 续跑形；否则回退 fallback
+apps/daemon/src/engine/intents/relay-resume.ts:209:  if (!registered.capabilities.session_resume) {
+apps/daemon/src/engine/intents/relay-resume.ts:212:    return { adapter: fallback, degradedReason: `executor ${plan.executor} 声明 session_resume=false（25-§3.1 能力声明——该家不支持原生续跑，明报降级新派）` }
+apps/daemon/src/engine/intents/relay-resume-faces.ts:19:  /** 真续跑形（指名命中且 session_resume=true——attempt 计数续用+前情注入+续跑版任务书） */
+apps/daemon/src/engine/intents/relay-resume-faces.ts:35: * 不外抛炸派发）→ session_resume 能力判别 → note/detail 观测锚 + 装配入参 + causation。
+apps/daemon/src/engine/tick/types.ts:305:  /** dsh 侧会话 id（契约 v1.5——resumeWithSession 唤起证据，MERGE note 留痕） */
+EXIT=0

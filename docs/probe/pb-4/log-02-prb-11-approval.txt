@@ -1,0 +1,100 @@
+# PRB-11 审批 fail-closed（审批端口/运行期）
+DATE=2026-11-03T05:02:47.500Z
+FINGERPRINT=sha256:daccda4e3385594c6a07b3c63fd79aa13f40f9c3100bbf83d4605fef43ad545a
+REPO=<repo>
+
+TS=2026-11-03T05:01:42.312Z
+$ grep -rn "approval" packages/adapters/src/bindcard packages/core/src apps/daemon/src/engine --include=*.ts
+packages/adapters/src/bindcard/capability.ts:21: *   2. **不自封权威**：出现自封字段（authority/authorized/granted/approval/verified 等）一律
+packages/adapters/src/bindcard/capability.ts:101:  'approval',
+packages/adapters/src/bindcard/cli-cards.ts:49:/** CLI 卡公共授权行（CLI 无原生策略段：tools/sandbox/approval 一律不承载） */
+packages/adapters/src/bindcard/cli-cards.ts:53:    'CLI 无原生策略段：tools/sandbox/approval 段不承载（换离 DSH 即明示不可用，BIND-LOSS-01）——未承载段最高记第 4/5 态，不得记第 6 态',
+packages/adapters/src/bindcard/dsh-card.ts:221:    carrier: 'dsh-user-approval（ask/never，fail-closed）',
+packages/core/src/flows.ts:32:  approval: '待批',
+packages/core/src/flows.ts:46:  approval: string
+packages/core/src/flows.ts:56: * 无审批环哨兵（DEV-43，docs/18-§2.1.1）：类型流未声明 approval 锚时的锚点值（空串）。
+packages/core/src/flows.ts:57: * 构造性安全：decide 5a 比 `successors.includes(approval)`——successors 只含声明状态名
+packages/core/src/flows.ts:58: * （非空），空串永不命中；5b 比 `issue.state === approval`——能到 5b 的单已过步3状态集
+packages/core/src/flows.ts:104:  { from: DEFAULT_STATES.delivered, to: DEFAULT_STATES.approval },
+packages/core/src/flows.ts:108:  { from: DEFAULT_STATES.dispatched, to: DEFAULT_STATES.approval },
+packages/core/src/flows.ts:126:  DEFAULT_STATES.approval,
+packages/core/src/flows.ts:136:  DEFAULT_STATES.approval,
+packages/core/src/flows.ts:140:  DEFAULT_STATES.approval,
+packages/core/src/authority.ts:161:  if (!hasAttestation) return refusal('root-proof-invalid', grant.grantId, 'external signature and offline approval both missing')
+packages/core/src/decide.ts:24: *   - submit_approval 派发前置：呈批迁移（新单→待批 / 复验通过→待批，L1/L2）
+packages/core/src/decide.ts:40: *   - submit_approval 为第十个动作（任务书列了九个"至少"）：docs 未冻结「新单→待批」由谁执行，
+packages/core/src/decide.ts:140:  type: 'submit_approval'
+packages/core/src/decide.ts:142:  /** 平台目标态（锚点 approval） */
+packages/core/src/decide.ts:373: *      后继含待批 → submit_approval；待批态 → 批否分流（dispatch/merge/等批）；
+packages/core/src/decide.ts:443:  if (successors.includes(anchors.approval)) {
+packages/core/src/decide.ts:444:    return { intentKey, action: { type: 'submit_approval', code: 'SUBMIT_APPROVAL', ticket: issue.id, toState: anchors.approval } }
+packages/core/src/decide.ts:449:  if (issue.state === anchors.approval) {
+packages/core/src/prm/compile-projection.ts:151:    approval:
+packages/core/src/prm/compile-projection.ts:152:      carried.has('approval') && deployment.approvalTemplateRef !== undefined
+packages/core/src/prm/compile-projection.ts:156:              normalizeRefs([deployment.approvalTemplateRef]),
+packages/core/src/prm/compile-projection.ts:157:              'default-template;approval-not-acceptance',
+packages/core/src/prm/compile-projection.ts:160:        : carried.has('approval')
+packages/core/src/prm/compile-projection.ts:161:          ? unsupportedSegment('approval', [], 'input-lacks-source(deployment.approvalTemplateRef)')
+packages/core/src/prm/compile-projection.ts:162:          : unsupportedSegment('approval', [], 'host-lacks-carrier'),
+packages/core/src/prm/compile-projection.ts:200:    approval: builds.approval.value,
+packages/core/src/prm/spec.ts:28:  'approval',
+packages/core/src/prm/spec.ts:36: * 强策略标签要求 `tools`＋`sandbox`＋`approval` 全承载（v2/12 §1.6 判定表）；`authority`
+packages/core/src/prm/spec.ts:40:export const GATING_SEGMENTS: readonly ProjectionSegment[] = ['authority', 'tools', 'sandbox', 'approval']
+packages/core/src/prm/projection-input.ts:37: * `sandbox`/`approvalTemplateRef`/`evidenceSinkRef`：各段显式来源声明（缺＝该段不可支持）。
+packages/core/src/prm/projection-input.ts:45:  readonly approvalTemplateRef?: string
+packages/core/src/prm/projection-input.ts:60:  readonly approvalTemplateRef: string | undefined
+packages/core/src/prm/projection-input.ts:85:  'approvalTemplateRef',
+packages/core/src/prm/projection-input.ts:97:    approvalTemplateRef: undefined,
+packages/core/src/prm/projection-input.ts:167:  let approvalTemplateRef: string | undefined
+packages/core/src/prm/projection-input.ts:168:  if (record['approvalTemplateRef'] !== undefined) {
+packages/core/src/prm/projection-input.ts:169:    approvalTemplateRef = readRef(record['approvalTemplateRef'])
+packages/core/src/prm/projection-input.ts:170:    if (approvalTemplateRef === undefined) issues.push('deployment.approvalTemplateRef 必须是受控引用')
+packages/core/src/prm/projection-input.ts:194:    approvalTemplateRef,
+apps/daemon/src/engine/records/state-map.ts:28:  approval: '待批',
+apps/daemon/src/engine/records/state-map.ts:38:  [PLATFORM_STATES.approval]: 'pending_start',
+apps/daemon/src/engine/records/state-map.ts:48:  pending_start: PLATFORM_STATES.approval,
+apps/daemon/src/engine/merge/merge-run.ts:14: *   1. 验收位：approvalSlotOf(flow,state)==='post-verified'（否则=v0 模拟轨——零行为
+apps/daemon/src/engine/merge/merge-run.ts:82:import { approvalSlotOf } from '../directive/wire.ts'
+apps/daemon/src/engine/merge/merge-run.ts:238:    if (deps === undefined || flow === undefined || approvalSlotOf(flow, fresh.state) !== 'post-verified') {
+apps/daemon/src/engine/typeflows.ts:31:      approval: t.anchors.approval ?? '',
+apps/daemon/src/engine/todoqueue/queue.ts:122: * 返回 ready_state：待批态='awaiting_approval'（成员但等制作人批），其余成员='ready'。
+apps/daemon/src/engine/todoqueue/queue.ts:124:export function queueMembership(issue: QueueMemberSource, flow: StateFlow | undefined): false | 'ready' | 'awaiting_approval' {
+apps/daemon/src/engine/todoqueue/queue.ts:134:  return anchors.approval !== '' && issue.state === anchors.approval ? 'awaiting_approval' : 'ready'
+apps/daemon/src/engine/engine.ts:118: *   - 呈批迁移（submit_approval）：v0 直迁平台，不落事件（呈批事件名待批示；真路径=网关
+apps/daemon/src/engine/engine.ts:1355:    const approvalQ: Array<Extract<Action, { type: 'submit_approval' }>> = []
+apps/daemon/src/engine/engine.ts:1588:        case 'submit_approval':
+apps/daemon/src/engine/engine.ts:1589:          approvalQ.push(action)
+apps/daemon/src/engine/engine.ts:1647:    // —— 相位 3 派发：submit_approval（派发前置呈批）→ dispatch ——
+apps/daemon/src/engine/engine.ts:1651:    const approvals = dispatchGate === 'draining' ? 0 : await runApprovalTransitions(workPhaseHost, approvalQ)
+apps/daemon/src/engine/engine.ts:1889:          approvals,
+apps/daemon/src/engine/engine.ts:1890:          results: actionResults.filter((r) => r.actionType === 'dispatch' || r.actionType === 'submit_approval'),
+apps/daemon/src/engine/tick-report/types.ts:135:    dispatch: { dispatched: number; approvals: number; results: readonly TickActionResult[] } &
+apps/daemon/src/engine/sentinel/events-index.ts:132:   * 5a submit_approval 回弹抑制（打回/拆单/搁置站立期不自动呈批）。
+apps/daemon/src/engine/directive/qualify.ts:8: * 链解析，不可解析=拒。R3 位别律（202-§8）：验收位（approvalSlot='post-verified'——
+apps/daemon/src/engine/directive/qualify.ts:38:   * wire.ts approvalSlotOf）。
+apps/daemon/src/engine/directive/qualify.ts:40:  approvalSlot?: 'pre-dispatch' | 'post-verified'
+apps/daemon/src/engine/directive/qualify.ts:98:      if (verb === '批准' && issue.approvalSlot !== 'post-verified') {
+apps/daemon/src/engine/directive/wire.ts:132:    const slot = issueFlow === undefined ? undefined : approvalSlotOf(issueFlow, issue.state)
+apps/daemon/src/engine/directive/wire.ts:138:      ...(slot !== undefined ? { approvalSlot: slot } : {}),
+apps/daemon/src/engine/directive/wire.ts:282:    actionType === 'submit_approval' && (verbNow === '打回' || verbNow === '拆单' || verbNow === '搁置')
+apps/daemon/src/engine/directive/wire.ts:294: * W-9 同款考量）。无 approval 锚/无流=undefined（既有面）。
+apps/daemon/src/engine/directive/wire.ts:296:export function approvalSlotOf(flow: StateFlow, state: string): 'pre-dispatch' | 'post-verified' | undefined {
+apps/daemon/src/engine/directive/wire.ts:298:  if (anchors.approval === '' || state !== anchors.approval) return undefined
+apps/daemon/src/engine/work/transition.ts:127:export type ApprovalAction = Extract<Action, { type: 'submit_approval' }>
+apps/daemon/src/engine/work/transition.ts:141:  let approvals = 0
+apps/daemon/src/engine/work/transition.ts:149:      approvals += 1
+apps/daemon/src/engine/work/transition.ts:163:  return approvals
+EXIT=0
+
+TS=2026-11-03T05:01:42.512Z
+$ grep -rn "PORT-APPROVAL\|approvalPort\|requestApproval\|approval-timeout\|approvalTimeout" apps packages --include=*.ts
+EXIT=1
+
+TS=2026-11-03T05:01:47.907Z
+$ grep -rn "approval" packages/contract/src/ports --include=*.ts
+packages/contract/src/ports/reg.ts:125:/** 端口接口（写方法全带 `CallContext`；approval/activation 不得由调用方自行成立） */
+packages/contract/src/ports/def.ts:181:  readonly approvalRef: string
+packages/contract/src/ports/def.ts:194:  readonly approval: ApprovalStamp
+packages/contract/src/ports/exec.ts:211:  | 'approval'
+packages/contract/src/ports/company.ts:108:  approval?: string
+EXIT=0

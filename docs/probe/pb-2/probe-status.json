@@ -1,0 +1,59 @@
+{
+  "batch": "PB-2",
+  "title": "投影与秘密",
+  "generatedAt": "2026-11-03T05:10:00.000Z",
+  "environment": {
+    "fingerprint": "sha256:daccda4e3385594c6a07b3c63fd79aa13f40f9c3100bbf83d4605fef43ad545a",
+    "head": "675192cfe1862ff65787b609d1e2d5b90da4c0b9",
+    "host": "Darwin 25.3.0 arm64 / macOS 26.3 (25D125)",
+    "node": "v24.21.0",
+    "bun": "1.4.3",
+    "dsh": "0.2.1-rc.5",
+    "codex": "codex-cli 0.162.1",
+    "claude": "missing",
+    "kimi": "missing"
+  },
+  "entry": {
+    "status": "partial",
+    "present": ["MIG-07 compileProjection/projectionDigest/projectionGate", "gateway createCredentialCatalog/catalog-entry"],
+    "absent": ["投影运行时加载器", "SEC-SIG-04 签名/验签通道", "运行时投影 drift 比对器"]
+  },
+  "rows": [
+    {
+      "id": "PRB-07",
+      "status": "executed",
+      "direction": "positive+negative",
+      "verdict": "negative-finding",
+      "conclusion": "组件级正负同验：合法类别路径投影/目录/句柄均不含探针秘密值，值形态逻辑引用与未知值键均被 catalog-value-rejected；但生成器不校验 secretTypes 类别形状，注入值形态字符串会原样进入 sandbox.sourceRefs（INJECTED_VALUE_PRESENT=1），故「投影只有类别」不是机械不变量。未接生产链路，不宣称投影防线。",
+      "evidence": ["log-01-prb-07-secret-context.txt"],
+      "commands": [
+        "STUDIO_PROBE_SECRET=<injected> mise exec -- bun scripts/probe/prb07-secret-scan.mjs --repo <repo>"
+      ],
+      "target": "normalizeInput 对 secretTypes 加 SecretType 白名单或强制 secret: 逻辑引用前缀（走批示，不在本单改契约/实现）"
+    },
+    {
+      "id": "PRB-08",
+      "status": "not-executed",
+      "direction": "digest-only-partial",
+      "missing": "SEC-SIG-04 签名封套/验签通道未建；无投影加载器与启动器，无法构造「篡改一字节→拒载＋不 spawn」；仅取到 digest 复算可检出篡改（DIGEST_MATCH=0）与 projectionGate 对篡改件仍 launchable=true（与函数自述一致），不构成整行。",
+      "evidence": ["log-02-prb-08-projection-signature.txt"],
+      "commands": [
+        "mise exec -- bun scripts/probe/prb08-digest-tamper.mjs --repo <repo>",
+        "grep -rn \"verifySignature\\|verifyProjection\\|SEC-SIG-04\" packages/core/src packages/gateway/src apps/daemon/src --include=*.ts"
+      ],
+      "target": "SEC-SIG-04 签名封套＋信任锚＋单调代次＋投影加载器拒载/不 spawn 路径；PRB-08 是 PB-3 HCL-2 锚前置"
+    },
+    {
+      "id": "PRB-09",
+      "status": "not-executed",
+      "direction": "static-only",
+      "missing": "无 PRM 策略投影的运行时加载/比对器，无宿主配置读取面；无法「生成后手工改宿主配置→检出 drift→差异项逐条列出」。daemon 的 reconcileProjection 是记录面↔事件面对账、statusSetDrift/trust-drift 是平台状态/重载信任面，均不是 PRM 策略投影 drift，不得代证。",
+      "evidence": ["log-03-prb-09-runtime-drift.txt"],
+      "commands": [
+        "grep -rn \"projection.*drift\\|drift.*projection\\|reconcileProjection\\|compareProjection\" apps packages --include=*.ts",
+        "grep -rn \"loadProjection\\|ProjectionLoader\" apps packages --include=*.ts"
+      ],
+      "target": "投影加载器＋运行时暴露面观测＋13 态逐项差异输出；依赖 PRB-08 先行"
+    }
+  ]
+}

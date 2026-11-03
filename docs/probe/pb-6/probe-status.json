@@ -1,0 +1,66 @@
+{
+  "batch": "PB-6",
+  "title": "备选 CLI",
+  "generatedAt": "2026-11-03T05:14:00.000Z",
+  "environment": {
+    "fingerprint": "sha256:daccda4e3385594c6a07b3c63fd79aa13f40f9c3100bbf83d4605fef43ad545a",
+    "head": "675192cfe1862ff65787b609d1e2d5b90da4c0b9",
+    "host": "Darwin 25.3.0 arm64 / macOS 26.3 (25D125)",
+    "node": "v24.21.0",
+    "bun": "1.4.3",
+    "dsh": "0.2.1-rc.5",
+    "codex": "codex-cli 0.162.1",
+    "claude": "missing",
+    "kimi": "missing"
+  },
+  "entry": {
+    "status": "partial",
+    "present": ["codex-cli 0.162.1 在机（版本/帮助/参数解析面可探）"],
+    "absent": ["claude CLI（missing）", "kimi CLI（missing）", "真实模型会话（无 auth，app-server 在 seatbelt 下 EPERM）"]
+  },
+  "rows": [
+    {
+      "id": "PRB-24",
+      "status": "not-executed",
+      "direction": "cli-missing",
+      "missing": "claude CLI 不在机：which claude EXIT=1、claude --version ENOENT；无法跑 detect()、权限模式/hooks、<2.1.277 降级链；adapter/card 静态命中不构成运行期能力证据。",
+      "evidence": ["log-01-prb-24-claude.txt"],
+      "commands": [
+        "which claude",
+        "claude --version",
+        "grep -n \"claude\" packages/adapters/src/agentconfig.ts"
+      ],
+      "target": "claude CLI 在机＋版本语料＋权限模式/hooks＋降级链实测；未证前 agents_md 降级档按不支持"
+    },
+    {
+      "id": "PRB-25",
+      "status": "not-executed",
+      "direction": "form-negative-finding",
+      "verdict": "negative-finding",
+      "missing": "整行正向（续跑真接续 cwd 一致＋AGENTS.md 通道生效＋成本折算）未执行：环境键名扫描未见 OPENAI/ANTHROPIC 键，且 codex app-server 在 seatbelt 下 EPERM（log-02）；~/.codex/auth.json 未在采集面，不作断言。形态腿已取到负向：真机为 codex exec resume <id> 子命令，codex exec --resume 被 clap 拒收 EXIT=2；adapter codex.ts:186-188 构造 --resume 旗标形、:116 声明 session_resume:true，与真机不符。",
+      "evidence": ["log-02-prb-25-codex.txt"],
+      "commands": [
+        "codex --version",
+        "codex exec --help",
+        "codex exec resume --help",
+        "codex exec --resume",
+        "codex exec resume 00000000-0000-0000-0000-000000000000 probe --skip-git-repo-check",
+        "grep -n \"resume\" packages/adapters/src/codex.ts"
+      ],
+      "target": "adapter 改 codex exec resume <id> [--json] 形＋真机续跑/通道/成本复验；改形前 session_resume 按不支持（负向列），合并跑/relay 依赖面风险登记"
+    },
+    {
+      "id": "PRB-26",
+      "status": "not-executed",
+      "direction": "cli-missing",
+      "missing": "kimi CLI 不在机：which kimi EXIT=1、kimi --version ENOENT；-S 取值形态/wire 路径/模式互斥不可探；adapter 拟稿注记不构成真机证据。",
+      "evidence": ["log-03-prb-26-kimi.txt"],
+      "commands": [
+        "which kimi",
+        "kimi --version",
+        "grep -n \"resume\\|-S\\|wire\" packages/adapters/src/kimi.ts"
+      ],
+      "target": "kimi CLI 在机＋-S 两形实测＋wire.jsonl 真实布局/时序＋-p 与 yolo/auto/plan 互斥；未证前按不支持"
+    }
+  ]
+}

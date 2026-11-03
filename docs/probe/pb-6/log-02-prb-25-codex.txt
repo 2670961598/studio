@@ -1,0 +1,254 @@
+# PRB-25 Codex 拟稿点（--resume 旗标形 vs resume 子命令形）
+DATE=2026-11-03T05:02:47.523Z
+FINGERPRINT=sha256:daccda4e3385594c6a07b3c63fd79aa13f40f9c3100bbf83d4605fef43ad545a
+REPO=<repo>
+
+TS=2026-11-03T05:02:25.914Z
+$ codex --version
+codex-cli 0.162.1
+WARNING: proceeding, even though we could not create PATH aliases: Operation not permitted (os error 1)
+EXIT=0
+
+TS=2026-11-03T05:02:27.897Z
+$ codex exec --help
+Run Codex non-interactively
+
+Usage: codex exec [OPTIONS] [PROMPT]
+       codex exec [OPTIONS] <COMMAND> [ARGS]
+
+Commands:
+  resume  Resume a previous session by id or pick the most recent with --last
+  fork    Fork a previous session by id into a new session
+  review  Run a code review against the current repository
+  help    Print this message or the help of the given subcommand(s)
+
+Arguments:
+  [PROMPT]
+          Initial instructions for the agent. If not provided as an argument (or if `-` is used),
+          instructions are read from stdin. If stdin is piped and a prompt is also provided, stdin
+          is appended as a `<stdin>` block
+
+Options:
+  -c, --config <key=value>
+          Override a configuration value that would otherwise be loaded from `~/.codex/config.toml`.
+          Use a dotted path (`foo.bar.baz`) to override nested values. The `value` portion is parsed
+          as TOML. If it fails to parse as TOML, the raw string is used as a literal.
+          
+          Examples: - `-c model="o3"` - `-c 'sandbox_permissions=["disk-full-read-access"]'` - `-c
+          shell_environment_policy.inherit=all`
+
+      --enable <FEATURE>
+          Enable a feature (repeatable). Equivalent to `-c features.<name>=true`
+
+      --disable <FEATURE>
+          Disable a feature (repeatable). Equivalent to `-c features.<name>=false`
+
+      --strict-config
+          Error out when config.toml contains fields that are not recognized by this version of
+          Codex
+
+  -i, --image <FILE>...
+          Optional image(s) to attach to the initial prompt
+
+  -m, --model <MODEL>
+          Model the agent should use
+
+      --oss
+          Use open-source provider
+
+      --local-provider <OSS_PROVIDER>
+          Specify which local provider to use (lmstudio or ollama). If not specified with --oss,
+          will use config default or show selection
+
+  -p, --profile <CONFIG_PROFILE_V2>
+          Layer $CODEX_HOME/<name>.config.toml on top of the base user config
+
+  -s, --sandbox <SANDBOX_MODE>
+          Select the sandbox policy to use when executing model-generated shell commands
+          
+          [possible values: read-only, workspace-write, danger-full-access]
+
+      --approve-for-me
+          Route approval requests through automatic review using the workspace-write sandbox
+
+      --dangerously-bypass-approvals-and-sandbox
+          Skip all confirmation prompts and execute commands without sandboxing. EXTREMELY
+          DANGEROUS. Intended solely for running in environments that are externally sandboxed
+
+      --dangerously-bypass-hook-trust
+          Run enabled hooks without requiring persisted hook trust for this invocation. DANGEROUS.
+          Intended only for automation that already vets hook sources
+
+  -C, --cd <DIR>
+          Tell the agent to use the specified directory as its working root
+
+      --worktree
+          Run the session in a new managed Git worktree
+
+      --add-dir <DIR>
+          Additional directories that should be writable alongside the primary workspace
+
+      --thread-source <SOURCE>
+          Source classification for newly created or forked threads
+
+      --cyber-access-program <PROGRAM>
+          Request an experimental Cyber access program for this turn (OpenAI provider only). Omit to
+          use server defaults. Not supported with review; fork requires a prompt
+          
+          [possible values: standard, daybreak_blue, daybreak_red]
+
+      --skip-git-repo-check
+          Allow running Codex outside a Git repository
+
+      --ephemeral
+          Run without persisting session files to disk
+
+      --ignore-user-config
+          Do not load `$CODEX_HOME/config.toml`; auth still uses `CODEX_HOME`
+
+      --ignore-rules
+          Do not load user or project execpolicy `.rules` files
+
+      --output-schema <FILE>
+          Path to a JSON Schema file describing the model's final response shape
+
+      --color <COLOR>
+          Specifies color settings for use in the output
+          
+          [default: auto]
+          [possible values: always, never, auto]
+
+      --json
+          Print events to stdout as JSONL
+
+  -o, --output-last-message <FILE>
+          Specifies file where the last message from the agent should be written
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+WARNING: proceeding, even though we could not create PATH aliases: Operation not permitted (os error 1)
+EXIT=0
+
+TS=2026-11-03T05:02:29.787Z
+$ codex exec resume --help
+Resume a previous session by id or pick the most recent with --last
+
+Usage: codex exec resume [OPTIONS] [SESSION_ID] [PROMPT]
+
+Arguments:
+  [SESSION_ID]
+          Conversation/session id (UUID) or thread name. UUIDs take precedence if it parses. If
+          omitted, use --last to pick the most recent recorded session
+
+  [PROMPT]
+          Prompt to send after resuming the session. If `-` is used, read from stdin
+
+Options:
+  -c, --config <key=value>
+          Override a configuration value that would otherwise be loaded from `~/.codex/config.toml`.
+          Use a dotted path (`foo.bar.baz`) to override nested values. The `value` portion is parsed
+          as TOML. If it fails to parse as TOML, the raw string is used as a literal.
+          
+          Examples: - `-c model="o3"` - `-c 'sandbox_permissions=["disk-full-read-access"]'` - `-c
+          shell_environment_policy.inherit=all`
+
+      --last
+          Resume the most recent recorded session (newest) without specifying an id
+
+      --all
+          Show all sessions (disables cwd filtering)
+
+      --enable <FEATURE>
+          Enable a feature (repeatable). Equivalent to `-c features.<name>=true`
+
+      --disable <FEATURE>
+          Disable a feature (repeatable). Equivalent to `-c features.<name>=false`
+
+  -i, --image <FILE>
+          Optional image(s) to attach to the prompt sent after resuming
+
+      --strict-config
+          Error out when config.toml contains fields that are not recognized by this version of
+          Codex
+
+  -m, --model <MODEL>
+          Model the agent should use
+
+      --dangerously-bypass-approvals-and-sandbox
+          Skip all confirmation prompts and execute commands without sandboxing. EXTREMELY
+          DANGEROUS. Intended solely for running in environments that are externally sandboxed
+
+      --dangerously-bypass-hook-trust
+          Run enabled hooks without requiring persisted hook trust for this invocation. DANGEROUS.
+          Intended only for automation that already vets hook sources
+
+      --worktree
+          Run the session in a new managed Git worktree
+
+      --thread-source <SOURCE>
+          Source classification for newly created or forked threads
+
+      --cyber-access-program <PROGRAM>
+          Request an experimental Cyber access program for this turn (OpenAI provider only). Omit to
+          use server defaults. Not supported with review; fork requires a prompt
+          
+          [possible values: standard, daybreak_blue, daybreak_red]
+
+      --skip-git-repo-check
+          Allow running Codex outside a Git repository
+
+      --ephemeral
+          Run without persisting session files to disk
+
+      --ignore-user-config
+          Do not load `$CODEX_HOME/config.toml`; auth still uses `CODEX_HOME`
+
+      --ignore-rules
+          Do not load user or project execpolicy `.rules` files
+
+      --output-schema <FILE>
+          Path to a JSON Schema file describing the model's final response shape
+
+      --json
+          Print events to stdout as JSONL
+
+  -o, --output-last-message <FILE>
+          Specifies file where the last message from the agent should be written
+
+  -h, --help
+          Print help (see a summary with '-h')
+WARNING: proceeding, even though we could not create PATH aliases: Operation not permitted (os error 1)
+EXIT=0
+
+TS=2026-11-03T05:02:31.289Z
+$ codex exec --resume
+WARNING: proceeding, even though we could not create PATH aliases: Operation not permitted (os error 1)
+error: unexpected argument '--resume' found
+
+  tip: to pass '--resume' as a value, use '-- --resume'
+
+Usage: codex exec [OPTIONS] [PROMPT]
+       codex exec [OPTIONS] <COMMAND> [ARGS]
+
+For more information, try '--help'.
+EXIT=2
+
+TS=2026-11-03T05:02:32.943Z
+$ codex exec resume 00000000-0000-0000-0000-000000000000 probe --skip-git-repo-check
+WARNING: proceeding, even though we could not create PATH aliases: Operation not permitted (os error 1)
+Error: failed to initialize in-process app-server client: Operation not permitted (os error 1)
+EXIT=1
+
+TS=2026-11-03T05:02:46.968Z
+$ grep -n "resume" packages/adapters/src/codex.ts
+15: *   - 续跑旗标 `codex exec --resume <sessionId>`：取旗标形态（镜像 claude --resume 语义）；
+16: *     真 CLI 亦可能是 `codex exec resume <id>` 子命令形态——两形孰真待探针，本拟稿取旗标形，
+37: *     回填，续跑输入全靠 TaskBrief.resume.sessionId（装配管线透传）——探针单核实
+116:    session_resume: true, // `codex exec --resume <id>`（拟稿——旗标/子命令两形待探针，见头注）
+178:   * 拉起 codex（execa）：`codex exec --json` + 续跑 `--resume <sessionId>`（拟稿旗标形）
+187:    if (task.resume !== undefined) {
+188:      args.push('--resume', task.resume.sessionId)
+EXIT=0

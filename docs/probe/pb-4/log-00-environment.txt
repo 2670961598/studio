@@ -1,0 +1,77 @@
+# PB-2/4/6 真机探针环境指纹（只读采集；不含任何凭据值）
+DATE=2026-11-03T05:01:06.165Z
+HEAD=675192cfe1862ff65787b609d1e2d5b90da4c0b9
+BRANCH=dev
+HOST=Darwin 25.3.0 arm64 / macOS 26.3 (25D125)
+NODE=v24.21.0
+BUN=1.4.3
+MISE=2026.10.11 macos-arm64 (2026-10-15)
+DSH=0.2.1-rc.5
+DSH_LOCKED=0.2.0-rc.2 (packages/adapters/src/dsh.ts LOCKED_VERSION)
+CODEX=codex-cli 0.162.1
+CLAUDE=missing
+KIMI=missing
+REPO_WRITABLE=no (EPERM)
+GIT=unavailable (fatal: could not open '/dev/null' for reading and writing: Operation not permitted)
+HEALTH_8791=200 (body 31B)
+HEALTH_8788=000 (body 0B)
+HEALTH_8789=404 (body 2692B)
+ENV_KEYS=DSH_HOME,DSH_PROFILE,DSH_PROFILE_DIR,DSH_SESSION_ID,DSH_SHELL,STUDIO_NEXT_INSTRUCTIONS,STUDIO_PROBE_SECRET
+
+# 采集命令（原始输出）
+$ uname -srm
+Darwin 25.3.0 arm64
+EXIT=0
+
+$ sw_vers -productVersion
+26.3
+EXIT=0
+
+$ sw_vers -buildVersion
+25D125
+EXIT=0
+
+$ mise --version
+2026.10.11 macos-arm64 (2026-10-15)
+mise WARN  mise version 2026.10.25 available
+mise WARN  self-update is disabled for this install, update mise the same way you installed it
+EXIT=0
+
+$ mise exec -- node --version
+v24.21.0
+EXIT=0
+
+$ mise exec -- bun --version
+1.4.3
+EXIT=0
+
+$ dsh --version
+0.2.1-rc.5
+EXIT=0
+
+$ codex --version
+codex-cli 0.162.1
+WARNING: proceeding, even though we could not create PATH aliases: Operation not permitted (os error 1)
+EXIT=0
+
+$ which claude
+EXIT=1
+
+$ which kimi
+EXIT=1
+
+$ git rev-parse --git-dir
+fatal: could not open '/dev/null' for reading and writing: Operation not permitted
+EXIT=128
+
+$ sh -c 'env | cut -d= -f1 | grep -E '\''^(DSH|KIMI|CODEX|CLAUDE|STUDIO|OPENAI|ANTHROPIC)'\'' | sort'
+DSH_HOME
+DSH_PROFILE
+DSH_PROFILE_DIR
+DSH_SESSION_ID
+DSH_SHELL
+STUDIO_NEXT_INSTRUCTIONS
+STUDIO_PROBE_SECRET
+EXIT=0
+
+FINGERPRINT=sha256:daccda4e3385594c6a07b3c63fd79aa13f40f9c3100bbf83d4605fef43ad545a

@@ -1,0 +1,60 @@
+# PRB-10 子 agent 衰减（声明面 vs 运行期）
+DATE=2026-11-03T05:02:47.493Z
+FINGERPRINT=sha256:daccda4e3385594c6a07b3c63fd79aa13f40f9c3100bbf83d4605fef43ad545a
+REPO=<repo>
+
+TS=2026-11-03T05:01:35.802Z
+$ grep -rn "subagent\|attenuat" packages/adapters/src apps/daemon/src packages/core/src --include=*.ts
+packages/adapters/src/bindcard/dsh-card.ts:75:    faceId: 'in-process-subagent-decay',
+packages/adapters/src/bindcard/dsh-card.ts:80:    note: 'dsh-subagent preset+toolFilter+maxDepth；外部 CLI 后端保留自身权限（不假设继承收紧）',
+packages/adapters/src/bindcard/dsh-card.ts:227:    carrier: 'dsh-subagent/dsh-tool-subagent（preset/toolFilter/maxDepth）',
+packages/adapters/src/dsh.ts:426:   * 为空流 + exit 1，isCompleted=false 如实）；subagent/fork 会话不可 adopt。
+EXIT=0
+
+TS=2026-11-03T05:01:37.394Z
+$ grep -rn "in-process-subagent-decay\|dsh-subagent" packages/adapters/src --include=*.ts
+packages/adapters/src/bindcard/dsh-card.ts:75:    faceId: 'in-process-subagent-decay',
+packages/adapters/src/bindcard/dsh-card.ts:80:    note: 'dsh-subagent preset+toolFilter+maxDepth；外部 CLI 后端保留自身权限（不假设继承收紧）',
+packages/adapters/src/bindcard/dsh-card.ts:227:    carrier: 'dsh-subagent/dsh-tool-subagent（preset/toolFilter/maxDepth）',
+EXIT=0
+
+TS=2026-11-03T05:01:37.492Z
+$ dsh --help
+Usage: dsh [--profile] <name> [options] [app-args...]
+       dsh plugin --profile <name> <pnpm-args...>
+
+dsh: boot a DeepSeek Harness profile — an ordered stack of plugin-bundle patch
+layers under your own overrides.
+
+Arguments:
+  args                           arguments for the booted profile's app (see:
+                                 dsh --profile <name> --help)
+
+Options:
+  -V, --version                  output the version number
+  --profile <name>               the profile under $DSH_HOME/profiles to boot
+  --from-default-profile <name>  replace a custom profile with a fresh copy of a
+                                 shipped profile template
+  --patch <path>                 extra patch-list overlay applied after the
+                                 profile layer (repeatable)
+  --dump-config                  print the composed profile tree and exit
+  --dump-config-schema           print JSON Schema for profile entries and
+                                 patches without mounting
+  --dump-default-config          print the profile tree without its user layer
+                                 or --patch overlays and exit
+
+Examples:
+  dsh web                                   boot the web profile (same as: dsh --profile web)
+  dsh rescue --from-default-profile web
+                                            recreate rescue from the shipped web template, then boot it
+  dsh headless "run the tests"              answer one task, print the result, and exit
+  dsh tui --patch ./extra.yml               boot a custom profile with one extra overlay
+  dsh tui --resume <session>                arguments after the launcher flags reach the app
+  dsh web --help                            the web app's own flags and help
+  dsh plugin --profile tui add <package>    install a plugin into the tui profile
+
+EXIT=0
+
+TS=2026-11-03T05:01:39.509Z
+$ dsh --help | grep -in "subagent\|tool-filter\|max-depth"
+EXIT=1

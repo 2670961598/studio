@@ -1,0 +1,41 @@
+# PRB-24 Claude 拟稿点（CLI 在机性 + 权限/降级面）
+DATE=2026-11-03T05:02:47.518Z
+FINGERPRINT=sha256:daccda4e3385594c6a07b3c63fd79aa13f40f9c3100bbf83d4605fef43ad545a
+REPO=<repo>
+
+TS=2026-11-03T05:02:25.164Z
+$ which claude
+EXIT=1
+
+TS=2026-11-03T05:02:25.543Z
+$ claude --version
+EXIT=null ERROR=ENOENT
+
+TS=2026-11-03T05:02:25.548Z
+$ grep -n "claude" packages/adapters/src/agentconfig.ts | head -40
+52: *   - 接线面：dsh 家唯一有 seatbelt 端子；claude/codex/kimi 无端子——**显式放宽一律拒收**
+63: * （当前恰 codex/kimi 续跑）；dsh/claude 声明原样、agents_md 只登记不改值、运行时零改动。
+71:import { ClaudeAdapter } from './claude.ts'
+248: * 四家内置注册捷径：dsh（default）/ claude / codex / kimi 一行接入
+252: * 见 bindcard/cli-cards.ts）；dsh/claude 等合法声明原样。
+273:const BUILTIN_ORDER: readonly ExecutorFamily[] = ['dsh', 'claude', 'codex', 'kimi']
+294:  claude: (cmd, _patches, seatbelt) => {
+295:    assertSeatbeltTerminal('claude', seatbelt ?? DEFAULT_SEATBELT_PLAN)
+369:  claude: (cmd, patches) => BUILTIN_FACTORIES.claude(cmd, patches, DEFAULT_SEATBELT_PLAN),
+515: * 声明同一引用时返回原适配器（dsh/claude/自定义家零改动）；运行时方法原样委托。
+549: * 无 seatbelt 端子的家族（claude/codex/kimi）：**显式放宽一律拒收**——没有端子就没有 profile
+EXIT=0
+
+TS=2026-11-03T05:02:25.790Z
+$ grep -n "claude" packages/adapters/src/bindcard/cli-cards.ts | head -40
+23: *     dsh/claude 的 session_resume（真机实证/较硬）与其余字段一律原样透传。
+24: *   - agents_md 面只登记（registered-only）不改值：claude 版本门控降级发生在 launch 且
+34:  claude: 'BIND-CLI-CLAUDE-01',
+74:  '原生成本字段（仅 claude cost_native=true）',
+104:  { face: '适配器接入（args/流归一/kill 链）', status: '已有', anchor: 'claude.ts（--max-budget-usd、原生 cost、killpg 链）' },
+106:  { face: 'AGENTS.md 版本门控降级', status: '未证', anchor: 'claude.ts 头注（拟稿；detect 以 gaps 明报）' },
+111:  cardId: CLI_BINDING_CARD_IDS.claude,
+113:  family: 'claude',
+120:    launchForm: 'PATH 上的外部 CLI（claude -p JSON 流）；版本探测 detect --version',
+351:    family: 'claude',
+EXIT=0

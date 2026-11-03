@@ -1,0 +1,41 @@
+# PRB-09 投影与运行时比对（drift 面静态侦察）
+DATE=2026-11-03T05:02:47.484Z
+FINGERPRINT=sha256:daccda4e3385594c6a07b3c63fd79aa13f40f9c3100bbf83d4605fef43ad545a
+REPO=<repo>
+
+TS=2026-11-03T05:01:25.153Z
+$ grep -rn "projection.*drift\|drift.*projection\|reconcileProjection\|compareProjection" apps packages --include=*.ts
+apps/daemon/test/v2/records/mainloop-records.test.ts:22:  reconcileProjection,
+apps/daemon/test/v2/records/mainloop-records.test.ts:98:    const reconciled = reconcileProjection(hist.query({ company: COMPANY }), allEvents)
+apps/daemon/test/v2/records/mainloop-records.test.ts:108:    const reconciled = reconcileProjection(hist.query({ company: COMPANY }), stack.ledger.queryEvents({}))
+apps/daemon/src/engine/records/projection.ts:74:export function reconcileProjection(
+apps/daemon/src/engine/records/index.ts:59:  reconcileProjection,
+packages/company/src/projection/issues.ts:16:  legacyFaceDrift: 'projection/legacy-face-drift',
+EXIT=0
+
+TS=2026-11-03T05:01:30.950Z
+$ grep -rn "drift" apps/daemon/src packages/core/src --include=*.ts | grep -v "/test/"
+apps/daemon/src/engine/engine.ts:1300:    const { alarmed: unknownStateAlarmed, foreignKnown, drift: statusSetDrift, declaredMissing: declaredStatusMissing, declaredExtra: platformStatusExtra } = await runDev49Sentinels({
+apps/daemon/src/engine/engine.ts:1305:      driftKeys: index.statusSetDriftAlarmed,
+apps/daemon/src/engine/sentinel/sentinels.ts:48:  driftKeys: ReadonlySet<string>
+apps/daemon/src/engine/sentinel/sentinels.ts:90:  drift: number
+apps/daemon/src/engine/sentinel/sentinels.ts:136:  let drift = 0
+apps/daemon/src/engine/sentinel/sentinels.ts:152:        if (declared.has(name) || knownForeign.has(name) || deps.driftKeys.has(name)) continue
+apps/daemon/src/engine/sentinel/sentinels.ts:158:        drift += 1
+apps/daemon/src/engine/sentinel/sentinels.ts:187:  return { alarmed, foreignKnown, drift, declaredMissing, declaredExtra }
+apps/daemon/src/engine/tier/model-tier.ts:215:        'serve/model-tier-drift',
+apps/daemon/src/control/hot-reload.ts:255:  kind: 'reloaded' | 'invalid' | 'apply-failed' | 'unchanged' | 'company-mismatch' | 'trust-drift' | TrustAnchorReject
+apps/daemon/src/control/hot-reload.ts:361:    kind: 'invalid' | 'trust-drift' | TrustAnchorReject,
+apps/daemon/src/control/hot-reload.ts:455:        return refuse('trust-drift', 'trust-drift', `RELOAD_TRUST_DRIFT：${detail}`, detail, diff, requestId)
+EXIT=0
+
+TS=2026-11-03T05:01:31.581Z
+$ grep -rn "loadProjection\|ProjectionLoader" apps packages --include=*.ts
+EXIT=1
+
+TS=2026-11-03T05:01:35.731Z
+$ ls -1 packages/core/src/prm
+compile-projection.ts
+projection-input.ts
+spec.ts
+EXIT=0
