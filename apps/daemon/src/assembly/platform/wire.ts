@@ -15,6 +15,7 @@ import { createGateway, CONTROL_TICKET, type Gateway } from '@studio-next/gatewa
 import { createLocalPlatform } from '@studio-next/localplatform'
 import { createTaigaPlatform, type TaigaAuth, type TaigaEntity } from '@studio-next/taiga'
 import { createFakePlatform } from '../../engine/fakes.ts'
+import { createAuthorityGate, type AuthorityGate } from '../../engine/tools/authority-gate.ts'
 import { createGatedPlatform } from '../../engine/tools/gated-platform.ts'
 // 类型环破口（IMPL-06-05）：ServeConfig 归位 assembly/serve/config.ts（本件只做平台接线，
 // 不经 serve.ts 门面取型——门面只保留公共导出/转发）
@@ -41,6 +42,13 @@ export interface WireGatedPlatformDeps {
    * 用于验证「闸拒绝时底层 platform 不被调用」（NEG-SEC-01/N-a 装配腿），生产装配不传。
    */
   gateway?: Gateway
+  /**
+   * 授权链闸注入（studio-dev-528；缺省按下面默认策略现造）：测试/硬切装配的显式注入面。
+   * 生产缺省＝`grants: () => []` ＋ shadow 策略——授予记录生产者未建（差距 #4）期间不阻断
+   * 存量控制面写；有授权主张时仍强制核验（fail-closed）。硬切 `requireClaim: true` 在
+   * 授予记录生产者落地后由装配处一行切换。
+   */
+  authority?: AuthorityGate
 }
 
 export function wireGatedPlatform(
@@ -61,7 +69,22 @@ export function wireGatedPlatform(
   log(
     `[serve] 网关已接：平台写路径全收口（17-§7；platform=${config.platform}；控制面 control key，一调用一签发）；${secretLine}`,
   )
-  return createGatedPlatform(raw, gateway, { ctx, author })
+  // 授权链闸（studio-dev-528）：core/authority 五函数经本闸接进写路径。默认 grants 为空＝
+  // 授予记录生产者未建（差距 #4），故无主张的存量写走 shadow（放行＋留痕），有主张强制核验。
+  // 证据落 daemon 日志（值无密钥；形状=AuthorityEvidence，后续可原样进台账/面板）。
+  const authority =
+    deps?.authority ??
+    createAuthorityGate({
+      grants: () => [],
+      now: clock,
+      record: (evidence) => {
+        log(
+          `[authority] ${evidence.mode}/${evidence.state} action=${evidence.action} ticket=${evidence.ticket} evidence=${evidence.evidenceId}` +
+            `${evidence.detail !== undefined ? ` detail=${evidence.detail}` : ''}`,
+        )
+      },
+    })
+  return createGatedPlatform(raw, gateway, { ctx, author, authority })
 }
 
 /**

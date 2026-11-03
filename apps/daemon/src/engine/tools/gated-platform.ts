@@ -40,8 +40,9 @@
  *   - 包装器透明：engine 写调用签名不变（返回值仍是 FlowPlatform），零改动接线见 serve.ts。
  */
 import { configInvalid } from '@studio-next/contract'
-import { composeSignature, signedBody } from '@studio-next/gateway'
-import type { Gateway, GateRejectReason, SignatureContext } from '@studio-next/gateway'
+import { CONTROL_TICKET, composeSignature, signedBody } from '@studio-next/gateway'
+import type { Gateway, SignatureContext } from '@studio-next/gateway'
+import type { AuthorityGate } from './authority-gate.ts'
 import type {
   ActivityPage,
   ClassifiedError,
@@ -98,10 +99,18 @@ export interface GatedPlatformOptions {
    * 测试注入坏 token 验 fail-closed；未来按单 wkey 在此接缝切换（TODO 头注）。
    */
   mintControlKey?: () => string
+  /**
+   * 授权链闸（studio-dev-528；缺省不启用＝存量装配零变更）。给出即在 wkey 鉴权前先过
+   * core/authority 五函数接线（engine/tools/authority-gate.ts）：拒绝＝EXTERNAL_REJECT/
+   * gw-authority-*，底层 platform 零调用（fail-closed）。
+   */
+  authority?: AuthorityGate
+  /** 授权证据的单号锚（缺省 CONTROL_TICKET——控制面实例口径） */
+  ticket?: TicketId
 }
 
 /** 运行期拒绝（两级分类的运行级通道：Error 本体 + ClassifiedError 形状，对齐 configInvalid 手法） */
-function gatewayRejected(subcause: GateRejectReason, detail: string): Error & ClassifiedError {
+function gatewayRejected(subcause: string, detail: string): Error & ClassifiedError {
   const err = new Error(`EXTERNAL_REJECT/${subcause}：${detail}`) as Error & ClassifiedError
   err.category = 'EXTERNAL_REJECT'
   err.subcause = subcause
@@ -124,11 +133,23 @@ export function createGatedPlatform(platform: FlowPlatform, gateway: Gateway, op
   const mint = opts.mintControlKey ?? ((): string => gateway.issueControlKey())
 
   /**
-   * 写路径闸（17-§7）：现铸短命 control key → gateWrite（鉴权→结构化→署名）。
-   * 被拒 → EXTERNAL_REJECT/<gw-*> 上抛，**底层 platform 不被调用**（fail-closed，绝不绕过）。
-   * payload=包装器自组的 @action 信封（JSON.stringify 恒产对象、无裸换行——首行信封稳定）。
+   * 写路径闸（17-§7）：授权链判定（studio-dev-528）→ 现铸短命 control key → gateWrite
+   * （鉴权→结构化→署名）。任一步被拒 → EXTERNAL_REJECT/<gw-*> 上抛，**底层 platform 不被调用**
+   * （fail-closed，绝不绕过）。payload=包装器自组的 @action 信封（JSON.stringify 恒产对象、
+   * 无裸换行——首行信封稳定）。
    */
   function gate(action: GatewayAction, args: Record<string, unknown>, op: string): void {
+    // 0) 授权链判定（先于铸造 token：拒绝不烧 nonce；证据由闸内 record 落点留痕）
+    if (opts.authority !== undefined) {
+      const decision = opts.authority.authorize({ action, args, ticket: opts.ticket ?? CONTROL_TICKET })
+      if (!decision.allowed) {
+        throw gatewayRejected(
+          decision.reason ?? 'gw-authority-prohibited',
+          `平台写 ${op} 被授权链拒绝（动作 ${action}；state=${decision.state}；evidence=${decision.evidenceId}；` +
+            `fail-closed：底层平台未被调用）`,
+        )
+      }
+    }
     const token = mint()
     const payload = `@action ${action} ${JSON.stringify(args)}`
     const verdict = gateway.gateWrite(token, action, payload)
