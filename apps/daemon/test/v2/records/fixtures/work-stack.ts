@@ -22,6 +22,7 @@ import { createRegistry } from '@studio-next/adapters'
 import type { EventRecord, FlowPlatform, IssueRecord, TicketId } from '@studio-next/contract'
 import { openLedger, type Ledger } from '@studio-next/store'
 import { createEngine, ENGINE_CONFIG_DEFAULTS, type Engine, type EngineConfig, type TickReport } from '../../../../src/engine/engine.ts'
+import type { RecordWirePort } from '../../../../src/engine/records/index.ts'
 import { createFakeAdapter, createFakePlatform, type FakeAdapterMode } from '../../../../src/engine/fakes.ts'
 import { createDefaultGateRunner } from '../../../../src/engine/gate.ts'
 import { createDefaultAssembler } from '../../../../src/engine/prompt-assembly.ts'
@@ -44,8 +45,18 @@ export interface WorkTestStack {
   readonly mode: { value: FakeAdapterMode }
 }
 
+/**
+ * 记录写面注入器（studio-dev-527 追加面）：给 ledger 与公司标识，返记录写面端口——
+ * 缺省不注入＝记录面关（基线零行为），既有用例调用面/语义不变。
+ */
+export type RecordWireFactory = (args: { readonly ledger: Ledger; readonly company: string }) => RecordWirePort
+
 /** 建真栈（一用例一库一目录；overrides 仅测试面按需覆盖引擎配置——缺省=基线零行为） */
-export async function createWorkStack(label: string, overrides: Partial<EngineConfig> = {}): Promise<WorkTestStack> {
+export async function createWorkStack(
+  label: string,
+  overrides: Partial<EngineConfig> = {},
+  extra: { readonly recordsOf?: RecordWireFactory } = {},
+): Promise<WorkTestStack> {
   const root = await mkdtemp(path.join(tmpdir(), `sn-work-${label}-`))
   roots.push(root)
   const ledger = openLedger(path.join(root, 'ledger.sqlite'))
@@ -60,9 +71,11 @@ export async function createWorkStack(label: string, overrides: Partial<EngineCo
   const mode: { value: FakeAdapterMode } = { value: 'ok' }
   const registry = createRegistry()
   registry.register(createFakeAdapter({ mode: () => mode.value, name: 'fake-work' }), { default: true })
+  const records = extra.recordsOf?.({ ledger, company: DEMO_SNAPSHOT.slug })
   const engine = createEngine({
     platform,
     ledger,
+    ...(records !== undefined ? { records } : {}),
     registry,
     assembler: createDefaultAssembler({
       fwkVersion: 'v0.5-test',

@@ -175,6 +175,8 @@ import {
 } from '@studio-next/core'
 import type { ExecutorRegistry, SeatbeltGrant } from '@studio-next/adapters'
 import type { Ledger, WorkRecord } from '@studio-next/store'
+import type { RecordWirePort } from './records/index.ts'
+import { recordTickIntake, recordTransition } from './records/hooks.ts'
 import { modelTierDispatchFace, resolveModelTier } from './tier/model-tier.ts'
 import { gateDispatch, settleDispatch, type BudgetGateDeps } from './budget-gate.ts'
 import { createLaneRegistry } from './lanes/registry.ts'
@@ -359,6 +361,8 @@ export interface EngineDeps {
   rooms?: RoomDuty
   /** cost_guard 段（132-§6.4 单C）：快照装载面——闸四联动（R6）与源评估的配置源；缺省不注入=面关零行为 */
   costGuard?: CostGuardConfig
+  /** 记录族生产写面（studio-dev-527；docs/17-§2 映射表）；缺省不注入＝面关零行为 */
+  records?: RecordWirePort
   /**
    * 成本警戒 notify 出口（129-§6.1②：escalate route=notify/dispatch+notify 的即时提醒
    * 通道——批示项④ busy 场景队首+即时提醒；105-刀B IM 链的登记位）。缺省不注入=留痕
@@ -477,6 +481,7 @@ export { constructEngineSignature, type EngineSignature, type EngineSignatureDra
 
 export function createEngine(deps: EngineDeps): Engine {
   const { platform, ledger, registry, gateRunner, clock, config, catalog } = deps
+  const records = deps.records // 记录族生产写面（缺省 undefined＝面关；写失败不打断拍）
   // 署名构造期校验先行（SEC-FC-06）：非法署名在消费依赖/建立写路径前拒起——不降级、不补缺省。
   // 未注入＝迁移期常量（ENGINE_CONFIG_DEFAULTS.actor='daemon' 直用；缺口登记见 v2/17，
   // 审计断言归 IMPL-07-10）。全部写路径的 actor 只从 writeActor 取，不再散读 config.actor。
@@ -861,6 +866,8 @@ export function createEngine(deps: EngineDeps): Engine {
         ...(instructionsPath !== undefined ? { instructionsPath } : {}),
       })
       syncMirror(transitioned)
+      // 记录族生产写面·相位 3 派发（docs/17-§2）：迁移→REC-WORK-06（前置不齐即拒，不臆造）
+      if (records !== undefined) recordTransition({ records, ticket, attempt, fromState: fresh.state, toState: action.toState, at, actor: person.id })
       // 队列等待锚（129-§6.2-R4）：DISPATCH note 尾携 wait/prio/boost（锚形冻结；
       // 计算体拆入 todoqueue/queue.ts queueDispatchAnchor——轨2 R1① 本单「先拆再增」行基线清偿）
       const queueAnchorInfo = queueDispatchAnchor(queueCarry, ticket, at)
@@ -971,6 +978,8 @@ export function createEngine(deps: EngineDeps): Engine {
     if (requirements.fourOk) {
       const anchors = flowAnchors(flow)
       const transitioned = await platform.issues.transition(ticket, anchors.evidenceReady)
+      // 记录族生产写面·相位 4 收割（docs/17-§2）：证据就绪迁移→REC-WORK-06（前置不齐即拒）
+      if (records !== undefined) recordTransition({ records, ticket, attempt: entry.attempt, fromState: fresh.state, toState: anchors.evidenceReady, at: now(), actor: entry.personId })
       const endedAt = now()
       ledger.endWorkRecord(entry.workRecordId, {
         ended_at: endedAt,
@@ -1253,6 +1262,10 @@ export function createEngine(deps: EngineDeps): Engine {
     })
     const issueById = new Map<TicketId, IssueRecord>(issues.map((i) => [i.id, i]))
     for (const issue of issues) syncMirror(issue)
+    // 记录族生产写面·相位 1 采集尾（docs/17-§2）：活动驱动单 → REC-WORK-01（钩子体=records/hooks.ts）
+    if (records !== undefined) {
+      recordTickIntake({ records, issueById, affected, at: now(), actorOf: (issue) => resolvePerson(issue)?.id ?? config.defaultPersonId })
+    }
 
     // —— 相位 1 尾·镜像 GC 维护步（studio-dev-511；docs/17-§2 相位内步骤/§3 可重建投影）——
     // 平台全量活动集已在本拍取到：删「company 下 issue ∉ 活动集」的残行（LOCAL-* 与未来同型）。
