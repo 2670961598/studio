@@ -59,6 +59,7 @@ export {
   ticketRoomName,
   resolveTicketMembers,
   ARCHIVED_PREFIX,
+  BOT_PASSWORD_SECRET,
 } from './provision.ts'
 export type {
   ProvisionPerson,
