@@ -321,6 +321,10 @@ describe('B 面 work_record interrupted 即时收口（studio-dev-505）', () =>
     expect(fails).toHaveLength(1)
     expect(fails[0]?.note ?? '').toContain('WORKER_DEAD')
     expect(fails[0]?.note ?? '').toContain('work_record=interrupted')
+    // 文案自洽（studio-dev-522）：即时收口非阈值触发——note 不得前置「超阈值」
+    // （09:08:27 实测 457ms < 3600000ms 字面矛盾；只改文案，判据/门禁零变）
+    expect(fails[0]?.note ?? '').toContain('即时收口')
+    expect(fails[0]?.note ?? '').not.toContain('超阈值')
     // 收口＝回滚首批位（可重派），非收割结论
     expect((await stack.platform.issues.get(ticket)).state).toBe(DEFAULT_STATES.fresh)
   })

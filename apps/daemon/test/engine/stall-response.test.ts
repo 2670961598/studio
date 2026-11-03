@@ -246,6 +246,9 @@ describe('消亡面：无在途句柄 → GATE_FAIL（WORKER_DEAD）+ 遗留工�
     const gateFails = stack.ledger.queryEvents({ issue: t1 }).filter((e) => e.event === 'GATE_FAIL')
     expect(gateFails).toHaveLength(1)
     expect(gateFails[0]?.note ?? '').toContain('WORKER_DEAD：')
+    // 阈值路径文案（studio-dev-522）：达阈触发仍明写「超阈值」；非即时收口面不冒认「即时收口」
+    expect(gateFails[0]?.note ?? '').toContain('超阈值')
+    expect(gateFails[0]?.note ?? '').not.toContain('即时收口')
     expect(gateFails[0]?.attempt).toBe(1) // 在工 attempt 口径（记正在跑的这一誓）
     expect(countOf(stack.ledger, t1, 'STALL')).toBe(2)
 

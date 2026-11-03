@@ -87,15 +87,20 @@ export async function executeStallResponse(
   const nth = index.stallStrikesOf(ticket) + 1 // 索引建于拍首（不含本拍）——本拍告警是第 N 次
   const effective = action.stallThresholdMs ?? config.stallAfterMs
   const entry = inflight.get(ticket)
-  const silent = `在工静默 ${action.silentMs}ms 超阈值 ${effective}ms`
+  // B 面即时收口：无在途句柄 + 台账终态 interrupted（工人确定性消亡）——不等阈值/告警计数。
+  // 刀关（stallKillAfterAlarms=0）时仍尊重「全关」语义（只叫不处置）。
+  const immediateGone = action.workerGone === true && entry === undefined && threshold > 0
+  // 文案条件化（studio-dev-522，docs/17-§2 相位 4 STALL 响置）：即时收口非阈值触发——
+  // 不再前置「超阈值」（09:08:27 实测 457ms<3600000ms 字面矛盾且与「不等阈值」互斥）；
+  // silentMs/阈值只作观测记录。阈值路径文案不动（达阈触发明写「超阈值」）。
+  const silent = immediateGone
+    ? `在工静默 ${action.silentMs}ms（阈值 ${effective}ms；即时收口非阈值触发，仅记录）`
+    : `在工静默 ${action.silentMs}ms 超阈值 ${effective}ms`
   // 活性锚观测面（可审计；回退锚 issue.updated 也明写，不静默）
   const anchorFace =
     action.livenessSource !== undefined
       ? `；活性锚=${action.livenessSource}@${new Date(action.livenessAnchorAt ?? 0).toISOString()}`
       : ''
-  // B 面即时收口：无在途句柄 + 台账终态 interrupted（工人确定性消亡）——不等阈值/告警计数。
-  // 刀关（stallKillAfterAlarms=0）时仍尊重「全关」语义（只叫不处置）。
-  const immediateGone = action.workerGone === true && entry === undefined && threshold > 0
   if (!immediateGone && (threshold <= 0 || nth < threshold || (entry !== undefined && entry.dispatchedAtSeq === host.currentSeq()))) {
     // 只叫：告警事件照落（观测面不变——decide 4 号判定的台账留痕）
     host.makeEvent('STALL', fresh, workAttempt, tickEvents, {
