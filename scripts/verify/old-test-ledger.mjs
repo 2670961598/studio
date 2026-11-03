@@ -2,11 +2,11 @@
 // old-test-ledger.mjs —— 旧测试台账机械校验（MIG-02 / IMPL-02-02）
 //
 // 依据：plan/04 §1.8.4（校验五条）／§1.8.3（八列格式）／§1.8.3-补（baseline 与 ledger 关系、
-//       校验基准＝214 实测清单＋口径差 1 行；2026-11-03 补登 5 件（原 209））、plan/03 §三（MIG-02 出口第 4 条）、
+//       校验基准＝215 实测清单＋口径差 1 行；2026-11-03 补登 6 件（原 209；含 studio-dev-576 size-gate））、plan/03 §三（MIG-02 出口第 4 条）、
 //       plan/05 IMPL-02-02、docs/86 B5、docs/90 §三 R5（审计基线 37 vs 实测 20）。
 //
 // 校验七件事（任一不满足 → exit 1）：
-//   ① 214 个 `.test.ts` 路径全覆盖（排除 `test/v2/**`）：与仓内实时 walk 结果**逐项相等**，
+//   ① 215 个 `.test.ts` 路径全覆盖（排除 `test/v2/**`）：与仓内实时 walk 结果**逐项相等**，
 //      缺一件=无声删除、多一件=未登记新增，两个方向都判红；
 //   ② 口径差 1 行在册且路径为 `scripts/guards/boundaries.test.mjs`（vitest 第 210 件）；
 //   ③ 每行八列齐全：路径/状态/用例数/失败类/处置/责任波/理由/最近复跑；处置/责任波/理由无空；
@@ -26,7 +26,7 @@ import { pathToFileURL } from "node:url";
 
 const LEDGER = "docs/baselines/old-tests-ledger.md";
 const DELTA_PATH = "scripts/guards/boundaries.test.mjs";
-const EXPECT_FILES = 214; // 2026-11-03 补登 +5（44ad987×3 / d1bfcd2 / 0e20f10；原 209）
+const EXPECT_FILES = 215; // 2026-11-03 补登 +6（44ad987×3 / d1bfcd2 / 0e20f10 / studio-dev-576 size-gate；原 209）
 const EXPECT_RED_FILES = 13;
 const EXPECT_RED_CASES = 20;
 
@@ -129,10 +129,10 @@ export function checkLedger(root) {
   fact("16:28", "必须标注数据源时间 2026-10-28 16:28");
   fact("非门", "必须写明旧测试不作施工门");
 
-  // ① 214 行
+  // ① 215 行
   const filesSec = section(text, "files");
   if (filesSec === null) {
-    errors.push("缺锚点 ledger:files（214 行主表不可判）");
+    errors.push("缺锚点 ledger:files（215 行主表不可判）");
   } else {
     const rows = parseTables(filesSec).flatMap((t) => t.rows.map((r) => ({ cols: r.length, cells: r })));
     const eight = rows.filter((r) => r.cols === 8).map((r) => r.cells);

@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { SummarySidecar, TaskBrief } from '@studio-next/contract'
-import { renderTaskBrief, type BriefContext } from '../src/brief.ts'
+import { renderTaskBrief, SIZE_GATE_MAX_LINES_PER_FILE, type BriefContext } from '../src/brief.ts'
 
 const SUMMARY: SummarySidecar = {
   schema: 'summary/v1',
@@ -144,6 +144,68 @@ describe('通道说明三分支（04-§六 B5：用户级优先 / claude<2.1.277
     })
     expect(r.text).toContain('--append-system-prompt-file 注入：`/tmp/sp.md`')
     expect(r.text).toContain('claude<2.1.277')
+  })
+})
+
+describe('行数阈硬约束 + 交付自检清单（docs/17-§5.1，studio-dev-576：撞阈必须真拆，禁折行凑数）', () => {
+  it('首版恒注入硬约束节：阈值/判定/真拆两形态/凑数六类/规则源/判定要义', () => {
+    const t = renderTaskBrief('first', baseCtx()).text
+    expect(t).toContain('## 行数阈硬约束（撞阈必须真拆——禁止折注释/删空行/压缩语句凑行数，否则验证必判负；docs/17-§5.1）')
+    expect(t).toContain('文件改动后 >600 行必须拆')
+    expect(t).toContain('scripts/guards/boundary-rules.mjs')
+    expect(t).toContain('bun run guard:boundaries`（违例码 BC-S2')
+    // 真拆两形态（SG-3）：新建文件 / 抽函数到更低层模块
+    expect(t).toContain('撞阈唯一合法处置=**真拆**：①新建文件')
+    expect(t).toContain('②抽函数/类型到既有更低层模块')
+    // 凑数六类（SG-4）：折注释/删空行/语句压行/压缩 JSON/删测试/藏字符串
+    expect(t).toContain('折叠注释（多行注释压单行/删注释正文/JSDoc 删段）')
+    expect(t).toContain('删/合并空行')
+    expect(t).toContain('语句压行（多语句同行、块压一行、删格式化换行）')
+    expect(t).toContain('压缩 JSON/数组/对象换行')
+    expect(t).toContain('删减或跳过测试/缩水断言')
+    expect(t).toContain('把代码藏进字符串/模板/外部文件绕行数')
+    expect(t).toContain('测试全绿、验收 exit=0 也判 Q6 判负退回')
+    expect(t).toContain('行数下降 ∧ 无新增文件 ∧ 无抽函数 = 凑数')
+  })
+
+  it('「交付自检清单」四问逐条在场（①行数前后 ②真拆证据 ③凑数自查 ④基线距离）', () => {
+    const t = renderTaskBrief('first', baseCtx()).text
+    expect(t).toContain('## 交付自检清单（改完必须逐项自报进 REPORT——缺项=未完成；docs/17-§5.1）')
+    expect(t).toContain('- ① 行数前后：每个改动文件 `wc -l` 改动前 → 改动后（逐文件列，禁合计口径）')
+    expect(t).toContain('- ② 真拆证据：新增文件路径 / 抽出的函数与其落点')
+    expect(t).toContain('- ③ 凑数自查：折注释 / 删空行 / 压缩语句 / 删改测试——逐项「是·否」')
+    expect(t).toContain('- ④ 基线距离：`maxLinesPerFile − wc -l`（即 600 − 改动后行数）')
+  })
+
+  it('续跑版同构注入（前情摘要不替代硬约束）', () => {
+    const t = renderTaskBrief('resume', {
+      ...baseCtx(),
+      attempt: 2,
+      resume: { sessionId: 's9', summaryPath: '/x.json', summary: { ...SUMMARY, rejection_reason: 'Q6 折注释凑行数' } },
+    }).text
+    expect(t).toContain('## 前情摘要')
+    expect(t).toContain('Q6 折注释凑行数')
+    expect(t).toContain('## 行数阈硬约束')
+    expect(t).toContain('## 交付自检清单')
+  })
+
+  it('段序：开工自检之后、预算上限之前（per-attempt 操作面，不破 AGENTS.md 层序）', () => {
+    const t = renderTaskBrief('first', { ...baseCtx(), budgetCapUsd: 5 }).text
+    const selfCheckAt = t.indexOf('## 开工自检')
+    const sizeAt = t.indexOf('## 行数阈硬约束')
+    const listAt = t.indexOf('## 交付自检清单')
+    const budgetAt = t.indexOf('## 预算上限')
+    expect(selfCheckAt).toBeGreaterThan(-1)
+    expect(sizeAt).toBeGreaterThan(selfCheckAt)
+    expect(listAt).toBeGreaterThan(sizeAt)
+    expect(budgetAt).toBeGreaterThan(listAt)
+  })
+
+  it('阈值文案随常量渲染（不硬编码第二处 600，防文案漂移）', () => {
+    expect(SIZE_GATE_MAX_LINES_PER_FILE).toBe(600)
+    const t = renderTaskBrief('first', baseCtx()).text
+    expect(t).toContain(`文件改动后 >${SIZE_GATE_MAX_LINES_PER_FILE} 行必须拆`)
+    expect(t).toContain(`即 ${SIZE_GATE_MAX_LINES_PER_FILE} − 改动后行数`)
   })
 })
 

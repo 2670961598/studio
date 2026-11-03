@@ -3,6 +3,9 @@
  *
  * 规格依据（实现单引用）：
  *   - 17-§5：任务书两版——首次版 / 续跑版（续跑版含前情摘要 = 上次 summary.json）。
+ *   - 17-§5.1（studio-dev-576 补章）：行数阈硬约束 + 交付自检清单两节，首版/续跑版同构恒注入
+ *     （SG-5）——撞阈必须真拆，禁折注释/删空行/压缩语句凑行数（验证层 Q6 判负口径，SG-4）。
+ *     阈值常量镜像唯一源 boundary-rules.mjs，漂移由 test/size-gate.test.ts 机械对账。
  *   - 17-§3 末行 / B4 / F1-15：REPORT 旁落 summary.json sidecar（结论/改动文件/打回理由）
  *     供续跑前情摘要——本模板把它注入续跑版「前情摘要」节。
  *   - kernel.ts TaskBrief：装配管线的输出对端（executor 输入形状）——本包返回文本与
@@ -71,6 +74,39 @@ function channelNote(c: TaskBrief['AGENTS_MD']): string {
   }
 }
 
+/**
+ * 行数阈常量镜像（docs/17-§5.1 SG-1/SG-5）：唯一源 = scripts/guards/boundary-rules.mjs
+ * `maxLinesPerFile`。本包只渲染，不改阈、不立第二源（阈值修订=宪法变更=提案流，20-§十三）；
+ * 漂移由 test/size-gate.test.ts 读规则文件断言相等（机械对账）。
+ */
+export const SIZE_GATE_MAX_LINES_PER_FILE = 600
+
+/** 行数阈硬约束节（17-§5.1 SG-2/SG-3/SG-4：撞阈=真拆，禁凑数——Q6 判负口径） */
+function sizeGateSection(): string[] {
+  const max = SIZE_GATE_MAX_LINES_PER_FILE
+  return [
+    '## 行数阈硬约束（撞阈必须真拆——禁止折注释/删空行/压缩语句凑行数，否则验证必判负；docs/17-§5.1）',
+    `- 阈值：文件改动后 >${max} 行必须拆（\`maxLinesPerFile\`，docs/20-§十五.三.2）；存量基线 \`lineBaseline\` 只减不增，基线内件改动后不得超过基线值（docs/20-§十五.三.3；docs/v2/13-§3.4）。规则唯一源 \`scripts/guards/boundary-rules.mjs\`；自查 \`bun run guard:boundaries\`（违例码 BC-S2，docs/20-§十五.六.3）`,
+    '- 判定口径：行数=`wc -l`（含空行与注释，与门禁 countLines 同式）：**只看改动后文件**，不看「本次改动行数」——删 30 行加 30 行仍是超阈',
+    `- 撞阈唯一合法处置=**真拆**：①新建文件（落点受 docs/20-§十五.四 域平面/contrib 约束——新特性开子目录，不向域平面加散文件；新文件自身 ≤${max} 行）②抽函数/类型到既有更低层模块（方向按 docs/20-§十五.二）。拆后逐文件回判，基线内件净减=合法清偿`,
+    '- **严禁凑数**（即使测试全绿、验收 exit=0 也判 Q6 判负退回）：折叠注释（多行注释压单行/删注释正文/JSDoc 删段）、删/合并空行、语句压行（多语句同行、块压一行、删格式化换行）、压缩 JSON/数组/对象换行、删减或跳过测试/缩水断言、把代码藏进字符串/模板/外部文件绕行数',
+    '- 判定要义：行数下降 ∧ 无新增文件 ∧ 无抽函数 = 凑数；命中即改回真拆再交（同因重试=空转，docs/17-§6）',
+    '- 纯文档/配置单无代码行面：自检清单①④照填（N/A 须给理由），②③不得留空',
+  ]
+}
+
+/** 交付自检清单节（17-§5.1 SG-6：改完逐项自报进 REPORT，缺项=未完成） */
+function selfCheckSection(): string[] {
+  const max = SIZE_GATE_MAX_LINES_PER_FILE
+  return [
+    '## 交付自检清单（改完必须逐项自报进 REPORT——缺项=未完成；docs/17-§5.1）',
+    '- ① 行数前后：每个改动文件 `wc -l` 改动前 → 改动后（逐文件列，禁合计口径）',
+    '- ② 真拆证据：新增文件路径 / 抽出的函数与其落点（未撞阈写「未撞阈，无需拆」）',
+    '- ③ 凑数自查：折注释 / 删空行 / 压缩语句 / 删改测试——逐项「是·否」（任一「是」=改回真拆再交）',
+    `- ④ 基线距离：\`maxLinesPerFile − wc -l\`（即 ${max} − 改动后行数）；在 \`lineBaseline\` 内再报「基线值 / 改动后 / 差额」`,
+  ]
+}
+
 /** 任务书两模板渲染：first=首版；resume=续跑版（多「前情摘要」节=上次 summary.json 注入） */
 export function renderTaskBrief(kind: BriefKind, ctx: BriefContext): BriefRenderResult {
   if (ctx.acceptance.length === 0) {
@@ -129,6 +165,9 @@ export function renderTaskBrief(kind: BriefKind, ctx: BriefContext): BriefRender
     '## 开工自检（首步必做——studio-dev-269/320 实证教训固化）',
     '- 对象路径：任务描述给出的路径一律按**绝对路径**使用（相对路径先换算绝对再访问——工位 cwd ≠ 仓根，按相对路径探测=269 式环境审计空转）',
     '- 自检三问（结果写进 REPORT「环境」首段）：①任务对象（文件/目录）逐项可达？②bash/glob/grep 等工具可用？③不可达/不可用项=如实申报+降级续作或如实空转申报——禁止按错误假设默默干完再交差',
+    // 行数阈硬约束 + 交付自检清单（17-§5.1，studio-dev-576）：恒注入、无开关（SG-5）
+    ...sizeGateSection(),
+    ...selfCheckSection(),
   )
 
   if (ctx.budgetCapUsd !== undefined) {
