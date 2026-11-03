@@ -33,6 +33,12 @@ export interface BroadcastTargets {
   overview?: boolean
   /** 部门频道（值=部门 path，如 `departments/研发部`；映射缺失=软失败） */
   dept?: string
+  /**
+   * 显式房间（room_id；制作人-岗位持久对话的回信通道，docs/21-§七.4 / v2/14-§1.9）：
+   * 与 alert/overview/dept 三逻辑角色并列，直接 `sendMessage(room_id, …)`——不做 alias
+   * 解析（DM 房无稳定 alias）。缺省不传=既有三角色行为逐字节不变。
+   */
+  room?: string
 }
 
 /** 单频道失败（观测面：逐条落日志/PATROL 计量；不抛出） */
@@ -90,7 +96,15 @@ export function createMatrixBroadcastFace(opts: BroadcastFaceOptions): {
     return roomId
   }
 
-  const sendToOne = async (target: string, message: Notification): Promise<{ ok: true; target: string } | { ok: false; target: string; reason: string }> => {
+  const sendToOne = async (target: string, message: Notification, roomIdDirect?: string): Promise<{ ok: true; target: string } | { ok: false; target: string; reason: string }> => {
+    if (roomIdDirect !== undefined) {
+      try {
+        await opts.client.sendMessage(roomIdDirect, formatNotification(message))
+        return { ok: true, target }
+      } catch (err) {
+        return { ok: false, target, reason: `发送失败（room=${roomIdDirect}）：${err instanceof Error ? err.message : String(err)}` }
+      }
+    }
     const alias = targetAlias(target, { slug: opts.slug, deptSlugs: opts.deptSlugs, serverName })
     if (alias === undefined) {
       return { ok: false, target, reason: `部门 ${target} 无 deptSlugs 映射（daemon.yaml matrixDeptMap）——部门频道跳过` }
@@ -119,14 +133,15 @@ export function createMatrixBroadcastFace(opts: BroadcastFaceOptions): {
 
   return {
     async send(message: Notification, targets: BroadcastTargets): Promise<BroadcastReport> {
-      const roles: string[] = []
-      if (targets.alert === true) roles.push('alert')
-      if (targets.overview === true) roles.push('overview')
-      if (targets.dept !== undefined && targets.dept !== '') roles.push(`dept:${targets.dept}`)
+      const roles: Array<{ role: string; roomId?: string }> = []
+      if (targets.room !== undefined && targets.room !== '') roles.push({ role: 'room', roomId: targets.room })
+      if (targets.alert === true) roles.push({ role: 'alert' })
+      if (targets.overview === true) roles.push({ role: 'overview' })
+      if (targets.dept !== undefined && targets.dept !== '') roles.push({ role: `dept:${targets.dept}` })
       const sent: string[] = []
       const failed: BroadcastFailure[] = []
-      for (const role of roles) {
-        const r = await sendToOne(role, message)
+      for (const { role, roomId } of roles) {
+        const r = await sendToOne(role, message, roomId)
         if (r.ok) sent.push(role)
         else {
           failed.push({ target: role, reason: r.reason })

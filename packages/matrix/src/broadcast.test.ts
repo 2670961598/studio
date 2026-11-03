@@ -64,6 +64,27 @@ describe('createMatrixBroadcastFace', () => {
     expect(send?.body).toEqual({ msgtype: 'm.text', body: '[gate] **过闸**\n四要件齐\n—— daemon@test（bot 代发）', 'm.mentions': {} })
   })
 
+  it('显式 room 定向（持久对话回信）：直发 room_id、无 alias 解析，报告键=room', async () => {
+    const { f, client } = await loggedInClient({
+      '/_matrix/client/v3/rooms/!dm%3Alocalhost/send/m.room.message': [{ event_id: '$e1' }],
+    })
+    const face = createMatrixBroadcastFace({ client, ...OPTS, botMxid: '@bot:localhost' })
+    const report = await face.send(N, { room: '!dm:localhost' })
+    expect(report).toEqual({ sent: ['room'], failed: [] })
+    expect(f.calls.filter((c) => c.path.includes('/directory/room/')).length).toBe(0)
+    expect(f.calls.some((c) => c.path.includes('/rooms/!dm%3Alocalhost/send/m.room.message/'))).toBe(true)
+  })
+
+  it('room 发送失败=软失败条目（不抛，积压面归 daemon 出站队列）', async () => {
+    const { client } = await loggedInClient({
+      '/_matrix/client/v3/rooms/!dm%3Alocalhost/send/m.room.message': [{ __throw: 'hs down' }],
+    })
+    const face = createMatrixBroadcastFace({ client, ...OPTS, botMxid: '@bot:localhost' })
+    const report = await face.send(N, { room: '!dm:localhost' })
+    expect(report.sent).toEqual([])
+    expect(report.failed[0]?.target).toBe('room')
+  })
+
   it('alias 解析缓存：同 alias 两发只解析一次', async () => {
     const { f, client } = await loggedInClient({
       '/_matrix/client/v3/directory/room/%23studio-dev-overview%3Alocalhost': [{ room_id: '!r1:localhost' }],

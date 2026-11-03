@@ -70,6 +70,12 @@ export interface AssembleDispatchInput {
    */
   readView: TicketReadView
   /**
+   * 冻结验收命令覆盖（制作人-岗位持久对话轮次，docs/21-§七.4，studio-dev-646）：
+   * 在场=L4/任务书用该命令（对话题=`test -s REPORT.md`），不走全局工程单 acceptance
+   * （否则对话题永远等 deliverables/plan.md，结构性 GATE_FAIL）。缺省=全局 acceptance。
+   */
+  acceptanceOverride?: readonly string[]
+  /**
    * 续跑上下文（129-E 单E，F1-15/17-§5 续跑版）：在场=任务书出续跑版（前情摘要注入
    * 上次 summary.json）；缺省=首版（既有行为零变更）。三元组=engine 侧断点解析产物
    * （resolveResumePlan——work_records 最后一条带 session 工时单），executor 不可续时
@@ -164,6 +170,7 @@ export function createDefaultAssembler(ctx: AssemblerContext): PromptAssembler {
     // 读面分级消费面之一（17-§7）：Blind 档的防污染边界声明 + 产出物路径入 L4 scope——
     // L4 是 AGENTS.md 持久层（抗 auto-compact），任务书可能被压缩而边界必须长存；
     // 生成者正文/评论结构性不入（Blind 视图无此数据——结构保证，read-tiers.ts 头注）
+    const acceptance = [...(input.acceptanceOverride ?? ctx.acceptance)]
     const blindScope =
       input.readView.tier === 'blind'
         ? [
@@ -193,7 +200,7 @@ export function createDefaultAssembler(ctx: AssemblerContext): PromptAssembler {
         ticket: input.issue.id,
         attempt: input.attempt,
         objective: input.issue.title,
-        acceptance: ctx.acceptance,
+        acceptance,
         docRefs: ctx.docRefs,
         lessons: ctx.lessons ?? [],
         ...(blindScope !== undefined ? { scope: blindScope } : {}),
@@ -216,7 +223,7 @@ export function createDefaultAssembler(ctx: AssemblerContext): PromptAssembler {
       workspace: input.workspace,
       briefPath: input.briefPath,
       agentsChannel: input.agentsChannel,
-      acceptance: ctx.acceptance,
+      acceptance,
       docRefs: ctx.docRefs,
       objective: input.issue.title,
       ...(input.resume !== undefined ? { resume: input.resume } : {}),

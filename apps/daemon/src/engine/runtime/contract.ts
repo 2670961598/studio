@@ -36,6 +36,7 @@ import type { RoomDuty } from '../rooms/room-duty.ts'
 import type { WorkerKeyDeps } from '../worker-key.ts'
 import type { RecordPhaseFactsPort, RecordWirePort } from '../records/index.ts'
 import type { ObservationTickStep } from '../observe/index.ts'
+import type { ConversationTickDeps } from '../conversation/consume.ts'
 import type { DispatchDerivationGuard } from '../work/dispatch-seatbelt.ts'
 import type { DispatchDerivationRegistry } from '../work/derivation-registration.ts'
 import type { DispatchSelectionDeps } from '../work/dispatch-selection.ts'
@@ -104,6 +105,12 @@ export interface EngineDeps extends HarvestRecordingDeps {
   records?: RecordWirePort
   /** 记录事实口（studio-dev-560 刀C；决定点→记录事实。缺省＝C 八族 fail-closed，不臆造） */
   recordPhaseFacts?: RecordPhaseFactsPort
+  /**
+   * 制作人-岗位持久对话入站消费依赖（docs/21-§七，studio-dev-646 Phase 1；缺省不注入=
+   * 会话面关，drain 的 mention 分流走既有 @唤醒）。注入=payload `conversation:{v:1}`
+   * 的 mention 意图由会话消费件处理（绑定/窗口/命令），其余仍走 @唤醒。
+   */
+  conversation?: ConversationTickDeps
   /**
    * 成本警戒 notify 出口（129-§6.1②：escalate route=notify/dispatch+notify 的即时提醒
    * 通道——批示项④ busy 场景队首+即时提醒；105-刀B IM 链的登记位）。缺省不注入=留痕

@@ -153,7 +153,7 @@ export async function runServe(
     }
   }
 
-  const { engine, sources, stop, hotReload, notifyRelay, api, ops, restartProbe } = buildServeRuntime(config, ledger, snapshot, {
+  const { engine, sources, stop, hotReload, notifyRelay, conversationRelay, api, ops, restartProbe } = buildServeRuntime(config, ledger, snapshot, {
     ...(opts?.matrixSource !== undefined ? { matrixSource: opts.matrixSource } : {}),
     ...(opts?.matrixRoomFace !== undefined ? { matrixRoomFace: opts.matrixRoomFace } : {}),
     ...(opts?.notifyBroadcast !== undefined ? { notifyBroadcast: opts.notifyBroadcast } : {}),
@@ -233,6 +233,12 @@ export async function runServe(
       //    挂=软失败日志+计量 failed，面板仍第一落点）；relayEvents 恒不抛（双保险 catch）。
       if (notifyRelay !== undefined && report.events.length > 0) {
         void notifyRelay(report.events).catch((): void => {})
+      }
+      // —— 制作人-岗位持久对话出站中继（docs/21-§七.4，studio-dev-646；conversation 面开时）：
+      //    拍边界处理本拍收割信号（REPORT 正文回写会话）+ 重试出站队列（notify targets.room）。
+      //    fire-and-forget：回信是沟通面非执行前置——失败积压不丢、不阻主循环。
+      if (conversationRelay !== undefined) {
+        void conversationRelay.relay().catch((): void => {})
       }
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err)

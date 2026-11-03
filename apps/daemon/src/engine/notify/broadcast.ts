@@ -21,6 +21,11 @@ export interface NotifyBroadcastTargets {
   overview?: boolean
   /** 部门频道（值=部门 path，如 `departments/研发部`） */
   dept?: string
+  /**
+   * 显式房间（room_id；制作人-岗位持久对话回信，docs/21-§七.4 / v2/14-§1.9）：
+   * 与三逻辑角色并列、互不翻译；装配面直接发给该房间，不做 alias 解析。
+   */
+  room?: string
 }
 
 /** 单频道软失败（观测面：relay 落日志+计量） */

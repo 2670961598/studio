@@ -116,6 +116,26 @@ export interface ServeConfig extends HrServeConfig, RestartServeConfig, Signatur
   /** 制作人 MXID（缺省 @opengames:localhost——神号全知，130 §6.7.2；21A-§2.2） */
   matrixProducerMxid?: string
   /**
+   * 制作人-岗位持久对话开关（docs/21-§七，studio-dev-646 Phase 1；缺省关）：true=装配
+   * 会话存储/入站消费/出站中继（daemon 侧）；DM 房消息走会话路径（不走 @唤醒）。
+   * 开而未注入 notify 面或矩阵源=CONFIG_INVALID 拒启（不静默空转）。
+   */
+  conversation: boolean
+  /** 会话目录（缺省 `<rootDir>/conversations`；append-only JSONL，daemon 唯一读写） */
+  conversationDir?: string
+  /** DM 房 ID 白名单（分号分隔；`conversation: true` 时必配） */
+  conversationRooms?: string[]
+  /** 未绑定 DM 房的缺省岗位（缺省 PRIME-0 宰相） */
+  conversationDefaultPerson?: string
+  /** 上下文窗口条数（缺省 12；docs/21-§七.3 冻结策略） */
+  conversationWindow?: number
+  /** 上下文总字数预算（缺省 6000） */
+  conversationMaxChars?: number
+  /** 单条消息注入上限（缺省 2000） */
+  conversationMaxMessageChars?: number
+  /** 回复正文上限（缺省 12000） */
+  conversationReplyMaxChars?: number
+  /**
    * watch-file 示例源开关（22-§三.1 验收靶子；缺省关）：true 时监听 fileWatchPath 指定
    * 文件的变化，JSON 行各产一条 webhook 意图（dedupKey=mtime#行号，见 src/engine/sources.ts）。
    */
@@ -282,6 +302,13 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   jobPollMs: 15_000,
   matrix: false,
   matrixChannels: false,
+  // 制作人-岗位持久对话缺省关（docs/21-§七）：关=零装配零注入
+  conversation: false,
+  conversationDefaultPerson: 'PRIME-0',
+  conversationWindow: 12,
+  conversationMaxChars: 6000,
+  conversationMaxMessageChars: 2000,
+  conversationReplyMaxChars: 12000,
   // 人事同步器缺省关（DEV-48，docs/52-§九；缺省值面=HR_SERVE_DEFAULTS 单一源）
   ...HR_SERVE_DEFAULTS,
   // 受权重启缺省关（studio-dev-504 / #497 C-6）：不开面=生产零行为

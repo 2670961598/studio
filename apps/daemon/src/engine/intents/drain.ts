@@ -28,6 +28,8 @@ import {
   resolveTicketFlow,
 } from '@studio-next/core'
 import { createDataChangeConsumer, createMentionConsumer, createWebhookConsumer } from './taxonomy.ts'
+import { createConversationConsumer, type ConversationTickDeps } from '../conversation/consume.ts'
+import { isConversationPayload } from '../conversation/protocol.ts'
 import { createEscalateConsumer, type CostThresholdNotice } from './escalate.ts'
 import { wireRelayResumeFaces, type RelayResumeFaces } from './relay-resume-faces.ts'
 import { pricingTicketDescription } from '../pricing/publish.ts'
@@ -75,6 +77,12 @@ export interface DrainDeps {
   notify?: (notice: CostThresholdNotice) => void
   /** 队列峰值优先级登记位（P0-B「priority=3 置顶」——escalate/schedule 两消费件注入面，129-D） */
   touch: (ticket: TicketId, intent: InvokeIntent) => void
+  /**
+   * 制作人-岗位持久对话入站依赖（docs/21-§七，studio-dev-646；缺省不注入=面关）：
+   * mention 意图 payload 带 `conversation:{v:1}` 时转会话消费件（绑定/窗口/命令），
+   * 其余 mention 仍走既有 @唤醒（单点分流，不双派单）。
+   */
+  conversation?: ConversationTickDeps
   onMutation: () => void
   /** 明报面（tick errors） */
   errors: string[]
@@ -174,6 +182,14 @@ export async function drainIntents(deps: DrainDeps): Promise<RelayResumeFaces> {
   const consumeWebhook = createWebhookConsumer(consumerDeps)
   const consumeDataChange = createDataChangeConsumer(consumerDeps)
   const consumeMention = createMentionConsumer(consumerDeps)
+  // 会话分流（docs/v2/14-§1.9）：同一 kind、不同 payload 标记——无会话面=零行为（既有 @唤醒不变）
+  const consumeConversation =
+    deps.conversation !== undefined
+      ? createConversationConsumer({
+          ...consumerDeps,
+          conversation: deps.conversation,
+        })
+      : undefined
   const consumeEscalate = createEscalateConsumer({
     ...consumerDeps,
     ...(deps.departments !== undefined ? { departments: deps.departments } : {}),
@@ -195,7 +211,12 @@ export async function drainIntents(deps: DrainDeps): Promise<RelayResumeFaces> {
     [K in InvokeIntent['kind']]?: (intent: InvokeIntent, intentKey: string) => Promise<void>
   } = {
     schedule: consumeSchedule,
-    mention: consumeMention,
+    mention: async (intent: InvokeIntent, intentKey: string): Promise<void> => {
+      if (consumeConversation !== undefined && isConversationPayload(intent.payload)) {
+        return consumeConversation(intent, intentKey)
+      }
+      return consumeMention(intent, intentKey)
+    },
     webhook: consumeWebhook,
     'data-change': consumeDataChange,
     escalate: consumeEscalate,

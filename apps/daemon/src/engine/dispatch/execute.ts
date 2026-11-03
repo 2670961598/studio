@@ -53,6 +53,7 @@ import { dropQueueCarry, queueDispatchAnchor } from '../todoqueue/queue.ts'
 import { startSessionArchive } from '../sessions/archive.ts' // 会话归档接线（studio-dev-551）
 import { mintWorkerKey, workerKeyCredentials, workerKeyGuidance, WORKER_WKEY_ENV_KEY } from '../worker-key.ts'
 import type { EngineRuntime } from '../runtime/types.ts'
+import { CONVERSATION_ACCEPTANCE } from '../conversation/protocol.ts'
 
 export async function executeDispatch(
   rt: EngineRuntime,
@@ -199,6 +200,8 @@ export async function executeDispatch(
         agentsTarget,
         agentsChannel: { channel: adapter.capabilities.agents_md, target: agentsTarget },
         readView,
+        // 持久对话轮次（docs/21-§七.4）：任务书/闸门用 `test -s REPORT.md`，不用工程单验收
+        ...(rt.deps.conversation?.store.turnOf(ticket) !== undefined ? { acceptanceOverride: CONVERSATION_ACCEPTANCE } : {}),
         ...(resumeFace?.assembleCtx !== undefined ? { resume: resumeFace.assembleCtx } : {}),
       })
       // —— P3-② 权限前移（studio-dev-100 提案 §4.3-2，治 E12 于干预窗内）：工位脚手架

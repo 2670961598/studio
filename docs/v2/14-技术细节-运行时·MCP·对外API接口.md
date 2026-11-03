@@ -177,6 +177,50 @@ emergencyStop(req: EmergencyStopRequest, ctx): PortResult<StopReceipt>  // REC-W
 
 **覆盖核对（一句话，防双源）**：REC- 74 类的写入面全部由上述 13 端口方法承载，逐类「生产者/写入者」以 v2/11 §一总表为唯一口径；端口方法缺承载的记录类＝缺口登记 v2/17（判据：v2/11 每族「生产者」列可指回本卷某方法签名）。
 
+### 1.9 会话面（CONV-；**不新增 PORT**，复用 PORT-GATE.notify 的房间定向）
+
+> 依据：docs/21-§七（制作人-岗位持久对话通道，studio-dev-646 Phase 1）。本节只定义接口面与
+> 边界；端口计数不变（仍 13），REC- 记录族不新增，会话不是可审计记录族（v2/11 不登记 CONV）。
+
+```ts
+// 会话面（daemon 内部结构接口，零新增 contract PORT；Matrix 实现由 apps/boot 注入）
+interface ConversationSessionFace {
+  // 入站：DM 房消息 → 会话存储 + 单轮 intent（payload.conversation={v:1}，kind='mention'）
+  ingest(msg: ConversationInbound): Promise<'queued' | 'command' | 'dropped'>
+  // 出站：复用 notify（PORT-GATE.notify 的内部中继面）的 room 定向扩展——room=显式 room_id，
+  // 不走逻辑频道角色解析；失败=软失败面（不抛、不阻主循环）
+  reply(room: string, text: string): Promise<DeliveryReceipt>
+  // 会话运维（命令面）：clear 只追加审计行，不物理删除；绑定是会话事实（非组织人事事实）
+  clear(input: ClearInput): ClearReceipt
+  bind(input: BindInput): BindReceipt
+}
+```
+
+- **Notify 房间定向（对 `NotifyBroadcastTargets` 的唯一增量）**：`targets.room?: string`——
+  显式 `room_id`；与 `alert/overview/dept` 三逻辑角色并列、互不翻译。Matrix 实现的语义=
+  直接 `sendMessage(room_id, …)`，不做 alias 解析；报告键名 `room`，失败入 `failed[]`。
+  既有三角色行为零变更（缺省不传 room=逐字节同前）。
+- **会话存储**：`<rootDir>/conversations/<工号>.jsonl` + `_bindings.jsonl`（append-only；
+  行族 `msg/clear/turn/turn-done/reply/delivered/bind`），daemon 唯一读写；**不进公司 git
+  契约包、不进 Taiga、不登记 REC- 族**——会话不是单据（docs/21-§七.1/§七.5）。
+- **入站 intent 形状**（复用 `InvokeIntent{kind:'mention'}`，零新 kind、零新事件名）：
+  `{target:'', mention:'DM', text, eventId, sender, room, channel, conversation:{v:1}}`；
+  `dedupKey=eventId`（21A-§5.10 勘误后口径不变）；绑定工号由会话消费件按 `_bindings.jsonl`
+  解析（源侧不猜岗位，`target` 留空）。窗口/截断策略是消费件契约：N 条（缺省 12）/单条
+  2000 字/总 6000 字，超限从最旧丢并标注，见 docs/21-§七.3。
+- **轮次验收口径**：任务书 L4 与 gateRunner 按单覆盖为 `test -s REPORT.md`
+  （`CONVERSATION_ACCEPTANCE`，docs/21-§七.4）——不复用工程单全局 acceptance；四要件其余三条
+  不变，覆盖为空数组=fail-closed 不判过。
+- **出站回复来源**：轮次收割四要件齐（docs/17-§6）→ `work_records.report_ref` 的 REPORT
+  正文（去 front-matter/首个一级标题）→ notify room 定向；回复同时追加 `msg(role=person)`。
+  失败轮次只发一次不含正文的回执。发送失败积压在 `reply` 队列，`delivered` 回执后出队。
+- **命令面鉴权**：`/bind`/`/clear`/`/status` 只接受 `matrixProducerMxid`；其余发送者丢弃。
+  `clear` 审计行含 actor/时刻/清空前最后消息 id/条数，**不物理删除历史**。
+- **与工作流水边界**：轮次执行载体=内部单轮唤醒单（标题 `[对话]` 前缀、可过滤），单不承载
+  会话状态；会话正文/历史不入平台。零单据派发需新增执行面，属 Phase 2 提案（不在本卷承诺）。
+- **验收**：docs/21-§七.6 五条；单测覆盖存储窗口/clear/绑定/幂等/出站重试，spike 覆盖
+  「一条消息进 → 一条回复出」闭环（本单 `deliverables/evidence/`）。
+
 ---
 
 ## 二、端口-文件映射单点表（冻结门 F5 唯一源；治 K5/H3b-P0-1）

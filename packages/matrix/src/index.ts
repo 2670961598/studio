@@ -34,6 +34,10 @@ export type {
 } from './client.ts'
 export { createMatrixNotifier, createMentionSource } from './adapter.ts'
 export type { MentionSourceOptions } from './adapter.ts'
+// 制作人-岗位持久对话（docs/21-§七，studio-dev-646 Phase 1）：DM 意图解析器 + 命令解析
+// （纯核心零 IO；adapter 只在 DM 白名单房走本路径，与 @唤醒互斥）
+export { CONVERSATION_PAYLOAD_VERSION, DM_PERSON_ID_PATTERN, parseDmMessage } from './conversation.ts'
+export type { ConversationDmPayload, DmParserConfig } from './conversation.ts'
 // 105-刀B notify 广播面（studio-dev-219；daemon 侧结构同形接口 NotifyBroadcastFace 的
 // Matrix 实现——逻辑频道角色→alias→room_id→发送；逐频道软失败不抛出，刀B-6 回退语义）
 export { createMatrixBroadcastFace, targetAlias } from './broadcast.ts'

@@ -216,12 +216,21 @@ export async function assembleMatrixSource(
   const rooms = splitSemicolonList(config.matrixRooms)
   if (rooms !== undefined) options?.log?.(`[boot] matrix 房间白名单：${rooms.join('、')}`)
   const roles = parseMatrixRoles(config.matrixRoles)
+  // 制作人-岗位持久对话 DM 房（docs/21-§七，studio-dev-646）：DM 房内消息走会话路径，
+  // 与 @唤醒互斥（adapter 内单点分流）；配置已由 parseDaemonConfig 交叉校验（conversation
+  // ⇒ matrix + matrixProducerMxid + conversationRooms），此处只做装配。
+  const dmRooms = config.conversation ? config.conversationRooms : undefined
+  if (dmRooms !== undefined) {
+    options?.log?.(`[boot] 持久对话 DM 房：${dmRooms.join('、')}（制作人=${config.matrixProducerMxid ?? '?'}）`)
+  }
   const source = createMentionSource({
     client,
     company: config.company,
     selfUserId: botMxid, // 登录返回的规范 MXID（非配置原文）——防回声
     ...(rooms !== undefined ? { rooms } : {}),
     ...(roles !== undefined ? { roles } : {}),
+    ...(dmRooms !== undefined ? { dmRooms } : {}),
+    ...(dmRooms !== undefined && config.matrixProducerMxid !== undefined ? { producerUserId: config.matrixProducerMxid } : {}),
     ...(config.matrixPollMs !== undefined ? { pollIntervalMs: config.matrixPollMs } : {}),
     ...(config.matrixSyncTimeoutMs !== undefined ? { syncTimeoutMs: config.matrixSyncTimeoutMs } : {}),
   })

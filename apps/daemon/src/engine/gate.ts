@@ -117,7 +117,15 @@ const POST_KILL_GRACE_MS = 2_000
  */
 export function createAcceptanceGateRunner(
   acceptance: readonly string[],
-  opts?: { timeoutMs?: number },
+  opts?: {
+    timeoutMs?: number
+    /**
+     * 按单覆盖验收命令（制作人-岗位持久对话轮次，docs/21-§七.4，studio-dev-646）：
+     * 返回 undefined=用全局 acceptance；返回空数组=拒跑（无验收不判定，fail-closed）。
+     * 与任务书装配的 `acceptanceOverride` 同一常量来源（`CONVERSATION_ACCEPTANCE`）。
+     */
+    acceptanceFor?: (ticket: string) => readonly string[] | undefined
+  },
 ): GateRunner {
   const timeoutMs = opts?.timeoutMs ?? ACCEPTANCE_GATE_TIMEOUT_MS
   if (acceptance.length === 0) {
@@ -128,8 +136,18 @@ export function createAcceptanceGateRunner(
       const dir = path.dirname(input.briefPath)
       const reportPath = path.join(dir, REPORT_FILENAME)
       const summaryPath = discoverSummaryPath(dir)
+      const commands = opts?.acceptanceFor?.(input.ticket) ?? acceptance
       const size = existsSync(reportPath) ? statSync(reportPath).size : 0
       const reportExists = size > 0 // 空 REPORT=未落盘（「非空输出」同精神，不粉饰）
+      if (reportExists && commands.length === 0) {
+        return {
+          exitCode: 1,
+          reportExists: true,
+          reportPath,
+          ...(summaryPath !== undefined ? { summaryPath } : {}),
+          note: `真验收闸门：单 ${input.ticket} 的验收命令为空（acceptanceFor 返回 []）——fail-closed 不判过`,
+        }
+      }
       if (!reportExists) {
         return {
           exitCode: 1,
@@ -141,8 +159,8 @@ export function createAcceptanceGateRunner(
       }
       const parts: string[] = [`REPORT size=${size}`]
       let verdict = 0
-      for (let i = 0; i < acceptance.length; i += 1) {
-        const cmd = acceptance[i] as string
+      for (let i = 0; i < commands.length; i += 1) {
+        const cmd = commands[i] as string
         if (verdict !== 0) {
           parts.push(`[${i + 1}] skipped（前序已红）`)
           continue

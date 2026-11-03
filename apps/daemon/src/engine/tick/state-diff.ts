@@ -97,6 +97,7 @@ export async function stateDiffPhase(
       ...(rt.deps.departments !== undefined ? { departments: rt.deps.departments } : {}),
       costGuard: (): CostGuardConfig | undefined => costGuard,
       ...(rt.deps.notify !== undefined ? { notify: rt.deps.notify } : {}),
+      ...(rt.deps.conversation !== undefined ? { conversation: rt.deps.conversation } : {}),
       touch: (ticket, intent): void => {
         const p = Math.max(0, Math.min(3, intent.priority ?? 0))
         if (p <= 0) return

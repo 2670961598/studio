@@ -103,3 +103,92 @@
 2. 面板端发一条 → Matrix 端收到并使用同一 seq，不产生重复消息。
 3. 任一端 clear → 两端历史同时清空，clear 记录仍在（审计可查）。
 4. 无凭据写 → 401/403/503，且会话文件零变化。
+
+
+## 八、制作人-岗位持久对话通道（Phase 1，studio-dev-646）
+
+> 2026-11-04 制作人定调：做制作人与指定工号（缺省 PRIME-0 宰相）的 **Matrix DM 持续对话**——
+> 历史持久（除非 `clear`），员工回复发回房间；不要每问一句都新开一个频道/房间。
+> 现状判断（已核）：Matrix 私聊本质=1:1 DM 房间（无需新机制）；缺的是**会话持久化＋岗位绑定＋
+> clear＋双端同步**。既有 @唤醒源把消息当一次性 intent 派单（无会话状态），故本节是新能力，
+> 不是配置开关。
+
+### 8.1 事实源与存储选择（会话不是单据）
+
+- **存储＝公司运行目录下 `conversations/<工号>.jsonl`（append-only JSONL）+ `_bindings.jsonl`**，
+  由 daemon 唯一读写；**不进公司 git 契约包、不进 Taiga**。选文件不选台账表：
+  ① 纯文本可审计、可直接 `jq` 复核，`clear` 作为一条显式审计记录天然可查；
+  ② 无 schema migration，跨版本可读，会话可重建（重放 JSONL 即得）；
+  ③ 对话是运行期资产，不是组织人事事实（公司 git 目录）也不是可重建投影（SQLite 台账），
+     放 `rootDir`（daemon.yaml 的运行目录）语义最正。台账只留 `PATROL` 审计锚（不复制正文）。
+- 记录行（一行一 JSON，字段 `v/kind/at/id` 恒在）：`msg`（role=producer｜person｜system）、
+  `clear`（含 actor/时刻/清空前的最后消息 id/清空条数）、`turn`（本轮派单锚：issue/eventId）、
+  `turn-done`、`reply`（出站队列）＋`delivered`（送达回执）。`_bindings.jsonl` 记录
+  `bind`（room→工号、操作者、原因=`explicit`｜`default`）。
+- **会话不是单据**：Taiga/YouTrack 里没有「对话单」；对话正文、历史、clear 记录都不写进任何
+  单据字段或评论。会话轮次的执行载体见 7.5 边界。
+
+### 8.2 岗位绑定（Matrix DM 房 → 工号）
+
+- Phase 1 部署现实：daemon 只登录一个网关 bot 账号（`matrixUserId`），DM 房对端是制作人，
+  单靠房间成员推不出「想找哪个岗位」。故绑定是**显式会话事实**，不是房间拓扑猜测：
+  ① 制作人在 DM 房发 `/bind <工号>` → 绑定该房到工号（操作者必须是 `matrixProducerMxid`）；
+  ② 未绑定的 DM 房收到第一条消息 → 自动绑定到 `conversationDefaultPerson`（缺省 `PRIME-0` 宰相），
+     记一条 `reason=default` 审计行并在回执里明示「已按缺省绑定」；
+  ③ `/status` 查看当前绑定与窗口统计。
+- 每工号一份会话文件；一个工号可被多个 DM 房绑定（各自独立窗口，按 room 隔离）。
+- 目标态（§五「每 agent 工号一个 Matrix 账号」）落地后，绑定可由账号身份自动完成；Phase 1 的
+  显式绑定与其不冲突——账号是传输面，绑定是会话面。
+
+### 8.3 入站（房间消息 → 会话 → 派给绑定工号）
+
+- 只消费配置在 `conversationRooms` 白名单里的 DM 房、且发送者=`matrixProducerMxid` 的
+  `m.text` 消息；其余发送者/消息类型一律丢弃（频道内容按不可信输入对待，§三）。
+- 每条消息：按 `eventId` 幂等去重 → 追加 `msg(role=producer)` → 取**最近 N 条上下文** →
+  生成一条 `mention` 意图（`source=matrix`，`dedupKey=eventId`，payload 带 `conversation:{v:1}`），
+  由会话消费件物化为该工号的单轮唤醒单并排入决策候选。
+- **窗口与截断策略（冻结）**：`conversationWindow` 缺省 **N=12 条**（仅本房、最近一次 `clear`
+  之后、role∈{producer,person}）；单条消息注入上限 **2000 字**；窗口总预算
+  `conversationMaxChars` 缺省 **6000 字**；超预算从**最旧**开始丢并在上下文头部标注
+  「更早 M 条已省略」。上下文只进任务书，不回写平台。
+- 命令消息（`/bind`、`/clear`、`/status`、`/help`）由会话消费件直接处理，不派单。
+
+### 8.4 出站（员工回复 → 房间）与 `clear`
+
+- **轮次验收口径＝`test -s REPORT.md`（按单覆盖，不复用工程单全局 acceptance）**：全局验收常含
+  `deliverables/plan.md` 等工程面，对话题套用会结构性 GATE_FAIL；任务书 L4 与闸门两处同源注入
+  `CONVERSATION_ACCEPTANCE`（`engine/conversation/protocol.ts`），四要件其余三条不变。
+- 收割成功（docs/17-§6 四要件齐）后，取该轮工时单 `report_ref` 指向的 REPORT 正文为回复
+  原文（去掉 front-matter/首个一级标题），经 **notify 面定向 room** 发回 DM 房，同时追加
+  `msg(role=person)` 入会话；失败轮次发一条不含正文的失败回执（同一轮次只发一次）。
+  发送走 `reply` 出站队列 + `delivered` 回执：Matrix 暂不可达只积压不丢，下一拍重试。
+- `/clear`：向该工号会话追加一条 `clear` 审计行（谁、何时、清空前最后消息 id、清空条数），
+  上下文窗口从下一条消息起归零；**不物理删除任何历史行**（审计在，不可静默抹除）。
+  `clear` 后仍保持房间↔工号绑定，不需要重新 `/bind`。
+
+### 8.5 边界（明确不做/不属于本通道）
+
+- 会话正文与历史**不落 Taiga**、不落公司 git 契约包；台账只留 `PATROL` 审计锚（人/房/事件 id）。
+- 轮次的执行载体是既有一单一命的**内部唤醒单**（同 @唤醒，标题带 `[对话]` 前缀，可过滤），
+  收割即归档；这不是「对话单」——单不承载会话状态，重放/续跑不读对话正文以外的字段。
+  「零单据派发」需要引擎新增执行面（契约/主循环变更），登记 Phase 2 提案，不在本 Phase 越权实现。
+- Phase 1 不做：多人群聊、E2EE、附件/图片理解、跨公司路由、把 clear 做成物理删除。
+
+### 8.6 配置与验收
+
+```yaml
+matrix: true
+matrixChannels: true                          # 回信复用 notify 广播面（boot 注入；conversation 依赖）
+conversation: true
+conversationRooms: '!dm-room:localhost'        # DM 房 ID 白名单（分号分隔）
+# conversationDir: <rootDir>/conversations   # 缺省即可
+# conversationDefaultPerson: PRIME-0          # 未绑定房的缺省岗位
+# conversationWindow: 12 / conversationMaxChars: 6000 / conversationReplyMaxChars: 12000
+matrixProducerMxid: '@producer:localhost'      # 操作者身份（命令鉴权与入站白名单）
+```
+
+验收（Phase 1）：① DM 房发一句话 → 收到该岗位一条回复，且 `conversations/<工号>.jsonl`
+新增 producer/person 两行；② 连发两句 → 第二句的任务书里能看到第一轮问答（窗口生效）；
+   对话题任务书 L4 验收=`test -s REPORT.md`（不是工程单全局验收）；
+③ `/clear` 后下一句任务书的上下文为空，文件里保留 `clear` 审计行；④ 非制作人发送/非白名单房
+不产生派单；⑤ 重复投递同一 eventId 只产生一次派单。

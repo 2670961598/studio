@@ -31,6 +31,7 @@ import {
   parseMentions,
   type MentionParserConfig,
 } from './mentions.ts'
+import { parseDmMessage, type DmParserConfig } from './conversation.ts'
 
 /** 通知出口：channel 语义 = room_id（v0.1 不做 alias→room_id 解析，README 留痕） */
 export function createMatrixNotifier(client: MatrixClient): Notifier {
@@ -58,6 +59,14 @@ export interface MentionSourceOptions {
   maxBackoffMs?: number
   /** 工号识别样式（默认 DEFAULT_AGENT_ID_PATTERN） */
   agentIdPattern?: RegExp
+  /**
+   * 制作人-岗位持久对话 DM 房白名单（docs/21-§七，studio-dev-646）：在白名单房内，
+   * 制作人（producerUserId）的 m.text 一律产会话意图（payload.conversation），**不走**
+   * @唤醒解析（避免同一条消息双派单）。缺省=不开 DM 会话路径（行为与既有逐字节一致）。
+   */
+  dmRooms?: readonly string[]
+  /** 制作人 MXID（matrixProducerMxid；dmRooms 给定时必配，否则 DM 路径不产意图） */
+  producerUserId?: string
 }
 
 /** @唤醒源：只产意图，绝不直接驱动 worker（docs/22 铁律） */
@@ -72,6 +81,11 @@ export function createMentionSource(options: MentionSourceOptions): InvokeSource
     ...(options.selfUserId !== undefined ? { selfUserId: options.selfUserId } : {}),
   }
   const allowedRooms = options.rooms !== undefined ? new Set(options.rooms) : undefined
+  const dmRooms = options.dmRooms !== undefined ? new Set(options.dmRooms) : undefined
+  const dmConfig: DmParserConfig | undefined =
+    dmRooms !== undefined && options.producerUserId !== undefined
+      ? { company: options.company, producerUserId: options.producerUserId, rooms: [...dmRooms] }
+      : undefined
 
   let running = false
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -99,7 +113,15 @@ export function createMentionSource(options: MentionSourceOptions): InvokeSource
       } else {
         for (const message of extractRoomMessages(sync)) {
           if (message.sender === options.selfUserId) continue
-          if (allowedRooms !== undefined && !allowedRooms.has(message.roomId)) continue
+          const isDmRoom = dmRooms?.has(message.roomId) ?? false
+          if (allowedRooms !== undefined && !allowedRooms.has(message.roomId) && !isDmRoom) continue
+          if (isDmRoom) {
+            // DM 房：会话路径优先且互斥（docs/v2/14-§1.9）；配置不齐=不产意图（fail-closed）
+            if (dmConfig === undefined) continue
+            const intent = parseDmMessage(message, dmConfig)
+            if (intent !== undefined) emit(intent)
+            continue
+          }
           for (const intent of parseMentions(message, parserConfig)) emit(intent)
         }
       }

@@ -29,6 +29,7 @@
  * demo 随机源（可注入）。只收配置校验件（serveconfig/coerce、hrsync/config、channels/channels）
  * 与引擎缺省常量。runtime.ts / run.ts / executor-face.ts 从这里取同一份配置契约。
  */
+import path from 'node:path'
 import { parseWhitelistSpec } from '../../engine/directive/index.ts'
 import { parseJudgeSites } from '../../engine/judge/sites129.ts'
 import { parseModelTierTickets } from '../../engine/tier/model-tier.ts'
@@ -46,6 +47,25 @@ import { DEFAULT_SERVE_CONFIG, type ServeConfig } from './config-types.ts'
 // 配置形状/缺省面拆至 config-types.ts（docs/20-§十五.三 600 行阈；拆后原文件余量 ≥50）；
 // 此处再出口保持既有导入面零改行（runtime.ts / run.ts / executor-face.ts 仍从 ./config.ts 取契约）。
 export { DEFAULT_SERVE_CONFIG, type ServeConfig } from './config-types.ts'
+
+/** DM 房白名单（docs/21-§七.6）：分号分隔 room_id；空/非 `!` 开头=CONFIG_INVALID 拒启 */
+function parseConversationRooms(raw: string): string[] {
+  const rooms = raw.split(';').map((v) => v.trim()).filter((v) => v !== '')
+  if (rooms.length === 0) throw new Error('daemon.yaml：conversationRooms 为空（至少一个 DM 房 room_id）')
+  for (const room of rooms) {
+    if (!room.startsWith('!')) throw new Error(`daemon.yaml：conversationRooms 条目须为 room_id（!xxx:server；实得 ${room}）`)
+  }
+  return rooms
+}
+
+/** 会话正整数闸（窗口/字数面）：非整数或越界＝明报不猜 */
+function conversationPositiveInt(value: string | number | boolean, key: string, min: number, max: number): number {
+  const v = num(value, key)
+  if (!Number.isInteger(v) || v < min || v > max) {
+    throw new Error(`daemon.yaml：${key} 须为 ${min}..${max} 的整数（实得 ${v}；docs/21-§七.3）`)
+  }
+  return v
+}
 
 function parseScalar(raw: string): string | number | boolean {
   const v = raw.trim()
@@ -200,6 +220,15 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'matrixChannels': cfg.matrixChannels = bool(value, key); break
       case 'matrixDeptMap': cfg.matrixDeptMap = str(value, key); break
       case 'matrixProducerMxid': cfg.matrixProducerMxid = str(value, key); break
+      // —— 制作人-岗位持久对话（docs/21-§七，studio-dev-646 Phase 1）：五键解析即验 ——
+      case 'conversation': cfg.conversation = bool(value, key); break
+      case 'conversationDir': cfg.conversationDir = str(value, key); break
+      case 'conversationRooms': cfg.conversationRooms = parseConversationRooms(str(value, key)); break
+      case 'conversationDefaultPerson': cfg.conversationDefaultPerson = str(value, key); break
+      case 'conversationWindow': cfg.conversationWindow = conversationPositiveInt(value, key, 1, 200); break
+      case 'conversationMaxChars': cfg.conversationMaxChars = conversationPositiveInt(value, key, 500, 100_000); break
+      case 'conversationMaxMessageChars': cfg.conversationMaxMessageChars = conversationPositiveInt(value, key, 100, 100_000); break
+      case 'conversationReplyMaxChars': cfg.conversationReplyMaxChars = conversationPositiveInt(value, key, 100, 200_000); break
       case 'fileWatch': cfg.fileWatch = bool(value, key); break
       case 'fileWatchPath': cfg.fileWatchPath = str(value, key); break
       case 'cadence': cfg.cadence = bool(value, key); break
@@ -310,6 +339,37 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
   }
   // —— 频道供给交叉校验（130-P3，130 提案 §6.7.3-③；fail-fast 同 matrix 先例）
   crossValidateMatrixChannels(cfg)
+  // —— 持久对话交叉校验（docs/21-§七.6，studio-dev-646 Phase 1；fail-fast 同 matrix 先例）：
+  //    开关开=矩阵源/制作人/白名单必有；缺省会话目录落 <rootDir>/conversations（运行期资产，
+  //    不进公司 git 契约包、不进 Taiga——docs/21-§七.1）。关=以下一律不校验（行为零变）。
+  if (cfg.conversation) {
+    const missingConversation = [
+      ...(!cfg.matrix ? ['matrix: true'] : []),
+      ...(cfg.matrixProducerMxid === undefined || cfg.matrixProducerMxid.trim() === '' ? ['matrixProducerMxid'] : []),
+      ...(cfg.conversationRooms === undefined || cfg.conversationRooms.length === 0 ? ['conversationRooms'] : []),
+    ]
+    if (missingConversation.length > 0) {
+      throw new Error(
+        `daemon.yaml：conversation: true 缺必配键：${missingConversation.join('、')}（docs/21-§七.6；DM 房消息入站与命令鉴权都要制作人身份）`,
+      )
+    }
+    const defaultPerson = cfg.conversationDefaultPerson ?? 'PRIME-0'
+    if (!/^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+$/.test(defaultPerson)) {
+      throw new Error(`daemon.yaml：conversationDefaultPerson 须为工号样式（如 PRIME-0；实得 ${defaultPerson}）`)
+    }
+    const window = cfg.conversationWindow ?? 12
+    const maxChars = cfg.conversationMaxChars ?? 6000
+    const maxMessageChars = cfg.conversationMaxMessageChars ?? 2000
+    if (maxMessageChars > maxChars) {
+      throw new Error(
+        `daemon.yaml：conversationMaxMessageChars(${maxMessageChars}) 不得大于 conversationMaxChars(${maxChars})——单条全占预算会让窗口恒定 1 条`,
+      )
+    }
+    if (window < 1) throw new Error('daemon.yaml：conversationWindow 须 ≥1')
+    if (cfg.conversationDir === undefined || cfg.conversationDir.trim() === '') {
+      cfg.conversationDir = path.join(cfg.rootDir, 'conversations')
+    }
+  }
   return cfg
 }
 

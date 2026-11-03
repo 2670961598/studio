@@ -48,6 +48,7 @@ import { flowsFromWorkflows } from '../../engine/typeflows.ts'
 import type { MatrixHrFace } from '../../engine/hrsync/hrsync.ts'
 import type { MatrixRoomFace, MatrixRoomFaceContext } from '../../engine/rooms/room-duty.ts'
 import { wireNotifyAssembly } from '../notify/notify.ts'
+import { conversationAcceptanceOptions, wireServeConversation } from './conversation-face.ts'
 import { wireServeOutboundGate } from '../outbound-gate/wire.ts'
 import type { NotifyBroadcastFace } from '../../engine/notify/broadcast.ts'
 import { assembleHrSync } from '../hrsync/assemble.ts'
@@ -266,10 +267,11 @@ export function buildServeRuntime(
   // —— notify 广播中继装配（105-刀B，studio-dev-219；面注入=开，缺省=零装配零行为）：
   //    装配体拆至 assembly/notify/（三件套：拍边界事件中继+cost 警戒 IM 出口+惊动计量
   //    PATROL；matrix 挂=IM 副本缺失，面板仍第一落点）。
+  const wrappedNotifyFace = opts?.notifyBroadcast !== undefined ? outbound.wrapNotifyFace(opts.notifyBroadcast) : undefined
   const wiredNotify =
-    opts?.notifyBroadcast !== undefined
+    wrappedNotifyFace !== undefined
       ? wireNotifyAssembly({
-          face: outbound.wrapNotifyFace(opts.notifyBroadcast),
+          face: wrappedNotifyFace,
           company: config.company,
           heartbeatIssue: engineConfig.heartbeatIssue,
           actor: engineConfig.actor,
@@ -283,6 +285,9 @@ export function buildServeRuntime(
   if (wiredNotify !== undefined) {
     log('[serve] notify 广播面已装配：事件中继（拍边界）+cost 警戒即时出口+惊动计量（105-刀B，studio-dev-219）——matrix 挂=IM 副本缺失，面板仍第一落点')
   }
+  // —— 制作人-岗位持久对话装配（docs/21-§七，studio-dev-646 Phase 1；关=零装配零注入）——
+  //    装配体拆至 assembly/serve/conversation-face.ts（先拆后增：runtime 只留一行调用）
+  const wiredConversation = wireServeConversation({ config, wrappedNotifyFace, ledger, people: () => companyState.snapshot.people, log })
   // cost 警戒出口（181 EngineDeps.notify 注入件）：面注入=IM 即时广播叠加（129 批示项④）
   const costNotifyOutlet = wiredNotify?.costNoticeOutlet ?? createCostNotifyOutlet(log)
   // 平台写出站闸（exits.ts platform-write）：gated 代理外再包出站扫描（写文本过闸后才出站）
@@ -301,6 +306,7 @@ export function buildServeRuntime(
     platform: enginePlatform,
     signature: identity.signature, // 署名三值注入（SEC-FC-06/SEC-SIG-01；studio-dev-529）：system＋onBehalfOf=决定人——engine 写路径 actor 取决定人，构造期校验先行
     ...(workerKeys !== undefined ? { workerKeys } : {}),
+    ...(wiredConversation !== undefined ? { conversation: wiredConversation.tick } : {}),
     ...(hrDigester !== undefined ? { hrSync: hrDigester } : {}),
     ...(config.companyDir !== undefined ? { companyWrite: companyWritePort } : {}), // 公司目录写面（studio-dev-541；DOM-01 唯一写入者）
     ...(roomFace !== undefined ? { rooms: roomFace } : {}),
@@ -317,7 +323,7 @@ export function buildServeRuntime(
     assembler: makeAssembler(),
     // 闸门双形态（v0.5 真单刀）：真单=逐条真执行冻结验收命令；demo=exit0 模拟占位
     gateRunner: realGate
-      ? createAcceptanceGateRunner(acceptance)
+      ? createAcceptanceGateRunner(acceptance, conversationAcceptanceOptions(wiredConversation))
       : createDefaultGateRunner(),
     ...(realGate ? { mergeRun: createDefaultMergeRunDeps({ gateCommand: acceptance }) } : {}), // 202-P2 相位 5 合并跑（面关=v0 模拟轨）
     clock,
@@ -344,6 +350,7 @@ export function buildServeRuntime(
     onWorkComplete: (signal: RelayWorkSignal): void => {
       recordsFace.objectRecords.afterHarvest(signal)
       relayPublish?.(signal)
+      wiredConversation?.relay.onWorkComplete(signal) // 会话轮次回写信号（拍边界 relay 消费）
     },
   })
 
@@ -527,6 +534,8 @@ export function buildServeRuntime(
     ...(resumePublish !== undefined ? { resumePublish } : {}),
     // 105-刀B（219）：拍边界事件中继露头（notifyBroadcast 注入时；runServe 主循环接线）
     ...(wiredNotify !== undefined ? { notifyRelay: wiredNotify.relayEvents } : {}),
+    // 制作人-岗位持久对话出站中继（docs/21-§七.4；runServe 拍边界接线）
+    ...(wiredConversation !== undefined ? { conversationRelay: wiredConversation.relay } : {}),
     async stop(): Promise<void> {
       // 先关 API 入口（不再接新请求）→ 停源（不再进新意图）→ 引擎 drain → 关台账（22-§三.3）
       await api.close()

@@ -18,6 +18,7 @@ import type { ServeApiWiring } from '../api/serve-face.ts'
 import type { ServeConfig } from './config.ts'
 import type { RestartProbeFace } from './executor-face.ts'
 import type { RecordPhaseFactsPort, RootGrantFact } from '../../engine/records/index.ts'
+import type { ConversationRelay } from '../../engine/conversation/reply.ts'
 import type { ServeOpsFace } from '../ops/index.ts'
 import type { DerivationServeFace } from './derivation.ts'
 import type { RootDelegationTrace } from './root-delegation/root-face.ts'
@@ -72,6 +73,12 @@ export interface ServeRuntime extends ServeOpsFace, RestartProbeFace {
    * 只读消费）。永不抛（软失败=日志+计量 failed 数，面板仍第一落点——刀B-6）。
    */
   notifyRelay?: (events: readonly EventRecord[]) => Promise<void>
+  /**
+   * 制作人-岗位持久对话出站中继（docs/21-§七.4，studio-dev-646；conversation: true 时存在）：
+   * runServe 在拍边界（notify 中继之后）调 relay()——消费 onWorkComplete 信号（REPORT 正文
+   * 回写会话）+ 重试出站队列（notify `targets.room`）；恒不抛，失败积压不丢。
+   */
+  conversationRelay?: ConversationRelay
   /** 对外 API 同进程装配面（MIG-06 收口；v2/14 §四）：runServe 在源启动前 await start()，停机先 close() */
   api: ServeApiWiring
   /** 根委任审计投影（SEC-ROOT-02 启动腿；v2/15 §7.3 步⑤；装配期已验，缺省=未装 root 面） */
