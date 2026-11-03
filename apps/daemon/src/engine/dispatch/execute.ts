@@ -33,6 +33,9 @@ import { personDayGateInput } from '../cost-guard/fold.ts'
 import { WORKSPACE_UMASK } from '../jobs/harvest-recon.ts'
 import { sentinelBriefBlock, sentinelDutyForTicket } from '../jobs/sentinel.ts'
 import { instructionsTarget, removeInstructions, writeInstructions } from '../instructions-store.ts'
+// 执行器选择链钩子（studio-dev-620；v2/07 §一）：钩子体驻 work/dispatch-selection.ts，
+// 本文件只留相位 3 一次接线（engine.ts 零改动——#556 拆件后派发体在本文件）。
+import { gateDispatchSelection } from '../work/dispatch-selection.ts'
 import { resumeDispatchFace } from '../intents/relay-resume-faces.ts'
 import type { ResumeDispatchPlan } from '../intents/relay-resume.ts'
 import { applyDispatchProjection } from '../prm/dispatch-projection.ts'
@@ -110,12 +113,24 @@ export async function executeDispatch(
     // fallback=档位适配器——tier 面选位先于 resume 判定，见上）
     const resumeFace =
       resumePlan !== undefined ? resumeDispatchFace(registry, resumePlan, tierFace?.adapter ?? registry.pick()) : undefined
-    const adapter =
+    const candidate =
       resumeFace !== undefined && resumeFace.adapter !== undefined
         ? resumeFace.adapter
         : (tierFace?.adapter ?? registry.pick())
-    if (adapter === undefined) return fail('注册表无存活 executor（registry.pick 空）', { kind: 'missing', capabilityRef: 'executor:registry.pick' })
+    if (candidate === undefined) return fail('注册表无存活 executor（registry.pick 空）', { kind: 'missing', capabilityRef: 'executor:registry.pick' })
     const attempt = index.attemptOf(ticket)
+    // 执行器选择链（studio-dev-620；v2/07 §一）：单据指定＞岗位绑定＞默认；拒派不降级
+    //（ESCALATE 每单每因一次——去重账 rt.selectionRejections）。解析/适配/留痕体在
+    // work/dispatch-selection.ts，本文件只留相位 3 一次调用（docs/17-§2 派发；docs/17-§6
+    // 拒派=不启动——fail 后不 transition/不 launch/不落工时单）。
+    const selection = gateDispatchSelection(
+      rt.deps.dispatchSelection,
+      { registry, ticket, personId: person.id, candidate, resumeActive: resumeFace?.active === true },
+      rt.selectionRejections,
+      (note) => makeEvent('ESCALATE', fresh, attempt, tickEvents, { note }),
+    )
+    if (selection.kind === 'err') return fail(selection.message)
+    const { adapter, anchor: selectionAnchor } = selection
     // workspace 落点（DEV-28，docs/43-§五 派发权限圈①cwd）：aiwsRoot 给定 → 员工家
     // .AIWS/<部门路径>/<工号>/tickets/<单号>/att<N>（收割四要件与 deliverables 收账经
     // dirname(briefPath) 随迁——闸门/台账引用零改动）；缺省 → 旧一次性布局（引擎直连
@@ -306,7 +321,7 @@ export async function executeDispatch(
         size: Buffer.byteLength(assembled.agentsMd.text, 'utf8'),
         payload_hash: `sha256:${createHash('sha256').update(assembled.agentsMd.text, 'utf8').digest('hex')}`,
         ...(resumeFace !== undefined ? { causation_id: resumeFace.causationId } : {}),
-        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version}${tierFace?.noteAnchor ?? ''};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${minted !== undefined ? `;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=${minted.nonce}` : ''}${action.breakerProbe === true ? `;breaker=half-open-probe（冷却窗过——单次试探：成功即复位，失败回全开续冷却，DEV-46）` : ''}${seatbeltSegment}${prm.noteAnchor}${resolved.autoAssignNote ?? ''}${queueAnchorInfo.waitAnchor}${resumeFace?.noteAnchor ?? ''}`,
+        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version}${tierFace?.noteAnchor ?? ''};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${minted !== undefined ? `;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=${minted.nonce}` : ''}${action.breakerProbe === true ? `;breaker=half-open-probe（冷却窗过——单次试探：成功即复位，失败回全开续冷却，DEV-46）` : ''}${seatbeltSegment}${selectionAnchor}${prm.noteAnchor}${resolved.autoAssignNote ?? ''}${queueAnchorInfo.waitAnchor}${resumeFace?.noteAnchor ?? ''}`,
       })
       // 派发成功即出队（129-§6.2）：携带条删——GATE_FAIL 回滚再入队走 touchQueueCarry
       // 新钟（attempt 轮次可区分，队列等待观测口径=每誓一钟，不跨轮累计）。

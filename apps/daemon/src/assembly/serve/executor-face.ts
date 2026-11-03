@@ -20,11 +20,13 @@ import {
   wireRegistry,
   type ExecutorRegistry,
 } from '@studio-next/adapters'
+import { EMPTY_SELECTION_CHAIN } from '@studio-next/adapters/bindcard'
+import { extractPersonAttrs } from '@studio-next/company'
 import { assertJudgeRoleLow, createModelCatalog, fingerprint, parseModelsYaml, type TierId } from '@studio-next/core'
 import { configInvalid } from '@studio-next/contract'
 import type { ModelCatalog, TicketId } from '@studio-next/contract'
 import type { Ledger } from '@studio-next/store'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { dshJudgeAdapterFactory, createJudgeRuntime } from '../../engine/judge/invoke.ts'
 import { createQueueJudge, parseJudgeSites, type QueueJudgeHook } from '../../engine/judge/sites129.ts'
@@ -32,6 +34,7 @@ import { checkTierPositionDeclarations, parseModelTierTickets, provisionModelTie
 import { createFakeAdapter } from '../../engine/fakes.ts'
 import { provisionDshBridgeOverlay } from '../../engine/instructions-store.ts'
 import { dispatchAdapterResolver } from '../../engine/work/dispatch-seatbelt.ts'
+import type { DispatchSelectionDeps } from '../../engine/work/dispatch-selection.ts'
 import { wireCapabilitySupply } from './capability-face.ts'
 import type { CapabilitySupplyFace } from '../../engine/capability/index.ts'
 import type { ServeConfig } from './config.ts'
@@ -75,6 +78,29 @@ export interface ExecutorFace extends RestartProbeFace {
   realGate: boolean
   /** 能力供给 CAP 记录面（REC-CAP-01 已在装配期落库；engine 派发相位消费，studio-dev-540） */
   capabilitySupply: CapabilitySupplyFace
+  /**
+   * 执行器选择链依赖（studio-dev-620；v2/07 §一）：登记链（daemon.yaml dispatchSelections）＋
+   * 岗位绑定偏好（org-config people[].executor）。**serve 恒注入**——生产派发面不存在
+   * 「未接线即放行」形态；非主绑定未登记一律拒派（NEG-RUN-05／GAP-V2-04 代偿）。
+   */
+  dispatchSelection: DispatchSelectionDeps
+}
+
+/**
+ * 岗位绑定 executor 偏好（org-config people[].executor；v2/07 §一「岗位绑定」的装配源）：
+ * 公司目录在挂时读 org-config.yaml 抽取索引键（不扩契约 PersonRef——快照不携带该键，
+ * 契约面子项登记见 REPORT）；文件缺省/无 executor 键=空表（面关＝只允许主绑定缺省链）。
+ * 坏 YAML → configInvalid（fail-closed 拒启，不静默空表）。启动期一次装载（换岗生效随重启）。
+ */
+function personExecutorsOf(config: ServeConfig): Readonly<Record<string, string>> {
+  if (config.companyDir === undefined) return {}
+  const file = path.join(path.resolve(config.companyDir), 'org-config.yaml')
+  if (!existsSync(file)) return {}
+  const out: Record<string, string> = {}
+  for (const attrs of extractPersonAttrs(readFileSync(file, 'utf8'))) {
+    if (attrs.executor !== undefined && attrs.executor.trim() !== '') out[attrs.id] = attrs.executor.trim()
+  }
+  return out
 }
 
 /**
@@ -106,6 +132,17 @@ export function wireExecutorFace(config: ServeConfig, deps: ExecutorFaceDeps): E
   } else {
     registry.register(createFakeAdapter(), { default: true })
   }
+
+  // —— 执行器选择链（studio-dev-620；v2/07 §一；NEG-RUN-05／GAP-V2-04 代偿）——
+  //   登记链＝daemon.yaml dispatchSelections（解析即验，坏条目启动期已拒）；岗位绑定＝
+  //   org-config people[].executor。serve 恒注入：非主绑定未登记=拒派（不是缺省放行）。
+  const dispatchSelection: DispatchSelectionDeps = {
+    chain: config.dispatchSelections ?? EMPTY_SELECTION_CHAIN,
+    personExecutors: personExecutorsOf(config),
+  }
+  log(
+    `[serve] 执行器选择链：登记 ${dispatchSelection.chain.entries.length} 条；岗位绑定偏好 ${Object.keys(dispatchSelection.personExecutors).length} 人；主绑定=dsh——非主绑定未登记=拒派（NEG-RUN-05；GAP-V2-04 代偿）`,
+  )
 
   // —— dsh bridge 插件 provisioning（v1.5#1 通道装载自动化）：注册表含 bridge 通道
   //    注册表含 bridge 通道 executor（agents_md≠native）时生成 overlay（装载法 B，34-§3.1，
@@ -235,5 +272,6 @@ export function wireExecutorFace(config: ServeConfig, deps: ExecutorFaceDeps): E
     acceptance,
     realGate,
     restartProbe,
+    dispatchSelection,
   }
 }

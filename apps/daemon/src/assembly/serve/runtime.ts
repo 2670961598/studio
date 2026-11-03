@@ -200,7 +200,7 @@ export function buildServeRuntime(
   const { aiwsRoot, aiwsClock } = wireAiwsFace(config, snapshot, clock, log)
 
   // —— executor 面装配（注册表/桥接 overlay/价目表与档位/judge 两址）——体=runtime-executor（20-§十五.三 先拆再增：本段零 engine 实例依赖，构造结果供下方 engine 注入与启动日志）
-  const { registry, catalog, modelRoles, modelTierTickets, judgeHook, acceptance, realGate, restartProbe, capabilitySupply } = wireExecutorFace(config, {
+  const { registry, catalog, modelRoles, modelTierTickets, judgeHook, acceptance, realGate, restartProbe, capabilitySupply, dispatchSelection } = wireExecutorFace(config, {
     ledger,
     clock,
     log,
@@ -289,7 +289,6 @@ export function buildServeRuntime(
     }),
   )
   const engine = createEngine({
-    // 写路径网关收口（17-§7）：raw platform 包一层 gated 代理——engine 写调用签名不变（透明）
     platform: enginePlatform,
     signature: identity.signature, // 署名三值注入（SEC-FC-06/SEC-SIG-01；studio-dev-529）：system＋onBehalfOf=决定人——engine 写路径 actor 取决定人，构造期校验先行
     ...(workerKeys !== undefined ? { workerKeys } : {}),
@@ -299,6 +298,7 @@ export function buildServeRuntime(
     records: recordsFace.records, // 记录族生产写面（docs/17-§2「记录族生产写面」段）
     ...(observationFace !== undefined ? { obs: observationFace.step } : {}), // 观察面 OBS（相位 1 尾；无观察位置＝面关）
     ...(config.seatbelt !== undefined ? { dispatchSeatbelt: config.seatbelt } : {}), capabilitySupply, // IMPL-07-09 配置通道＋CAP 记录/五出口决策（studio-dev-540）
+    dispatchSelection, // studio-dev-620：执行器选择链（serve 恒注入——非主绑定未登记=拒派；NEG-RUN-05/GAP-V2-04 代偿）
     derivationGuard: derivation.guard, // GAP-V2-04 派发 0 号闸（撤回面）
     derivationRegistry: derivation.registry, // GAP-V2-04 S6 spawn 前登记（失败即不派）
     registry,

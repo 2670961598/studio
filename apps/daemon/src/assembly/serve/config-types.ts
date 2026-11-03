@@ -8,6 +8,7 @@
  * 拆件前 config.ts 600/600（零余量）；拆后原文件余量 ≥50（阈 600），本件 <600。
  */
 import type { SeatbeltGrant } from '@studio-next/adapters'
+import type { SelectionChain } from '@studio-next/adapters/bindcard'
 import { ENGINE_CONFIG_DEFAULTS } from '../../engine/engine.ts'
 import { HR_SERVE_DEFAULTS, type HrServeConfig } from '../hrsync/config.ts'
 import { RESTART_SERVE_DEFAULTS, type RestartServeConfig } from '../serveconfig/restart.ts'
@@ -217,6 +218,8 @@ export interface ServeConfig extends HrServeConfig, RestartServeConfig, Signatur
    * resolver 与 `EngineDeps.dispatchSeatbelt` 同取此一处。
    */
   seatbelt?: SeatbeltGrant
+  /** 执行器选择链登记（studio-dev-620；v2/07 §一；NEG-RUN-05／GAP-V2-04 代偿；解析/校验见 serveconfig/coerce.ts；缺省=空链——只允许主绑定缺省链） */
+  dispatchSelections?: SelectionChain
   /** LocalFile 平台根（platform: localfile 时生效；缺省 <rootDir>/platform） */
   platformDir?: string
   /** Taiga 实例根（platform: taiga 时必配；如 http://localhost:9000——/api/v1 由客户端拼接，尾斜杠自动剥） */

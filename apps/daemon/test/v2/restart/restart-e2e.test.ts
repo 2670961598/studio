@@ -108,6 +108,9 @@ describe('受权重启 E2E（隔离实例：在途不打断 + 四口径自检）
         `agentYaml: ${path.join(root, 'agent.yaml')}`,
         `models: ${path.join(root, 'models.yaml')}`,
         'acceptance: "test -s REPORT.md && test -s summary.json"',
+        // 执行器选择链登记（studio-dev-620；v2/07 §一）：本夹具执行体=claude（非主绑定），
+        // 按 NEG-RUN-05 须先登记选择链，否则派发被 fail-closed 拒（GAP-V2-04 代偿）。
+        `dispatchSelections: '${JSON.stringify([{ ticket: issue.id, executor: 'claude', source: 'ticket', registeredBy: 's504-e2e', reason: '测试执行体 claude（NEG-RUN-05 登记）' }])}'`,
         'restartEnabled: true',
         `restartAuthorizations: '${JSON.stringify([auth])}'`,
         'restartDrainTimeoutMs: 20000',

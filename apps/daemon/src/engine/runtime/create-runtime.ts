@@ -110,6 +110,8 @@ export function createRuntime(deps: EngineDeps, seams: EngineSeams): EngineRunti
   const workerKeys = deps.workerKeys
   const rooms = deps.rooms // 单据房间义务面（130-P3）：缺省=零行为
   const onWorkComplete = deps.onWorkComplete // 收割完成钩（129-E F1-11 接力产面）：缺省=零行为
+  // 执行器选择链拒派留痕去重（studio-dev-620）：每单每因一次——rescan 重派不刷屏
+  const selectionRejections = new Set<string>()
 
   // daemon_kv：store v4 正式面（活动流游标/拍序的家——ledger.kvGet/kvSet；自建 DDL/prepared 已删，存量原地续用——文件头注「已清偿」与 migrations v4 头注）
   const seqSeed = Number.parseInt(ledger.kvGet(TICK_SEQ_KEY) ?? '0', 10)
@@ -218,6 +220,7 @@ export function createRuntime(deps: EngineDeps, seams: EngineSeams): EngineRunti
     queueAgeStepMs,
     personLimits,
     pinnedTicketSet,
+    selectionRejections,
     assignRuntime: (): AssignRuntime => ({ people: () => rt.people, config, personLimits, inflight, ledger, platform }),
     mergeHost,
   }

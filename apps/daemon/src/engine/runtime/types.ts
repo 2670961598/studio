@@ -189,5 +189,7 @@ export interface EngineRuntime {
   readonly personLimits: { overrides: NonNullable<EngineConfig['personInflightOverrides']>; defaultLimit: number }
   readonly pinnedTicketSet: () => ReadonlySet<TicketId>
   readonly assignRuntime: () => AssignRuntime
+  /** 执行器选择链拒派留痕去重账（每单每因一次——rescan 重派不刷屏；studio-dev-620） */
+  readonly selectionRejections: Set<string>
   mergeHost: MergeRunHost
 }

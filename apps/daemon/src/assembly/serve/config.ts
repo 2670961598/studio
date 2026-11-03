@@ -34,7 +34,7 @@ import { parseJudgeSites } from '../../engine/judge/sites129.ts'
 import { parseModelTierTickets } from '../../engine/tier/model-tier.ts'
 import { parsePersonInflightOverrides } from '../../engine/todoqueue/queue.ts'
 import { parseStallAfterMsByExecutor } from './watchdog-config.ts'
-import { bool, coerceSeatbeltGrant, num, rejectRemovedGatewayKey, str, type SeatbeltConfigRaw } from '../serveconfig/coerce.ts'
+import { bool, coerceDispatchSelectionChain, coerceSeatbeltGrant, num, rejectRemovedGatewayKey, str, type SeatbeltConfigRaw } from '../serveconfig/coerce.ts'
 import { coerceHrServeKey, validateHrServeCross } from '../hrsync/config.ts'
 import { crossValidateMatrixChannels } from '../channels/channels.ts'
 import { coerceRestartServeKey, isRestartKey, validateRestartCross } from '../serveconfig/restart.ts'
@@ -231,6 +231,7 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'seatbeltWriteRoots': seatbeltRaw.writeRoots = value; break
       case 'seatbeltAuthorization': seatbeltRaw.authorization = value; break
       case 'seatbeltOutboundTcp': seatbeltRaw.outboundTcp = value; break
+      case 'dispatchSelections': cfg.dispatchSelections = coerceDispatchSelectionChain(str(value, key)); break // studio-dev-620（缺省不写=空链）
       // —— SEC-FC-01/02（v2/15 §一）：网关开关键与密钥键**已从生产配置面删除** ——
       //    不是「未知键」的泛化拒绝：明报「该键已删除 + 替代供给面」，防旧配置静默漂移。
       case 'gateway':

@@ -6,6 +6,10 @@
  * buildContext 同源配置）。daemon.yaml 平台键 coerce 面仍归 serve.ts（配置事实源单一），
  * 本件只做运行时接线：resolveTaigaAuth（凭据）/ loadTaigaFieldMap（字段映射）/
  * wirePlatform（FlowPlatform 装配——serve 与 hr-sync 装配两处消费）。
+ *
+ * 搬移前原位注释（studio-dev-620 Q6 先拆后增适配——runtime.ts 一行既有装配注释随 gated-platform
+ * 装配搬入，逐字保留；仅位置变、语义不变）：
+ *   - 写路径网关收口（17-§7）：raw platform 包一层 gated 代理——engine 写调用签名不变（透明）。
  */
 
 import { readFileSync } from 'node:fs'

@@ -38,6 +38,7 @@ import type { RecordWirePort } from '../records/index.ts'
 import type { ObservationTickStep } from '../observe/index.ts'
 import type { DispatchDerivationGuard } from '../work/dispatch-seatbelt.ts'
 import type { DispatchDerivationRegistry } from '../work/derivation-registration.ts'
+import type { DispatchSelectionDeps } from '../work/dispatch-selection.ts'
 import type { EngineConfig, MergeRunDeps } from '../tick/types.ts'
 import type { TickReport } from '../tick-report/types.ts'
 
@@ -126,6 +127,7 @@ export interface EngineDeps extends HarvestRecordingDeps {
   derivationGuard?: DispatchDerivationGuard // GAP-V2-04 派生树撤回闸（省略=不拦；注入=phase-3 派发前拒已撤派生树，NEG-SEC-08/NEG-RUN-05）
   derivationRegistry?: DispatchDerivationRegistry // GAP-V2-04 S6 派发时登记（省略=不登记；注入=spawn 前 register，失败即派发失败）
   capabilitySupply?: import('../capability/index.ts').CapabilitySupplyFace // CAP 记录＋五出口决策（studio-dev-540；缺省＝面关零行为）
+  dispatchSelection?: DispatchSelectionDeps // studio-dev-620 执行器选择链（serve 恒注入；缺省=面关——仅测试直连引擎的兼容缝；NEG-RUN-05／GAP-V2-04 代偿）
 }
 
 /** 引擎句柄：serve 循环每拍调 tick()；停机走 dispose()（在途 drain=优雅杀） */

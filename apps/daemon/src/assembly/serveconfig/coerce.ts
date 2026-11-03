@@ -26,7 +26,9 @@ import { DEFAULT_SEATBELT_TIER, resolveSeatbeltGrant, SEATBELT_TIERS, type Seatb
 import { configInvalid } from '@studio-next/contract'
 import type { CompanySnapshot } from '@studio-next/contract'
 import type { SignatureContext } from '@studio-next/gateway'
+import type { SelectionChain, SelectionChainEntry } from '@studio-next/adapters/bindcard'
 import { ENGINE_CONFIG_DEFAULTS } from '../../engine/engine.ts'
+import { buildSelectionChain } from '../../engine/work/dispatch-selection.ts'
 import { resolveSignatureIdentity, type SignatureIdentity } from './signature.ts'
 import type { ServeConfig } from '../serve/config.ts'
 
@@ -316,4 +318,74 @@ export function daemonIdentity(config: ServeConfig, snapshot: CompanySnapshot, s
     },
     ...resolveSignatureIdentity(config, snapshot),
   }
+}
+
+// ---------------------------------------------------------------------------
+// 执行器选择链登记通道（studio-dev-620；v2/07 §一；NEG-RUN-05／GAP-V2-04 代偿登记面）
+// ---------------------------------------------------------------------------
+
+/** 选择链条目允许键（封闭集：未知键=配置坏，明报不静默丢弃） */
+const DISPATCH_SELECTION_KEYS = ['ticket', 'executor', 'source', 'positionRef', 'registeredBy', 'reason'] as const
+
+/**
+ * daemon.yaml `dispatchSelections` → 选择链账本（JSON 数组字符串；扁平 YAML 只收标量——
+ * 与 seatbeltWriteRoots 同款引号包裹 JSON 先例）。
+ *
+ * 逐条过 `buildSelectionChain`→adapters `registerSelection`（单号非空／ENU-88 执行器值集／
+ * source∈ticket|position／position 必给 positionRef／登记人＋依据非空／同键不得自相矛盾）：
+ * 任一条非法＝CONFIG_INVALID 拒启（fail-closed，不静默忽略登记段——静默丢登记＝NEG-RUN-05
+ * 的放行路径重新打开）。缺省不写＝undefined＝空链（只允许主绑定缺省链）。
+ */
+export function coerceDispatchSelectionChain(raw: string): SelectionChain {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new Error(
+      `daemon.yaml：dispatchSelections 须为引号包裹的 JSON 数组字符串（如 '[{"ticket":"T-1","executor":"claude","source":"ticket","registeredBy":"谁","reason":"为何"}]'）——实得非 JSON`,
+    )
+  }
+  if (!Array.isArray(parsed)) throw new Error('daemon.yaml：dispatchSelections 须为 JSON 数组（收到非数组 JSON）')
+  const entries: SelectionChainEntry[] = []
+  parsed.forEach((item, i) => {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      throw new Error(`daemon.yaml：dispatchSelections 第 ${i + 1} 条须为对象（收到 ${Array.isArray(item) ? '数组' : typeof item}）`)
+    }
+    const rec = item as Record<string, unknown>
+    const unknown = Object.keys(rec).filter((k) => !(DISPATCH_SELECTION_KEYS as readonly string[]).includes(k))
+    if (unknown.length > 0) {
+      throw new Error(`daemon.yaml：dispatchSelections 第 ${i + 1} 条含未知键 ${unknown.join('、')}（只收 ${DISPATCH_SELECTION_KEYS.join('/')}）`)
+    }
+    const ticket = rec['ticket']
+    const executor = rec['executor']
+    const source = rec['source']
+    const registeredBy = rec['registeredBy']
+    const reason = rec['reason']
+    const positionRef = rec['positionRef']
+    if (
+      typeof ticket !== 'string' ||
+      typeof executor !== 'string' ||
+      typeof source !== 'string' ||
+      typeof registeredBy !== 'string' ||
+      typeof reason !== 'string' ||
+      (positionRef !== undefined && typeof positionRef !== 'string')
+    ) {
+      throw new Error(
+        `daemon.yaml：dispatchSelections 第 ${i + 1} 条形状错（ticket/executor/source/registeredBy/reason 须为字符串，positionRef 可选字符串）`,
+      )
+    }
+    entries.push({
+      ticket,
+      executor: executor as SelectionChainEntry['executor'],
+      source: source as SelectionChainEntry['source'],
+      ...(positionRef !== undefined ? { positionRef } : {}),
+      registeredBy,
+      reason,
+    })
+  })
+  const built = buildSelectionChain(entries)
+  if (built.kind === 'err') {
+    throw new Error(`daemon.yaml：dispatchSelections 条目非法：CONFIG_INVALID/${built.error.subcause}：${built.error.detail ?? ''}`)
+  }
+  return built.value
 }
