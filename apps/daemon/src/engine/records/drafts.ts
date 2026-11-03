@@ -12,16 +12,20 @@
  *
  * 本件核心纪律：**请求型/事件型可直写，决定型必须先有权源/前置记录**——
  *   - 可直接写：REC-WORK-01（请求型，无决定面，v2/11 §0.2）；
- *   - 条件可写：REC-WORK-06（决定型：边集前置记录齐＋规则依据齐）、REC-EVD-01（事件型：
- *     需 REC-LIFE-04 出工段引用）；
+ *   - 条件可写：REC-WORK-06（决定型：边序列前置记录齐＋规则依据齐＋决定面）、REC-EVD-01
+ *     （事件型：需 REC-LIFE-04 出工段引用）；
  *   - 刀D（studio-dev-561）已解除的族：WORK-12/17、ACC-01/02、CHG-01、REV-01、MEM-03、
  *     EVD-04 的草案在 `close-drafts.ts`/`governance-drafts.ts`；族不在本表阻断清单内，
  *     但前置件未落时仍由契约校验器＋被引记录存在性闸拒写（fail-closed）。
+ *
+ * 2026-11-03（studio-dev-592）：平台主干跨态（L0 新单→已派发）按 §14.1 既有边的**有序复合
+ * 路径**（M-01→M-05）逐边各出一条 WORK-06；不新增边、不放宽任意多跳。逐边前置不齐＝整条
+ * 路径拒写（不写半条）——拒绝日志逐边点名缺件，不再以「无对应边」笼统拒写。
  */
 import type { IssueRecord } from '@studio-next/contract'
-import { validateHarvestBatch } from '@studio-next/contract/records'
+import { legalWorkExits, validateHarvestBatch } from '@studio-next/contract/records'
 import type { DraftDecisionFaceInput, DraftRecordRef, RecordDraft, RecordDraftGate } from './types.ts'
-import { requiredEvidenceOf, workEdgeOf, workStateOf } from './state-map.ts'
+import { EDGE_PRODUCER_TYPE, requiredEvidenceOf, workEdgesOf, workStateOf } from './state-map.ts'
 
 export type { DraftDecisionFaceInput, DraftRecordRef } from './types.ts'
 
@@ -31,6 +35,11 @@ export const INTAKE_DEADLINE_MS = 24 * 60 * 60 * 1000
 /** 草案构建结果：ok=draft；refused=前置/契约不齐（调用方只观测，不重试、不补造） */
 export type DraftOutcome =
   | { readonly ok: true; readonly draft: RecordDraft; readonly gate?: RecordDraftGate }
+  | { readonly ok: false; readonly recordType: string; readonly code: 'record-prereq-missing'; readonly reason: string }
+
+/** 迁移草案结果：ok=边序列逐边各一条（复合路径=多条）；refused=整条路径不写（不写半条） */
+export type TransitionDraftsOutcome =
+  | { readonly ok: true; readonly drafts: readonly RecordDraft[] }
   | { readonly ok: false; readonly recordType: string; readonly code: 'record-prereq-missing'; readonly reason: string }
 
 /** ISO 时刻（记录时间字段全形；调用方给 epoch-ms，转换只在此一处） */
@@ -90,10 +99,16 @@ export function workIntakeDraft(args: {
 
 /**
  * 平台迁移 → REC-WORK-06 状态迁移草案（相位 3/4/6 迁移执行缝）。
- * 三道闸全在写前判：①边在 §14.1 表内；②该边前置记录齐（§14.1 前置记录列）；
- * ③规则型生产者附规则依据引用（§5.2）。任一不齐＝拒写（不伪造迁移记录）。
+ *
+ * 边解析（docs/17-§2「状态桥接」段 2026-11-03 修订）：平台一跳可能跨过工作十态中间态
+ * （L0「新单→已派发」＝ intake→pending_start→in_progress），按 §14.1 **既有边的有序复合
+ * 路径**逐边各出一条 REC-WORK-06（M-01、M-05）；不新增边、不放宽任意多跳。
+ *
+ * 四道闸全在写前判，任一不齐＝**整条路径拒写**（不写半条、不伪造迁移记录）：
+ *   ①边序列可解析（单边或白名单复合；表外/回退＝拒）；②逐边前置记录齐（§14.1「前置记录」列）；
+ *   ③规则型生产者附规则依据引用（§5.2）；④决定面（§0.3-2 决定面封闭清单）。
  */
-export function workTransitionDraft(args: {
+export function workTransitionDrafts(args: {
   readonly ticket: string
   readonly attempt: number
   readonly fromPlatformState: string
@@ -106,60 +121,68 @@ export function workTransitionDraft(args: {
   /** 权源引用（决定型 authority_ref；由授权链派生注入——调用方不得自填，缺即拒；§0.3-2/§2.2） */
   readonly authorityRef?: DraftRecordRef
   readonly decision?: DraftDecisionFaceInput
-}): DraftOutcome {
-  const fromState = workStateOf(args.fromPlatformState)
-  const toState = workStateOf(args.toPlatformState)
+}): TransitionDraftsOutcome {
+  const { ticket, attempt, fromPlatformState, toPlatformState, company } = args
+  const fromState = workStateOf(fromPlatformState)
+  const toState = workStateOf(toPlatformState)
   if (fromState === undefined || toState === undefined) {
     return {
       ok: false,
       recordType: 'REC-WORK-06',
       code: 'record-prereq-missing',
       reason:
-        `平台状态不在工作十态桥接表：${args.fromPlatformState}→${args.toPlatformState}` +
+        `平台状态不在工作十态桥接表：${fromPlatformState}→${toPlatformState}` +
         '（state-map.ts 头注缺口 1：桥接表外状态不猜）',
     }
   }
-  const edge = workEdgeOf(args.fromPlatformState, args.toPlatformState)
-  if (edge === undefined) {
+  const edges = workEdgesOf(fromPlatformState, toPlatformState)
+  if (edges.length === 0) {
+    const exits = legalWorkExits(fromState).join('/') || '无（终态）'
     return {
       ok: false,
       recordType: 'REC-WORK-06',
       code: 'record-prereq-missing',
       reason:
-        `平台迁移 ${args.fromPlatformState}→${args.toPlatformState}（${fromState}→${toState}）` +
-        '在 v2/11 §14.1 M-01..M-28 边集内无对应边（回退/重开/返工语义归 REC-WORK-10/11）——不臆造迁移记录',
+        `平台迁移 ${fromPlatformState}→${toPlatformState}（${fromState}→${toState}）` +
+        '在 v2/11 §14.1 M-01..M-28 边集内无对应边（表外/回退/重开/返工语义归 REC-WORK-10/11）；' +
+        `当前状态 ${fromState} 的合法出口=${exits}——不臆造迁移记录`,
     }
   }
-  const required = requiredEvidenceOf(edge)
-  const provided = new Set((args.evidenceRefs ?? []).map((ref) => ref.refType))
-  const missing = required.filter((type) => !provided.has(type))
-  if (missing.length > 0) {
-    return {
-      ok: false,
-      recordType: 'REC-WORK-06',
-      code: 'record-prereq-missing',
-      reason: `边 ${edge.edge}（${fromState}→${toState}）前置记录未齐：缺 ${missing.join('、')}（v2/11 §14.1 前置记录列）`,
-    }
+
+  const provided = args.evidenceRefs ?? []
+  const providedTypes = new Set(provided.map((ref) => ref.refType))
+  const gaps: string[] = []
+  for (const edge of edges) {
+    const missing = requiredEvidenceOf(edge).filter((type) => !providedTypes.has(type))
+    if (missing.length > 0) gaps.push(`边 ${edge.edge} 缺 ${missing.join('、')}`)
   }
-  if (args.ruleBasisRef === undefined) {
+  if (gaps.length > 0) {
+    const pathLabel = edges.length === 1 ? `边 ${edges[0]?.edge ?? ''}` : `复合路径 ${edges.map((edge) => edge.edge).join('→')}`
     return {
       ok: false,
       recordType: 'REC-WORK-06',
       code: 'record-prereq-missing',
       reason:
-        `边 ${edge.edge} 为规则型迁移（decide 规则档）但规则依据记录未登记（rule_basis_ref 缺）——` +
-        '§5.2 规定规则型必附规则依据引用，不写「系统判定」',
+        `平台迁移 ${fromPlatformState}→${toPlatformState}（${fromState}→${toState}）${pathLabel} 前置记录未齐：` +
+        `${gaps.join('；')}（v2/11 §14.1 前置记录列）${edges.length > 1 ? '——整条路径拒写（不写半条）' : ''}`,
     }
   }
+
+  for (const edge of edges) {
+    const producerType = EDGE_PRODUCER_TYPE[edge.edge] ?? 'decisive'
+    if (producerType === 'rule' && args.ruleBasisRef === undefined) {
+      return {
+        ok: false,
+        recordType: 'REC-WORK-06',
+        code: 'record-prereq-missing',
+        reason:
+          `边 ${edge.edge} 为规则型迁移（守护计时者）但规则依据记录未登记（rule_basis_ref 缺）——` +
+          '§5.2 规定规则型必附规则依据引用，不写「系统判定」',
+      }
+    }
+  }
+
   const decision = args.decision
-  if (decision !== undefined && decision.basisRefs.length === 0) {
-    return {
-      ok: false,
-      recordType: 'REC-WORK-06',
-      code: 'record-prereq-missing',
-      reason: '决定面 basis_refs 为空（§0.3-1：依据引用不得为空列表；trigger_ref 亦由首项承载）',
-    }
-  }
   if (decision === undefined) {
     return {
       ok: false,
@@ -168,66 +191,97 @@ export function workTransitionDraft(args: {
       reason: '决定面未提供（decidedBy/authorityRef/rationale/basisRefs/scopeJudged）——决定面封闭清单类型不得缺决定面（§0.3-2）',
     }
   }
+  if (decision.basisRefs.length === 0) {
+    return {
+      ok: false,
+      recordType: 'REC-WORK-06',
+      code: 'record-prereq-missing',
+      reason: '决定面 basis_refs 为空（§0.3-1：依据引用不得为空列表；trigger_ref 亦由首项承载）',
+    }
+  }
+  const fallbackTrigger = decision.basisRefs[0]
+  if (fallbackTrigger === undefined) {
+    return {
+      ok: false,
+      recordType: 'REC-WORK-06',
+      code: 'record-prereq-missing',
+      reason: '决定面 basis_refs 无可解析首项（trigger_ref 无承载——§0.3-1）',
+    }
+  }
   // 权源闸（刀B）：决定型记录写入前须有可验证权源——由授权链派生注入，调用方不得自填
   const resolvedAuthority = args.authorityRef ?? decision.authorityRef
   if (resolvedAuthority === undefined) {
+    const pathLabel = edges.map((item) => item.edge).join('→')
     return {
       ok: false,
       recordType: 'REC-WORK-06',
       code: 'record-prereq-missing',
       reason:
-        `边 ${edge.edge}（${fromState}→${toState}）缺权源引用（authority_ref）——决定型记录不得无源落库；` +
+        `迁移路径 ${pathLabel}（${fromState}→${toState}）缺权源引用（authority_ref）——决定型记录不得无源落库；` +
         '权源须由 REC-AUTH-01 授权链派生（engine/records/authority.ts），调用方不得自填（§0.3-2/§2.2）',
     }
   }
   const recordedAt = isoAt(args.at)
-  const draft: RecordDraft = {
-    recordType: 'REC-WORK-06',
-    recordId: `rec-work-06:${args.company}:${args.ticket}:${args.attempt}:${edge.edge}`,
-    producedAt: recordedAt,
-    decidedBy: decision.decidedBy,
-    effectiveState: 'effective',
-    effectiveFrom: decision.effectiveFrom,
-    idempotencyKey: {
-      recordType: 'REC-WORK-06',
-      subjectId: args.ticket,
-      operationClass: 'transition',
-      requesterSequence: `${args.attempt}:${edge.edge}`,
-    },
-    proofBoundary:
-      '本记录证明：平台迁移已按 REC-WORK-06 登记（边号/前后态/生产者三分/前置记录引用/决定面）；' +
-      '不证明五门与资源门已过（REC-WORK-04/05 未落时该边前置即不齐、本记录不会存在）；不证明平台侧迁移不可逆。',
-    payload: {
-      state_family: 'work',
-      from_state: fromState,
-      to_state: toState,
-      producer_type: 'rule',
-      rule_basis_ref: args.ruleBasisRef,
-      trigger_ref: decision.basisRefs[0],
-      authority_ref: resolvedAuthority,
-      precondition_results: [],
-      expected_version: `${edge.edge}@attempt-${args.attempt}`,
-      actual_actor: args.actor,
-      dissent_position: decision.dissentPosition,
-      occurred_at: recordedAt,
-      observed_at: recordedAt,
-      recorded_at: recordedAt,
-      side_effects: [],
-      evidence_refs: args.evidenceRefs ?? [],
-      produced_refs: [],
-      decision_face: {
-        decided_by: decision.decidedBy,
-        authority_ref: resolvedAuthority,
-        rationale: decision.rationale,
-        basis_refs: decision.basisRefs,
-        scope_judged: { judged: decision.scopeJudged.judged, not_judged: decision.scopeJudged.notJudged },
-        dissent_position: decision.dissentPosition,
-        effective_state: 'effective',
-        effective_time: decision.effectiveFrom,
-      },
-    },
+  const decisionFace = {
+    decided_by: decision.decidedBy,
+    authority_ref: resolvedAuthority,
+    rationale: decision.rationale,
+    basis_refs: decision.basisRefs,
+    scope_judged: { judged: decision.scopeJudged.judged, not_judged: decision.scopeJudged.notJudged },
+    dissent_position: decision.dissentPosition,
+    effective_state: 'effective' as const,
+    effective_time: decision.effectiveFrom,
   }
-  return { ok: true, draft }
+  const drafts = edges.map((edge): RecordDraft => {
+    const producerType = EDGE_PRODUCER_TYPE[edge.edge] ?? 'decisive'
+    const edgeRefs = provided.filter((ref) => edge.evidence.includes(ref.refType))
+    const trigger = edgeRefs[0] ?? fallbackTrigger
+    const ruleBasis = producerType === 'rule' ? args.ruleBasisRef : undefined
+    return {
+      recordType: 'REC-WORK-06',
+      recordId: `rec-work-06:${company}:${ticket}:${attempt}:${edge.edge}`,
+      producedAt: recordedAt,
+      decidedBy: decision.decidedBy,
+      effectiveState: 'effective',
+      effectiveFrom: decision.effectiveFrom,
+      idempotencyKey: {
+        recordType: 'REC-WORK-06',
+        subjectId: ticket,
+        operationClass: 'transition',
+        requesterSequence: `${attempt}:${edge.edge}`,
+      },
+      proofBoundary:
+        `本记录证明：平台迁移 ${fromState}→${toState} 的边 ${edge.edge}（${edge.from}→${edge.to}）已按 REC-WORK-06 登记` +
+        '（边号/前后态/生产者三分/前置记录引用/决定面/权源）；' +
+        `不证明未登记的相邻边已发生（复合路径逐边各一条，缺边即整条路径拒写）；` +
+        '不证明平台侧迁移不可逆。',
+      payload: {
+        state_family: 'work',
+        from_state: edge.from,
+        to_state: edge.to,
+        producer_type: producerType,
+        ...(ruleBasis !== undefined ? { rule_basis_ref: ruleBasis } : {}),
+        trigger_ref: trigger,
+        authority_ref: resolvedAuthority,
+        precondition_results: requiredEvidenceOf(edge).map((type) => ({
+          item: `前置记录 ${type}`,
+          satisfied: true,
+          basis: provided.find((ref) => ref.refType === type)?.refId ?? type,
+        })),
+        expected_version: `${edge.edge}@attempt-${attempt}`,
+        actual_actor: args.actor,
+        dissent_position: decision.dissentPosition,
+        occurred_at: recordedAt,
+        observed_at: recordedAt,
+        recorded_at: recordedAt,
+        side_effects: [],
+        evidence_refs: edgeRefs,
+        produced_refs: [],
+        decision_face: decisionFace,
+      },
+    }
+  })
+  return { ok: true, drafts }
 }
 
 /**

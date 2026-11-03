@@ -51,11 +51,14 @@ export { buildEnvelope, type EnvelopeContext, type EnvelopeOutcome } from './env
 export {
   PLATFORM_STATES,
   PLATFORM_TO_WORK_STATE,
+  PLATFORM_COMPOSITE_EDGES,
+  EDGE_PRODUCER_TYPE,
   WORK_STATE_TO_PLATFORM,
   WORK_STATE_SET,
   assertStateMapComplete,
   requiredEvidenceOf,
   workEdgeOf,
+  workEdgesOf,
   workStateOf,
 } from './state-map.ts'
 export {
@@ -67,8 +70,9 @@ export {
   harvestBatchDraft,
   isoAt,
   workIntakeDraft,
-  workTransitionDraft,
+  workTransitionDrafts,
   type DraftOutcome,
+  type TransitionDraftsOutcome,
 } from './drafts.ts'
 export { exceptionDraft, reviewDraft, settlementDraft } from './close-drafts.ts'
 export {

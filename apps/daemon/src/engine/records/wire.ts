@@ -21,11 +21,19 @@
  *   - **对账读者**（#559 验收项）：本件暴露 `reconcile()` 读面消费者，生产对账循环
  *     （`hooks.recordReconcileTick` ← 相位 7 落账）按拍节流调用 `reconcileProjection`，
  *     欠账不吞、只留痕（不新增事件名——事件枚举冻结）。
+ *   - **迁移复合路径整条写/整条不写**（studio-dev-592，docs/17-§2「状态桥接」段）：先全量成
+ *     信封（形状闸）再逐条落库；任一条形状不合格＝零落库，不留「半条迁移」。
  */
 import type { EventRecord } from '@studio-next/contract'
 import type { HistFace, HistRecordRef } from '@studio-next/store'
 import { buildEnvelope } from './envelope.ts'
-import { harvestBatchDraft, workIntakeDraft, workTransitionDraft, type DraftOutcome } from './drafts.ts'
+import {
+  harvestBatchDraft,
+  workIntakeDraft,
+  workTransitionDrafts,
+  type DraftOutcome,
+  type TransitionDraftsOutcome,
+} from './drafts.ts'
 import { exceptionDraft, reviewDraft, settlementDraft } from './close-drafts.ts'
 import {
   accountabilityDraft,
@@ -44,6 +52,8 @@ import {
   type RecordAccountabilityArgs,
   type RecordAuthorityArgs,
   type RecordChangeSegmentArgs,
+  type RecordDraft,
+  type RecordDraftGate,
   type RecordExceptionArgs,
   type RecordHarvestArgs,
   type RecordIntakeArgs,
@@ -129,7 +139,7 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
     reconcile: 0,
   }
 
-  const refuse = (outcome: Extract<DraftOutcome, { ok: false }>): RecordWriteResult => {
+  const refuse = (outcome: Extract<DraftOutcome | TransitionDraftsOutcome, { ok: false }>): RecordWriteResult => {
     counters.refused += 1
     deps.log?.(`[records] 拒写 ${outcome.recordType}：${outcome.reason}`)
     return failureOf(outcome.recordType, outcome.code, outcome.reason)
@@ -166,27 +176,37 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
     return undefined
   }
 
-  const write = (outcome: DraftOutcome): RecordWriteResult => {
-    if (!outcome.ok) return refuse(outcome)
-    const { draft, gate } = outcome
+  /** 单条写前全量闸：被引前置在库 → 形状闸 → 族内不变量；返回信封或拒（一律不落库） */
+  const prepare = (
+    draft: RecordDraft,
+    gate?: RecordDraftGate,
+  ): { readonly ok: true; readonly envelope: unknown } | { readonly ok: false; readonly result: RecordWriteResult } => {
     const missing = checkRequires(draft.recordType, gate?.requires)
-    if (missing !== undefined) return missing
+    if (missing !== undefined) return { ok: false, result: missing }
     const built = buildEnvelope(draft, { company })
     if (!built.ok) {
       counters.failed += 1
       deps.log?.(`[records] 形状拒收 ${draft.recordType}（recordId=${draft.recordId}）：${built.reason}`)
-      return failureOf(draft.recordType, built.code, built.reason)
+      return { ok: false, result: failureOf(draft.recordType, built.code, built.reason) }
     }
     // 族内不变量（契约判定件；本件不复制判据）——不过即拒写，不落坏行
     const invariants = gate?.validate?.(built.envelope)
     if (invariants !== undefined && !invariants.ok) {
-      return refuse({
+      return {
         ok: false,
-        recordType: draft.recordType,
-        code: 'record-prereq-missing',
-        reason: `族内不变量不成立：${invariants.issues.map((issue) => `${issue.path}=${issue.message}`).join('; ')}`,
-      })
+        result: refuse({
+          ok: false,
+          recordType: draft.recordType,
+          code: 'record-prereq-missing',
+          reason: `族内不变量不成立：${invariants.issues.map((issue) => `${issue.path}=${issue.message}`).join('; ')}`,
+        }),
+      }
     }
+    return { ok: true, envelope: built.envelope }
+  }
+
+  /** 已成信封的单条落库（幂等先读；append 异常＝failed 不重试） */
+  const appendBuilt = (draft: RecordDraft, envelope: unknown): RecordWriteResult => {
     // 幂等（§0.4-4）：同 recordId 命中既有行＝重放，不产生第二次副作用
     const existing = hist.get(draft.recordId)
     if (existing !== undefined) {
@@ -195,7 +215,7 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
       return { ok: true, recordId: draft.recordId, recordType: draft.recordType, deduped: true, ref }
     }
     try {
-      const guarded = deps.guardRecord !== undefined ? deps.guardRecord(built.envelope) : built.envelope
+      const guarded = deps.guardRecord !== undefined ? deps.guardRecord(envelope) : envelope
       const ref = hist.append(guarded)
       return {
         ok: true,
@@ -257,6 +277,30 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
     )
   }
 
+  const write = (outcome: DraftOutcome): RecordWriteResult => {
+    if (!outcome.ok) return refuse(outcome)
+    const prepared = prepare(outcome.draft, outcome.gate)
+    if (!prepared.ok) return prepared.result
+    return appendBuilt(outcome.draft, prepared.envelope)
+  }
+
+  /** 迁移边序列：先全量成信封（形状闸）→ 再逐条落库；任一条失败即返回（不补造后续） */
+  const writePath = (outcome: TransitionDraftsOutcome): RecordWriteResult => {
+    if (!outcome.ok) return refuse(outcome)
+    const built: { draft: RecordDraft; envelope: unknown }[] = []
+    for (const draft of outcome.drafts) {
+      const prepared = prepare(draft)
+      if (!prepared.ok) return prepared.result
+      built.push({ draft, envelope: prepared.envelope })
+    }
+    let last: RecordWriteResult | undefined
+    for (const item of built) {
+      last = appendBuilt(item.draft, item.envelope)
+      if (!last.ok) return last
+    }
+    return last ?? failureOf('REC-WORK-06', 'record-write-failed', '迁移路径为空（边序列解析不应产出空路径）')
+  }
+
   return {
     writtenBy: RECORD_WRITTEN_BY,
     counters,
@@ -265,12 +309,12 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
       counters.intake += 1
       return write(workIntakeDraft({ ...args, company }))
     },
-    /** 相位 3/4/6 迁移执行缝：REC-WORK-06（决定型；边集/前置/规则依据/权源/决定面五闸） */
+    /** 相位 3/4/6 迁移执行缝：REC-WORK-06（决定型；边序列/逐边前置/规则依据/权源/决定面五闸） */
     transition(args: RecordTransitionArgs): RecordWriteResult {
       counters.transition += 1
       const authorityRef = authorityRefOf(args.actor)
-      return write(
-        workTransitionDraft({
+      return writePath(
+        workTransitionDrafts({
           ticket: args.ticket,
           attempt: args.attempt,
           fromPlatformState: args.fromState,
@@ -281,6 +325,7 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
           ...(args.evidenceRefs !== undefined ? { evidenceRefs: args.evidenceRefs } : {}),
           ...(args.ruleBasisRef !== undefined ? { ruleBasisRef: args.ruleBasisRef } : {}),
           ...(authorityRef !== undefined ? { authorityRef } : {}),
+          ...(args.decision !== undefined ? { decision: args.decision } : {}),
         }),
       )
     },

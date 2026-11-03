@@ -112,9 +112,15 @@ export interface RecordTransitionArgs {
   readonly at: number
   readonly actor: string
   /** 本迁移已具备的前置记录引用（§14.1 前置记录列；缺即拒，不补造） */
-  readonly evidenceRefs?: readonly { readonly refType: string; readonly refId: string; readonly refVersion: string }[]
+  readonly evidenceRefs?: readonly DraftRecordRef[]
   /** 规则型生产者的规则依据引用（§5.2；规则未登记即拒） */
-  readonly ruleBasisRef?: { readonly refType: string; readonly refId: string; readonly refVersion: string }
+  readonly ruleBasisRef?: DraftRecordRef
+  /**
+   * 决定面（§0.3-2：REC-WORK-06 在决定面封闭清单内，任何迁移都必带）。
+   * 平台直派桥接（L0 新单→已派发）以一个派发决定承载 M-01→M-05 复合路径两跳——
+   * 决定面与逐边前置记录分离：前置记录逐边判，决定面是同一派发决定（docs/17-§2 状态桥接段）。
+   */
+  readonly decision?: DraftDecisionFaceInput
 }
 
 /** 收割批次入参（相位 4 收割；REC-EVD-01 事件型，但仍需出工段引用） */

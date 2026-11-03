@@ -16,14 +16,16 @@ import {
   UNBLOCKED_RECORD_FAMILIES,
   PLATFORM_STATES,
   PLATFORM_TO_WORK_STATE,
+  PLATFORM_COMPOSITE_EDGES,
   assertStateMapComplete,
   blockedDraftFor,
   buildEnvelope,
   createRecordWire,
   reconcileProjection,
   workEdgeOf,
+  workEdgesOf,
   workIntakeDraft,
-  workTransitionDraft,
+  workTransitionDrafts,
   type RecordWire,
 } from '../../../src/engine/records/index.ts'
 import { createTicket, createWorkStack, disposeWorkStacks, eventsOf, runTicks, type WorkTestStack } from './fixtures/work-stack.ts'
@@ -114,7 +116,7 @@ describe('记录族生产写面·面关对照（红）', () => {
 
 describe('决定型记录前置闸（拒写不臆造）', () => {
   it('REC-WORK-06：已派发→证据就绪（M-10）缺 REC-WORK-08/REC-EVD-03 → 拒写', async () => {
-    const outcome = workTransitionDraft({
+    const outcome = workTransitionDrafts({
       ticket: 'DEMO-1',
       attempt: 1,
       fromPlatformState: PLATFORM_STATES.dispatched,
@@ -142,7 +144,7 @@ describe('决定型记录前置闸（拒写不臆造）', () => {
   })
 
   it('回退边（已交付→已派发）不在 §14.1 边集 → 拒写（不冒充迁移）', async () => {
-    const outcome = workTransitionDraft({
+    const outcome = workTransitionDrafts({
       ticket: 'DEMO-1',
       attempt: 1,
       fromPlatformState: PLATFORM_STATES.delivered,
@@ -171,6 +173,120 @@ describe('决定型记录前置闸（拒写不臆造）', () => {
     expect(UNBLOCKED_RECORD_FAMILIES['REC-ACC-01']?.ref).toBe('v2/11 §七')
     expect(UNBLOCKED_RECORD_FAMILIES['REC-CHG-01']?.ref).toBe('v2/11 §八/§14.4-2')
     expect(UNBLOCKED_RECORD_FAMILIES['REC-REV-01']?.ref).toBe('v2/11 §十')
+  })
+})
+
+const DECISION = {
+  decidedBy: 'PRIME-0',
+  authorityRef: { refType: 'REC-AUTH-01', refId: 'rec-auth-01:demo:PRIME-0', refVersion: '1.0.0' },
+  rationale: 'L0 直派：受理与开工在同一派发决定内完成（docs/17-§2 状态桥接）',
+  basisRefs: [{ refType: 'REC-WORK-02', refId: 'rec-work-02:demo:DEMO-L0', refVersion: '1.0.0' }],
+  scopeJudged: { judged: ['受理', '开工'], notJudged: ['验收', '结清'] },
+  dissentPosition: '无异议',
+  effectiveFrom: '2026-11-03T00:00:00.000Z',
+} as const
+
+const PREREQ_TYPES = ['REC-WORK-02', 'REC-WORK-03', 'REC-WORK-04', 'REC-WORK-05'] as const
+
+/** 声明式前置引用（测试用；引用存在性闸归 #560 missingRefsOf——本件只验路径/逐边门控） */
+const PREREQ_REFS = PREREQ_TYPES.map((refType) => ({
+  refType,
+  refId: `${refType.toLowerCase()}:demo:DEMO-L0`,
+  refVersion: '1.0.0',
+}))
+
+const L0_ARGS = {
+  ticket: 'DEMO-L0',
+  attempt: 1,
+  fromPlatformState: PLATFORM_STATES.fresh,
+  toPlatformState: PLATFORM_STATES.dispatched,
+  at: Date.parse('2026-11-03T00:00:00.000Z'),
+  actor: 'ENG-1',
+  company: COMPANY,
+} as const
+
+describe('L0 直派复合路径（studio-dev-592：M-01→M-05 逐边登记，不新增边）', () => {
+  it('跨态主干解析为既有边的有序复合路径（M-01→M-05），不是表外边', () => {
+    const edges = workEdgesOf(PLATFORM_STATES.fresh, PLATFORM_STATES.dispatched)
+    expect(edges.map((edge) => edge.edge)).toEqual(['M-01', 'M-05'])
+    expect(edges[0]?.from).toBe('intake')
+    expect(edges[0]?.to).toBe('pending_start')
+    expect(edges[1]?.from).toBe('pending_start')
+    expect(edges[1]?.to).toBe('in_progress')
+    expect(PLATFORM_COMPOSITE_EDGES[`${PLATFORM_STATES.fresh}→${PLATFORM_STATES.dispatched}`]).toEqual(['M-01', 'M-05'])
+  })
+
+  it('红：无逐边前置 → 整条路径拒写，拒因逐边点名（不再「无对应边」）', () => {
+    const outcome = workTransitionDrafts(L0_ARGS)
+    expect(outcome.ok).toBe(false)
+    if (!outcome.ok) {
+      expect(outcome.reason).toContain('复合路径 M-01→M-05')
+      expect(outcome.reason).toContain('REC-WORK-02')
+      expect(outcome.reason).toContain('REC-WORK-04')
+      expect(outcome.reason).not.toContain('无对应边')
+    }
+  })
+
+  it('红：只补 M-01 前置（02/03）→ M-05 缺 04/05，整条路径仍拒写（不写半条）', () => {
+    const outcome = workTransitionDrafts({ ...L0_ARGS, evidenceRefs: PREREQ_REFS.slice(0, 2), decision: DECISION })
+    expect(outcome.ok).toBe(false)
+    if (!outcome.ok) {
+      expect(outcome.reason).toContain('边 M-05')
+      expect(outcome.reason).toContain('REC-WORK-04')
+      expect(outcome.reason).toContain('REC-WORK-05')
+      expect(outcome.reason).toContain('不写半条')
+    }
+  })
+
+  it('绿：逐边前置齐＋决定面齐 → 两条草案 M-01/M-05（生产者三分按 §14.1）', () => {
+    const outcome = workTransitionDrafts({ ...L0_ARGS, evidenceRefs: PREREQ_REFS, decision: DECISION })
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(outcome.drafts.map((draft) => draft.recordId.split(':').at(-1))).toEqual(['M-01', 'M-05'])
+    const [m01, m05] = outcome.drafts
+    const p01 = m01?.payload as { producer_type: string; evidence_refs: { refType: string }[]; from_state: string; to_state: string }
+    const p05 = m05?.payload as { producer_type: string; evidence_refs: { refType: string }[]; from_state: string; to_state: string }
+    expect(p01.producer_type).toBe('decisive')
+    expect(p05.producer_type).toBe('initiator')
+    expect(p01.evidence_refs.map((ref) => ref.refType)).toEqual(['REC-WORK-02', 'REC-WORK-03'])
+    expect(p05.evidence_refs.map((ref) => ref.refType)).toEqual(['REC-WORK-04', 'REC-WORK-05'])
+    expect([p01.from_state, p01.to_state]).toEqual(['intake', 'pending_start'])
+    expect([p05.from_state, p05.to_state]).toEqual(['pending_start', 'in_progress'])
+  })
+
+  it('绿：写面按路径落两行 REC-WORK-06（边号区分、重放幂等零第二副作用）', async () => {
+    const { stack } = await stackWithRecords('rec-l0-path')
+    const hist = histOf(stack.ledger)
+    const wire = createRecordWire({ hist, company: COMPANY })
+    const args = { ticket: L0_ARGS.ticket, attempt: L0_ARGS.attempt, fromState: L0_ARGS.fromPlatformState, toState: L0_ARGS.toPlatformState, at: L0_ARGS.at, actor: L0_ARGS.actor, evidenceRefs: PREREQ_REFS, decision: DECISION }
+    const first = wire.transition(args)
+    expect(first.ok).toBe(true)
+    const rows = hist.query({ company: COMPANY, type: 'REC-WORK-06' })
+    expect(rows).toHaveLength(2)
+    expect(rows.map((row) => row.recordId.split(':').at(-1)).sort()).toEqual(['M-01', 'M-05'])
+    const replay = wire.transition(args)
+    expect(replay.ok).toBe(true)
+    if (replay.ok) expect(replay.deduped).toBe(true)
+    expect(hist.query({ company: COMPANY, type: 'REC-WORK-06' })).toHaveLength(2)
+  })
+
+  it('红：非法回退仍拒写且留痕（日志明报表外边＋合法出口，零行）', async () => {
+    const { stack } = await stackWithRecords('rec-l0-red')
+    const logs: string[] = []
+    const wire = createRecordWire({ hist: histOf(stack.ledger), company: COMPANY, log: (line) => logs.push(line) })
+    const result = wire.transition({
+      ticket: L0_ARGS.ticket,
+      attempt: L0_ARGS.attempt,
+      at: L0_ARGS.at,
+      actor: L0_ARGS.actor,
+      fromState: PLATFORM_STATES.delivered,
+      toState: PLATFORM_STATES.dispatched,
+      evidenceRefs: PREREQ_REFS,
+      decision: DECISION,
+    })
+    expect(result.ok).toBe(false)
+    expect(logs.some((line) => line.includes('拒写 REC-WORK-06') && line.includes('无对应边') && line.includes('合法出口'))).toBe(true)
+    expect(histOf(stack.ledger).query({ company: COMPANY, type: 'REC-WORK-06' })).toHaveLength(0)
   })
 })
 
