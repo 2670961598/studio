@@ -22,6 +22,11 @@
  *   ④ **装配＋监听生命周期**：`assembleApi`（gated-only 不变）→ `start()`＝真监听
  *      （port/缺省 0；JSON 响应过 `guardResponse`＝第 5 出口 wrapper）＋启动行（实际端口/
  *      只读面/缺口）→ `close()`（runServe 停机收口先关 API）。
+ *   ⑤ **启动只读探活（studio-dev-629/#547 增量）**：`start()` 监听成功后立即以公开只读面
+ *      API-01 `GET /v1/company` 自探活（200 ∧ ok=true ∧ 公司维同源才放行；超时/非 200/
+ *      坏 JSON/公司维不符一律 `close()` 后抛，runServe 侧收口为 CONFIG_INVALID 拒启——
+ *      fail-closed，不静默半面）。**不新增端点**（API- 族冻结，`/healthz` 属契约面子项
+ *      待批）；探活属装配面启动闸，不是主循环新相位（docs/17-§2 七相位不增删）。
  *
  * 边界：本件不持 engine/ledger/平台句柄；ledger 只经注入的 `guardResponse`（出站闸失败
  * 落账）间接触达——与 log-egress 出口同纪律，API 代码本身零库零平台。
@@ -179,6 +184,8 @@ export interface ServeApiArgs {
   readonly guardResponse?: (payload: unknown) => unknown
   /** 监听地址（缺省 127.0.0.1 环回；LAN 暴露未落位＝缺口） */
   readonly host?: string
+  /** 启动只读探活选项（超时缺省 5s；fetch 可注入——测试面不触网；缺省＝生产全局 fetch） */
+  readonly probe?: ApiProbeOptions
 }
 
 /** serve 侧 API 装配面（`ServeRuntime.api`）：装配一次、监听一次、停机一处收口 */
@@ -242,7 +249,6 @@ export function wireServeApi(args: ServeApiArgs): ServeApiWiring {
         ...(args.host !== undefined ? { host: args.host } : {}),
         ...(args.guardResponse !== undefined ? { guardResponse: args.guardResponse } : {}),
       })
-      server = handle
       const gaps = API_READ_FACE_GAPS.map((face) => `${face}(${API_READ_FACE_GAP_REASONS[face]})`).join('、')
       args.log(
         `[serve] 对外 API 已监听：${handle.url}（同进程装配；绑定=${handle.host}；` +
@@ -250,6 +256,18 @@ export function wireServeApi(args: ServeApiArgs): ServeApiWiring {
           `触发面=fail-closed 401/403（凭据目录/签名验签未装配）；写面=PORT-GATE ${gateWired ? '已接线（receiveIntent→engine.ingest；只落单不派工）' : 'fail-closed（未注入——拒绝而非静默）'}；` +
           `响应面出站闸=${args.guardResponse !== undefined ? '已接 guardApiResponse' : '未接（缺口）'}）`,
       )
+      // 监听成功≠对外可用：以公开只读面自探活（200∧ok∧同公司维）才放行；失败先关监听再抛，
+      // 由 runServe 收口为 CONFIG_INVALID 拒启（fail-closed——不静默起一个半面）。
+      try {
+        const probe = await probeServeApi(handle.url, args.company.slug, args.probe)
+        args.log(
+          `[serve] 对外 API 探活通过：GET ${probe.url} → HTTP ${String(probe.status)}（company=${probe.companySlug}；只读探针=API-01，不新增端点）`,
+        )
+      } catch (err) {
+        await handle.close()
+        throw new Error(`API 启动探活失败（${handle.url}）：${err instanceof Error ? err.message : String(err)}`)
+      }
+      server = handle
       return handle
     },
     async close(): Promise<void> {
@@ -258,4 +276,84 @@ export function wireServeApi(args: ServeApiArgs): ServeApiWiring {
       if (current !== undefined) await current.close()
     },
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 启动只读探活（studio-dev-629；原 #547 功能在 #542 版本上增量重出）
+//
+// 依据：docs/17-§2（主循环七相位——监听属装配面，探活是启动闸，不是新相位）；
+// docs/17-§6（收割四要件——本单是 devtask，四要件映射见 REPORT，不改判据）；
+// docs/v2/14 §四（API-01..16 端点族冻结；默认绑定环回；「只落单不派工」）。
+// 纪律：**不新增端点**（`/healthz` 属契约面子项，须报 Lead/制作人批）——以公开只读面
+// API-01 `GET /v1/company` 作探针：200 ∧ ok=true ∧ company.slug 同维才放行；非 200/
+// 坏 JSON/公司维不符/请求异常一律抛（调用方关监听并拒启，不静默降级）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 探活响应窄面（只取 status/json；不依赖 DOM lib，Node/Bun 的 fetch Response 结构同形） */
+export interface ApiProbeResponse {
+  readonly status: number
+  json(): Promise<unknown>
+}
+
+/** 探活请求注入面（测试/离线面可替换；缺省全局 fetch） */
+export type ApiProbeFetch = (
+  url: string,
+  init?: { readonly headers?: Readonly<Record<string, string>>; readonly signal?: AbortSignal },
+) => Promise<ApiProbeResponse>
+
+/** 探活选项（超时缺省 5s；fetch 可注入） */
+export interface ApiProbeOptions {
+  readonly timeoutMs?: number
+  readonly fetchImpl?: ApiProbeFetch
+}
+
+/** 探活结果（供启动日志与运维探针引用实际端点/状态/公司维） */
+export interface ApiProbeResult {
+  /** 实际请求的只读端点 URL（`<base>/v1/company`） */
+  readonly url: string
+  readonly status: number
+  readonly companySlug: string
+}
+
+/**
+ * 对外 API 只读探活（fail-closed）。
+ * @param url          监听基址（`ApiServerHandle.url`，如 http://127.0.0.1:8788）
+ * @param expectedSlug 本进程挂载公司 slug（SEC-WD-01：读面公司维须同源）
+ * @param options      超时/fetch 注入（缺省 5s＋全局 fetch）
+ */
+export async function probeServeApi(
+  url: string,
+  expectedSlug: string,
+  options: ApiProbeOptions = {},
+): Promise<ApiProbeResult> {
+  const target = `${url.replace(/\/+$/, '')}/v1/company`
+  const timeoutMs = options.timeoutMs ?? 5_000
+  const fetchImpl: ApiProbeFetch = options.fetchImpl ?? (fetch as unknown as ApiProbeFetch)
+  let response: ApiProbeResponse
+  try {
+    response = await fetchImpl(target, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+  } catch (err) {
+    throw new Error(`API 探活请求失败（${target}）：${err instanceof Error ? err.message : String(err)}`)
+  }
+  if (response.status !== 200) {
+    throw new Error(`API 探活非 200（${target} → HTTP ${String(response.status)}）`)
+  }
+  let body: unknown
+  try {
+    body = await response.json()
+  } catch (err) {
+    throw new Error(`API 探活响应非 JSON（${target}）：${err instanceof Error ? err.message : String(err)}`)
+  }
+  if (typeof body !== 'object' || body === null || (body as { readonly ok?: unknown }).ok !== true) {
+    throw new Error(`API 探活响应 ok≠true（${target}）`)
+  }
+  const company = (body as { readonly company?: { readonly slug?: unknown } }).company
+  const slug = typeof company?.slug === 'string' ? company.slug : undefined
+  if (slug !== expectedSlug) {
+    throw new Error(`API 探活公司维不符（${target}：期望 ${expectedSlug}，实得 ${String(slug)}）`)
+  }
+  return { url: target, status: response.status, companySlug: slug }
 }

@@ -139,22 +139,25 @@ export const SECTION = {
 `,
   serve: `  studio-next serve --config <daemon.yaml>
        常驻主循环（v0.5，docs/16-§四）：七相位引擎 + 心跳日志 + SIGINT/SIGTERM 优雅停。
-       配置最小面（扁平 YAML 子集）：db / platform(fake|localfile) / company / rootDir / tickMs /
+       配置最小面（扁平 YAML 子集）：db / platform(fake|localfile) / company / rootDir / apiPort(0..65535；0=ephemeral，生产单实例写 8788) / tickMs /
        maxActionsPerTick / maxInflight / stallAfterMs / stallAfterMsByExecutor(executor=ms;...) / stallKillAfterAlarms / laneTtlMs / mergeLeaseTtlMs / breakerThreshold /
        autoApprove / seatbeltTier(read-only|workspace-write；缺省 read-only) / seatbeltWriteRoots(引号 JSON 数组，仅 workspace-write) /
        seatbeltAuthorization(谁/何单/何策略，仅 workspace-write 必填) /
        companyDir / jobs / jobPollMs / models / budgetTicketCapUsd / budgetPersonCapUsd / reloadWatch；
+       apiPort: 对外 API 监听端口（缺省 0=ephemeral——测试/多实例同机不撞端口；单实例生产写 8788，
+       绑定恒 127.0.0.1 环回，v2/14 §四）；启动后以 API-01 GET /v1/company 只读探活，失败=CONFIG_INVALID 拒启；
        jobs: true 起定时岗调度器（v0.4：cron 到点→schedule 意图→主循环，结果落台账）；
        models: <models.yaml> 装载价目表→派发前预算闸估算校准（态 A；缺省态 B=适配器自报），
        预算预留-结算不落即不派（20-§六.8）；companyDir 给定时接 L1 配置热重载（指纹自动+
        reload 手动，reloadWatch 缺省开）；demo 模式=fake 全家桶零外部依赖
        （真 dsh/YouTrack/网关未接线，见 src/assembly/serve.ts 头注）
-       配置样例（最小可跑——company create 顺产骨架同款，studio-dev-103 S4C）：
+       配置样例（最小可跑——company create 顺产骨架同款，studio-dev-103 S4C；apiPort 单实例生产写 8788）：
          db: "/abs/work-root/var/ledger.sqlite"
          platform: localfile
          company: "my-corp"
          companyDir: "/abs/work-root/my-corp"
          rootDir: "/abs/work-root/var"
+         apiPort: 8788
          tickMs: 1000
          jobs: true
 `,
