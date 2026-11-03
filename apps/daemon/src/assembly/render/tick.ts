@@ -15,7 +15,9 @@ export function renderTick(report: TickReport): string {
       p.collect.cursorLoop ? ' [cursor-loop]' : ''
     }${
       p.stateDiff.reopened > 0 ? ` reopened=${p.stateDiff.reopened}` : ''
-    }${p.stateDiff.rescanned > 0 ? ` rescan=+${p.stateDiff.rescanned}` : ''}${p.account.heartbeat ? ' [heartbeat]' : ''}`
+    }${p.stateDiff.rescanned > 0 ? ` rescan=+${p.stateDiff.rescanned}` : ''}${
+      p.collect.obs !== undefined ? ` obs=${p.collect.obs.faultsRecorded}f/${p.collect.obs.watchesOpened}o/${p.collect.obs.watchesClosed}c open=${p.collect.obs.openWatches}` : ''
+    }${p.account.heartbeat ? ' [heartbeat]' : ''}`
   )
 }
 

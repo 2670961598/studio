@@ -16,6 +16,7 @@ import type { CostCloseTickReport } from '../cost-close/close.ts'
 import type { QueueSiteJudgeReport } from '../judge/sites129.ts'
 import type { MergeQueueFace } from '../merge/merge-lease.ts'
 import type { MirrorGcTickReport } from '../mirror-gc/step.ts'
+import type { ObsTickReport } from '../observe/types.ts'
 
 /** 采集相位汇报 */
 export interface TickPhaseCollect {
@@ -44,6 +45,12 @@ export interface TickPhaseCollect {
    * 删除数、样本单号与备份路径。不新增事件名（事件枚举冻结 17-§3）。
    */
   mirrorGc?: MirrorGcTickReport
+  /**
+   * 观察面 OBS 本拍报告（studio-dev-539／重出 studio-dev-617；docs/17-§2 相位 1 尾步骤）：
+   * 故障/观察开启与结束计数＋只读投影六态摘要（`snapshotFound=false`＝材料不足，不补零/
+   * 不补绿——NEG-MON-01）。面未装配（无观察位置）＝本段缺席，零行为。
+   */
+  obs?: ObsTickReport
   cursorBefore: string | null
   cursorAfter: string | null
   /** studio-dev-409：本拍 activity 翻页出现 nextCursor 同值再现（游标回退环）——

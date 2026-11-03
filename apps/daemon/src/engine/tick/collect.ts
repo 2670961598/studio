@@ -15,6 +15,7 @@ import type { IssueRecord, TicketId } from '@studio-next/contract'
 import type { DirectiveVerb } from '../directive/index.ts'
 import { engineDirectiveDeps, runDirectiveLayer } from '../directive/index.ts'
 import { runMirrorGcTick, type MirrorGcTickReport } from '../mirror-gc/step.ts'
+import type { ObsCollectFailure } from '../observe/index.ts'
 import { recordTickIntake } from '../records/hooks.ts'
 import { buildEventIndex } from '../sentinel/events-index.ts'
 import { runDev49Sentinels } from '../sentinel/sentinels.ts'
@@ -28,6 +29,8 @@ export async function collectPhase(rt: EngineRuntime, ctx: TickCtx): Promise<Col
   const startedAt = ctx.startedAt
   const tickEvents = ctx.tickEvents
   const errors = ctx.errors
+  /** 本拍采集失败事实（OBS 观察面输入；studio-dev-539／重出 studio-dev-617） */
+  const obsFailures: ObsCollectFailure[] = []
     // —— 相位 1 采集：activity 增量（游标）+ issues 全量对账（镜像 upsert） ——
     const cursorRaw = ledger.kvGet(CURSOR_KEY)
     // 空串=「游标为 null（尚未消费任何活动）」的持久形态（kv 列 NOT NULL——回读须还原 null）
@@ -70,13 +73,24 @@ export async function collectPhase(rt: EngineRuntime, ctx: TickCtx): Promise<Col
       }
       ledger.kvSet(CURSOR_KEY, cursor ?? '')
     } catch (err) {
-      errors.push(`采集相位失败：${err instanceof Error ? err.message : String(err)}`)
+      const message = `采集相位失败：${err instanceof Error ? err.message : String(err)}`
+      errors.push(message)
+      obsFailures.push({ source: 'activity', message })
+    }
+
+    if (cursorLoop) {
+      obsFailures.push({
+        source: 'cursor-loop',
+        message: '活动流 nextCursor 同值再现（游标回退环）：已停翻防打转，游标停在最后未重复值',
+      })
     }
 
     let mirrorListOk = true
     const issues = await platform.issues.list({}).catch((err: unknown) => {
       mirrorListOk = false
-      errors.push(`镜像对账失败（issues.list）：${err instanceof Error ? err.message : String(err)}`)
+      const message = `镜像对账失败（issues.list）：${err instanceof Error ? err.message : String(err)}`
+      errors.push(message)
+      obsFailures.push({ source: 'mirror-list', message })
       return [] as IssueRecord[]
     })
     const issueById = new Map<TicketId, IssueRecord>(issues.map((i) => [i.id, i]))
@@ -111,6 +125,25 @@ export async function collectPhase(rt: EngineRuntime, ctx: TickCtx): Promise<Col
     } catch (err) {
       errors.push(`镜像 GC 失败：${err instanceof Error ? err.message : String(err)}`)
     }
+
+    // —— 相位 1 尾·观察面 OBS（studio-dev-539／重出 studio-dev-617；docs/17-§2 相位内步骤）：
+    // 故障边沿触发落 REC-OBS-02＋观察义务 REC-OBS-03；恢复落 REC-OBS-04；写失败进 errors
+    // （fail-closed，§6 接管≠收割）。面未装配＝零行为；观测写不改事实面（不 appendEvent、不 mutate）。
+    let obs: CollectOutcome['obs']
+    if (rt.deps.obs !== undefined) {
+      const obsOutcome = rt.deps.obs.observe({
+        seq,
+        at: new Date(startedAt).toISOString(),
+        lastTrustedAt: new Date(rt.lastCollectOkAt).toISOString(),
+        cursorBefore,
+        cursorAfter: cursor,
+        failures: obsFailures,
+      })
+      obs = obsOutcome.report
+      errors.push(...obsOutcome.errors)
+    }
+    // 最后可信点只在本拍采集无失败时前移（不取当前时刻冒充——v2/11 §十二 last_trusted.at）
+    if (obsFailures.length === 0) rt.lastCollectOkAt = startedAt
 
     // —— 相位 1 尾：DEV-49 A4 双哨（未知态哨+状态集巡逻核，docs/52-§十；体=sentinels.ts，
     // 键派生=events-index.ts）——流外态单/出厂态回流不再只走 NOOP 静默观测链：ESCALATE
@@ -178,6 +211,7 @@ export async function collectPhase(rt: EngineRuntime, ctx: TickCtx): Promise<Col
     issues,
     issueById,
     mirrorGc,
+    obs,
     index,
     unknownStateAlarmed,
     foreignKnown,

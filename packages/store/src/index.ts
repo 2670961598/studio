@@ -309,6 +309,31 @@ export {
   type HistTxReceipt,
 } from './hist.ts'
 
+// OBS 观察族写面（studio-dev-539／重出 studio-dev-617；v2/11 §十二／v2/14 §1.8 PORT-OBS.reportFault 数据面）：
+// 记录写口仍唯一经 hist.append（本面只做端口形状→记录 payload 映射与不变量前置判定）；
+// 失败一律 fail-closed 抛 ObsWriteError（形状拒收=false 副作用／写口异常=true 须对账）。
+// 生产装配面：daemon assembly/observe（观察面·相位 1 尾）——不从 src/obs/write.ts 深引。
+export {
+  createObservationWriteFace,
+  ObsWriteError,
+  OBS_CLOSURE_RECORD_TYPE,
+  OBS_FAULT_RECORD_TYPE,
+  OBS_RECORD_AREA,
+  OBS_RECORD_SCHEMA_REF,
+  OBS_RECORD_SPEC_VERSION,
+  OBS_WATCH_RECORD_TYPE,
+  OBS_WRITTEN_BY,
+  type ContinuousObservationWriteInput,
+  type ObservationClosureWriteInput,
+  type ObservationFaultWriteInput,
+  type ObservationIdempotency,
+  type ObservationProjectionRead,
+  type ObservationWriteDeps,
+  type ObservationWriteFace,
+  type ObservationWriteReceipt,
+  type OpenObservationWatch,
+} from './obs/write.ts'
+
 // v17 派生树登记账本（GAP-V2-04 S6）：append-only 读写面（daemon 组合根经 ledger.db 消费）
 export { createDerivationLedger } from './derivation/derivation-ledger.ts'
 export type {

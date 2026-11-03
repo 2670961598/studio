@@ -50,6 +50,7 @@ export async function runTick(rt: EngineRuntime): Promise<TickReport> {
         affectedTickets: collected.affected.length,
         mirrorSynced: collected.issues.length,
         ...(collected.mirrorGc !== undefined ? { mirrorGc: collected.mirrorGc } : {}),
+        ...(collected.obs !== undefined ? { obs: collected.obs } : {}),
         cursorBefore: collected.cursorBefore,
         cursorAfter: collected.cursor,
         cursorLoop: collected.cursorLoop,

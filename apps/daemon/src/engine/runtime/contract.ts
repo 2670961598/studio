@@ -35,6 +35,7 @@ import type { SplitDirectiveInput } from '../split/materialize.ts'
 import type { RoomDuty } from '../rooms/room-duty.ts'
 import type { WorkerKeyDeps } from '../worker-key.ts'
 import type { RecordWirePort } from '../records/index.ts'
+import type { ObservationTickStep } from '../observe/index.ts'
 import type { DispatchDerivationGuard } from '../work/dispatch-seatbelt.ts'
 import type { DispatchDerivationRegistry } from '../work/derivation-registration.ts'
 import type { EngineConfig, MergeRunDeps } from '../tick/types.ts'
@@ -113,6 +114,12 @@ export interface EngineDeps extends HarvestRecordingDeps {
    * 钩异常进 tick errors 不炸拍（防御性 try/catch——收割面完整性优先于钩面）。
    */
   onWorkComplete?: (signal: RelayWorkSignal) => void
+  /**
+   * 观察面（OBS）拍内步骤（studio-dev-539／重出 studio-dev-617；缺省不注入＝面关零行为）：
+   * 相位 1 采集尾落 REC-OBS-02/03/04（docs/17-§2 相位内步骤；写失败原样进 TickReport.errors，
+   * 不参与 docs/17-§6 收割判定）。
+   */
+  obs?: ObservationTickStep
   hrGate?: HrGateOptions // 任职闸门注入面（v2/02 §3.4）：缺省 compat（引擎直连/旧测试）；serve 恒注入 strict（缺证即拒）
   mergeRun?: MergeRunDeps // 202-P2 studio-dev-232：注入=相位 5 真单刀面开；缺省=v0 模拟轨零行为
   dispatchSeatbelt?: SeatbeltGrant // IMPL-07-09 派发域 seatbelt 圈定授权（省略=read-only 最严；放宽须显式授权并留痕；校验/留痕面见 work/dispatch-seatbelt.ts）

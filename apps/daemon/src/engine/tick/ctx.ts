@@ -15,6 +15,7 @@ import type { DirectiveLayerResult } from '../directive/index.ts'
 import type { HrSyncTickReport } from '../hrsync/hrsync.ts'
 import type { ResumeDispatchPlan } from '../intents/relay-resume.ts'
 import type { MirrorGcTickReport } from '../mirror-gc/step.ts'
+import type { ObsTickReport } from '../observe/types.ts'
 import type { PricingStaleTickReport } from '../pricing/pricing.ts'
 import type { EventIndex } from '../sentinel/events-index.ts'
 import type { TickActionResult, TickDecisionEntry, TickPhaseHarvest, TickReport } from '../tick-report/types.ts'
@@ -48,6 +49,8 @@ export interface CollectOutcome {
   issues: IssueRecord[]
   issueById: Map<TicketId, IssueRecord>
   mirrorGc: MirrorGcTickReport | undefined
+  /** 观察面 OBS 本拍报告（studio-dev-539／重出 studio-dev-617；面未装配＝undefined） */
+  obs: ObsTickReport | undefined
   index: EventIndex
   unknownStateAlarmed: number
   foreignKnown: number

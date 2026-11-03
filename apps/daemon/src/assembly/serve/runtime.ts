@@ -39,6 +39,7 @@ import { createHotReload, type HotReload, type HotReloadApplyReport } from '../.
 import { PLUGINS_DIR, executorFamiliesOf, wireCompanyAssets } from '../assets/wire.ts'
 import { wireServeOps } from '../ops/index.ts'
 import { bootRecordRoster, wireServeRecords } from '../records/index.ts'
+import { wireObservationFace } from '../observe/wire.ts'
 import { makeUlid } from '../../engine/tools/id.ts'
 import { logJobContractWarnings } from '../../engine/jobs/freshness.ts'
 import { registerJobSources } from '../sources/jobs.ts'
@@ -170,7 +171,6 @@ export function buildServeRuntime(
   // —— PORT-OPS 面（OPS 补形 A；v2/14 §1.8）：装配体在 assembly/ops/serve-face.ts；不自动触发。
   const opsFace = wireServeOps({ ledger, clock, guardRecord: outbound.gate.guardStoreRecord, log })
   // —— 记录族生产写面（studio-dev-527；docs/17-§2 映射表）：PORT-HIST append 唯一写口。
-  //   记录写失败不打断拍（wire 三态回报）；事件面照旧，欠账由 projection 对账发现。
   const recordsFace = wireServeRecords({
     ledger,
     company: config.company,
@@ -178,10 +178,9 @@ export function buildServeRuntime(
     log,
     ...(opts?.recordsRootGrant !== undefined ? { rootGrant: opts.recordsRootGrant } : {}),
   })
-  // —— 公司面活持有者（docs/38-§2 L1 热重载替换点）：快照整组换，闭包零重建
   const companyState: { snapshot: CompanySnapshot } = { snapshot }
+  const observationFace = wireObservationFace({ ledger, snapshot: companyState.snapshot, company: config.company, clock, makeId: makeUlid, log, guardRecord: outbound.gate.guardStoreRecord }) // 观察面 OBS 装配（studio-dev-539/617；搬移说明见 assembly/observe/wire.ts 头注）
 
-  // 类型流表（DEV-43）：workflows 声明 → T:<type> 键（无声明=undefined=不注入，D9）
   const typeFlows = flowsFromWorkflows(snapshot.workflows)
   if (typeFlows !== undefined) {
     log(`[serve] 类型流装载：${Object.keys(typeFlows).length} 类（${Object.keys(typeFlows).join('、')}）——T 键叠缺省表（docs/18-§2.1.1）`)
@@ -298,6 +297,7 @@ export function buildServeRuntime(
     ...(roomFace !== undefined ? { rooms: roomFace } : {}),
     ledger, // 已在装配序开头过三不入·库闸（appendEvent 写前扫描）
     records: recordsFace.records, // 记录族生产写面（docs/17-§2「记录族生产写面」段）
+    ...(observationFace !== undefined ? { obs: observationFace.step } : {}), // 观察面 OBS（相位 1 尾；无观察位置＝面关）
     ...(config.seatbelt !== undefined ? { dispatchSeatbelt: config.seatbelt } : {}), capabilitySupply, // IMPL-07-09 配置通道＋CAP 记录/五出口决策（studio-dev-540）
     derivationGuard: derivation.guard, // GAP-V2-04 派发 0 号闸（撤回面）
     derivationRegistry: derivation.registry, // GAP-V2-04 S6 spawn 前登记（失败即不派）

@@ -201,6 +201,8 @@ export function createRuntime(deps: EngineDeps, seams: EngineSeams): EngineRunti
     directiveDeps,
     directives,
     mirrorGcFirstRun,
+    // OBS 最后可信点下界（studio-dev-539／重出 studio-dev-617）：构造期取注入时钟，不读墙钟。
+    lastCollectOkAt: clock(),
     lastProjectedTodoQueue,
     intentQueue,
     splitQueue,

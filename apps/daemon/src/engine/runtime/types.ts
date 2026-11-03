@@ -166,6 +166,11 @@ export interface EngineRuntime {
   directives: DirectiveAuthorizer | undefined
   /** 镜像 GC 首拍强制位（studio-dev-511） */
   mirrorGcFirstRun: boolean
+  /**
+   * 最后采集成功时刻（ms；OBS 最后可信点下界——studio-dev-539／重出 studio-dev-617，
+   * v2/11 §十二 last_trusted.at：不取当前时刻冒充）。相位 1 无失败才前移。
+   */
+  lastCollectOkAt: number
   /** todo_queue 投影写缓存（canonical JSON——diff 才写） */
   lastProjectedTodoQueue: string | undefined
   readonly intentQueue: InvokeIntent[]
