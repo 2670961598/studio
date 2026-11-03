@@ -15,7 +15,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { CallContext, CircuitBreakRequest, EmergencyStopRequest, OpsRef, OpsRecordRef, StopReceipt } from '@studio-next/contract'
+import type { CallContext, CircuitBreakRequest, EmergencyStopRequest, OpsRef, OpsRecordRef, ReadContext, StopReceipt } from '@studio-next/contract'
 import { openLedger, type Ledger } from '@studio-next/store'
 import { assembleOps, OPS_RECORD_SCHEMA_REF, OPS_RECORD_SPEC_VERSION, OPS_RECORD_WRITTEN_BY, type OpsAssembly } from '../../../src/assembly/ops/index.ts'
 import type { OpsStopRecord } from '../../../src/control/stop-channel.ts'
@@ -23,6 +23,12 @@ import type { OpsStopRecord } from '../../../src/control/stop-channel.ts'
 const AT = '2026-11-01T00:00:00.000Z'
 const DUE = '2026-11-02T00:00:00.000Z'
 const COMPANY = 'demo'
+
+/** 读上下文（v2/14 §0.2-1：读方法必带；公司维=本装配挂载公司 demo——缺省/越权＝拒） */
+const READ_CTX: ReadContext = {
+  readScope: { company: { companyId: 'company-demo', slug: COMPANY }, fields: ['record.payload'], purpose: 'ops-hist 读回' },
+  caller: { callerId: 'AGENT-1', kind: 'employment', personId: 'AGENT-1' },
+}
 
 const BOUNDARY_REF: OpsRecordRef = { refType: 'REC-AUTH-01', refId: 'boundary-1', refVersion: '2.1.0' }
 
@@ -122,7 +128,7 @@ describe('REC-WORK-18 信封映射 + PORT-HIST 落库可读', () => {
     const outcome = assembly.ops.emergencyStop(stopRequest(), opsContext())
     if (outcome.kind !== 'ok') throw new Error(`预期 Ok，收到 ${outcome.error.category}/${outcome.error.subcause}`)
     const receipt = outcome.value as StopReceipt
-    const record = assembly.hist.get(receipt.recordId)
+    const record = assembly.hist.get(receipt.recordId, READ_CTX)
     expect(record).toBeDefined()
     expect(record?.recordType).toBe('REC-WORK-18')
     expect(record?.schemaRef).toEqual(OPS_RECORD_SCHEMA_REF)
@@ -147,14 +153,14 @@ describe('REC-WORK-18 信封映射 + PORT-HIST 落库可读', () => {
     expect(payload['effect_on_original']).toBe('不追认原动作、不等于恢复、不推广为常态')
 
     // 读面查询（company 维）同句柄可见
-    const rows = assembly.hist.query({ company: COMPANY, type: 'REC-WORK-18' })
+    const rows = assembly.hist.query({ company: COMPANY, type: 'REC-WORK-18' }, READ_CTX)
     expect(rows.some((row) => row.recordId === receipt.recordId)).toBe(true)
   })
 
   it('circuitBreak 落库：boundary_ref=null、notified/review 具名；真实缺口写进 proofBoundary', () => {
     const outcome = assembly.ops.circuitBreak(breakRequest(), opsContext())
     if (outcome.kind !== 'ok') throw new Error(`预期 Ok，收到 ${outcome.error.category}/${outcome.error.subcause}`)
-    const record = assembly.hist.get(outcome.value.recordId)
+    const record = assembly.hist.get(outcome.value.recordId, READ_CTX)
     expect(record).toBeDefined()
     const payload = record?.payload as Record<string, unknown>
     expect(payload['boundary_ref']).toBeNull()
@@ -174,13 +180,13 @@ describe('REC-WORK-18 信封映射 + PORT-HIST 落库可读', () => {
 describe('幂等与错误分类（同 recordId 重放不产生第二行；冲突/坏形不冒 Ok）', () => {
   it('同 recordId 同内容：第一次 appended=true，第二次 appended=false（返回既有，不产生第二行）', () => {
     const record = stopRecord()
-    const before = assembly.hist.query({ company: COMPANY, type: 'REC-WORK-18' }).length
+    const before = assembly.hist.query({ company: COMPANY, type: 'REC-WORK-18' }, READ_CTX).length
     const first = assembly.appendRecord(record)
     expect(first).toEqual({ recordId: record.recordId, recordType: 'REC-WORK-18', appended: true })
     const second = assembly.appendRecord(record)
     expect(second).toEqual({ recordId: record.recordId, recordType: 'REC-WORK-18', appended: false })
-    expect(assembly.hist.query({ company: COMPANY, type: 'REC-WORK-18' }).length).toBe(before + 1)
-    expect(assembly.hist.get(record.recordId)?.payload).toMatchObject({ trigger: record.trigger })
+    expect(assembly.hist.query({ company: COMPANY, type: 'REC-WORK-18' }, READ_CTX).length).toBe(before + 1)
+    expect(assembly.hist.get(record.recordId, READ_CTX)?.payload).toMatchObject({ trigger: record.trigger })
   })
 
   it('同 recordId 异内容 → 抛分类 conflict（ops-record-conflict；不改写既有行）', () => {
@@ -196,7 +202,7 @@ describe('幂等与错误分类（同 recordId 重放不产生第二行；冲突
     const classified = failure as { opsWrite?: { category?: string; subcause?: string } }
     expect(classified.opsWrite?.category).toBe('conflict')
     expect(classified.opsWrite?.subcause).toBe('ops-record-conflict')
-    expect((assembly.hist.get('REC-WORK-18-IDEM-2')?.payload as { trigger: string }).trigger).toBe('REC-WORK-17')
+    expect((assembly.hist.get('REC-WORK-18-IDEM-2', READ_CTX)?.payload as { trigger: string }).trigger).toBe('REC-WORK-17')
   })
 
   it('引用版本非 semver → 抛分类 unavailable（ops-record-invalid；记录形状拒收未落库）', () => {
@@ -210,7 +216,7 @@ describe('幂等与错误分类（同 recordId 重放不产生第二行；冲突
     const classified = failure as { opsWrite?: { category?: string; subcause?: string } }
     expect(classified.opsWrite?.category).toBe('unavailable')
     expect(classified.opsWrite?.subcause).toBe('ops-record-invalid')
-    expect(assembly.hist.get(record.recordId)).toBeUndefined()
+    expect(assembly.hist.get(record.recordId, READ_CTX)).toBeUndefined()
   })
 
   it('三不入·库闸拒写 → fail-closed（ops-record-unmapped；未落库）', () => {
@@ -231,6 +237,6 @@ describe('幂等与错误分类（同 recordId 重放不产生第二行；冲突
     const classified = failure as { opsWrite?: { category?: string; subcause?: string } }
     expect(classified.opsWrite?.category).toBe('unavailable')
     expect(classified.opsWrite?.subcause).toBe('ops-record-unmapped')
-    expect(guarded.hist.get('REC-WORK-18-GUARDED')).toBeUndefined()
+    expect(guarded.hist.get('REC-WORK-18-GUARDED', READ_CTX)).toBeUndefined()
   })
 })

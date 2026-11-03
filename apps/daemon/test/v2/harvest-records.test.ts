@@ -21,6 +21,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
+import type { ReadContext } from '@studio-next/contract'
 import { createHistFace, openLedger, type HistFace, type Ledger } from '@studio-next/store'
 import {
   createHarvestBatchLedger,
@@ -45,6 +46,11 @@ import { validateEvidenceItem, validateHarvestBatch } from '../../../../packages
 import { createTicket, createWorkStack, disposeWorkStacks, eventsNamed, runTicks } from './records/fixtures/work-stack.ts'
 
 const COMPANY = 'demo'
+/** 读上下文（v2/14 §0.2-1：读方法必带；公司维=被测公司，两槽同填——V2 身份表落位前同值） */
+const READ_CTX: ReadContext = {
+  readScope: { company: { companyId: COMPANY, slug: COMPANY }, fields: ['record.payload'], purpose: 'harvest-records 测试读回' },
+  caller: { callerId: 'AGENT-1', kind: 'employment', personId: 'AGENT-1' },
+}
 const SEGMENT: HarvestSegment = { ticket: 'T-1' as HarvestSegment['ticket'], attempt: 1 }
 
 const roots: string[] = []
@@ -131,7 +137,7 @@ describe('批次落库：REC-EVD-01（批次）＋REC-EVD-02（证据项）真�
     runBatch(batches, completeRequirements())
 
     // ① 批次记录：一条、类型/信封/公司/写入路径齐（PORT-HIST 唯一写口真行）
-    const batchRows = hist.query({ company: COMPANY, type: 'REC-EVD-01' })
+    const batchRows = hist.query({ company: COMPANY, type: 'REC-EVD-01' }, READ_CTX)
     expect(batchRows).toHaveLength(1)
     const record = batchRows[0]
     if (record === undefined) throw new Error('REC-EVD-01 未落库')
@@ -166,7 +172,7 @@ describe('批次落库：REC-EVD-01（批次）＋REC-EVD-02（证据项）真�
     expect(collected).toHaveLength(4)
 
     // ④ 证据项记录：逐项落库、引用回批次 collected_items、契约 REC-EVD-02 判定件绿
-    const itemRows = hist.query({ company: COMPANY, type: 'REC-EVD-02' })
+    const itemRows = hist.query({ company: COMPANY, type: 'REC-EVD-02' }, READ_CTX)
     expect(itemRows).toHaveLength(4)
     expect(collected.map((entry) => entry.content_ref.refId).sort()).toEqual(itemRows.map((row) => row.recordId).sort())
     for (const item of itemRows) {
@@ -201,8 +207,8 @@ describe('批次落库：REC-EVD-01（批次）＋REC-EVD-02（证据项）真�
     batches.record({ ...SEGMENT, deliverer: 'AGENT-1' }, completeRequirements())
     const again = batches.seal(SEGMENT, 'completed', 1500)
     expect(again.status).toBe('duplicate')
-    expect(hist.query({ company: COMPANY, type: 'REC-EVD-01' })).toHaveLength(1)
-    expect(hist.query({ company: COMPANY, type: 'REC-EVD-02' })).toHaveLength(4)
+    expect(hist.query({ company: COMPANY, type: 'REC-EVD-01' }, READ_CTX)).toHaveLength(1)
+    expect(hist.query({ company: COMPANY, type: 'REC-EVD-02' }, READ_CTX)).toHaveLength(4)
     expect(batches.recordingOf(SEGMENT)?.batchRecordId).toBe(firstId)
     db.close()
   })
@@ -213,7 +219,7 @@ describe('批次落库：REC-EVD-01（批次）＋REC-EVD-02（证据项）真�
     const batches = createHarvestRecordingLedger(createHarvestBatchLedger(), { sink: assembly.sink, company: COMPANY, now: () => 2000 })
     runBatch(batches, missingReportRequirements())
 
-    const rows = hist.query({ company: COMPANY, type: 'REC-EVD-01' })
+    const rows = hist.query({ company: COMPANY, type: 'REC-EVD-01' }, READ_CTX)
     expect(rows).toHaveLength(1)
     const record = rows[0]
     if (record === undefined) throw new Error('不完整批次未落库')
@@ -229,7 +235,7 @@ describe('批次落库：REC-EVD-01（批次）＋REC-EVD-02（证据项）真�
     expect(input.usable).toBe(false)
     expect(input.reasons.join('')).toContain('完整性=incomplete')
     expect(input.reasons.join('')).not.toContain('未落库')
-    for (const row of hist.query({ company: COMPANY, type: 'REC-EVD-02' })) {
+    for (const row of hist.query({ company: COMPANY, type: 'REC-EVD-02' }, READ_CTX)) {
       expect(validateEvidenceItem(row)).toEqual({ ok: true })
     }
     db.close()
@@ -246,8 +252,8 @@ describe('fail-closed：缺证不落半套、写口异常不冒已落库', () =>
     runBatch(batches, terminalNotCollectedRequirements())
 
     // 不臆造终态：ENU-53 五值不含 unknown → 整批（批次＋证据项）都不写，防落半套
-    expect(hist.query({ company: COMPANY, type: 'REC-EVD-01' })).toHaveLength(0)
-    expect(hist.query({ company: COMPANY, type: 'REC-EVD-02' })).toHaveLength(0)
+    expect(hist.query({ company: COMPANY, type: 'REC-EVD-01' }, READ_CTX)).toHaveLength(0)
+    expect(hist.query({ company: COMPANY, type: 'REC-EVD-02' }, READ_CTX)).toHaveLength(0)
     const recording = batches.recordingOf(SEGMENT)
     expect(recording?.state).toBe('refused')
     expect(recording?.reasons.join('')).toContain('终态')
@@ -278,7 +284,7 @@ describe('fail-closed：缺证不落半套、写口异常不冒已落库', () =>
     })
     runBatch(batches, completeRequirements())
 
-    expect(hist.query({ company: COMPANY, type: 'REC-EVD-01' })).toHaveLength(0)
+    expect(hist.query({ company: COMPANY, type: 'REC-EVD-01' }, READ_CTX)).toHaveLength(0)
     const recording = batches.recordingOf(SEGMENT)
     expect(recording?.state).toBe('failed')
     expect(recording?.reasons.join('')).toContain('未落库')
@@ -303,7 +309,7 @@ describe('真机接线：引擎第 4 相位（收割）写 REC-EVD-01/02 到真�
       expect(eventsNamed(stack.ledger, ticket, 'GATE_PASS')).toHaveLength(1)
 
       const hist = createHistFace(stack.ledger.db)
-      const rows = hist.query({ company: COMPANY, type: 'REC-EVD-01' })
+      const rows = hist.query({ company: COMPANY, type: 'REC-EVD-01' }, READ_CTX)
       expect(rows).toHaveLength(1)
       const record = rows[0]
       if (record === undefined) throw new Error('真机收割批次未落库')
@@ -311,7 +317,7 @@ describe('真机接线：引擎第 4 相位（收割）写 REC-EVD-01/02 到真�
       expect(payload.segment_ref.refId).toBe(`${ticket}@att1`)
       expect(payload.harvest_completeness).toBe('complete')
       expect(payload.execution_terminal).toBe('completed')
-      expect(hist.query({ company: COMPANY, type: 'REC-EVD-02' })).toHaveLength(4)
+      expect(hist.query({ company: COMPANY, type: 'REC-EVD-02' }, READ_CTX)).toHaveLength(4)
     } finally {
       stack.ledger.close()
     }
@@ -327,8 +333,8 @@ describe('真机接线：引擎第 4 相位（收割）写 REC-EVD-01/02 到真�
 
       const hist = createHistFace(stack.ledger.db)
       // 终态 unknown → 不臆造、不落半套：批次与证据项都零行
-      expect(hist.query({ company: COMPANY, type: 'REC-EVD-01' })).toHaveLength(0)
-      expect(hist.query({ company: COMPANY, type: 'REC-EVD-02' })).toHaveLength(0)
+      expect(hist.query({ company: COMPANY, type: 'REC-EVD-01' }, READ_CTX)).toHaveLength(0)
+      expect(hist.query({ company: COMPANY, type: 'REC-EVD-02' }, READ_CTX)).toHaveLength(0)
     } finally {
       stack.ledger.close()
     }

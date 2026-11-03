@@ -34,7 +34,7 @@
  *      拒绝即零副作用失败；该尝试的留痕归调用方错误面（不伪造悬空引用冒充审计）；
  *   4. `partial_provided`（ENU-66）本面不产生（单 scope 单次访问不混合授权面），保留给分批访问刀。
  */
-import { configInvalid, type MemoryDomain } from '@studio-next/contract'
+import { configInvalid, type CallerRef, type MemoryDomain, type ReadContext } from '@studio-next/contract'
 import {
   RECORD_TYPE_VERSION_INITIAL,
   type ObjectRef,
@@ -198,6 +198,32 @@ function decidedByOf(ctx: MemoryAccessContext): string {
 }
 
 /**
+ * 读上下文（hist read 面必带；v2/14 §0.2-1）：公司维＝本次访问公司（两槽同填——V2 公司身份
+ * 表落位前 companyId 与 slug 同值，与 daemon assembly/api/readers.ts 同口径）；caller 取 who
+ * 三分首个非空引用（任职→employment、位置→position、程序→program），审计可追溯到访问主体。
+ */
+function readContextOf(ctx: MemoryAccessContext, company: string, purpose: string): ReadContext {
+  const holder = ctx.who.holderRef
+  const position = ctx.who.positionRef
+  const procedure = ctx.who.procedureRef
+  const caller: CallerRef | undefined =
+    holder != null
+      ? { callerId: holder.refId, kind: 'employment' }
+      : position != null
+        ? { callerId: position.refId, kind: 'position' }
+        : procedure != null
+          ? { callerId: procedure.refId, kind: 'program', programRef: procedure.refId }
+          : undefined
+  if (caller === undefined) {
+    configInvalid('store/hist:memory-access-incomplete', '访问主体缺项：任职/位置/程序至少一项（REC-MEM-02.who——§十三）')
+  }
+  return {
+    readScope: { company: { companyId: company, slug: company }, fields: ['memory.entry.payload'], purpose },
+    caller,
+  }
+}
+
+/**
  * v14 记录面工厂之外的记忆访问面工厂：`hist` 须已是迁移完成的唯一记录写口。
  * 只增访问留痕与访问控制，不改 hist 的读写语义（append/get/memory 原样复用）。
  */
@@ -242,8 +268,8 @@ export function createMemoryAccessFace(hist: HistFace, options: MemoryAccessFace
   }
 
   /** 条目引用解析（定向读取；不存在/非记忆/跨公司＝拒，不冒充「无行」——§0.2-1） */
-  const resolveEntry = (recordId: string, company: string): HistRecord => {
-    const record = hist.get(recordId)
+  const resolveEntry = (recordId: string, company: string, rc: ReadContext): HistRecord => {
+    const record = hist.get(recordId, rc)
     if (record === undefined) {
       configInvalid('store/hist:memory-entry-missing', `条目 ${recordId} 权威确认不存在（不得冒充「无记忆」）`)
     }
@@ -263,8 +289,9 @@ export function createMemoryAccessFace(hist: HistFace, options: MemoryAccessFace
     company: string,
     targetScope: string,
     entries: readonly HistRecord[],
+    rc: ReadContext,
   ): AccessDenial | undefined => {
-    const basis = hist.get(ctx.authority.basisRef.refId)
+    const basis = hist.get(ctx.authority.basisRef.refId, rc)
     if (basis === undefined) {
       return {
         subcause: 'store/hist:memory-authority-missing',
@@ -348,9 +375,9 @@ export function createMemoryAccessFace(hist: HistFace, options: MemoryAccessFace
   }
 
   /** 审计条目引用完整性（§十五-1：审计不得引悬空/跨公司/非记忆记录） */
-  const assertAuditEntries = (entryRefs: readonly RecordRef[], company: string): void => {
+  const assertAuditEntries = (entryRefs: readonly RecordRef[], company: string, rc: ReadContext): void => {
     for (const ref of entryRefs) {
-      const record = hist.get(ref.refId)
+      const record = hist.get(ref.refId, rc)
       if (record === undefined) {
         configInvalid('store/hist:memory-audit-entry-missing', `审计引用条目 ${ref.refId} 不存在（引用悬空＝缺证——§十五-1）`)
       }
@@ -369,8 +396,9 @@ export function createMemoryAccessFace(hist: HistFace, options: MemoryAccessFace
     company: string,
     decidedBy: string,
     tx: HistTx | undefined,
+    rc: ReadContext,
   ): HistRecordRef => {
-    assertAuditEntries(payload.layer_and_entries.entry_refs, company)
+    assertAuditEntries(payload.layer_and_entries.entry_refs, company, rc)
     const record = auditEnvelope(payload, company, decidedBy)
     return tx === undefined ? hist.append(record) : hist.append(record, tx)
   }
@@ -378,6 +406,7 @@ export function createMemoryAccessFace(hist: HistFace, options: MemoryAccessFace
   const read = (query: MemoryReadQuery, ctx: MemoryAccessContext): MemoryReadResult => {
     assertReadQuery(query)
     assertAccessContext(ctx)
+    const rc = readContextOf(ctx, query.company, `memory.read:${query.scope}`)
     const when = ctx.when ?? isoTimestamp(clock())
     const targeted = query.entryRefs !== undefined
     let entries: HistRecord[]
@@ -386,12 +415,12 @@ export function createMemoryAccessFace(hist: HistFace, options: MemoryAccessFace
       if (refs.length === 0) {
         configInvalid('store/hist:memory-access-no-entries', '定向读取须至少一条条目引用（REC-MEM-02 entry_refs min 1——零条目不成证）')
       }
-      entries = refs.map((ref) => resolveEntry(ref.refId, query.company))
+      entries = refs.map((ref) => resolveEntry(ref.refId, query.company, rc))
     } else {
       if (query.domain === undefined) {
         configInvalid('store/hist:memory-domain-required', '扫描读取必填 domain（REC-MEM-02 layer_and_entries 单域——§十三）')
       }
-      entries = hist.memory({ company: query.company, scope: query.scope, domain: query.domain })
+      entries = hist.memory({ company: query.company, scope: query.scope, domain: query.domain }, rc)
     }
     if (entries.length === 0) {
       configInvalid(
@@ -405,7 +434,7 @@ export function createMemoryAccessFace(hist: HistFace, options: MemoryAccessFace
       configInvalid('store/hist:memory-domain-missing', '访问条目无记忆域（坏行 fail-closed）')
     }
     const entryRefs = entries.map(refOf)
-    const denial = accessDenialOf(ctx, when, query.company, query.scope, entries)
+    const denial = accessDenialOf(ctx, when, query.company, query.scope, entries, rc)
     if (denial !== undefined) {
       // 访问被拒也是审计事件（ENU-66）：先落 denied 留痕，再 fail-closed 抛。
       // 拒绝记录取「请求域 > 首条目域」作单域槽（域一致性回调用方错误面判，不在被拒时混入提供结果）。
@@ -414,6 +443,7 @@ export function createMemoryAccessFace(hist: HistFace, options: MemoryAccessFace
         query.company,
         decidedByOf(ctx),
         undefined,
+        rc,
       )
       configInvalid(denial.subcause, denial.detail)
     }
@@ -423,7 +453,7 @@ export function createMemoryAccessFace(hist: HistFace, options: MemoryAccessFace
     if (query.domain !== undefined && firstDomain !== query.domain) {
       configInvalid('store/hist:memory-domain-mismatch', `请求域 ${query.domain} 与条目域 ${firstDomain} 不一致`)
     }
-    const audit = appendAudit(auditPayloadOf(ctx, when, firstDomain, entryRefs, 'provided'), query.company, decidedByOf(ctx), undefined)
+    const audit = appendAudit(auditPayloadOf(ctx, when, firstDomain, entryRefs, 'provided'), query.company, decidedByOf(ctx), undefined, rc)
     return { entries, audit }
   }
 
@@ -437,6 +467,7 @@ export function createMemoryAccessFace(hist: HistFace, options: MemoryAccessFace
       'store/hist:memory-company-missing',
       '记忆写入须给 companyRef（多公司部署写面必带公司维——SEC-WD-01）',
     )
+    const rc = readContextOf(ctx, company, `memory.write:${ctx.scope}`)
     const draftScope = ownerScopeOfDraft(record)
     if (draftScope === undefined) {
       configInvalid('store/hist:memory-entry-scope-missing', '待写条目缺 payload.owner_scope（scope 精确等值无可判依据）')
@@ -448,19 +479,19 @@ export function createMemoryAccessFace(hist: HistFace, options: MemoryAccessFace
       )
     }
     const when = ctx.when ?? isoTimestamp(clock())
-    const denial = accessDenialOf(ctx, when, company, draftScope, [])
+    const denial = accessDenialOf(ctx, when, company, draftScope, [], rc)
     if (denial !== undefined) configInvalid(denial.subcause, denial.detail)
     const tx = hist.begin()
     try {
       const entryRef = hist.append(record, tx)
-      const stored = hist.get(entryRef.recordId)
+      const stored = hist.get(entryRef.recordId, rc)
       if (stored === undefined) {
         configInvalid('store/hist:memory-entry-unreadable', `写入条目 ${entryRef.recordId} 同事务内不可回读（不落无审计记忆）`)
       }
       if (ownerScopeOf(stored) !== ctx.scope) {
         configInvalid('store/hist:memory-scope-denied', `写入条目 owner_scope=${ownerScopeOf(stored)} ≠ 调用方 scope=${ctx.scope}`)
       }
-      appendAudit(auditPayloadOf(ctx, when, domainOf(stored), [refOf(stored)], 'provided'), company, decidedByOf(ctx), tx)
+      appendAudit(auditPayloadOf(ctx, when, domainOf(stored), [refOf(stored)], 'provided'), company, decidedByOf(ctx), tx, rc)
       hist.commit(tx)
       return entryRef
     } catch (error) {
@@ -482,7 +513,16 @@ export function createMemoryAccessFace(hist: HistFace, options: MemoryAccessFace
     if (decidedBy === undefined) {
       configInvalid('store/hist:memory-access-incomplete', '访问主体缺项：任职/位置/程序至少一项（REC-MEM-02.who——§十三）')
     }
-    return appendAudit(draft.payload, draft.company, decidedBy, undefined)
+    // 审计条目引用完整性读取：调用者＝本审计记录的具名决定者（程序读，不伪造 who 三分）
+    const rc: ReadContext = {
+      readScope: {
+        company: { companyId: draft.company, slug: draft.company },
+        fields: ['memory.audit.entries'],
+        purpose: 'REC-MEM-02 条目引用完整性校验',
+      },
+      caller: { callerId: decidedBy, kind: 'program', programRef: decidedBy },
+    }
+    return appendAudit(draft.payload, draft.company, decidedBy, undefined, rc)
   }
 
   return { read, write, auditAccess }

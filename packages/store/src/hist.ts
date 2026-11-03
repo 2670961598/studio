@@ -10,6 +10,10 @@
  *   - docs/v2/05 §三 DOM-05：`records`＝记录投影，**不是第四事实源**；本面不写 events、不写 cost_daily；
  *     投影钩子同事务触发＝目标（未证，治 L3J-P1-02）
  *   - docs/v2/10 §4.1（schemaRef/specVersion 引用串）；docs/v2/17 NEG-REC-05（DOM-05 负向面）
+ *   - docs/v2/14 §0.2-1（读面缺省＝拒；越权＝Err，不得 Ok(undefined) 冒充「无行」）／§1.6（PORT-HIST
+ *     get/query/reconcile 读签名）；docs/v2/15 §五 SEC-RD-01（readScope＋caller 字段承载，治 P0-10；
+ *     读面越界访问留痕）；docs/17-§2（相位机）/§6（收割四要件）＝本单派发面——**只接读面，不改相位/
+ *     收割判据**（studio-dev-543）
  *
  * 形状唯一源＝contract：信封＋族 payload 一律经 records.ts 接缝（contract `ALL_RECORD_SCHEMAS`）判，
  * 本文件零字段表（§0.6 枚举/形状零重述）。本单不新增记录类/端口（74 类/20 端口不变）。
@@ -32,24 +36,34 @@
  *   - memory 只读 REC-MEM-01 且按 owner_scope **精确等值**（不自动继承：继承只能经 REC-MEM-03 的
  *     inherit/transfer_out 显式凭证）；未落 REC-MEM-02 访问审计（§3.3 每次访问留痕归 port 完整刀）。
  *   - payload() 的知悉范围遮罩/byteDigestState 三态未实现（归 IMPL-04-08/port 完整刀）；get 直返原 payload。
+ *   - 读面知悉范围本单只落**公司维**（records.company 与 readScope.company 同维判定）＋上下文完整性闸；
+ *     字段维（ReadScope.fields）本单只校验「非空声明」，payload 字段级遮罩仍归 IMPL-04-08/port 完整刀
+ *     （get/query 直返原 payload——字段级越权不在本单冒充已闭合）。
  *   - 零 `Date.now` 依赖：created_at 由注入时钟（缺省 Date.now）供，测试可复现。
  */
 import type { DatabaseSync } from 'node:sqlite'
-import { configInvalid, type MemoryDomain, type ReconcileDifferenceKind } from '@studio-next/contract'
+import { configInvalid, type MemoryDomain, type ReadContext, type ReconcileDifferenceKind } from '@studio-next/contract'
 import { optNum, optStr, str, type SqlRow } from './row-helpers.ts'
+import { v2RecordArea } from './records.ts'
 import {
-  ALL_RECORD_SCHEMAS,
-  checkEffectiveSlotConsistency,
-  issuesFromZod,
-  v2RecordArea,
-  type AllRecordType,
-  type EffectiveSlotCarrier,
-  type RecordEnvelope,
-  type RecordValidationIssue,
-} from './records.ts'
+  companyInReadScope,
+  createHistReadGuards,
+  decodeRow,
+  isoTimestamp,
+  parseRecord,
+  readContextDenial,
+  readDenied,
+  requireRecord,
+  type HistReadAudit,
+  type HistReadDenial,
+  type HistReadDenialSpec,
+  type HistReadMethod,
+  type HistRecord,
+} from './hist/read.ts'
 
-/** 记录（contract 信封原形；读面返形——`basisRefs` 恒 []，见文件头注缺口） */
-export type HistRecord = RecordEnvelope<unknown>
+// 读面知悉范围（ReadContext）闸/审计类型与纯函数、记录读形：本文件是唯一出口（store/index.ts 经此取用）。
+export { companyInReadScope, readContextDenial }
+export type { HistReadAudit, HistReadDenial, HistReadDenialSpec, HistReadMethod, HistRecord }
 
 /** append/correct 结果（身份＋是否本次落库；false=同 id/幂等键内容一致的重放） */
 export interface HistRecordRef {
@@ -128,22 +142,28 @@ export interface HistFace {
   abort(tx: HistTx): HistTxReceipt
   /** 追加（信封＋族 payload＋生效槽一律 contract 判；同 id/幂等键内容一致=返回既有） */
   append(record: unknown, tx?: HistTx): HistRecordRef
-  /** 按 id 取记录；权威确认不存在=undefined（坏行=fail-closed） */
-  get(recordId: string): HistRecord | undefined
-  /** company 必填；area/type/since 过滤；produced_at,record_id 升序 */
-  query(query: HistQuery): HistRecord[]
+  /**
+   * 按 id 取记录（必带读上下文）：缺上下文/越权＝拒（不泄漏记录存在性与内容）；
+   * 只有**权威确认不存在**才 undefined（坏行=fail-closed）。
+   */
+  get(recordId: string, rc: ReadContext): HistRecord | undefined
+  /** 读查询（必带读上下文；company 须在知悉范围内）；area/type/since 过滤；produced_at,record_id 升序 */
+  query(query: HistQuery, rc: ReadContext): HistRecord[]
   /** 追加修正记录（REC-COR-01；原行不覆盖） */
   correct(draft: HistCorrectionDraft, tx?: HistTx): HistRecordRef
-  /** 只读投影自洽对账（不跨 events/外部回执） */
-  reconcile(query: HistReconcileQuery): HistReconcileBatch
-  /** 记忆读面（REC-MEM-01 按 owner_scope 精确等值，不自动继承） */
-  memory(query: HistMemoryQuery): HistRecord[]
+  /** 只读投影自洽对账（必带读上下文；跨公司＝拒，不泄漏差异面） */
+  reconcile(query: HistReconcileQuery, rc: ReadContext): HistReconcileBatch
+  /** 记忆读面（必带读上下文；REC-MEM-01 按 owner_scope 精确等值，不自动继承） */
+  memory(query: HistMemoryQuery, rc: ReadContext): HistRecord[]
 }
 
-/** 面工厂选项：时钟注入（created_at/completedAt；缺省 Date.now） */
+/** 面工厂选项：时钟注入（created_at/completedAt；缺省 Date.now）＋读面审计钩子 */
 export interface HistFaceOptions {
   readonly now?: () => number
+  /** 读面审计钩子（每次读调用一次；allow/deny 都记——谁在读、范围依据、判定） */
+  readonly onRead?: (audit: HistReadAudit) => void
 }
+
 
 /** 写口列投影（v14 列集；created_at 库侧补列，回读不入信封） */
 interface RecordColumns {
@@ -163,16 +183,6 @@ interface RecordColumns {
   readonly idempotency_key: string | null
 }
 
-/** 解码问题（列级；对账面收差异、读写面抛 CONFIG_INVALID） */
-interface DecodeIssue {
-  readonly path: string
-  readonly message: string
-}
-
-type DecodeOutcome =
-  | { readonly ok: true; readonly record: HistRecord }
-  | { readonly ok: false; readonly issues: readonly DecodeIssue[] }
-
 const INSERT_RECORD_SQL =
   'INSERT INTO records (record_id, record_type, record_area, schema_ref, spec_version, company, produced_at, producer, payload, proof_boundary, effective_state, effective_time, revises, idempotency_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
 
@@ -181,11 +191,6 @@ function epochMs(timestamp: string): number {
   const ms = Date.parse(timestamp)
   if (Number.isNaN(ms)) configInvalid('store/hist:bad-timestamp', `timestamp 不可解析：${timestamp}`)
   return ms
-}
-
-/** epoch ms → UTC `Z` 串（读面归一；契约 TimestampSchema 收） */
-function isoTimestamp(ms: number): string {
-  return new Date(ms).toISOString()
 }
 
 /** 幂等键落列形（五元组固定序 JSON 数组——UNIQUE 列字节可比） */
@@ -238,91 +243,6 @@ function sameColumns(row: SqlRow, cols: RecordColumns, options: { readonly ignor
   )
 }
 
-/** 幂等键列 → 五元组（坏形=解码问题） */
-function decodeIdempotencyKey(value: unknown, issues: DecodeIssue[]): HistRecord['idempotencyKey'] {
-  if (value === undefined) return undefined
-  if (!Array.isArray(value) || value.length !== 5 || !value.every((part) => typeof part === 'string')) {
-    issues.push({ path: 'idempotency_key', message: 'idempotency_key 列须为五元组 JSON 数组（[companyRef, recordType, subjectId, operationClass, requesterSequence]）' })
-    return undefined
-  }
-  const [companyRef = '', recordType = '', subjectId = '', operationClass = '', requesterSequence = ''] = value as string[]
-  return { companyRef, recordType, subjectId, operationClass, requesterSequence }
-}
-
-/** 行 → 信封（列编码回解；不判形状——形状由 parseRecord 统一判） */
-function decodeRow(row: SqlRow): DecodeOutcome {
-  const issues: DecodeIssue[] = []
-  const jsonColumn = (column: string): unknown => {
-    const raw = optStr(row, column)
-    if (raw === undefined) return undefined
-    try {
-      return JSON.parse(raw) as unknown
-    } catch {
-      issues.push({ path: column, message: `${column} 列不是合法 JSON` })
-      return undefined
-    }
-  }
-  const payload = jsonColumn('payload')
-  const producer = jsonColumn('producer')
-  const schemaRef = jsonColumn('schema_ref')
-  const revises = jsonColumn('revises')
-  const idempotencyKey = decodeIdempotencyKey(jsonColumn('idempotency_key'), issues)
-  const producedAt = optNum(row, 'produced_at')
-  if (producedAt === undefined || !Number.isFinite(producedAt)) issues.push({ path: 'produced_at', message: 'produced_at 缺失或非有限数（NOT NULL 整数列）' })
-  if (issues.length > 0 || producedAt === undefined || !Number.isFinite(producedAt)) return { ok: false, issues }
-  const effectiveTime = optNum(row, 'effective_time')
-  if (effectiveTime !== undefined && !Number.isFinite(effectiveTime)) {
-    issues.push({ path: 'effective_time', message: 'effective_time 非有限数（epoch ms 整数列）' })
-    return { ok: false, issues }
-  }
-  const proofBoundary = optStr(row, 'proof_boundary')
-  const record: HistRecord = {
-    recordId: str(row, 'record_id'),
-    recordType: str(row, 'record_type'),
-    schemaRef: schemaRef as HistRecord['schemaRef'],
-    specVersion: str(row, 'spec_version'),
-    companyRef: str(row, 'company'),
-    producedAt: isoTimestamp(producedAt),
-    producer: producer as HistRecord['producer'],
-    basisRefs: [],
-    payload: payload as unknown,
-    effectiveState: str(row, 'effective_state') as HistRecord['effectiveState'],
-    ...(effectiveTime === undefined ? {} : { effectiveTime: { from: isoTimestamp(effectiveTime) } }),
-    ...(proofBoundary === undefined ? {} : { proofBoundary }),
-    ...(revises === undefined ? {} : { revises: revises as NonNullable<HistRecord['revises']> }),
-    ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
-  }
-  return { ok: true, record }
-}
-
-type ParseOutcome =
-  | { readonly ok: true; readonly record: HistRecord }
-  | { readonly ok: false; readonly issues: readonly RecordValidationIssue[] }
-
-/** 记录闸：未登记类型＋信封/族 payload（contract 74 类）＋生效槽一致性（§0.5） */
-function parseRecord(record: unknown): ParseOutcome {
-  const bag = typeof record === 'object' && record !== null ? (record as { recordType?: unknown }) : undefined
-  const recordType = bag?.recordType
-  if (typeof recordType !== 'string' || !Object.hasOwn(ALL_RECORD_SCHEMAS, recordType)) {
-    return {
-      ok: false,
-      issues: [{ path: 'recordType', message: `recordType=${String(recordType)} 未在 contract 74 类登记（v2/11 §一：未登记即悬空引用）` }],
-    }
-  }
-  const parsed = ALL_RECORD_SCHEMAS[recordType as AllRecordType].safeParse(record)
-  if (!parsed.success) return { ok: false, issues: issuesFromZod(parsed.error) }
-  const slot = checkEffectiveSlotConsistency(parsed.data as EffectiveSlotCarrier)
-  return slot.ok ? { ok: true, record: parsed.data as RecordEnvelope<unknown> } : { ok: false, issues: slot.issues }
-}
-
-/** 记录闸（写面形）：非法即 CONFIG_INVALID（首个 issue 路径入 subcause，对齐 assertRecord 风格） */
-function requireRecord(record: unknown): HistRecord {
-  const outcome = parseRecord(record)
-  if (outcome.ok) return outcome.record
-  const first = outcome.issues[0]
-  configInvalid(`store/record:invalid:${first?.path ?? '(root)'}`, first?.message)
-}
-
 /** v14 列集可落性闸（缺列字段拒收，不静默丢——见文件头注缺口） */
 function assertLandable(record: HistRecord): void {
   if (record.basisRefs.length > 0) {
@@ -362,6 +282,8 @@ function correctsTarget(payload: unknown, targetRecordId: string): boolean {
  */
 export function createHistFace(db: DatabaseSync, options: HistFaceOptions = {}): HistFace {
   const clock = options.now ?? (() => Date.now())
+  // 读面闸/审计（缺省/越权＝拒；onRead 缺省＝不落审计行，闸行为不变）
+  const read = createHistReadGuards(options.onRead === undefined ? { now: clock } : { now: clock, onRead: options.onRead })
   const txStates = new WeakMap<HistTx, { readonly refs: HistRecordRef[] }>()
   let txSeq = 0
 
@@ -496,63 +418,102 @@ export function createHistFace(db: DatabaseSync, options: HistFaceOptions = {}):
     return db.prepare(sql).all(...params) as SqlRow[]
   }
 
-  const get = (recordId: string): HistRecord | undefined => {
+  /** 行读（无审计）：调用方已过上下文/公司维闸 */
+  const selectRecords = (q: HistQuery): HistRecord[] => selectRows(q).map(readRowChecked)
+
+  const get = (recordId: string, rc: ReadContext): HistRecord | undefined => {
+    const ctx = read.requireReadContext('get', rc)
     const row = db.prepare('SELECT * FROM records WHERE record_id = ?').get(recordId) as SqlRow | undefined
-    return row === undefined ? undefined : readRowChecked(row)
+    if (row === undefined) {
+      // 权威确认不存在＝undefined（唯一合法 undefined；越权在下面先拒，不冒充「无行」）
+      read.emit('get', 'allow', ctx, 0, null)
+      return undefined
+    }
+    // 先判公司维再解码：越权调用者拿不到坏行/内容细节
+    read.requireCompanyInScope('get', ctx, str(row, 'company'))
+    return read.auditedRead('get', ctx, () => readRowChecked(row), () => 1)
   }
 
-  const query = (q: HistQuery): HistRecord[] => selectRows(q).map(readRowChecked)
+  const query = (q: HistQuery, rc: ReadContext): HistRecord[] => {
+    const ctx = read.requireReadContext('query', rc)
+    read.requireCompanyInScope('query', ctx, q.company)
+    return read.auditedRead('query', ctx, () => selectRecords(q), (records) => records.length)
+  }
 
-  const reconcile = (q: HistReconcileQuery): HistReconcileBatch => {
-    const rows = selectRows(q)
-    const differences: HistReconcileDifference[] = []
-    const add = (kind: ReconcileDifferenceKind, recordId: string, detail: string): void => {
-      differences.push({ kind, recordId, detail })
-    }
-    for (const row of rows) {
-      const recordId = str(row, 'record_id')
-      const decoded = decodeRow(row)
-      if (!decoded.ok) {
-        for (const issue of decoded.issues) add('undeterminable', recordId, `${issue.path}: ${issue.message}`)
-        continue
-      }
-      const shape = parseRecord(decoded.record)
-      if (!shape.ok) {
-        add('conflict', recordId, shape.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; '))
-        continue
-      }
-      const record = shape.record
-      const area = v2RecordArea(record.recordType)
-      if (str(row, 'record_area') !== area) {
-        add('conflict', recordId, `record_area=${str(row, 'record_area')} 与类型派生域 ${area} 不一致（§0.9 列 CHECK 外的坏行）`)
-      }
-      const revises = record.revises
-      if (revises !== undefined) {
-        const target = db.prepare('SELECT produced_at FROM records WHERE record_id = ?').get(revises.refId) as SqlRow | undefined
-        if (target === undefined) {
-          add('missing', recordId, `revises → ${revises.refId} 不存在（版本链悬空，§0.4-1）`)
-        } else if ((optNum(target, 'produced_at') ?? 0) > (optNum(row, 'produced_at') ?? 0)) {
-          add('disorder', recordId, `修正/新版本先于被修正记录（revises → ${revises.refId}，§0.4-3 时间轴乱序）`)
+  const reconcile = (q: HistReconcileQuery, rc: ReadContext): HistReconcileBatch => {
+    const ctx = read.requireReadContext('reconcile', rc)
+    read.requireCompanyInScope('reconcile', ctx, q.company)
+    return read.auditedRead(
+      'reconcile',
+      ctx,
+      () => {
+        const rows = selectRows(q)
+        const differences: HistReconcileDifference[] = []
+        const add = (kind: ReconcileDifferenceKind, recordId: string, detail: string): void => {
+          differences.push({ kind, recordId, detail })
         }
-      }
-    }
-    return {
-      query: q,
-      checked: rows.length,
-      differences,
-      settled: differences.length === 0,
-      completedAt: isoTimestamp(clock()),
-    }
+        for (const row of rows) {
+          const recordId = str(row, 'record_id')
+          const decoded = decodeRow(row)
+          if (!decoded.ok) {
+            for (const issue of decoded.issues) add('undeterminable', recordId, `${issue.path}: ${issue.message}`)
+            continue
+          }
+          const shape = parseRecord(decoded.record)
+          if (!shape.ok) {
+            add('conflict', recordId, shape.issues.map((issue) => `${issue.path}: ${issue.message}`).join('; '))
+            continue
+          }
+          const record = shape.record
+          const area = v2RecordArea(record.recordType)
+          if (str(row, 'record_area') !== area) {
+            add('conflict', recordId, `record_area=${str(row, 'record_area')} 与类型派生域 ${area} 不一致（§0.9 列 CHECK 外的坏行）`)
+          }
+          const revises = record.revises
+          if (revises !== undefined) {
+            const target = db.prepare('SELECT produced_at FROM records WHERE record_id = ?').get(revises.refId) as SqlRow | undefined
+            if (target === undefined) {
+              add('missing', recordId, `revises → ${revises.refId} 不存在（版本链悬空，§0.4-1）`)
+            } else if ((optNum(target, 'produced_at') ?? 0) > (optNum(row, 'produced_at') ?? 0)) {
+              add('disorder', recordId, `修正/新版本先于被修正记录（revises → ${revises.refId}，§0.4-3 时间轴乱序）`)
+            }
+          }
+        }
+        return {
+          query: q,
+          checked: rows.length,
+          differences,
+          settled: differences.length === 0,
+          completedAt: isoTimestamp(clock()),
+        }
+      },
+      (batch) => batch.checked,
+    )
   }
 
-  const memory = (q: HistMemoryQuery): HistRecord[] => {
-    if (q.scope.trim() === '') configInvalid('store/hist:memory-scope-empty', 'memory scope 不得为空（按 scope 精确读，不自动继承）')
-    return query({ company: q.company, type: 'REC-MEM-01' }).filter((record) => {
-      const payload = record.payload
-      if (typeof payload !== 'object' || payload === null) return false
-      const bag = payload as { owner_scope?: unknown; domain?: unknown }
-      return bag.owner_scope === q.scope && (q.domain === undefined || bag.domain === q.domain)
-    })
+  const memory = (q: HistMemoryQuery, rc: ReadContext): HistRecord[] => {
+    const ctx = read.requireReadContext('memory', rc)
+    read.requireCompanyInScope('memory', ctx, q.company)
+    if (q.scope.trim() === '') {
+      read.emit('memory', 'deny', ctx, 0, 'store/hist:memory-scope-empty')
+      throw readDenied({
+        subcause: 'store/hist:memory-scope-empty',
+        failure: 'rejected_precondition',
+        detail: 'memory scope 不得为空（按 scope 精确读，不自动继承）',
+      })
+    }
+    return read.auditedRead(
+      'memory',
+      ctx,
+      () =>
+        selectRecords({ company: q.company, type: 'REC-MEM-01' }).filter((record) => {
+          const payload = record.payload
+          if (typeof payload !== 'object' || payload === null) return false
+          const bag = payload as { owner_scope?: unknown; domain?: unknown }
+          return bag.owner_scope === q.scope && (q.domain === undefined || bag.domain === q.domain)
+        }),
+      (records) => records.length,
+    )
   }
 
   return {

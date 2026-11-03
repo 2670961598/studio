@@ -24,7 +24,7 @@
  *   - **迁移复合路径整条写/整条不写**（studio-dev-592，docs/17-§2「状态桥接」段）：先全量成
  *     信封（形状闸）再逐条落库；任一条形状不合格＝零落库，不留「半条迁移」。
  */
-import type { EventRecord } from '@studio-next/contract'
+import type { EventRecord, ReadContext } from '@studio-next/contract'
 import type { HistFace, HistRecordRef } from '@studio-next/store'
 import { buildEnvelope } from './envelope.ts'
 import {
@@ -123,6 +123,19 @@ const REF_VERSION = '1.0.0'
  */
 export function createRecordWire(deps: RecordWireDeps): RecordWire {
   const { hist, company } = deps
+  /**
+   * hist 读面闸（v2/14 §0.2-1：读方法必带 ReadContext，缺省/越权＝拒）：
+   * 本写面的前件校验/幂等命中/对账读都是**程序读**，公司维＝装配公司（两槽同填——V2 公司身份
+   * 表落位前 companyId 与 slug 同值）；内部读不享「无上下文」旁路。
+   */
+  const readContext: ReadContext = {
+    readScope: {
+      company: { companyId: company, slug: company },
+      fields: ['records.record.payload'],
+      purpose: 'records 写面前件/幂等/对账读（engine/records/wire）',
+    },
+    caller: { callerId: RECORD_WRITTEN_BY, kind: 'program', programRef: RECORD_WRITTEN_BY },
+  }
   const counters = {
     intake: 0,
     transition: 0,
@@ -155,7 +168,7 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
    */
   const checkRequires = (recordType: string, requirements: NonNullable<Extract<DraftOutcome, { ok: true }>['gate']>['requires']): RecordWriteResult | undefined => {
     for (const requirement of requirements ?? []) {
-      const existing = hist.get(requirement.ref.refId)
+      const existing = hist.get(requirement.ref.refId, readContext)
       if (existing === undefined) {
         return refuse({
           ok: false,
@@ -234,7 +247,7 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
   /** 已成信封的单条落库（幂等先读；append 异常＝failed 不重试） */
   const appendBuilt = (draft: RecordDraft, envelope: unknown): RecordWriteResult => {
     // 幂等（§0.4-4）：同 recordId 命中既有行＝重放，不产生第二次副作用
-    const existing = hist.get(draft.recordId)
+    const existing = hist.get(draft.recordId, readContext)
     if (existing !== undefined) {
       counters.deduped += 1
       const ref: HistRecordRef = { recordId: draft.recordId, recordType: draft.recordType, appended: false }
@@ -263,7 +276,7 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
 
   /** 前件记录引用解析（只认**已落库**记录；未落＝undefined → 调用方拒写，不引用未来记录） */
   const refOf = (recordId: string): { refType: string; refId: string; refVersion: string } | undefined => {
-    const row = hist.get(recordId)
+    const row = hist.get(recordId, readContext)
     if (row === undefined) return undefined
     return { refType: row.recordType, refId: row.recordId, refVersion: REF_VERSION }
   }
@@ -381,7 +394,7 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
         return failureOf('REC-LIFE-04', 'record-prereq-missing', reason)
       }
       const person = personOf(roster, args.personId)
-      const appointment = person !== undefined ? hist.get(appointmentRecordId(company, person.id, positionRefIdOf(person))) : undefined
+      const appointment = person !== undefined ? hist.get(appointmentRecordId(company, person.id, positionRefIdOf(person)), readContext) : undefined
       // 只认**生效**任命（拟任面 pending 不得作为出工前件——§3.1/§十五-2）
       const appointmentRef =
         appointment !== undefined && appointment.effectiveState === 'effective'
@@ -431,7 +444,7 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
         deps.log?.(`[records] 拒写 权源解析：${reason}`)
         return failureOf('REC-AUTH-01', 'record-prereq-missing', reason)
       }
-      if (hist.get(ref.refId) === undefined) {
+      if (hist.get(ref.refId, readContext) === undefined) {
         counters.refused += 1
         return failureOf('REC-AUTH-01', 'record-prereq-missing', `覆盖授予 ${ref.refId} 尚未落库——不引用未来记录（先跑名册装载相位）`)
       }
@@ -496,7 +509,7 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
     reconcile(since = 0): ProjectionReconciliation {
       counters.reconcile += 1
       const roster = deps.roster?.roster()
-      const records = hist.query({ company, ...(since > 0 ? { since } : {}) })
+      const records = hist.query({ company, ...(since > 0 ? { since } : {}) }, readContext)
       const events = deps.readEvents !== undefined ? deps.readEvents(since) : []
       const rosterSubjects = roster !== undefined ? new Set(roster.people.map((person) => person.id)) : undefined
       const reconciled = reconcileProjection(records, events, rosterSubjects !== undefined ? { rosterSubjects } : {})

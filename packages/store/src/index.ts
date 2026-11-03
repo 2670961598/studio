@@ -293,16 +293,23 @@ export type {
 export { EndSessionSchema, type EndSession, type EndSessionInput } from './sessions/archive.ts'
 
 // v14 PORT-HIST 记录唯一写口（IMPL-04-06；v2/14 §1.6）——hist.ts 面工厂与读写形状。
-// 记录写口唯一：append/correct；读面 get/query/reconcile/memory 均 fail-closed 于坏行。
+// 记录写口唯一：append/correct；读面 get/query/reconcile/memory 必带 ReadContext（v2/14 §0.2-1：
+// 缺省＝拒、越权＝拒），并 fail-closed 于坏行。读面审计钩子＝HistFaceOptions.onRead（不写记录）。
 // 生产装配面：daemon assembly/ops（OPS 补形 A：REC-WORK-18 记录经 createHistFace(ledger.db)
 // .append 落 records；同 recordId 幂等）经本出口取用——不从 src/hist.ts 深引。
 export {
+  companyInReadScope,
   createHistFace,
+  readContextDenial,
   type HistCorrectionDraft,
   type HistFace,
   type HistFaceOptions,
   type HistMemoryQuery,
   type HistQuery,
+  type HistReadAudit,
+  type HistReadDenial,
+  type HistReadDenialSpec,
+  type HistReadMethod,
   type HistRecord,
   type HistRecordRef,
   type HistReconcileBatch,

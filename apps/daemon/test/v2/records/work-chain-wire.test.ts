@@ -14,6 +14,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createHistFace, openLedger, type HistFace, type Ledger } from '@studio-next/store'
+import type { ReadContext } from '@studio-next/contract'
 import type {
   CompletionRecordPayload,
   EffectLevelPayload,
@@ -49,6 +50,11 @@ import {
 import { AT, decisionFace } from '../../../../../packages/contract/test/v2/records/fixtures.ts'
 
 const COMPANY = 'demo'
+/** 读上下文（v2/14 §0.2-1：读方法必带；公司维=被测公司，两槽同填——V2 身份表落位前同值） */
+const READ_CTX: ReadContext = {
+  readScope: { company: { companyId: COMPANY, slug: COMPANY }, fields: ['record.payload'], purpose: 'work-chain-wire 测试读回' },
+  caller: { callerId: 'ENG-1', kind: 'employment', personId: 'ENG-1' },
+}
 const T0 = Date.parse('2026-11-03T00:00:00.000Z')
 const ISO0 = new Date(T0).toISOString()
 const ROSTER = {
@@ -86,7 +92,7 @@ async function wireWith(label: string): Promise<{ ledger: Ledger; hist: HistFace
 }
 
 function rowsOf(hist: HistFace, type: string) {
-  return hist.query({ company: COMPANY, type })
+  return hist.query({ company: COMPANY, type }, READ_CTX)
 }
 
 /** 台账直插前件（刀B/CAP 之外的记录：本测试的「已落库」前置，非生产写面） */
@@ -106,7 +112,7 @@ function seedPrereqs(hist: HistFace, wire: RecordWire): { authRef: ReturnType<ty
   if (!auth.ok) throw new Error(`AUTH-01 前件未落：${auth.reason}`)
   const authRef = { refType: auth.ref.recordType, refId: auth.ref.recordId, refVersion: '1.0.0' }
   const life05Id = conflictRegistryRecordId(COMPANY, 'ENG-1', 'departments/研发部')
-  const life05 = hist.get(life05Id)
+  const life05 = hist.get(life05Id, READ_CTX)
   if (life05 === undefined) throw new Error('LIFE-05 前件未落')
   const life05Ref = chainRef(life05.recordType, life05.recordId)
   // CAP-01/02（刀C 计划锁的契约前件；件外族，本测试只作为「已落库」事实种入）
@@ -304,7 +310,7 @@ describe('刀C 红面：事实口缺省/前件未落 → 八族 fail-closed（0 
       expect(result.ok).toBe(false)
       if (!result.ok) expect(result.code).toBe('record-prereq-missing')
     }
-    expect(hist.query({ company: COMPANY })).toHaveLength(0)
+    expect(hist.query({ company: COMPANY }, READ_CTX)).toHaveLength(0)
   })
 
   it('harvestChain/acceptanceChain 无 facts：逐族拒写，records 0 行', async () => {
@@ -313,7 +319,7 @@ describe('刀C 红面：事实口缺省/前件未落 → 八族 fail-closed（0 
     const accepted = wire.acceptanceChain({ ticket: 'DEMO-560', attempt: 1, at: T0, actor: 'ENG-1' })
     expect(harvested.map((result) => (result.ok ? 'ok' : result.code))).toEqual(['record-prereq-missing', 'record-prereq-missing'])
     expect(accepted.map((result) => (result.ok ? 'ok' : result.code))).toEqual(['record-prereq-missing'])
-    expect(hist.query({ company: COMPANY })).toHaveLength(0)
+    expect(hist.query({ company: COMPANY }, READ_CTX)).toHaveLength(0)
   })
 
   it('facts 带伪 authority_ref（未落库）：开工链全拒，0 行（引用未来记录＝拒写）', async () => {
@@ -321,7 +327,7 @@ describe('刀C 红面：事实口缺省/前件未落 → 八族 fail-closed（0 
     const facts = startFacts(chainRef('REC-AUTH-01', 'rec-auth-01:demo:FORGED:1'))
     const results = wire.startChain({ ticket: 'DEMO-560', attempt: 1, at: T0, actor: 'ENG-1', facts })
     expect(results.every((result) => !result.ok)).toBe(true)
-    expect(hist.query({ company: COMPANY })).toHaveLength(0)
+    expect(hist.query({ company: COMPANY }, READ_CTX)).toHaveLength(0)
   })
 })
 

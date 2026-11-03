@@ -17,6 +17,7 @@ import { readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { ReadContext } from '@studio-next/contract'
 import { createHistFace, openLedger, type Ledger } from '@studio-next/store'
 import {
   BLOCKED_RECORD_FAMILIES,
@@ -41,6 +42,11 @@ import { DEMO_SNAPSHOT } from '../../../src/assembly/demo/demo-snapshot.ts'
 import { createTicket, createWorkStack, disposeWorkStacks, runTicks } from './fixtures/work-stack.ts'
 
 const COMPANY = 'demo'
+/** 读上下文（v2/14 §0.2-1：读方法必带；公司维=被测公司，两槽同填——V2 身份表落位前同值） */
+const READ_CTX: ReadContext = {
+  readScope: { company: { companyId: COMPANY, slug: COMPANY }, fields: ['record.payload'], purpose: 'life-auth-wire 测试读回' },
+  caller: { callerId: 'AGENT-1', kind: 'employment', personId: 'AGENT-1' },
+}
 const T0 = Date.parse('2026-11-03T00:00:00.000Z')
 
 /** 授权链外部事实（#530 根委任生产件的夹具形态：设立记录/公开指纹/外部签名件/期限/核验结论） */
@@ -93,7 +99,7 @@ async function wireWith(
 
 /** 库内某族行数（真表直查） */
 function rowsOf(ledger: Ledger, type: string) {
-  return createHistFace(ledger.db).query({ company: COMPANY, type })
+  return createHistFace(ledger.db).query({ company: COMPANY, type }, READ_CTX)
 }
 
 describe('刀B 红面：名册/外部事实缺省 → 派生类写面一律拒写（fail-closed，零行）', () => {
@@ -381,7 +387,7 @@ describe('刀B 名册对账：任职/授权记录不得脱离名册（凭空主�
     const { ledger, wire } = await wireWith('reconcile', { roster: ROSTER, rootGrant: ROOT_FACT })
     wire.rosterLoad({ at: T0, reason: 'boot' })
     const hist = createHistFace(ledger.db)
-    const records = hist.query({ company: COMPANY })
+    const records = hist.query({ company: COMPANY }, READ_CTX)
     const rosterSubjects = new Set(ROSTER.people.map((person) => person.id))
     const settled = reconcileProjection(records, [], { rosterSubjects })
     expect(settled.differences.filter((difference) => difference.kind === 'undeterminable')).toHaveLength(0)

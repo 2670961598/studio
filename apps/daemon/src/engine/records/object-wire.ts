@@ -22,7 +22,7 @@
  *   - 其余四类为装配面显式写口（REV/CHG/ACC-02/EVAL）——无生产决策源时不自动触发，
  *     由复盘/进化/问责/评价位置经各自生产链注入事实后调用。
  */
-import type { EventRecord } from '@studio-next/contract'
+import type { EventRecord, ReadContext } from '@studio-next/contract'
 import type { HistFace, HistRecordRef, Ledger } from '@studio-next/store'
 import type { RelayWorkSignal } from '../intents/relay-resume-sources.ts'
 import {
@@ -169,6 +169,23 @@ export function createObjectRecordWire(deps: ObjectRecordWireDeps): ObjectRecord
   const { hist, company, now } = deps
   const log = deps.log ?? ((): void => undefined)
   const positions = deps.positions ?? {}
+  /**
+   * hist 读面闸（v2/14 §0.2-1：读方法必带 ReadContext，缺省/越权＝拒）：
+   * 证据闭包核验/收割前件回查/观测计数与对账均为**程序读**，公司维＝装配公司（两槽同填——
+   * V2 公司身份表落位前 companyId 与 slug 同值）；内部读不享「无上下文」旁路。
+   */
+  const readContext: ReadContext = {
+    readScope: {
+      company: { companyId: company, slug: company },
+      fields: ['records.record.payload'],
+      purpose: 'object-wire 证据闭包/收割前件/观测读',
+    },
+    caller: {
+      callerId: 'daemon:engine/records/object-wire',
+      kind: 'program',
+      programRef: 'daemon:engine/records/object-wire',
+    },
+  }
 
   const write = (draft: ObjectCarrierDraft, ctx: ObjectWriteContext = {}): ObjectWriteOutcome => {
     const parsed = ALL_RECORD_SCHEMAS[draft.recordType].safeParse(draft.envelope)
@@ -186,7 +203,7 @@ export function createObjectRecordWire(deps: ObjectRecordWireDeps): ObjectRecord
     }
     const bag = draft.envelope as { payload?: unknown }
     for (const ref of collectRecordRefs(bag.payload)) {
-      const target = hist.get(ref.refId)
+      const target = hist.get(ref.refId, readContext)
       if (target === undefined) {
         const detail = `${draft.recordType} 证据闭包缺失：${ref.refType}#${ref.refId} 未落库（不造悬空引用——§0.4-2）`
         log(`[records] 拒写 ${detail}`)
@@ -220,7 +237,7 @@ export function createObjectRecordWire(deps: ObjectRecordWireDeps): ObjectRecord
       log(`[records] 拒写 REC-ACC-01：${detail}`)
       return { status: 'refused', code: 'position-missing', detail }
     }
-    const work = hist.query({ company, type: 'REC-WORK-01' }).find((record) => record.idempotencyKey?.subjectId === signal.ticket)
+    const work = hist.query({ company, type: 'REC-WORK-01' }, readContext).find((record) => record.idempotencyKey?.subjectId === signal.ticket)
     if (work === undefined) {
       const detail = `缺 REC-WORK-01（${signal.ticket}）——依赖 #527 记录族生产写面先落，不造悬空引用`
       log(`[records] 拒写 REC-ACC-01：${detail}`)
@@ -279,8 +296,8 @@ export function createObjectRecordWire(deps: ObjectRecordWireDeps): ObjectRecord
       'REC-REV-01': 0,
       'REC-EVAL-01': 0,
     }
-    for (const type of Object.keys(counts) as ObjectCarrierType[]) counts[type] = hist.query({ company, type }).length
-    const batch = hist.reconcile({ company })
+    for (const type of Object.keys(counts) as ObjectCarrierType[]) counts[type] = hist.query({ company, type }, readContext).length
+    const batch = hist.reconcile({ company }, readContext)
     return { counts, settled: batch.settled, checked: batch.checked, differences: batch.differences.length }
   }
 

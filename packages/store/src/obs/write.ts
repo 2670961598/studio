@@ -39,7 +39,7 @@
  */
 import type { DatabaseSync } from 'node:sqlite'
 import { configInvalid } from '@studio-next/contract'
-import type { ProjectionFault } from '@studio-next/contract'
+import type { ProjectionFault, ReadContext } from '@studio-next/contract'
 import {
   RECORD_TYPE_VERSION_INITIAL,
   validateContinuousObservation,
@@ -204,6 +204,19 @@ export function createObservationWriteFace(deps: ObservationWriteDeps): Observat
   const hist = deps.hist ?? createHistFace(deps.db)
   const company = requireText(deps.company, 'company')
   const decidedBy = requireText(deps.decidedBy, 'decidedBy')
+  /**
+   * hist 读面闸（v2/14 §0.2-1：读方法必带 ReadContext，缺省/越权＝拒）：
+   * 写面回读（openWatches/readFaults）是**程序读**，公司维＝装配公司（两槽同填——V2 公司身份
+   * 表落位前 companyId 与 slug 同值）；内部读不享「无上下文」旁路。
+   */
+  const readContext: ReadContext = {
+    readScope: {
+      company: { companyId: company, slug: company },
+      fields: ['records.record.payload'],
+      purpose: 'obs 写面观察/故障记录回读（openWatches/readFaults）',
+    },
+    caller: { callerId: OBS_WRITTEN_BY, kind: 'program', programRef: OBS_WRITTEN_BY },
+  }
 
   const envelopeOf = (
     recordType: string,
@@ -393,8 +406,8 @@ export function createObservationWriteFace(deps: ObservationWriteDeps): Observat
   }
 
   const openWatches = (): readonly OpenObservationWatch[] => {
-    const watches = hist.query({ company, type: OBS_WATCH_RECORD_TYPE })
-    const closures = hist.query({ company, type: OBS_CLOSURE_RECORD_TYPE })
+    const watches = hist.query({ company, type: OBS_WATCH_RECORD_TYPE }, readContext)
+    const closures = hist.query({ company, type: OBS_CLOSURE_RECORD_TYPE }, readContext)
     const closed = new Set<string>()
     for (const closure of closures) {
       const watchRef = payloadOf(closure).watch_ref
@@ -423,7 +436,7 @@ export function createObservationWriteFace(deps: ObservationWriteDeps): Observat
   }
 
   const readFaults = (options?: { readonly viewName?: string; readonly limit?: number }): readonly HistRecord[] => {
-    const rows = hist.query({ company, type: OBS_FAULT_RECORD_TYPE })
+    const rows = hist.query({ company, type: OBS_FAULT_RECORD_TYPE }, readContext)
     const filtered =
       options?.viewName === undefined
         ? rows

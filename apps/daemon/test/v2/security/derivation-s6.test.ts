@@ -15,7 +15,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { CallContext } from '@studio-next/contract'
+import type { CallContext, ReadContext } from '@studio-next/contract'
 import type { GrantLink } from '@studio-next/core'
 import { createHistFace, openLedger, type Ledger } from '@studio-next/store'
 import { createPersistentDerivation } from '../../../src/engine/derivation/persistent-gateway.ts'
@@ -32,6 +32,11 @@ const NOW = Date.parse('2026-06-01T00:00:00Z')
 const DERIVED_AT = '2026-06-01T00:00:00Z'
 const LAST_PROBED = '2026-06-01T00:00:00Z'
 const WINDOW = { from: '2026-01-01T00:00:00Z', to: '2027-01-01T00:00:00Z' }
+/** 读上下文（v2/14 §0.2-1：读方法必带；公司维=被测公司 'CO'，两槽同填——V2 身份表落位前同值） */
+const READ_CTX: ReadContext = {
+  readScope: { company: { companyId: 'CO', slug: 'CO' }, fields: ['record.payload'], purpose: 'derivation-s6 测试读回' },
+  caller: { callerId: 'AGENT-1', kind: 'employment', personId: 'AGENT-1' },
+}
 const dirs: string[] = []
 
 afterEach(() => {
@@ -240,8 +245,8 @@ describe('S6 真实撤回触发源：PORT-AUTH.withdraw → gateway.revoke → �
     expect(refusal?.subcause).toBe('dispatch/derivation-revoked')
 
     // —— REC 写面：REC-AUTH-03 与 REC-EVD-RVK 各一行，后代清单闭合 ——
-    const authRows = hist.query({ company: 'CO', type: 'REC-AUTH-03' })
-    const evdRows = hist.query({ company: 'CO', type: 'REC-EVD-RVK' })
+    const authRows = hist.query({ company: 'CO', type: 'REC-AUTH-03' }, READ_CTX)
+    const evdRows = hist.query({ company: 'CO', type: 'REC-EVD-RVK' }, READ_CTX)
     expect(authRows).toHaveLength(1)
     expect(evdRows).toHaveLength(1)
     const authPayload = authRows[0]?.payload as {
@@ -282,7 +287,7 @@ describe('S6 真实撤回触发源：PORT-AUTH.withdraw → gateway.revoke → �
     expect(rebuilt.gateway.revocationPort().isRevoked('T-1', 'dsh')).toBe(true)
     expect(rebuilt.gateway.revocationPort().isRevoked('T-1', 'dsh-child')).toBe(true)
     expect(rebuilt.gateway.catalog.supply('SEC-GR-SCOPE', { seconds: 60 }).kind).toBe('err')
-    expect(createHistFace(reopened.db).query({ company: 'CO', type: 'REC-AUTH-03' })).toHaveLength(1)
+    expect(createHistFace(reopened.db).query({ company: 'CO', type: 'REC-AUTH-03' }, READ_CTX)).toHaveLength(1)
     reopened.close()
   })
 })

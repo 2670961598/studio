@@ -21,7 +21,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createRegistry } from '@studio-next/adapters'
-import type { CompanySnapshot, ExecutorAdapter, FlowPlatform, PersonRef } from '@studio-next/contract'
+import type { CompanySnapshot, ExecutorAdapter, FlowPlatform, PersonRef, ReadContext } from '@studio-next/contract'
 import { createHistFace, openLedger, type HistFace, type Ledger } from '@studio-next/store'
 import { ENGINE_CONFIG_DEFAULTS, createEngine, type Engine, type TickReport } from '../../../src/engine/engine.ts'
 import { createFakeAdapter, createFakePlatform } from '../../../src/engine/fakes.ts'
@@ -37,6 +37,11 @@ import {
 
 const T0 = Date.parse('2026-11-03T00:00:00.000Z')
 const COMPANY = 'cap-corp'
+/** 读上下文（v2/14 §0.2-1：读方法必带；公司维=被测公司，两槽同填——V2 身份表落位前同值） */
+const READ_CTX: ReadContext = {
+  readScope: { company: { companyId: COMPANY, slug: COMPANY }, fields: ['record.payload'], purpose: 'capability-supply 测试读回' },
+  caller: { callerId: 'AGENT-1', kind: 'employment', personId: 'AGENT-1' },
+}
 
 let root = ''
 let snapshot: CompanySnapshot
@@ -183,7 +188,7 @@ describe('REC-CAP 写者：能力供给声明与退化回执（PORT-HIST 唯一�
     expect(first).toHaveLength(1)
     expect(second).toEqual(first)
 
-    const declarations = stack.hist.query({ company: COMPANY, type: 'REC-CAP-01' })
+    const declarations = stack.hist.query({ company: COMPANY, type: 'REC-CAP-01' }, READ_CTX)
     expect(declarations).toHaveLength(1)
     const record = declarations[0] as NonNullable<(typeof declarations)[number]>
     expect(record.recordType).toBe('REC-CAP-01')
@@ -213,7 +218,7 @@ describe('REC-CAP 写者：能力供给声明与退化回执（PORT-HIST 唯一�
     })
     expect(ref?.appended).toBe(true)
 
-    const receipts = stack.hist.query({ company: COMPANY, type: 'REC-CAP-RECEIPT' })
+    const receipts = stack.hist.query({ company: COMPANY, type: 'REC-CAP-RECEIPT' }, READ_CTX)
     expect(receipts).toHaveLength(1)
     const record = receipts[0] as NonNullable<(typeof receipts)[number]>
     const payload = payloadOf(record)
@@ -316,7 +321,7 @@ describe('主循环接线：三触发面 → 五出口决策 → 出口留痕＋
     expect(note).toContain('exit=refuse')
     expect(report.phases.dispatch.dispatched).toBe(0)
     expect(report.errors.join('\n')).toContain('detect 不达标')
-    const receipts = stack.hist.query({ company: COMPANY, type: 'REC-CAP-RECEIPT' })
+    const receipts = stack.hist.query({ company: COMPANY, type: 'REC-CAP-RECEIPT' }, READ_CTX)
     expect(receipts).toHaveLength(1)
     const payload = payloadOf(receipts[0] as NonNullable<(typeof receipts)[number]>)
     expect(payload['result']).toMatchObject({ proved: false, negative_findings: ['native-agents-missing'] })

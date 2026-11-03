@@ -5,12 +5,13 @@
  * `fixtures.ts`（同 test/v2 内共享件，不复制）。本文件不是测试文件（不受 .test.ts 收集）。
  *
  * 依据：plan/05 IMPL-04-06（临时库 migrate 到 v15）；docs/v2/11 §〇（信封）/§0.4（幂等）/§0.5（时间）；
- * docs/v2/14 §1.6（PORT-HIST 签名）。
+ * docs/v2/14 §1.6（PORT-HIST 签名）/§0.2-1（读方法必带 ReadContext）。
  */
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
+import type { ReadContext } from '@studio-next/contract'
 import { openSqlite } from '../../src/driver.ts'
 import { createHistFace, type HistFace } from '../../src/hist.ts'
 import { migrate } from '../../src/migrations.ts'
@@ -22,6 +23,21 @@ export { T0, ulid }
 export const CLOCK = T0 + 9_000_000
 /** 主测试公司（各 describe 用独立 company 隔离共享库） */
 export const COMPANY = 'studio-hist'
+
+/**
+ * 读上下文（v2/14 §0.2-1：读方法必带；公司维=被测 company，两槽同填——V2 公司身份表落位前
+ * companyId 与 slug 同值，与 daemon assembly/api/readers.ts 同口径）；字段维只声明非空。
+ */
+export function readContext(company: string, callerId = 'E-7'): ReadContext {
+  return {
+    readScope: {
+      company: { companyId: company, slug: company },
+      fields: ['record.payload'],
+      purpose: 'hist 测试读面（IMPL-04-06）',
+    },
+    caller: { callerId, kind: 'employment', personId: callerId },
+  }
+}
 
 export const iso = (ms: number): string => new Date(ms).toISOString()
 

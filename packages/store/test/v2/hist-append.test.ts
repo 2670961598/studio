@@ -27,6 +27,7 @@ import {
   idemKey,
   iso,
   openHistHarness,
+  readContext as rc,
   recordRow,
   ulid,
   type HistHarness,
@@ -80,7 +81,7 @@ describe('append→get 往返（信封维无损；缺列字段拒收）', () => 
     })
     expect(h.hist.append(record)).toEqual({ recordId: roundId, recordType: 'REC-EVT-01', appended: true })
 
-    const got = h.hist.get(roundId)
+    const got = h.hist.get(roundId, rc(company))
     expect(got?.recordId).toBe(roundId)
     expect(got?.recordType).toBe('REC-EVT-01')
     expect(got?.companyRef).toBe(company)
@@ -124,7 +125,7 @@ describe('append→get 往返（信封维无损；缺列字段拒收）', () => 
   })
 
   it('get 权威确认不存在＝undefined（不拿空对象冒充）', () => {
-    expect(h.hist.get(ulid(T0, 999))).toBeUndefined()
+    expect(h.hist.get(ulid(T0, 999), rc(company))).toBeUndefined()
   })
 })
 
@@ -248,10 +249,10 @@ describe('显式 tx 句柄（begin/commit/abort；句柄校验）', () => {
     expect(tx.open).toBe(true)
     const ref = h.hist.append(envelope('REC-EVT-01', evtPayload(), { companyRef: company, recordId: id }), tx)
     expect(ref.appended).toBe(true)
-    expect(h.hist.get(id)).toBeDefined() // 同连接内可见（未提交）
+    expect(h.hist.get(id, rc(company))).toBeDefined() // 同连接内可见（未提交）
     const receipt = h.hist.abort(tx)
     expect(receipt).toEqual({ txId: tx.txId, committed: false, recordRefs: [] })
-    expect(h.hist.get(id)).toBeUndefined()
+    expect(h.hist.get(id, rc(company))).toBeUndefined()
     expect(countRecords(h.db, company)).toBe(0)
   })
 
@@ -265,8 +266,8 @@ describe('显式 tx 句柄（begin/commit/abort；句柄校验）', () => {
     expect(receipt.committed).toBe(true)
     expect(receipt.recordRefs.map((r) => r.recordId)).toEqual([id1, id2])
     expect(tx.open).toBe(false)
-    expect(h.hist.get(id1)).toBeDefined()
-    expect(h.hist.get(id2)).toBeDefined()
+    expect(h.hist.get(id1, rc(company))).toBeDefined()
+    expect(h.hist.get(id2, rc(company))).toBeDefined()
   })
 
   it('已关闭/外来句柄再写＝拒（显式句柄不得跨面/跨生命周期复用）', () => {
@@ -307,7 +308,7 @@ describe('显式 tx 句柄（begin/commit/abort；句柄校验）', () => {
       tx,
     )
     h.hist.abort(tx)
-    expect(h.hist.get(id)).toBeDefined()
+    expect(h.hist.get(id, rc(company))).toBeDefined()
     expect(countRecords(h.db, company, " AND record_type = 'REC-COR-01'")).toBe(0)
   })
 })
@@ -335,7 +336,7 @@ describe('correct（REC-COR-01 追加；原行一字不动）', () => {
     // 原行不覆盖（含 created_at 在内的全列逐字节不变）
     expect(recordRow(h.db, original)).toEqual(before)
     // 修正行独立存在、payload 指向原记录
-    const cor = h.hist.get(corId)
+    const cor = h.hist.get(corId, rc(company))
     expect(cor?.recordType).toBe('REC-COR-01')
     const payload = cor?.payload as { corrects: Array<{ refId: string }>; original_preserved: boolean }
     expect(payload.corrects[0]?.refId).toBe(original)

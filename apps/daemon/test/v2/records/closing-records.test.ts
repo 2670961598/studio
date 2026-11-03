@@ -20,6 +20,7 @@ import {
   refMatches,
   type RecordWriteResult,
 } from '../../../src/engine/records/index.ts'
+import type { ReadContext } from '@studio-next/contract'
 import {
   COMPANY,
   T0,
@@ -34,6 +35,12 @@ import {
   writeGreenScenario,
   type PhaseDStack,
 } from './fixtures/phase-d-stack.ts'
+
+/** 读上下文（v2/14 §0.2-1：读方法必带；公司维=被测公司，两槽同填——V2 身份表落位前同值） */
+const READ_CTX: ReadContext = {
+  readScope: { company: { companyId: COMPANY, slug: COMPANY }, fields: ['record.payload'], purpose: 'closing-records 测试读回' },
+  caller: { callerId: 'AGENT-1', kind: 'employment', personId: 'AGENT-1' },
+}
 
 const stacks: PhaseDStack[] = []
 afterAll(async () => {
@@ -57,7 +64,7 @@ function expectRefused(result: RecordWriteResult, needle: string): void {
 
 /** 数一族的库内行数（唯一事实源） */
 function countOf(stack: PhaseDStack, recordType: string): number {
-  return stack.hist.query({ company: COMPANY, type: recordType }).length
+  return stack.hist.query({ company: COMPANY, type: recordType }, READ_CTX).length
 }
 
 describe('刀C/刀D 族清单（逐族解除 BLOCKED 并留表）', () => {

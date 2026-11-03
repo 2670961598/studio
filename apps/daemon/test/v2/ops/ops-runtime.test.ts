@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { CallContext, EmergencyStopRequest } from '@studio-next/contract'
+import type { CallContext, EmergencyStopRequest, ReadContext } from '@studio-next/contract'
 import { createHistFace, openLedger, type Ledger } from '@studio-next/store'
 import {
   buildServeRuntime,
@@ -110,7 +110,12 @@ describe('buildServeRuntime：PORT-OPS 装配面存在且接到 PORT-HIST', () =
     if (outcome.kind !== 'ok') throw new Error(`预期 Ok，收到 ${outcome.error.category}/${outcome.error.subcause}`)
     // 台账句柄由 runtime 装配持有（outbound 受闸 Proxy 透传 db）——测试用原句柄读同库
     const hist = createHistFace(ledger.db)
-    const record = hist.get(outcome.value.recordId)
+    // 读面必带 ReadContext（v2/14 §0.2-1：缺省＝拒、越权＝拒）；公司维=本 serve 挂载公司
+    const rc: ReadContext = {
+      readScope: { company: { companyId: 'company-demo', slug: 'demo' }, fields: ['record.payload'], purpose: 'ops-runtime 读回' },
+      caller: { callerId: 'AGENT-1', kind: 'employment', personId: 'AGENT-1' },
+    }
+    const record = hist.get(outcome.value.recordId, rc)
     expect(record).toBeDefined()
     expect(record?.recordType).toBe('REC-WORK-18')
     expect(record?.companyRef).toBe('demo')

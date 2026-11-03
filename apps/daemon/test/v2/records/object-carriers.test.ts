@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { createHistFace, openLedger, type HistFace, type Ledger } from '@studio-next/store'
+import type { ReadContext } from '@studio-next/contract'
 import {
   createObjectRecordWire,
   type ObjectRecordPositions,
@@ -30,6 +31,11 @@ import type {
 
 const AT = '2026-11-03T00:00:00.000Z'
 const AT_LATER = '2026-11-04T00:00:00.000Z'
+/** 读上下文（v2/14 §0.2-1：读方法必带；公司维=被测公司，两槽同填——V2 身份表落位前同值） */
+const READ_CTX: ReadContext = {
+  readScope: { company: { companyId: 'demo', slug: 'demo' }, fields: ['record.payload'], purpose: 'object-carriers 测试读回' },
+  caller: { callerId: 'AGENT-1', kind: 'employment', personId: 'AGENT-1' },
+}
 
 const roots: string[] = []
 afterAll(async () => {
@@ -227,7 +233,7 @@ describe('五对象记录载体·生产写口（绿）', () => {
     expect(face.wire.recordReview(meta('T-1', 'review'), reviewPayload()).ok).toBe(true)
     const replay = face.wire.recordReview(meta('T-1', 'review'), reviewPayload())
     expect(replay.ok && replay.ref.appended).toBe(false)
-    expect(face.hist.query({ company: 'demo', type: 'REC-REV-01' })).toHaveLength(1)
+    expect(face.hist.query({ company: 'demo', type: 'REC-REV-01' }, READ_CTX)).toHaveLength(1)
   })
 
   it('相位 4 收割钩：GATE_FAIL → REC-ACC-01 开案（独立裁判位置在场）', async () => {
@@ -236,19 +242,19 @@ describe('五对象记录载体·生产写口（绿）', () => {
     appendGateFail(face.ledger)
     const outcome = face.wire.afterHarvest(face.ledger, { ticket: 'T-1', attempt: 1, outcome: 'failed', personId: 'AGENT-1' })
     expect(outcome.status).toBe('written')
-    const rows = face.hist.query({ company: 'demo', type: 'REC-ACC-01' })
+    const rows = face.hist.query({ company: 'demo', type: 'REC-ACC-01' }, READ_CTX)
     expect(rows).toHaveLength(1)
     expect(rows[0]?.payload).toMatchObject({ conclusion: 'attribution_undetermined' })
     // 重放（同 attempt）零第二行
     expect(face.wire.afterHarvest(face.ledger, { ticket: 'T-1', attempt: 1, outcome: 'failed', personId: 'AGENT-1' }).status).toBe('written')
-    expect(face.hist.query({ company: 'demo', type: 'REC-ACC-01' })).toHaveLength(1)
+    expect(face.hist.query({ company: 'demo', type: 'REC-ACC-01' }, READ_CTX)).toHaveLength(1)
   })
 
   it('收割完成（completed）=零对象载体：不由收割面代作复盘/评价（不伪造决定者）', async () => {
     const face = await makeFace()
     const outcome = face.wire.afterHarvest(face.ledger, { ticket: 'T-1', attempt: 1, outcome: 'completed', personId: 'AGENT-1' })
     expect(outcome).toEqual({ status: 'skipped', reason: 'completed（复盘/评价不由收割面代作——不伪造决定者）' })
-    expect(face.hist.query({ company: 'demo' })).toHaveLength(0)
+    expect(face.hist.query({ company: 'demo' }, READ_CTX)).toHaveLength(0)
   })
 })
 
@@ -260,7 +266,7 @@ describe('五对象记录载体·fail-closed（红）', () => {
     const outcome = face.wire.openAccountabilityCase(meta('T-1', 'acc-case-open'), broken)
     expect(outcome.ok).toBe(false)
     expect(outcome.ok ? '' : outcome.code).toBe('shape-refused')
-    expect(face.hist.query({ company: 'demo', type: 'REC-ACC-01' })).toHaveLength(0)
+    expect(face.hist.query({ company: 'demo', type: 'REC-ACC-01' }, READ_CTX)).toHaveLength(0)
   })
 
   it('不变量闸：诱导「段不可跳」→ 拒写、records 零行（§八 段序）', async () => {
@@ -269,7 +275,7 @@ describe('五对象记录载体·fail-closed（红）', () => {
     const outcome = face.wire.recordChangeSegment(meta('cand-1', 'chg-activation'), changePayload(), { previousSegment: 'candidate' })
     expect(outcome.ok).toBe(false)
     expect(outcome.ok ? '' : outcome.code).toBe('shape-refused')
-    expect(face.hist.query({ company: 'demo', type: 'REC-CHG-01' })).toHaveLength(0)
+    expect(face.hist.query({ company: 'demo', type: 'REC-CHG-01' }, READ_CTX)).toHaveLength(0)
   })
 
   it('证据闭包：引用未落库记录 → 拒写（不造悬空引用；依赖 #527 先落）', async () => {
@@ -277,7 +283,7 @@ describe('五对象记录载体·fail-closed（红）', () => {
     const outcome = face.wire.recordReview(meta('T-1', 'review'), reviewPayload())
     expect(outcome.ok).toBe(false)
     expect(outcome.ok ? '' : outcome.code).toBe('evidence-missing')
-    expect(face.hist.query({ company: 'demo' })).toHaveLength(0)
+    expect(face.hist.query({ company: 'demo' }, READ_CTX)).toHaveLength(0)
   })
 
   it('独立位置缺位：afterHarvest 拒绝以 daemon 冒充裁判（position-missing）', async () => {
@@ -286,7 +292,7 @@ describe('五对象记录载体·fail-closed（红）', () => {
     appendGateFail(face.ledger)
     const outcome = face.wire.afterHarvest(face.ledger, { ticket: 'T-1', attempt: 1, outcome: 'failed', personId: 'AGENT-1' })
     expect(outcome).toEqual({ status: 'refused', code: 'position-missing', detail: '独立裁判位置/控制依据引用未配置（OBJECT positions）——问责载体不开面' })
-    expect(face.hist.query({ company: 'demo', type: 'REC-ACC-01' })).toHaveLength(0)
+    expect(face.hist.query({ company: 'demo', type: 'REC-ACC-01' }, READ_CTX)).toHaveLength(0)
   })
 
   it('无 GATE_FAIL 事件：拒写（不凭猜测开案）', async () => {
@@ -294,7 +300,7 @@ describe('五对象记录载体·fail-closed（红）', () => {
     seedWorkRecord(face.hist)
     const outcome = face.wire.afterHarvest(face.ledger, { ticket: 'T-1', attempt: 1, outcome: 'failed', personId: 'AGENT-1' })
     expect(outcome.status).toBe('refused')
-    expect(face.hist.query({ company: 'demo', type: 'REC-ACC-01' })).toHaveLength(0)
+    expect(face.hist.query({ company: 'demo', type: 'REC-ACC-01' }, READ_CTX)).toHaveLength(0)
   })
 
   it('面关对照（红基线）：未接写口=records 零行；接写口=对应行出现（同一真库）', async () => {
@@ -305,11 +311,11 @@ describe('五对象记录载体·fail-closed（红）', () => {
     seedWorkRecord(hist)
     appendGateFail(ledger)
     // 红：无写口 —— records 只有种子行
-    expect(hist.query({ company: 'demo', type: 'REC-ACC-01' })).toHaveLength(0)
+    expect(hist.query({ company: 'demo', type: 'REC-ACC-01' }, READ_CTX)).toHaveLength(0)
     // 绿：接生产装配面（同 afterHarvest 调用面）
     const wire = createObjectRecordWire({ hist, company: 'demo', now: () => Date.parse(AT), positions: { accountabilityArbiter: 'QA-3', arbiterControlBasisRef: workRef() } })
     expect(wire.afterHarvest(ledger, { ticket: 'T-1', attempt: 1, outcome: 'failed', personId: 'AGENT-1' }).status).toBe('written')
-    expect(hist.query({ company: 'demo', type: 'REC-ACC-01' })).toHaveLength(1)
+    expect(hist.query({ company: 'demo', type: 'REC-ACC-01' }, READ_CTX)).toHaveLength(1)
   })
 
   it('信封元闸：决定者/写入者缺失 → 构造期抛错（不落半条）', () => {

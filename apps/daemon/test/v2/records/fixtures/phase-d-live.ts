@@ -9,6 +9,7 @@
  * §六/§七/§八/§十/§十三。证据口径：写完后由调用方用 `sqlite3 ... GROUP BY record_type` 直查
  * （本跑器只落库并打印计数，不替 sqlite 断言）。red=前置件未落/独立性自填，全部 refused、0 行。
  */
+import type { ReadContext } from '@studio-next/contract'
 import {
   COMPANY,
   T0,
@@ -114,6 +115,11 @@ const types = [
   'REC-MEM-03', 'REC-EVD-04', 'REC-WORK-08', 'REC-WORK-09', 'REC-WORK-10', 'REC-WORK-13', 'REC-EVD-01',
 ]
 const counts: Record<string, number> = {}
-for (const type of types) counts[type] = stack.hist.query({ company: COMPANY, type }).length
+/** 读上下文（v2/14 §0.2-1：读方法必带；公司维=被测公司，两槽同填——V2 身份表落位前同值） */
+const READ_CTX: ReadContext = {
+  readScope: { company: { companyId: COMPANY, slug: COMPANY }, fields: ['record.payload'], purpose: 'phase-d-live 计数读回' },
+  caller: { callerId: 'AGENT-1', kind: 'employment', personId: 'AGENT-1' },
+}
+for (const type of types) counts[type] = stack.hist.query({ company: COMPANY, type }, READ_CTX).length
 console.log(JSON.stringify({ mode, db: dbPath, counts }))
 stack.ledger.close()

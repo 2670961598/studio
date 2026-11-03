@@ -10,6 +10,7 @@
  * 前置不齐拒写不臆造）。断言只认库内事实（sqlite 直查；非单测自证桩）。
  */
 import { afterAll, describe, expect, it } from 'vitest'
+import type { ReadContext } from '@studio-next/contract'
 import { createHistFace, type Ledger } from '@studio-next/store'
 import {
   BLOCKED_RECORD_FAMILIES,
@@ -35,6 +36,11 @@ afterAll(async () => {
 })
 
 const COMPANY = 'demo'
+/** 读上下文（v2/14 §0.2-1：读方法必带；公司维=被测公司，两槽同填——V2 身份表落位前同值） */
+const READ_CTX: ReadContext = {
+  readScope: { company: { companyId: COMPANY, slug: COMPANY }, fields: ['record.payload'], purpose: 'mainloop-records 测试读回' },
+  caller: { callerId: 'AGENT-1', kind: 'employment', personId: 'AGENT-1' },
+}
 
 /** 记录面读口（真表；与写面同一 db 句柄之外独立开 hist——读面不共享写面事务） */
 function histOf(ledger: Ledger) {
@@ -60,7 +66,7 @@ describe('记录族生产写面·相位 1（REC-WORK-01 意图信封；绿）', 
     const ticket = await createTicket(stack, '记录写面单')
     await runTicks(stack, 2) // 拍1 采集写意图 → 拍2 派发
 
-    const rows = histOf(stack.ledger).query({ company: COMPANY, type: 'REC-WORK-01' })
+    const rows = histOf(stack.ledger).query({ company: COMPANY, type: 'REC-WORK-01' }, READ_CTX)
     expect(rows).toHaveLength(1)
     expect(rows[0]?.idempotencyKey?.subjectId).toBe(ticket)
     expect(rows[0]?.producer?.writtenBy).toBe('daemon:engine/records')
@@ -81,7 +87,7 @@ describe('记录族生产写面·相位 1（REC-WORK-01 意图信封；绿）', 
     expect(replay.ok).toBe(true)
     if (replay.ok) expect(replay.deduped).toBe(true)
 
-    const rows = histOf(stack.ledger).query({ company: COMPANY, type: 'REC-WORK-01' })
+    const rows = histOf(stack.ledger).query({ company: COMPANY, type: 'REC-WORK-01' }, READ_CTX)
     expect(rows).toHaveLength(1)
     expect(wire.counters.deduped).toBeGreaterThan(0)
   })
@@ -94,11 +100,11 @@ describe('记录族生产写面·面关对照（红）', () => {
     await runTicks(stack, 2)
 
     const hist = histOf(stack.ledger)
-    expect(hist.query({ company: COMPANY })).toHaveLength(0)
+    expect(hist.query({ company: COMPANY }, READ_CTX)).toHaveLength(0)
 
     const allEvents = stack.ledger.queryEvents({})
     expect(allEvents.some((event) => event.event === 'DISPATCH' && event.issue === ticket)).toBe(true)
-    const reconciled = reconcileProjection(hist.query({ company: COMPANY }), allEvents)
+    const reconciled = reconcileProjection(hist.query({ company: COMPANY }, READ_CTX), allEvents)
     expect(reconciled.settled).toBe(false)
     expect(reconciled.differences.some((d: { kind: string; subjectId: string }) => d.kind === 'missing' && d.subjectId === ticket)).toBe(true)
   })
@@ -108,7 +114,7 @@ describe('记录族生产写面·面关对照（红）', () => {
     await createTicket(stack, '对账单')
     await runTicks(stack, 2)
     const hist = histOf(stack.ledger)
-    const reconciled = reconcileProjection(hist.query({ company: COMPANY }), stack.ledger.queryEvents({}))
+    const reconciled = reconcileProjection(hist.query({ company: COMPANY }, READ_CTX), stack.ledger.queryEvents({}))
     expect(reconciled.settled).toBe(true)
     expect(reconciled.differences).toEqual([])
   })
@@ -139,7 +145,7 @@ describe('决定型记录前置闸（拒写不臆造）', () => {
     await runTicks(stack, 2) // 派发拍：REC-WORK-06 尝试写入但前置不齐
 
     expect(wire.counters.refused).toBeGreaterThan(0)
-    const rows = histOf(stack.ledger).query({ company: COMPANY, type: 'REC-WORK-06' })
+    const rows = histOf(stack.ledger).query({ company: COMPANY, type: 'REC-WORK-06' }, READ_CTX)
     expect(rows).toHaveLength(0)
   })
 
@@ -261,13 +267,13 @@ describe('L0 直派复合路径（studio-dev-592：M-01→M-05 逐边登记，�
     const args = { ticket: L0_ARGS.ticket, attempt: L0_ARGS.attempt, fromState: L0_ARGS.fromPlatformState, toState: L0_ARGS.toPlatformState, at: L0_ARGS.at, actor: L0_ARGS.actor, evidenceRefs: PREREQ_REFS, decision: DECISION }
     const first = wire.transition(args)
     expect(first.ok).toBe(true)
-    const rows = hist.query({ company: COMPANY, type: 'REC-WORK-06' })
+    const rows = hist.query({ company: COMPANY, type: 'REC-WORK-06' }, READ_CTX)
     expect(rows).toHaveLength(2)
     expect(rows.map((row) => row.recordId.split(':').at(-1)).sort()).toEqual(['M-01', 'M-05'])
     const replay = wire.transition(args)
     expect(replay.ok).toBe(true)
     if (replay.ok) expect(replay.deduped).toBe(true)
-    expect(hist.query({ company: COMPANY, type: 'REC-WORK-06' })).toHaveLength(2)
+    expect(hist.query({ company: COMPANY, type: 'REC-WORK-06' }, READ_CTX)).toHaveLength(2)
   })
 
   it('红：非法回退仍拒写且留痕（日志明报表外边＋合法出口，零行）', async () => {
@@ -286,7 +292,7 @@ describe('L0 直派复合路径（studio-dev-592：M-01→M-05 逐边登记，�
     })
     expect(result.ok).toBe(false)
     expect(logs.some((line) => line.includes('拒写 REC-WORK-06') && line.includes('无对应边') && line.includes('合法出口'))).toBe(true)
-    expect(histOf(stack.ledger).query({ company: COMPANY, type: 'REC-WORK-06' })).toHaveLength(0)
+    expect(histOf(stack.ledger).query({ company: COMPANY, type: 'REC-WORK-06' }, READ_CTX)).toHaveLength(0)
   })
 })
 

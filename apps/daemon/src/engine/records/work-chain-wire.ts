@@ -21,6 +21,7 @@ import {
   validateWorkContract,
   type RecordValidationOutcome,
 } from '@studio-next/contract/records'
+import type { ReadContext } from '@studio-next/contract'
 import { workTransitionDrafts, type DraftOutcome } from './drafts.ts'
 import {
   chainRecordId,
@@ -63,6 +64,23 @@ export interface ChainWriter {
 /** 建链写面（每个 wire 实例一个；不共享事务/不另开库） */
 export function createChainWriter(deps: ChainWriterDeps): ChainWriter {
   const { company, hist, counters } = deps
+  /**
+   * hist 读面闸（v2/14 §0.2-1：读方法必带 ReadContext，缺省/越权＝拒）：
+   * 前件记录引用完整性读取是**程序读**，公司维＝装配公司（两槽同填——V2 公司身份表落位前
+   * companyId 与 slug 同值）；内部读不享「无上下文」旁路。
+   */
+  const readContext: ReadContext = {
+    readScope: {
+      company: { companyId: company, slug: company },
+      fields: ['records.record.payload'],
+      purpose: 'work-chain-wire 前件记录引用完整性读',
+    },
+    caller: {
+      callerId: 'daemon:engine/records/work-chain-wire',
+      kind: 'program',
+      programRef: 'daemon:engine/records/work-chain-wire',
+    },
+  }
 
   /** contract 判定结论 → 字段级 issue 串（写面统一口径） */
   const issuesOf = (outcome: RecordValidationOutcome): string[] =>
@@ -82,7 +100,7 @@ export function createChainWriter(deps: ChainWriterDeps): ChainWriter {
       const refId = bag['refId']
       const refVersion = bag['refVersion']
       if (typeof refType === 'string' && refType.startsWith('REC-') && typeof refId === 'string' && typeof refVersion === 'string') {
-        if (!produced.has(refId) && hist.get(refId) === undefined) missing.add(`${refType}:${refId}`)
+        if (!produced.has(refId) && hist.get(refId, readContext) === undefined) missing.add(`${refType}:${refId}`)
         return
       }
       for (const item of Object.values(bag)) walk(item)

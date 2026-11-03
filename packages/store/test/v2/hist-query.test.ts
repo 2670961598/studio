@@ -28,6 +28,7 @@ import {
   iso,
   memPayload,
   openHistHarness,
+  readContext as rc,
   ulid,
   type HistHarness,
 } from './hist-fixtures.ts'
@@ -65,30 +66,30 @@ describe('query（company 必填；area/type/since 过滤；produced_at,record_i
   })
 
   it('company 全量（升序；跨 AREA 可查）', () => {
-    const all = h.hist.query({ company })
+    const all = h.hist.query({ company }, rc(company))
     expect(all.map((r) => r.recordId)).toEqual([ulid(t1, 1), ulid(t2, 2), ulid(t3, 3)])
     expect(all.map((r) => r.recordType)).toEqual(['REC-EVT-01', 'REC-ASSET-02', 'REC-EVT-03'])
   })
 
   it('area 过滤（记录域由 recordType 派生，不手填）', () => {
-    expect(h.hist.query({ company, area: 'AUTH' }).map((r) => r.recordId)).toEqual([ulid(t1, 1), ulid(t3, 3)])
-    expect(h.hist.query({ company, area: 'ASSET' }).map((r) => r.recordId)).toEqual([ulid(t2, 2)])
-    expect(h.hist.query({ company, area: 'WORK' })).toEqual([])
+    expect(h.hist.query({ company, area: 'AUTH' }, rc(company)).map((r) => r.recordId)).toEqual([ulid(t1, 1), ulid(t3, 3)])
+    expect(h.hist.query({ company, area: 'ASSET' }, rc(company)).map((r) => r.recordId)).toEqual([ulid(t2, 2)])
+    expect(h.hist.query({ company, area: 'WORK' }, rc(company))).toEqual([])
   })
 
   it('type / since / 组合过滤（since 含界）', () => {
-    expect(h.hist.query({ company, type: 'REC-ASSET-02' }).map((r) => r.recordId)).toEqual([ulid(t2, 2)])
-    expect(h.hist.query({ company, since: t2 }).map((r) => r.recordId)).toEqual([ulid(t2, 2), ulid(t3, 3)])
-    expect(h.hist.query({ company, area: 'AUTH', since: t3 }).map((r) => r.recordId)).toEqual([ulid(t3, 3)])
-    expect(h.hist.query({ company: 'no-such-company' })).toEqual([])
+    expect(h.hist.query({ company, type: 'REC-ASSET-02' }, rc(company)).map((r) => r.recordId)).toEqual([ulid(t2, 2)])
+    expect(h.hist.query({ company, since: t2 }, rc(company)).map((r) => r.recordId)).toEqual([ulid(t2, 2), ulid(t3, 3)])
+    expect(h.hist.query({ company, area: 'AUTH', since: t3 }, rc(company)).map((r) => r.recordId)).toEqual([ulid(t3, 3)])
+    expect(h.hist.query({ company: 'no-such-company' }, rc('no-such-company'))).toEqual([])
   })
 
   it('坏行不冒充「无行」：get/query 遇到坏 payload → CONFIG_INVALID（fail-closed）', () => {
     const badId = ulid(T0 + 40_000, 4)
     h.hist.append(envelope('REC-EVT-01', evtPayload(), { recordId: badId, companyRef: company, producedAt: iso(T0 + 40_000) }))
     h.db.prepare("UPDATE records SET payload = '{oops' WHERE record_id = ?").run(badId)
-    expect(() => h.hist.get(badId)).toThrow(/CONFIG_INVALID\/store\/hist:corrupt-row:payload/)
-    expect(() => h.hist.query({ company })).toThrow(/CONFIG_INVALID\/store\/hist:corrupt-row:payload/)
+    expect(() => h.hist.get(badId, rc(company))).toThrow(/CONFIG_INVALID\/store\/hist:corrupt-row:payload/)
+    expect(() => h.hist.query({ company }, rc(company))).toThrow(/CONFIG_INVALID\/store\/hist:corrupt-row:payload/)
   })
 })
 
@@ -103,7 +104,7 @@ describe('reconcile（只读对账：投影自洽；差异不压平；零写语�
   })
 
   it('健康投影：settled=true、差异空、completedAt=注入时钟', () => {
-    const batch = h.hist.reconcile({ company })
+    const batch = h.hist.reconcile({ company }, rc(company))
     expect(batch.checked).toBe(1)
     expect(batch.differences).toEqual([])
     expect(batch.settled).toBe(true)
@@ -127,7 +128,7 @@ describe('reconcile（只读对账：投影自洽；差异不压平；零写语�
     h.hist.append(envelope('REC-EVT-01', evtPayload(), { companyRef: company, recordId: badTime, producedAt: iso(T0 + 6_000) }))
     h.db.prepare("UPDATE records SET produced_at = 'oops' WHERE record_id = ?").run(badTime)
 
-    const batch = h.hist.reconcile({ company })
+    const batch = h.hist.reconcile({ company }, rc(company))
     expect(batch.settled).toBe(false)
     const kinds = batch.differences.map((d) => `${d.kind}:${d.recordId}`)
     expect(kinds).toContain(`undeterminable:${jsonBad}`)
@@ -151,15 +152,15 @@ describe('reconcile（只读对账：投影自洽；差异不压平；零写语�
         revises: { refId: target, refVersion: '1.0.0' },
       }),
     })
-    const batch = h.hist.reconcile({ company: chain })
+    const batch = h.hist.reconcile({ company: chain }, rc(chain))
     expect(batch.differences.some((d) => d.kind === 'disorder' && d.recordId === corId)).toBe(true)
   })
 
   it('只读：对账前后 records 全表逐行相同（监控/对账不改事实——NEG-MON-03 前腿）', () => {
     const snapshot = (): unknown => h.db.prepare('SELECT * FROM records ORDER BY record_id').all()
     const before = snapshot()
-    h.hist.reconcile({ company })
-    h.hist.reconcile({ company: 'no-such-company' })
+    h.hist.reconcile({ company }, rc(company))
+    h.hist.reconcile({ company: 'no-such-company' }, rc('no-such-company'))
     expect(snapshot()).toEqual(before)
   })
 })
@@ -184,20 +185,20 @@ describe('memory（REC-MEM-01 按 owner_scope 精确读；不自动继承）', (
   })
 
   it('只返回本 scope 的 REC-MEM-01（不返回他 scope / 非记忆记录）', () => {
-    expect(h.hist.memory({ company, scope: 'ENG-1' }).map((r) => r.recordId)).toEqual([mem1])
-    expect(h.hist.memory({ company, scope: 'ENG-2' }).map((r) => r.recordId)).toEqual([mem2])
+    expect(h.hist.memory({ company, scope: 'ENG-1' }, rc(company)).map((r) => r.recordId)).toEqual([mem1])
+    expect(h.hist.memory({ company, scope: 'ENG-2' }, rc(company)).map((r) => r.recordId)).toEqual([mem2])
   })
 
   it('不自动继承：父 scope/前缀/子 scope 均不命中（继承只能走 REC-MEM-03 显式凭证）', () => {
-    expect(h.hist.memory({ company, scope: 'ENG' })).toEqual([])
-    expect(h.hist.memory({ company, scope: 'ENG-1/child' })).toEqual([])
-    expect(h.hist.memory({ company, scope: 'STUDIO' })).toEqual([])
+    expect(h.hist.memory({ company, scope: 'ENG' }, rc(company))).toEqual([])
+    expect(h.hist.memory({ company, scope: 'ENG-1/child' }, rc(company))).toEqual([])
+    expect(h.hist.memory({ company, scope: 'STUDIO' }, rc(company))).toEqual([])
   })
 
   it('domain 过滤生效；空 scope 拒', () => {
-    expect(h.hist.memory({ company, scope: 'ENG-2', domain: 'personal' })).toEqual([])
-    expect(h.hist.memory({ company, scope: 'ENG-2', domain: 'work' }).map((r) => r.recordId)).toEqual([mem2])
-    expect(() => h.hist.memory({ company, scope: '  ' })).toThrow(/CONFIG_INVALID\/store\/hist:memory-scope-empty/)
+    expect(h.hist.memory({ company, scope: 'ENG-2', domain: 'personal' }, rc(company))).toEqual([])
+    expect(h.hist.memory({ company, scope: 'ENG-2', domain: 'work' }, rc(company)).map((r) => r.recordId)).toEqual([mem2])
+    expect(() => h.hist.memory({ company, scope: '  ' }, rc(company))).toThrow(/CONFIG_INVALID\/store\/hist:memory-scope-empty/)
   })
 })
 
@@ -253,9 +254,9 @@ describe('DOM-05 投影面：零 events/cost_daily 写、无 append-only 触发�
 
   it('记录投影非事实源：records 行数只随 append 增长、query/memory/reconcile 零写', () => {
     const before = countRecords(h.db, company)
-    h.hist.query({ company })
-    h.hist.memory({ company, scope: 'ENG-1' })
-    h.hist.reconcile({ company })
+    h.hist.query({ company }, rc(company))
+    h.hist.memory({ company, scope: 'ENG-1' }, rc(company))
+    h.hist.reconcile({ company }, rc(company))
     expect(countRecords(h.db, company)).toBe(before)
   })
 })

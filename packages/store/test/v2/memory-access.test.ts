@@ -21,7 +21,7 @@ import {
   type MemoryAccessWho,
 } from '../../src/memory/access.ts'
 import type { RecordRef } from '../../../contract/src/records/envelope.ts'
-import { CLOCK, T0, envelope, iso, memPayload, openHistHarness, ulid, type HistHarness } from './hist-fixtures.ts'
+import { CLOCK, T0, envelope, iso, memPayload, openHistHarness, readContext, ulid, type HistHarness } from './hist-fixtures.ts'
 
 let h: HistHarness
 let seq = 0
@@ -190,7 +190,7 @@ describe('memory.write：每次写入落 REC-MEM-02（同事务，审计不可�
     })
     const ref = w.memory.write(record, ctx(w))
     expect(ref).toMatchObject({ recordId: entryId, recordType: 'REC-MEM-01', appended: true })
-    expect(h.hist.get(entryId)?.recordId).toBe(entryId)
+    expect(h.hist.get(entryId, readContext(w.company))?.recordId).toBe(entryId)
     const rows = audits(w.company)
     expect(rows).toHaveLength(1)
     expect(lastAudit(w.company).payload.result).toBe('provided')
@@ -215,7 +215,7 @@ describe('memory.write：每次写入落 REC-MEM-02（同事务，审计不可�
       producedAt: iso(T0 + 2_000),
     })
     expect(() => memory.write(record, ctx(w))).toThrow(/audit store unavailable/)
-    expect(h.hist.get(entryId)).toBeUndefined()
+    expect(h.hist.get(entryId, readContext(w.company))).toBeUndefined()
     expect(audits(w.company)).toHaveLength(0)
   })
 
@@ -228,7 +228,7 @@ describe('memory.write：每次写入落 REC-MEM-02（同事务，审计不可�
       producedAt: iso(T0 + 2_000),
     })
     expect(() => w.memory.write(record, ctx(w, { scope: 'ENG-1' }))).toThrow(/CONFIG_INVALID\/store\/hist:memory-scope-denied/)
-    expect(h.hist.get(entryId)).toBeUndefined()
+    expect(h.hist.get(entryId, readContext(w.company))).toBeUndefined()
     expect(audits(w.company)).toHaveLength(0)
   })
 })
