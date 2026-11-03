@@ -128,7 +128,7 @@ export const SECTION = {
        size、payload_hash）。--input JSON 七件套见 src/evolve/postmortem.ts PostmortemInput；
        --input 必给（复盘正文不可虚构）；库必须已存在（写面不代建库）
 `,
-  panel: `  studio-next panel --db <库路径> [--port 8791]
+  panel: `  studio-next panel --db <库路径> [--port 8791] [--company-dir <公司目录>]
        :8791 只读监控面（v0.3，docs/16-§四）：jobs/runs/workers/事件流（SSE），
        全部读 SQLite 零写；库不存在即拒启；Ctrl-C 优雅关闭
 `,
@@ -243,9 +243,9 @@ export const CONCISE = {
   例：studio-next postmortem --db var/ledger.sqlite --company my-corp --issue ISSUE-7 --input review.json
   本命令全文：studio-next postmortem --help
 `,
-  panel: `panel —— :8791 只读监控面（jobs/runs/workers/事件流 SSE；全读零写；库不存在即拒启）
-  studio-next panel --db <库路径> [--port 8791]
-  例：studio-next panel --db var/ledger.sqlite
+  panel: `panel —— :8791 监控面（jobs/runs/workers/事件流 SSE 全读零写；库不存在即拒启；--company-dir 目录不存在即拒启）
+  studio-next panel --db <库路径> [--port 8791] [--company-dir <公司目录>]
+  例：studio-next panel --db var/ledger.sqlite --company-dir /path/to/company（含 --company-dir 时装配对话页）
   本命令全文：studio-next panel --help
 `,
   overview: `overview —— :8789 公司概览面（挂载公司目录→/<slug>/ 概览/组织/人事/进度/财务五读面，全 GET 只读）

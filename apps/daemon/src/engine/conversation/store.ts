@@ -35,6 +35,7 @@ import {
   type ContextWindow,
   type ConversationMessage,
   type ConversationMessageInput,
+  type ConversationSource,
   type ConversationStoreOptions,
   type ConversationTurn,
   type PendingReply,
@@ -70,6 +71,10 @@ export class ConversationStore {
   private readonly maxMessageChars: number
   private readonly persons = new Map<string, PersonState>()
   private readonly bindings = new Map<string, BindRecord>()
+  /** 跨进程写者（面板进程/daemon）场景：按文件签名按需重载（缺省 true；测试可关） */
+  private readonly reloadOnChange: boolean
+  private readonly personSigs = new Map<string, string>()
+  private bindingsSig: string | undefined
   private problems = 0
 
   constructor(options: ConversationStoreOptions) {
@@ -79,8 +84,10 @@ export class ConversationStore {
     this.log = options.log ?? ((): void => {})
     this.maxStoredChars = options.maxStoredChars ?? 20_000
     this.maxMessageChars = options.maxMessageChars ?? 2000
+    this.reloadOnChange = options.reloadOnChange ?? true
     mkdirSync(this.dir, { recursive: true, mode: 0o700 })
     this.loadBindings()
+    this.bindingsSig = this.fileSignature(this.bindingsPath())
   }
 
   /** 绑定（同房后写覆盖先写；append-only 审计） */
@@ -90,11 +97,13 @@ export class ConversationStore {
     const record: BindRecord = { v: 1, kind: 'bind', id: this.makeId(), at: this.now(), room, person, by, reason }
     this.appendLine(this.bindingsPath(), record)
     this.bindings.set(room, record)
+    this.bindingsSig = this.fileSignature(this.bindingsPath())
     return record
   }
 
   /** 房间当前绑定（无=undefined——消费件按缺省岗位策略处理） */
   bindingOf(room: string): { person: string; at: number; reason: 'explicit' | 'default'; by: string } | undefined {
+    this.refreshBindings()
     const found = this.bindings.get(room)
     return found === undefined ? undefined : { person: found.person, at: found.at, reason: found.reason, by: found.by }
   }
@@ -111,6 +120,7 @@ export class ConversationStore {
       if (state.eventIds.has(input.eventId)) return undefined
       state.eventIds.add(input.eventId)
     }
+    if (input.clientMsgId !== undefined && state.clientMsgIds.has(input.clientMsgId)) return undefined
     const record: RawRecord = {
       v: 1,
       kind: 'msg',
@@ -121,9 +131,12 @@ export class ConversationStore {
       role: input.role,
       text: clip(input.text, this.maxStoredChars),
       ...(input.eventId !== undefined ? { eventId: input.eventId } : {}),
+      ...(input.source !== undefined ? { source: input.source } : {}),
+      ...(input.clientMsgId !== undefined ? { clientMsgId: input.clientMsgId } : {}),
     }
     this.appendLine(this.personPath(input.person), record)
     state.records.push(record)
+    if (record.kind === 'msg' && record.clientMsgId !== undefined) state.clientMsgIds.set(record.clientMsgId, record.id)
     return record
   }
 
@@ -132,11 +145,60 @@ export class ConversationStore {
     return this.ensurePerson(person).eventIds.has(eventId)
   }
 
+  /** 面板 Port：按 clientMsgId 查既有消息（同工号幂等命中；跨重启靠文件装载） */
+  findMessageByClientMsgId(person: string, clientMsgId: string): ConversationMessage | undefined {
+    const state = this.ensurePerson(person)
+    const id = state.clientMsgIds.get(clientMsgId)
+    if (id === undefined) return undefined
+    const found = state.records.find((r): r is Extract<RawRecord, { kind: 'msg' }> => r.kind === 'msg' && r.id === id)
+    if (found === undefined) return undefined
+    return {
+      id: found.id,
+      at: found.at,
+      person: found.person,
+      room: found.room,
+      role: found.role,
+      text: found.text,
+      ...(found.eventId !== undefined ? { eventId: found.eventId } : {}),
+    }
+  }
+
+  /** 面板 Port：可见行（msg role≠system 与 clear），文件序（append-only 稳定；seq 由适配器合成） */
+  visibleRecords(person: string): RawRecord[] {
+    return this.ensurePerson(person).records.filter(
+      (r) => (r.kind === 'msg' && r.role !== 'system') || r.kind === 'clear',
+    )
+  }
+
+  /** 面板 Port：目录内工号列表（不含 _bindings.jsonl；稳定排序） */
+  personIds(): string[] {
+    try {
+      return readdirSync(this.dir)
+        .filter((name) => name.endsWith('.jsonl') && name !== '_bindings.jsonl')
+        .map((name) => name.slice(0, -'.jsonl'.length))
+        .filter((id) => CONVERSATION_PERSON_ID_PATTERN.test(id))
+        .sort()
+    } catch {
+      return []
+    }
+  }
+
+  /** 工号当前绑定房（多绑定时取最后写入；无=undefined） */
+  roomFor(person: string): string | undefined {
+    this.refreshBindings()
+    let latest: BindRecord | undefined
+    for (const record of this.bindings.values()) {
+      if (record.person !== person) continue
+      if (latest === undefined || record.at >= latest.at) latest = record
+    }
+    return latest?.room
+  }
+
   /**
    * clear：追加审计行，上下文从下一条消息起归零；**不物理删除**任何历史行。
    * 返回清空条数/清空前末消息 id（审计可见）。
    */
-  clear(room: string, person: string, by: string, reason?: string): ClearReceipt {
+  clear(room: string, person: string, by: string, reason?: string, source?: ConversationSource): ClearReceipt {
     this.assertPerson(person)
     const state = this.ensurePerson(person)
     const active = this.activeMessages(state, room)
@@ -152,6 +214,7 @@ export class ConversationStore {
       by,
       ...(reason !== undefined && reason !== '' ? { reason } : {}),
       ...(before !== undefined ? { before } : {}),
+      ...(source !== undefined ? { source } : {}),
       count: active.length,
     }
     this.appendLine(this.personPath(person), record)
@@ -380,11 +443,22 @@ export class ConversationStore {
 
   private ensurePerson(person: string): PersonState {
     this.assertPerson(person)
-    const existing = this.persons.get(person)
-    if (existing !== undefined) return existing
+    const cached = this.persons.get(person)
+    if (cached === undefined) return this.reloadPerson(person)
+    if (!this.reloadOnChange) return cached
+    const file = this.personPath(person)
+    if (this.fileSignature(file) === this.personSigs.get(person)) return cached
+    // 跨进程写者：文件签名（size+mtimeMs）变化→整人 state 重载（append-only 全量重建；坏行跳过）
+    return this.reloadPerson(person)
+  }
+
+  /** 重读某人工号文件并重建 state（跨进程可见性；坏行隔离不阻塞读） */
+  private reloadPerson(person: string): PersonState {
+    const file = this.personPath(person)
     const state: PersonState = {
       records: [],
       eventIds: new Set(),
+      clientMsgIds: new Map(),
       turns: new Map(),
       replies: new Map(),
       delivered: new Set(),
@@ -392,7 +466,7 @@ export class ConversationStore {
       lastProblemAt: 0,
     }
     this.persons.set(person, state)
-    const file = this.personPath(person)
+    this.personSigs.set(person, this.fileSignature(file) ?? '')
     if (!existsSync(file)) return state
     const text = readFileSync(file, 'utf8')
     for (const [index, line] of text.split('\n').entries()) {
@@ -401,6 +475,7 @@ export class ConversationStore {
       if (record === undefined || record.kind === 'bind') continue
       state.records.push(record)
       if (record.kind === 'msg' && record.eventId !== undefined) state.eventIds.add(record.eventId)
+      if (record.kind === 'msg' && record.clientMsgId !== undefined) state.clientMsgIds.set(record.clientMsgId, record.id)
       if (record.kind === 'clear') {
         // clear 只影响上下文读面（activeMessages 顺序扫描），无需额外状态
         continue
@@ -435,6 +510,23 @@ export class ConversationStore {
       if (record.kind === 'failure-notice') state.failureNotices.add(`${record.issue}#${record.attempt}`)
     }
     return state
+  }
+
+  /** 文件签名（size:mtimeMs；不存在=undefined）——跨进程读面重载的唯一判据（不轮询 sleep） */
+  private fileSignature(file: string): string | undefined {
+    if (!existsSync(file)) return undefined
+    const info = statSync(file)
+    return `${String(info.size)}:${String(info.mtimeMs)}`
+  }
+
+  /** 绑定文件按签名重载（面板/daemon 跨进程绑定可见） */
+  private refreshBindings(): void {
+    if (!this.reloadOnChange) return
+    const sig = this.fileSignature(this.bindingsPath())
+    if (sig === this.bindingsSig) return
+    this.bindingsSig = sig
+    this.bindings.clear()
+    this.loadBindings()
   }
 
   private loadBindings(): void {

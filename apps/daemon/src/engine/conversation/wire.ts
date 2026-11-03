@@ -12,6 +12,7 @@ import type { NotifyBroadcastFace } from '../notify/broadcast.ts'
 import { ConversationStore } from './store.ts'
 import type { ConversationRuntimeConfig, ConversationTickDeps } from './consume.ts'
 import { createConversationRelay, type ConversationRelay } from './reply.ts'
+import { createPanelRelay } from './panel-relay.ts'
 
 export interface WireConversationInput {
   company: string
@@ -28,6 +29,8 @@ export interface WireConversationInput {
   notify: NotifyBroadcastFace
   /** 人员索引活取（L1 热重载后署名取新快照；缺省=工号） */
   people: () => readonly PersonRef[]
+  /** 中继游标状态文件（缺省=<dir>/../var/conversations/.relay-state.json；测试可注入） */
+  statePath?: string
   log?: (line: string) => void
 }
 
@@ -68,10 +71,19 @@ export function wireConversation(input: WireConversationInput): WiredConversatio
     maxChars: input.maxChars,
     maxMessageChars: input.maxMessageChars,
   }
+  const statePath = input.statePath ?? path.join(path.dirname(dir), 'var', 'conversations', '.relay-state.json')
+  const panelRelay = createPanelRelay({
+    store,
+    notify: input.notify,
+    statePath,
+    senderSignature: conversationSignature(input.company, undefined, '制作人'),
+    log,
+  })
   const relay = createConversationRelay({
     store,
     ledger: input.ledger,
     notify: input.notify,
+    panelRelay,
     config: { company: input.company, replyMaxChars: input.replyMaxChars },
     signatureOf: (person: string): string =>
       conversationSignature(input.company, input.people().find((p) => p.id === person), person),

@@ -61,15 +61,33 @@
 ### 7.1 单一会话事实源（Phase 1 落存储）
 
 - 位置：`<companyDir>/conversations/<工号>.jsonl`（一行一条 JSON；append-only）。
-- 记录两类（`v=1`）：
-  - `message`：`{v,kind,seq,id,at,personId,from:{kind:'producer'|'person',ref},text,source:'matrix'|'panel',clientMsgId?}`
-  - `clear`：`{v,kind,seq,id,at,personId,by,reason?,source}`
-- `seq` 由存储侧单点分配（同一工号单调递增，从 1 起）；`id` 全局唯一（ULID 或等价物）。
+- 记录两类（`v=1`；**落盘 `kind` 以 Phase 1 实现为准**，不复用面板 Port 的命名）：
+  - `msg`：`{v,kind:'msg',id,at,person,room,role:'producer'|'person'|'system',text,eventId?,source?:'matrix'|'panel',clientMsgId?}`
+  - `clear`：`{v,kind:'clear',id,at,person,room,by,reason?,source}`
+  - 其余行族（`bind/reply/delivered/turn/turn-done/failure-notice`）是投递/审计记录，**不是会话消息**，
+    不进面板 Port 读面。
+- `seq` **不落盘**：由装配适配器按「面板可见有效行（`msg` role≠system 与 `clear`）文件序」合成
+  （append-only 稳定，从 1 起；坏行跳过不影响已合成值）；`version`=最后合成 seq。`id` 全局唯一
+  （ULID 或等价物）。
+- 幂等：面板写=`(person, clientMsgId)`；Matrix 写=`eventId`；同键同内容→既有行+`deduped:true`，
+  同键异内容=409。
 - 追加原子性：单行 ≤ 16KB（正文上限 4000 字符），O_APPEND 单次写；坏行隔离不阻塞后续读。
-- clear 语义：**只追加 clear 记录，不物理删除**（审计留痕）；有效历史=最后一条 clear 之后的 message。
+- clear 语义：**只追加 clear 记录，不物理删除**（审计留痕）；有效历史=最后一条 clear 之后的 `msg`。
 - 存储不入契约包（不是 REC- 族，不改 v2/11 记录形状）；不建台账表（避免与既有 `sessions`
   归档表混名）。
 - 权限：写只允许 Matrix 网关（Phase 1）与面板制作人凭据（Phase 2）；读对环回访客开放。
+- **跨进程读面（面板进程与 daemon 双写者）**：读面按文件签名（`size+mtimeMs`）**按需重载**（每人
+  会话文件与 `_bindings.jsonl` 独立比对）；写仍 append-only 单行原子。半行/坏行跳过并计数，下次签名
+  变化再补读——不轮询、不 sleep、不因他进程写入抛错/停服务。
+
+**面板 Port 映射表**（`packages/panel/src/conversation/types.ts` ← 装配适配器 ← 本存储）：
+
+| store 行 | Port 形状 | 备注 |
+|---|---|---|
+| `msg(role='producer')` | `message{kind:'message',seq,from:{kind:'producer',ref:…},source,clientMsgId?}` | `source` 透传；panel 写=producer 工号（`STUDIO_PANEL_PRODUCER_ID`） |
+| `msg(role='person')` | `message{kind:'message',seq,from:{kind:'person',ref:person},source}` | 员工回复（出站中继来源） |
+| `msg(role='system')` | **不进读面** | 系统旁白只留审计（不冒充对话） |
+| `clear` | `clear{kind:'clear',seq,by,reason?,source}` | `reset`/`clearSeq` 据其合成 |
 
 ### 7.2 双端同步契约
 
@@ -95,6 +113,18 @@
 - 写权限：只有制作人凭据可写（`X-Studio-Producer-Token` + 服务端配置
   `STUDIO_PANEL_PRODUCER_TOKEN`）；未配置令牌=写面 503 fail-closed；缺/错令牌=401/403；
   只读访客可读不可写；越权一律拒，不降级。
+- **装配接线（Phase 2 生产）**：`apps/daemon` 侧适配器把本存储实现为 panel `ConversationStore` Port；
+  CLI `panel --company-dir <dir>` 时注入 `{store, policy}`（同一 `<dir>/conversations/<工号>.jsonl` 事实源）；
+  缺省不传 `--company-dir`=store 缺席=读/写统一 503（不得面板侧落盘代偿）。写策略由
+  `STUDIO_PANEL_PRODUCER_TOKEN`/`STUDIO_PANEL_PRODUCER_ID` 构造（未配 token=503；缺=401；错=403；
+  actorRef=制作人工号、不接受客户端自报）。
+- **面板→Matrix 中继（B）**：拍边界 watcher 读 `source='panel'` 的 `msg`（按 person 游标 `relayedSeq`），
+  经 notify 面 `targets.room` 发回该工号绑定 DM 房（**daemon 读面随文件签名变化重载——面板进程
+  写入立即可见**）；成功推进游标、失败积压重试不丢；同一 seq 只发一次；重启从游标恢复不重发；
+  只处理 panel 源（Matrix 入站/员工回复绝不进此路，防回环）。
+- **中继游标（运行期状态）**：每工号持久化 `relayedSeq` 于
+  `<companyDir>/var/conversations/.relay-state.json` `{v:1,persons:{<工号>:{relayedSeq}}}`——运行期状态，
+  不进公司 git 契约包/不入 Taiga；原子写（tmp+rename）；发送失败只记日志/计数、不阻主循环（下一拍重试）。
 - 端点/页面/轮询/失败标记详见 `docs/v2/14` §8.1。
 
 ### 7.5 验收口径
@@ -126,7 +156,7 @@
   `turn-done`、`reply`（出站队列）＋`delivered`（送达回执）。`_bindings.jsonl` 记录
   `bind`（room→工号、操作者、原因=`explicit`｜`default`）。
 - **会话不是单据**：Taiga/YouTrack 里没有「对话单」；对话正文、历史、clear 记录都不写进任何
-  单据字段或评论。会话轮次的执行载体见 7.5 边界。
+  单据字段或评论。会话轮次的执行载体见 8.5 边界。
 
 ### 8.2 岗位绑定（Matrix DM 房 → 工号）
 

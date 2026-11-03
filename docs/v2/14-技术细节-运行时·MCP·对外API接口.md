@@ -356,6 +356,19 @@ interface ConversationSessionFace {
   `(personId, clientMsgId)`，同键同内容→200＋`deduped:true`，同键异内容→409。
 - 存储未接线（`ConversationStore` 缺席）：读/写 API 统一 503 `conversation-store-unavailable`，
   页面显示降级横幅；**不得**返回空列表冒充「没有会话」，**不得**在 panel 侧落盘代偿。
+- **装配入口（生产接线，studio-dev-654）**：`apps/daemon/src/cli/panel.ts`
+  `panel --db <库路径> [--port 8791] [--company-dir <dir>]`；传 `--company-dir` 时构造 daemon
+  `engine/conversation/store.ts` 的 Port 适配器（同一 `<dir>/conversations/<工号>.jsonl`，seq 由适配器
+  按有效行序合成）＋写策略，调用 `servePanel(port, db, {conversation:{store,policy}})`；缺省不传
+  `--company-dir`=保持 `store:null` 503 降级。传 `--company-dir` 时**目录不存在即拒启**（
+  `console.error` 明报 + exit 1，fail-fast，不代建公司目录）。适配器只做形状映射，**不落第二份存储**。
+  跨进程（panel/daemon）共享同一 JSONL：store 读面按文件签名（size+mtimeMs）**按需重载**（写仍
+  append-only 单行原子），面板写入 daemon 视图立即可见（中继/上下文一致）。
+- **环境变量**：`STUDIO_PANEL_PRODUCER_TOKEN`（写面凭据；未配置=写 503）；`STUDIO_PANEL_PRODUCER_ID`
+  （署名工号，缺省 `PRIME-0`；缺省/非法=写面 503 fail-closed；不接受客户端自报身份）。
+- **中继失败面**：面板写成功（已落盘）后由 daemon 拍边界 watcher 消费——B 回 Matrix 绑定房
+  （notify `targets.room`）；游标状态 `<companyDir>/var/conversations/.relay-state.json`（运行期，
+  不入仓）；发送失败积压/重试、不丢不重发（seq 游标幂等）；失败只记日志/计数，不反向改面板写结果。
 - 依赖：Phase 1 `#646` 的会话存储与装配注入；本卷不重复实现存储层（`docs/21-§7.1/§7.4`）。
 
 ## 九、审计处置表

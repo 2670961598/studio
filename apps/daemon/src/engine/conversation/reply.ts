@@ -31,6 +31,8 @@ export interface ConversationRelayDeps {
   config: ConversationReplyConfig
   /** 岗位署名（人面四段式；缺省=工号） */
   signatureOf?: (person: string) => string
+  /** 面板→Matrix 中继（studio-dev-654a；拍边界同拍执行，失败只计数不阻回信） */
+  panelRelay?: { relay(): Promise<void> }
   readFile?: (path: string) => string
   log?: (line: string) => void
 }
@@ -135,7 +137,15 @@ export function createConversationRelay(deps: ConversationRelayDeps): Conversati
           log(`[conversation] 轮次回写异常（${signal.ticket}#att${signal.attempt}）：${err instanceof Error ? err.message : String(err)}`)
         }
       }
-      // ② 出站队列（有界 5/拍；失败留队下拍重试）
+      // ② 面板→Matrix 中继（studio-dev-654a；只发 panel 源，独立游标；失败保留游标下拍重试）
+      if (deps.panelRelay !== undefined) {
+        try {
+          await deps.panelRelay.relay()
+        } catch (err) {
+          log(`[conversation] 面板中继异常（不阻回信）：${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
+      // ③ 出站队列（有界 5/拍；失败留队下拍重试）
       const replies = deps.store.pendingReplies(5)
       for (const reply of replies) {
         const message: Notification = {

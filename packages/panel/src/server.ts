@@ -325,7 +325,7 @@ export function createPanelApp(opts: PanelAppOptions): PanelApp {
 // toWebRequest / forwardResponse / listenHono 导出；错误兜底文案按 label 参数化。
 
 /** servePanel 选项 */
-export interface ServePanelOptions extends PanelAppOptions {
+export interface ServePanelOptions extends Omit<PanelAppOptions, 'openLedger'> {
   /** 绑定地址（缺省 127.0.0.1——:8791 是内部监控面，默认只绑本机） */
   hostname?: string
 }

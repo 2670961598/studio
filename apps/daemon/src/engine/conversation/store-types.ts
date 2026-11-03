@@ -10,6 +10,9 @@ export const CONVERSATION_PERSON_ID_PATTERN = /^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+$/
 export type ConversationRole = 'producer' | 'person' | 'system'
 export type ReplyKind = 'reply' | 'notice'
 
+/** 会话来源：Matrix 端或面板端（缺省 matrix；仅面板 Port 写会带 panel） */
+export type ConversationSource = 'matrix' | 'panel'
+
 export interface ConversationMessageInput {
   person: string
   room: string
@@ -17,6 +20,10 @@ export interface ConversationMessageInput {
   text: string
   /** Matrix eventId（入站幂等键；命令/system 行可省） */
   eventId?: string
+  /** 来源标记（缺省 matrix；面板 Port 写=panel） */
+  source?: ConversationSource
+  /** 面板幂等键（同工号唯一；面板 Port 写用，与 eventId 双轨） */
+  clientMsgId?: string
 }
 
 export interface ConversationMessage {
@@ -79,11 +86,40 @@ export interface ConversationStoreOptions {
   maxStoredChars?: number
   /** 单条消息注入任务书上限（docs/21-§七.3 冻结值 2000） */
   maxMessageChars?: number
+  /**
+   * 跨进程读面重载（缺省 true）：按文件签名（size+mtimeMs）在该人/绑定文件变化时重读重建 state。
+   * 单进程测试可注入 false 做确定性（写路径不受影响，仍 append-only 单行原子）。
+   */
+  reloadOnChange?: boolean
 }
 
 export type RawRecord =
-  | { v: 1; kind: 'msg'; id: string; at: number; person: string; room: string; role: ConversationRole; text: string; eventId?: string }
-  | { v: 1; kind: 'clear'; id: string; at: number; person: string; room: string; by: string; reason?: string; before?: string; count: number }
+  | {
+      v: 1
+      kind: 'msg'
+      id: string
+      at: number
+      person: string
+      room: string
+      role: ConversationRole
+      text: string
+      eventId?: string
+      source?: ConversationSource
+      clientMsgId?: string
+    }
+  | {
+      v: 1
+      kind: 'clear'
+      id: string
+      at: number
+      person: string
+      room: string
+      by: string
+      reason?: string
+      before?: string
+      count: number
+      source?: ConversationSource
+    }
   | { v: 1; kind: 'turn'; id: string; at: number; person: string; room: string; eventId: string; issue: string; attempt: number }
   | { v: 1; kind: 'turn-done'; id: string; at: number; person: string; issue: string }
   | { v: 1; kind: 'reply'; id: string; at: number; person: string; room: string; text: string; replyKind: ReplyKind; forIssue?: string }
@@ -104,6 +140,8 @@ export type BindRecord = {
 export interface PersonState {
   records: RawRecord[]
   eventIds: Set<string>
+  /** clientMsgId → msg id（面板幂等键查询；跨重启靠文件重建） */
+  clientMsgIds: Map<string, string>
   turns: Map<string, ConversationTurn>
   replies: Map<string, PendingReply>
   delivered: Set<string>
