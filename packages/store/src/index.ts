@@ -309,6 +309,24 @@ export {
   type HistTxReceipt,
 } from './hist.ts'
 
+// 记忆访问审计面（PORT-HIST 记忆子面；docs/v2/08 §3.3 / v2/11 §十三 / v2/14 §1.6）
+// REC-MEM-02：每次记忆读/写留痕＋scope 精确等值＋越权/缺证/到期 fail-closed。
+// 生产装配面：daemon assembly/ops（assembleOps 建面并注入 makeId/now/log）经本出口取用。
+export {
+  createMemoryAccessFace,
+  MEMORY_ACCESS_PROOF_BOUNDARY,
+  MEMORY_ACCESS_SCHEMA_REF,
+  MEMORY_ACCESS_SPEC_VERSION,
+  MEMORY_ACCESS_WRITTEN_BY,
+  type MemoryAccessContext,
+  type MemoryAccessFace,
+  type MemoryAccessFaceOptions,
+  type MemoryAccessWho,
+  type MemoryAuditDraft,
+  type MemoryReadQuery,
+  type MemoryReadResult,
+} from './memory/access.ts'
+
 // 快照与重建
 export { rebuild } from './rebuild.ts'
 export type { RebuildResult } from './rebuild.ts'

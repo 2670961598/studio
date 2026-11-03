@@ -12,15 +12,23 @@
  * `createHistFace(ledger.db).append` 接起来——`appendRecord` 注入给落口；本件零权源判定、
  * 零记录形状定义（形状唯一源＝contract/report，映射见 ./envelope.ts）。
  *
+ * 记忆访问面接线（studio-dev-538；docs/v2/08 §3.3 / v2/11 §十三 / v2/14 §1.6）：
+ * 同一 HIST 句柄上建 `createMemoryAccessFace`——生产消费方的记忆读/写只走 `memory`
+ * （memory.read/write ⇒ REC-MEM-02 访问审计落库；scope 精确等值、越权/缺证/到期 fail-closed）。
+ * 装配日志显式（启动日志证据锚）；`hist` 仍露出作读回/对账，但**不得绕过 memory 面
+ * 直接向消费方提供记忆内容**（否则审计缺证＝判负）。
+ *
  * fail-closed：写口抛出一律不吞——按类包成 `OpsWriteError`（conflict/unavailable）抛回
  * 落口，由落口回分类 Err（同 id 异内容＝conflict；形状/库异常＝unavailable，副作用可能
  * 由回执的 sideEffectPossible/reconcile 承载）。`makeId/now` 全注入（不读墙钟、不造随机）。
  */
 import {
   createHistFace,
+  createMemoryAccessFace,
   type HistFace,
   type HistRecordRef,
   type Ledger,
+  type MemoryAccessFace,
 } from '@studio-next/store'
 import { createOpsLanding, opsWriteError, type OpsLanding, type OpsStopRecord } from '../../control/ops/index.ts'
 import { opsStopEnvelope } from './envelope.ts'
@@ -49,6 +57,11 @@ export interface OpsAssembly {
   readonly appendRecord: (record: OpsStopRecord) => HistRecordRef
   /** 本装配持有的 HIST 面（读回/对账用；读写同句柄——v2/14 §1.6） */
   readonly hist: HistFace
+  /**
+   * 记忆访问面（REC-MEM-02 审计；studio-dev-538）：生产消费方的记忆读/写唯一入口。
+   * 直接用 `hist.memory` 供消费＝绕审计（缺证即判负），只允许读回/对账用途。
+   */
+  readonly memory: MemoryAccessFace
 }
 
 /** 写口异常 → 分类错误（CONFIG_INVALID/duplicate 由 store 判；本件只做归类，不改写结论） */
@@ -68,11 +81,17 @@ function writeErrorOf(error: unknown): Error {
 /**
  * 建 PORT-OPS 生产装配（一 serve 进程一实例）：
  *   - HIST 面：`createHistFace(ledger.db)`（records 表；v14 迁移由 openLedger 完成）；
+ *   - 记忆访问面：`createMemoryAccessFace(hist, …)`（REC-MEM-02 审计；makeId/now 与落口同源）；
  *   - 落口：`createOpsLanding({ makeId, now, appendRecord })`；
  *   - appendRecord：OpsStopRecord → REC-WORK-18 信封 → （可选三不入·库闸）→ hist.append。
  */
 export function assembleOps(deps: AssembleOpsDeps): OpsAssembly {
   const hist = createHistFace(deps.ledger.db)
+  const memory = createMemoryAccessFace(hist, {
+    makeId: deps.makeId,
+    now: () => Date.parse(deps.now()),
+    writtenBy: 'daemon:assembly/ops',
+  })
 
   const appendRecord = (record: OpsStopRecord): HistRecordRef => {
     let envelope: unknown
@@ -101,5 +120,9 @@ export function assembleOps(deps: AssembleOpsDeps): OpsAssembly {
     },
   })
 
-  return { ops, appendRecord, hist }
+  deps.log?.(
+    '[ops] PORT-HIST 记忆访问面已装配：memory.read/write → REC-MEM-02 访问审计（scope 精确等值；越权/缺证/到期 fail-closed；审计不可缺——v2/08 §3.3）',
+  )
+
+  return { ops, appendRecord, hist, memory }
 }
