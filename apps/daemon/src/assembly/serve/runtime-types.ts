@@ -17,6 +17,7 @@ import type { ServeApiWiring } from '../api/serve-face.ts'
 import type { ServeConfig } from './config.ts'
 import type { RestartProbeFace } from './executor-face.ts'
 import type { ServeOpsFace } from '../ops/index.ts'
+import type { RootDelegationTrace } from './root-delegation/root-face.ts'
 
 /** serve 运行栈（engine + 唤起源注册表 + PORT-OPS 面 + 统一停机面；runServe 与测试共用装配） */
 export interface ServeRuntime extends ServeOpsFace, RestartProbeFace {
@@ -50,6 +51,8 @@ export interface ServeRuntime extends ServeOpsFace, RestartProbeFace {
   notifyRelay?: (events: readonly EventRecord[]) => Promise<void>
   /** 对外 API 同进程装配面（MIG-06 收口；v2/14 §四）：runServe 在源启动前 await start()，停机先 close() */
   api: ServeApiWiring
+  /** 根委任审计投影（SEC-ROOT-02 启动腿；v2/15 §7.3 步⑤；装配期已验，缺省=未装 root 面） */
+  rootDelegation?: RootDelegationTrace
   /** daemon.yaml seatbelt 解析产物（IMPL-07-09 配置通道；与 EngineDeps.dispatchSeatbelt 同引用，undefined=read-only 缺省） */
   dispatchSeatbelt: ServeConfig['seatbelt']
   /** 优雅停：先关 API→stopAll 唤起源→在途 drain→关台账（SIGINT/SIGTERM 同一收口，可重入；未消费意图停机即弃，at-most-once——engine.ts 头注）。 */

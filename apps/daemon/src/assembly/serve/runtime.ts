@@ -30,7 +30,6 @@ import { createEngine, ENGINE_CONFIG_DEFAULTS, parseDataChangeRoutes, type Engin
 import { runEvolveStartupSelfCheck, type FrozenAsset } from '../../evolve/evolve-guard.ts'
 import { mergeDataChangeRoutes } from '../../engine/intents/taxonomy.ts'
 import { createCostNotifyOutlet, mergeCostThresholdDefaults } from '../../engine/intents/escalate.ts'
-import { createGateway, CONTROL_TICKET } from '@studio-next/gateway'
 import { wirePeopleChangeSource } from '../../engine/hrsync/people-change-source.ts'
 import { wireRelaySource, wireResumeSource, type RelayWorkSignal } from '../../engine/intents/relay-resume-sources.ts'
 import { buildServeDirectiveDeps } from '../../engine/directive/index.ts'
@@ -64,9 +63,10 @@ import { queueServeOverrides } from '../../engine/todoqueue/queue.ts'
 import { reEnsureChannels, startChannelSupply, wireRoomFace } from '../channels/channels.ts'
 import { seedJobs, removeMissingJobs } from '../jobs-seed/jobs-seed.ts'
 import { daemonIdentity, type ServeConfig } from './config.ts'
+import { loadRootDelegationFace } from './root-delegation/root-face.ts'
+import { wireWorkerKeys } from './root-delegation/worker-key-face.ts'
 import { wireExecutorFace } from './executor-face.ts'
 import { wireServeApi } from '../api/serve-face.ts'
-import type { WorkerKeyDeps } from '../../engine/worker-key.ts'
 
 import type { ServeRuntime } from './runtime-types.ts'
 
@@ -78,21 +78,6 @@ const MATRIX_MANIFEST: SourceManifest = {
   name: 'matrix',
   kind: 'mention',
   configSchema: '注入工厂（装配单元供 createMentionSource 产物；daemon.yaml matrix 开关）',
-}
-
-/**
- * worker 级 wkey 接线（17-§7「按单签发→随派发注入→关单吊销」；src/engine/worker-key.ts）。
- * gateway: false 时不签发（与控制面同开关）；签发实例绑 CONTROL_TICKET——本实例只用
- * issue/revoke 面，verify 面结构性失效（永远不能验 worker key，防误用；worker 侧验签
- * 归 per-ticket studio-tools 接线，吊销跨进程可见性疑点见 worker-key.ts 头注）。
- * 身份=共享活对象（与控制面同源——L1 热重载 mutate 面）。
- */
-function wireWorkerKeys(config: ServeConfig, identity: ReturnType<typeof daemonIdentity>, clock: () => number, log: (line: string) => void): WorkerKeyDeps | undefined {
-  if (!config.gateway) return undefined
-  const { secret, ctx, author } = identity
-  const gateway = createGateway({ secret, clock, ticket: CONTROL_TICKET, ctx, author })
-  log('[serve] worker wkey 已接：按单签发 → TaskBrief.credentials（env 通道，子进程 env STUDIO_TOOLS_WKEY）→ GATE_FAIL/断路/CLOSE 吊销（17-§7；scope=六动词全集；凭据值红名单——不入提示词/档案/任务书/日志）')
-  return { gateway }
 }
 
 /**
@@ -183,6 +168,11 @@ export function buildServeRuntime(
   logJobContractWarnings(snapshot.jobs, typeFlows, log)
   // daemon 网关身份（共享活对象——reload 时 mutate ctx 三字段，署名跟随新组织）
   const identity = daemonIdentity(config, snapshot)
+
+  // —— SEC-ROOT-02 启动腿（docs/v2/15 §7.3；studio-dev-530）：装载部署信任域根委任并交
+  //     createGateway 构造期验。缺省 env＝不装 root 面（rootPreflight 恒拒 gw-root-no-delegation，
+  //     「没配」≠「不用验」）；载体坏/缺证明＝CONFIG_INVALID 拒启（禁先起来后补）。
+  const rootDelegation = loadRootDelegationFace({ log })
 
   // —— .AIWS 员工工作区树（DEV-28，docs/43-§五+§十9）：建司即建+存量对账——根推导
   //    单一规则：显式 aiwsRoot > dirname(companyDir)/.AIWS > <rootDir>/.AIWS；per-company
@@ -278,7 +268,7 @@ export function buildServeRuntime(
     })
 
   // worker 级 wkey（17-§7）：按单签发→TaskBrief.credentials env 注入→关单吊销（src/engine/worker-key.ts）
-  const workerKeys = wireWorkerKeys(config, identity, clock, log)
+  const workerKeys = wireWorkerKeys(config, identity, clock, log, rootDelegation)
   // raw platform（未包网关代理的原件）：engine 拿 gated 代理（下）；daemon 自身动作
   //（hr-sync 对账单开单）拿原件——网关收口的是 worker 写路径，非 daemon 自身动作
   const rawPlatform = wirePlatform(config)
@@ -325,7 +315,9 @@ export function buildServeRuntime(
   // cost 警戒出口（181 EngineDeps.notify 注入件）：面注入=IM 即时广播叠加（129 批示项④）
   const costNotifyOutlet = wiredNotify?.costNoticeOutlet ?? createCostNotifyOutlet(log)
   // 平台写出站闸（exits.ts platform-write）：gated 代理外再包出站扫描（写文本过闸后才出站）
-  const enginePlatform = outbound.wrapPlatform(wireGatedPlatform(rawPlatform, config, identity, clock, log))
+  const enginePlatform = outbound.wrapPlatform(
+    wireGatedPlatform(rawPlatform, config, identity, clock, log, rootDelegation === undefined ? undefined : { root: rootDelegation.options }),
+  )
   const engine = createEngine({
     // 写路径网关收口（17-§7）：raw platform 包一层 gated 代理——engine 写调用签名不变（透明）
     platform: enginePlatform,
@@ -550,6 +542,7 @@ export function buildServeRuntime(
     sources,
     api,
     dispatchSeatbelt: config.seatbelt,
+    ...(rootDelegation !== undefined ? { rootDelegation: rootDelegation.trace } : {}),
     ...opsFace,
     evolveSelfCheck,
     restartProbe,

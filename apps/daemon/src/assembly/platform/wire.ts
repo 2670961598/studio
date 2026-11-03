@@ -11,7 +11,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve as resolvePath } from 'node:path'
 import type { FieldProvisionMap, FlowPlatform } from '@studio-next/contract'
-import { createGateway, CONTROL_TICKET, type Gateway } from '@studio-next/gateway'
+import { createGateway, CONTROL_TICKET, type Gateway, type RootDelegationOptions } from '@studio-next/gateway'
 import { createLocalPlatform } from '@studio-next/localplatform'
 import { createTaigaPlatform, type TaigaAuth, type TaigaEntity } from '@studio-next/taiga'
 import { createFakePlatform } from '../../engine/fakes.ts'
@@ -49,6 +49,13 @@ export interface WireGatedPlatformDeps {
    * 授予记录生产者落地后由装配处一行切换。
    */
   authority?: AuthorityGate
+  /**
+   * 根委任装配面（SEC-ROOT-02 启动腿；docs/v2/15 §7.3；studio-dev-530）：生产装配由
+   * `buildServeRuntime` 把启动期装载的 root 面透传至此——给出即在构造期验 `root_delegation`，
+   * 坏委任/缺证明＝CONFIG_INVALID 拒启；缺省＝不装 root 面（`rootPreflight` 恒拒
+   * `gw-root-no-delegation`，不误放行）。与 `gateway` 互斥语义：显式注入实例优先（测试面）。
+   */
+  root?: RootDelegationOptions
 }
 
 export function wireGatedPlatform(
@@ -60,7 +67,16 @@ export function wireGatedPlatform(
   deps?: WireGatedPlatformDeps,
 ): FlowPlatform {
   const { secret, ctx, author } = identity
-  const gateway = deps?.gateway ?? createGateway({ secret, clock, ticket: CONTROL_TICKET, ctx, author })
+  const gateway =
+    deps?.gateway ??
+    createGateway({
+      secret,
+      clock,
+      ticket: CONTROL_TICKET,
+      ctx,
+      author,
+      ...(deps?.root !== undefined ? { root: deps.root } : {}),
+    })
   const secretLine =
     identity.secretSource === 'env'
       ? `签根来源=env ${GATEWAY_SECRET_ENV}（值不入日志/台账/错误消息）`
