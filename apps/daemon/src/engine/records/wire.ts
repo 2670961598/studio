@@ -18,12 +18,28 @@
 import type { HistFace, HistRecordRef } from '@studio-next/store'
 import { buildEnvelope } from './envelope.ts'
 import { harvestBatchDraft, workIntakeDraft, workTransitionDraft, type DraftOutcome } from './drafts.ts'
+import { exceptionDraft, reviewDraft, settlementDraft } from './close-drafts.ts'
+import {
+  accountabilityDraft,
+  changeSegmentDraft,
+  memoryDisposalDraft,
+  remedyDraft,
+  valueEvaluationDraft,
+} from './governance-drafts.ts'
 import {
   RECORD_WRITTEN_BY,
+  type RecordAccountabilityArgs,
+  type RecordChangeSegmentArgs,
+  type RecordExceptionArgs,
   type RecordHarvestArgs,
   type RecordIntakeArgs,
+  type RecordMemoryDisposalArgs,
   type RecordRefusalCode,
+  type RecordRemedyArgs,
+  type RecordReviewArgs,
+  type RecordSettlementArgs,
   type RecordTransitionArgs,
+  type RecordValueEvaluationArgs,
   type RecordWirePort,
   type RecordWriteResult,
 } from './types.ts'
@@ -53,7 +69,21 @@ function failureOf(recordType: string, code: RecordRefusalCode, reason: string):
  */
 export function createRecordWire(deps: RecordWireDeps): RecordWire {
   const { hist, company } = deps
-  const counters = { intake: 0, transition: 0, deduped: 0, refused: 0, failed: 0 }
+  const counters = {
+    intake: 0,
+    transition: 0,
+    deduped: 0,
+    refused: 0,
+    failed: 0,
+    settlement: 0,
+    exception: 0,
+    accountability: 0,
+    remedy: 0,
+    change: 0,
+    review: 0,
+    memory: 0,
+    value: 0,
+  }
 
   const refuse = (outcome: Extract<DraftOutcome, { ok: false }>): RecordWriteResult => {
     counters.refused += 1
@@ -61,14 +91,57 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
     return failureOf(outcome.recordType, outcome.code, outcome.reason)
   }
 
+  /**
+   * 跨记录前置闸（刀D）：被引记录必须已在库且类型一致；链前段等附加核验由 `match` 承载。
+   * 缺件/异类型一律 `record-prereq-missing`——不把「将来会落」当作已落（fail-closed）。
+   */
+  const checkRequires = (recordType: string, requirements: NonNullable<Extract<DraftOutcome, { ok: true }>['gate']>['requires']): RecordWriteResult | undefined => {
+    for (const requirement of requirements ?? []) {
+      const existing = hist.get(requirement.ref.refId)
+      if (existing === undefined) {
+        return refuse({
+          ok: false,
+          recordType,
+          code: 'record-prereq-missing',
+          reason: `${requirement.role} 引用 ${requirement.ref.refId} 未落库（前置记录缺失——不臆造）`,
+        })
+      }
+      if (existing.recordType !== requirement.recordType) {
+        return refuse({
+          ok: false,
+          recordType,
+          code: 'record-prereq-missing',
+          reason: `${requirement.role} 引用实际类型=${existing.recordType}，期望 ${requirement.recordType}（跨记录引用须机械判族）`,
+        })
+      }
+      const mismatch = requirement.match?.(existing)
+      if (mismatch !== undefined) {
+        return refuse({ ok: false, recordType, code: 'record-prereq-missing', reason: `${requirement.role}：${mismatch}` })
+      }
+    }
+    return undefined
+  }
+
   const write = (outcome: DraftOutcome): RecordWriteResult => {
     if (!outcome.ok) return refuse(outcome)
-    const { draft } = outcome
+    const { draft, gate } = outcome
+    const missing = checkRequires(draft.recordType, gate?.requires)
+    if (missing !== undefined) return missing
     const built = buildEnvelope(draft, { company })
     if (!built.ok) {
       counters.failed += 1
       deps.log?.(`[records] 形状拒收 ${draft.recordType}（recordId=${draft.recordId}）：${built.reason}`)
       return failureOf(draft.recordType, built.code, built.reason)
+    }
+    // 族内不变量（契约判定件；本件不复制判据）——不过即拒写，不落坏行
+    const invariants = gate?.validate?.(built.envelope)
+    if (invariants !== undefined && !invariants.ok) {
+      return refuse({
+        ok: false,
+        recordType: draft.recordType,
+        code: 'record-prereq-missing',
+        reason: `族内不变量不成立：${invariants.issues.map((issue) => `${issue.path}=${issue.message}`).join('; ')}`,
+      })
     }
     // 幂等（§0.4-4）：同 recordId 命中既有行＝重放，不产生第二次副作用
     const existing = hist.get(draft.recordId)
@@ -135,6 +208,46 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
           cost: args.cost,
         }),
       )
+    },
+    /** 相位 5 合并 / 相位 6 回收：REC-WORK-12（决定型；MEM-03＋EVD-04＋独立核验） */
+    settlement(args: RecordSettlementArgs): RecordWriteResult {
+      counters.settlement += 1
+      return write(settlementDraft({ ...args, company }))
+    },
+    /** 相位 6 回收 / 断路：REC-WORK-17（具名接收＋升级链） */
+    exception(args: RecordExceptionArgs): RecordWriteResult {
+      counters.exception += 1
+      return write(exceptionDraft({ ...args, company }))
+    },
+    /** 相位 6 回收 / 断路：REC-ACC-01（任职引用＋独立裁判） */
+    accountability(args: RecordAccountabilityArgs): RecordWriteResult {
+      counters.accountability += 1
+      return write(accountabilityDraft({ ...args, company }))
+    },
+    /** 问责出口：REC-ACC-02（决定面＋proof_boundary＋执行证据链） */
+    remedy(args: RecordRemedyArgs): RecordWriteResult {
+      counters.remedy += 1
+      return write(remedyDraft({ ...args, company }))
+    },
+    /** 配置热更 / 变更决定位：REC-CHG-01（不可跳段＋三门不合并） */
+    changeSegment(args: RecordChangeSegmentArgs): RecordWriteResult {
+      counters.change += 1
+      return write(changeSegmentDraft({ ...args, company }))
+    },
+    /** 终局后 / 周期复盘：REC-REV-01（EVD-04＋WORK-09＋复盘位置独立） */
+    review(args: RecordReviewArgs): RecordWriteResult {
+      counters.review += 1
+      return write(reviewDraft({ ...args, company }))
+    },
+    /** 结清 / 复盘前置：REC-MEM-03（处置授权独立＋三路分流凭证） */
+    memoryDisposal(args: RecordMemoryDisposalArgs): RecordWriteResult {
+      counters.memory += 1
+      return write(memoryDisposalDraft({ ...args, company }))
+    },
+    /** 结清 / 复盘前置：REC-EVD-04（四本账＋判断者独立） */
+    valueEvaluation(args: RecordValueEvaluationArgs): RecordWriteResult {
+      counters.value += 1
+      return write(valueEvaluationDraft({ ...args, company }))
     },
   }
 }

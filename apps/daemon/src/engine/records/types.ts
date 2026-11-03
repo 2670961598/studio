@@ -16,6 +16,22 @@
  *   - 记录类型一律取 v2/11 §一 登记值，本件不新增类、不改 payload 形状（契约面零变更）。
  */
 import type { IssueRecord } from '@studio-next/contract'
+import type {
+  AccountabilityCaseContext,
+  AccountabilityCasePayload,
+  ChangeSegmentContext,
+  ChangeSegmentPayload,
+  ExceptionRecordPayload,
+  MemoryDisposalContext,
+  MemoryDisposalPayload,
+  RemedyDecisionContext,
+  RemedyDecisionPayload,
+  ReviewContext,
+  ReviewPayload,
+  ValueEvaluationPayload,
+  WorkSettlementContext,
+  WorkSettlementPayload,
+} from '../../../../../packages/contract/src/records/index.ts'
 import type { HistRecordRef } from '@studio-next/store'
 import type { RecordValidationIssue } from '../../../../../packages/contract/src/records/index.ts'
 
@@ -113,6 +129,121 @@ export interface RecordHarvestArgs {
   readonly cost: readonly { readonly item: string; readonly amount: number; readonly unit: string }[]
 }
 
+// —— 刀D（studio-dev-561）：结清/复盘/问责/变更链/记忆分流/价值评估 ——
+//
+// 入参一律取 contract 的 payload 类型（形状唯一源=v2/11 §一 74 类），本件只补
+// **跨记录前置闸**（contract 看不到的部分）：引用类型、被引记录是否存在、独立性是否自填。
+// 逐族依据：WORK-12=v2/11 §5.2；WORK-17=§5.4；ACC-01/02=§七；CHG-01=§八/§14.4-2；
+// REV-01=§十；MEM-03=§十三；EVD-04=§六（docs/17-§2 映射表同源）。
+
+/** 记录引用形（与 contract RecordRef 同构；草案入参不带 recordType 判定的额外包装） */
+export interface DraftRecordRef {
+  readonly refType: string
+  readonly refId: string
+  readonly refVersion: string
+}
+
+/** 决定面输入（v2/11 §0.3-1 六件；决定面封闭清单类型必带——§0.3-2） */
+export interface DraftDecisionFaceInput {
+  readonly decidedBy: string
+  readonly authorityRef: DraftRecordRef
+  readonly rationale: string
+  readonly basisRefs: readonly DraftRecordRef[]
+  readonly scopeJudged: { readonly judged: readonly string[]; readonly notJudged: readonly string[] }
+  readonly dissentPosition: string
+  readonly effectiveFrom: string
+}
+
+/** 被引前置记录（wire 写前用 hist.get 机械核验：缺即拒、异类型即拒） */
+export interface RecordRefRequirement {
+  readonly ref: DraftRecordRef
+  readonly recordType: string
+  readonly role: string
+  /** 额外机械核验（如变更链前段的段名一致）；返回 undefined=通过，字符串=拒写理由 */
+  readonly match?: (record: { readonly recordType: string; readonly payload: unknown }) => string | undefined
+}
+
+/** 记录草案闸（contract 校验器＋被引前置记录清单；随草案返回，wire 统一执行） */
+export interface RecordDraftGate {
+  readonly requires?: readonly RecordRefRequirement[]
+  readonly validate?: (record: unknown) => import('../../../../../packages/contract/src/records/index.ts').RecordValidationOutcome
+}
+
+/** 结清入参（相位 5 合并/相位 6 回收；REC-WORK-12 决定型） */
+export interface RecordSettlementArgs {
+  readonly ticket: string
+  readonly attempt: number
+  readonly at: number
+  /** 除 settled_state 外的 payload（四态由 deriveWorkSettlementState 按清单推导，不接受自报） */
+  readonly payload: Omit<WorkSettlementPayload, 'settled_state'>
+  readonly context?: WorkSettlementContext
+}
+
+/** 异常入参（相位 6 回收/断路；REC-WORK-17） */
+export interface RecordExceptionArgs {
+  readonly ticket: string
+  readonly attempt: number
+  readonly at: number
+  readonly payload: ExceptionRecordPayload
+  readonly context?: { readonly treatedAsClosed?: boolean }
+}
+
+/** 问责入参（相位 6 回收/断路；REC-ACC-01） */
+export interface RecordAccountabilityArgs {
+  readonly ticket: string
+  readonly at: number
+  readonly payload: AccountabilityCasePayload
+  readonly context?: AccountabilityCaseContext
+}
+
+/** 救济入参（REC-ACC-02；决定面封闭清单成员） */
+export interface RecordRemedyArgs {
+  readonly ticket: string
+  readonly at: number
+  readonly payload: RemedyDecisionPayload
+  readonly context?: RemedyDecisionContext
+}
+
+/** 变更链段入参（配置热更/变更决定位；REC-CHG-01） */
+export interface RecordChangeSegmentArgs {
+  readonly ticket: string
+  readonly at: number
+  readonly payload: ChangeSegmentPayload
+  readonly context?: ChangeSegmentContext
+  /** 链前段的被引记录（非 candidate 段必填；wire 核验存在且段名一致） */
+  readonly previousSegmentRef?: DraftRecordRef
+  /** 能力包变更的 CAP-01/02 前件（capability_pack 的三门段必填） */
+  readonly capabilityRefs?: { readonly cap01?: DraftRecordRef; readonly cap02?: DraftRecordRef }
+}
+
+/** 复盘入参（终局后/周期；REC-REV-01） */
+export interface RecordReviewArgs {
+  readonly ticket: string
+  readonly at: number
+  readonly payload: ReviewPayload
+  readonly context?: ReviewContext
+}
+
+/** 记忆分流入参（结清/复盘前置；REC-MEM-03） */
+export interface RecordMemoryDisposalArgs {
+  readonly ticket: string
+  readonly at: number
+  readonly payload: MemoryDisposalPayload
+  readonly context?: MemoryDisposalContext
+  /** 处置授权位置（§三 表 D 行 10/11；不得为该记忆的请求方本人——独立位置闸） */
+  readonly independentPosition: string
+  /** 请求方/被处置记忆的责任位置（与 independentPosition 同体即拒） */
+  readonly requestedBy?: string
+}
+
+/** 价值评估入参（结清/复盘前置；REC-EVD-04） */
+export interface RecordValueEvaluationArgs {
+  readonly ticket: string
+  readonly at: number
+  readonly payload: ValueEvaluationPayload
+  readonly context?: { readonly negativeValueUnlisted?: boolean }
+}
+
 /** 记录写面端口（EngineDeps.records；缺省不注入＝记录面关、行为零变） */
 export interface RecordWirePort {
   readonly counters: {
@@ -121,8 +252,24 @@ export interface RecordWirePort {
     deduped: number
     refused: number
     failed: number
+    settlement: number
+    exception: number
+    accountability: number
+    remedy: number
+    change: number
+    review: number
+    memory: number
+    value: number
   }
   intake(args: RecordIntakeArgs): RecordWriteResult
   transition(args: RecordTransitionArgs): RecordWriteResult
   harvest(args: RecordHarvestArgs): RecordWriteResult
+  settlement(args: RecordSettlementArgs): RecordWriteResult
+  exception(args: RecordExceptionArgs): RecordWriteResult
+  accountability(args: RecordAccountabilityArgs): RecordWriteResult
+  remedy(args: RecordRemedyArgs): RecordWriteResult
+  changeSegment(args: RecordChangeSegmentArgs): RecordWriteResult
+  review(args: RecordReviewArgs): RecordWriteResult
+  memoryDisposal(args: RecordMemoryDisposalArgs): RecordWriteResult
+  valueEvaluation(args: RecordValueEvaluationArgs): RecordWriteResult
 }

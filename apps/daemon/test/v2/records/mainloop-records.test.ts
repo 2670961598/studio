@@ -13,6 +13,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { createHistFace, type Ledger } from '@studio-next/store'
 import {
   BLOCKED_RECORD_FAMILIES,
+  UNBLOCKED_RECORD_FAMILIES,
   PLATFORM_STATES,
   PLATFORM_TO_WORK_STATE,
   assertStateMapComplete,
@@ -155,18 +156,21 @@ describe('决定型记录前置闸（拒写不臆造）', () => {
     expect(workEdgeOf(PLATFORM_STATES.delivered, PLATFORM_STATES.dispatched)).toBeUndefined()
   })
 
-  it('问责/变更/复盘三族：写面已接但前置链未注册 → 逐族拒写并给阻断件（§七/§八/§十）', () => {
+  it('刀D 三族：写面已解除阻断（UNBLOCKED 留表），前置不齐仍逐族拒写（§七/§八/§十）', () => {
     for (const recordType of ['REC-ACC-01', 'REC-CHG-01', 'REC-REV-01'] as const) {
+      expect(UNBLOCKED_RECORD_FAMILIES[recordType]).toBeDefined()
+      expect(BLOCKED_RECORD_FAMILIES[recordType]).toBeUndefined()
       const outcome = blockedDraftFor(recordType)
       expect(outcome.ok).toBe(false)
       if (!outcome.ok) {
         expect(outcome.code).toBe('record-prereq-missing')
-        expect(outcome.reason).toContain(BLOCKED_RECORD_FAMILIES[recordType]!.blocker)
+        expect(outcome.reason).toContain('写面已解除阻断')
+        expect(outcome.reason).toContain(UNBLOCKED_RECORD_FAMILIES[recordType]!.gate)
       }
     }
-    expect(BLOCKED_RECORD_FAMILIES['REC-ACC-01']?.ref).toBe('v2/11 §七')
-    expect(BLOCKED_RECORD_FAMILIES['REC-CHG-01']?.ref).toBe('v2/11 §八')
-    expect(BLOCKED_RECORD_FAMILIES['REC-REV-01']?.ref).toBe('v2/11 §十')
+    expect(UNBLOCKED_RECORD_FAMILIES['REC-ACC-01']?.ref).toBe('v2/11 §七')
+    expect(UNBLOCKED_RECORD_FAMILIES['REC-CHG-01']?.ref).toBe('v2/11 §八/§14.4-2')
+    expect(UNBLOCKED_RECORD_FAMILIES['REC-REV-01']?.ref).toBe('v2/11 §十')
   })
 })
 

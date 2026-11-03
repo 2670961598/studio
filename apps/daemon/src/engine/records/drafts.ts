@@ -14,38 +14,23 @@
  *   - 可直接写：REC-WORK-01（请求型，无决定面，v2/11 §0.2）；
  *   - 条件可写：REC-WORK-06（决定型：边集前置记录齐＋规则依据齐）、REC-EVD-01（事件型：
  *     需 REC-LIFE-04 出工段引用）；
- *   - 现阶段拒写（前置链无生产者，fail-closed 而非伪造）：WORK-08/09/10/12/13/17、
- *     ACC-01、CHG-01、REV-01——逐类给出阻断件（`BLOCKED_RECORD_FAMILIES`）。
+ *   - 刀D（studio-dev-561）已解除的族：WORK-12/17、ACC-01/02、CHG-01、REV-01、MEM-03、
+ *     EVD-04 的草案在 `close-drafts.ts`/`governance-drafts.ts`；族不在本表阻断清单内，
+ *     但前置件未落时仍由契约校验器＋被引记录存在性闸拒写（fail-closed）。
  */
 import type { IssueRecord } from '@studio-next/contract'
-import type { RecordDraft } from './types.ts'
+import type { DraftDecisionFaceInput, DraftRecordRef, RecordDraft, RecordDraftGate } from './types.ts'
 import { requiredEvidenceOf, workEdgeOf, workStateOf } from './state-map.ts'
+
+export type { DraftDecisionFaceInput, DraftRecordRef } from './types.ts'
 
 /** 受理时限缺省（24h；v0 无受理 SLA 配置——缺省值登记于 plan，非契约值） */
 export const INTAKE_DEADLINE_MS = 24 * 60 * 60 * 1000
 
 /** 草案构建结果：ok=draft；refused=前置/契约不齐（调用方只观测，不重试、不补造） */
 export type DraftOutcome =
-  | { readonly ok: true; readonly draft: RecordDraft }
+  | { readonly ok: true; readonly draft: RecordDraft; readonly gate?: RecordDraftGate }
   | { readonly ok: false; readonly recordType: string; readonly code: 'record-prereq-missing'; readonly reason: string }
-
-/** 记录引用形（§0.4-2：ID＋版本；跨记录不变量靠 refType 机械判族） */
-export interface DraftRecordRef {
-  readonly refType: string
-  readonly refId: string
-  readonly refVersion: string
-}
-
-/** 判定面（v2/11 §0.3-1 六件；决定面封闭清单类型必带——本件按契约字段名落） */
-export interface DraftDecisionFaceInput {
-  readonly decidedBy: string
-  readonly authorityRef: DraftRecordRef
-  readonly rationale: string
-  readonly basisRefs: readonly DraftRecordRef[]
-  readonly scopeJudged: { readonly judged: readonly string[]; readonly notJudged: readonly string[] }
-  readonly dissentPosition: string
-  readonly effectiveFrom: string
-}
 
 /** ISO 时刻（记录时间字段全形；调用方给 epoch-ms，转换只在此一处） */
 export function isoAt(ms: number): string {
@@ -316,35 +301,10 @@ export const BLOCKED_RECORD_FAMILIES: Readonly<
     blocker: '触发记录（REC-WORK-06/08/09）未落——返工记录必须引被触发记录（§2 字段首项）',
     ref: 'v2/11 §5.2/§5.4',
   },
-  'REC-WORK-12': {
-    phase: '回收/结清',
-    blocker: 'REC-MEM-03 出工记忆分流＋REC-EVD-04 价值评估（或显式缺口）未落（§5.2 结清前置）',
-    ref: 'v2/11 §5.2',
-  },
   'REC-WORK-13': {
     phase: '派发',
     blocker: 'REC-WORK-03 任务合同（work_ref）未落——协作请求必须引合同（§5.3 字段首项）',
     ref: 'v2/11 §5.3',
-  },
-  'REC-WORK-17': {
-    phase: '异常/断路',
-    blocker: 'subject_ref（工作/合同记录）未落；具名接收位置未登记（§5.4 不得默认未认领）',
-    ref: 'v2/11 §5.4',
-  },
-  'REC-ACC-01': {
-    phase: '问责',
-    blocker: 'REC-LIFE-01 任职引用（subject_ref）＋独立裁判位置/控制关系依据未落（§七 独立性核验槽）',
-    ref: 'v2/11 §七',
-  },
-  'REC-CHG-01': {
-    phase: '变更链',
-    blocker: '变更链前段（candidate→验证授权→独立验证→激活批准）未落；三门不得合并、不可跳段（§八/§14.4-2）',
-    ref: 'v2/11 §八',
-  },
-  'REC-REV-01': {
-    phase: '复盘',
-    blocker: 'REC-EVD-04 代价账＋REC-WORK-09 验收引用未落；复盘位置独立性不得自填（§十）',
-    ref: 'v2/11 §十',
   },
   'REC-EVD-01': {
     phase: '收割',
@@ -353,10 +313,78 @@ export const BLOCKED_RECORD_FAMILIES: Readonly<
   },
 }
 
+/**
+ * 刀D 已解除的族（studio-dev-561；逐族留表——解除＝写面实现＋前置闸就位，**不是**前置件已落）。
+ * 值＝{ 相位, 写面件, 前置闸, 依据 }；与 docs/17-§2 刀D 段同源。
+ * 口径：写面已接但前置件（刀B 任职/授权、刀C 验收/证据包）未落时，草案/写面一律
+ * `record-prereq-missing` 拒写——fail-closed 是合法终态，不臆造记录。
+ */
+export const UNBLOCKED_RECORD_FAMILIES: Readonly<
+  Record<string, { readonly phase: string; readonly writer: string; readonly gate: string; readonly ref: string }>
+> = {
+  'REC-WORK-12': {
+    phase: '相位 5 合并 / 相位 6 回收',
+    writer: 'close-drafts.settlementDraft',
+    gate: 'MEM-03 分流凭证＋EVD-04 价值评估（或显式缺口）＋独立核验位置（核验者≠责任者且非其控制者）',
+    ref: 'v2/11 §5.2',
+  },
+  'REC-WORK-17': {
+    phase: '相位 6 回收 / 断路',
+    writer: 'close-drafts.exceptionDraft',
+    gate: 'subject_ref（工作/合同记录，须已落）＋具名接收位置＋升级链（不得默认未认领）',
+    ref: 'v2/11 §5.4',
+  },
+  'REC-ACC-01': {
+    phase: '相位 6 回收 / 断路',
+    writer: 'governance-drafts.accountabilityDraft',
+    gate: 'REC-LIFE-01 任职引用＋独立裁判位置/控制关系依据（独立性自填即拒）＋申辩窗口非无限期',
+    ref: 'v2/11 §七',
+  },
+  'REC-ACC-02': {
+    phase: '问责出口 / 救济',
+    writer: 'governance-drafts.remedyDraft',
+    gate: 'case_ref（ACC-01/损害记录，须已落）＋决定面＋proof_boundary＋执行证据链',
+    ref: 'v2/11 §七',
+  },
+  'REC-CHG-01': {
+    phase: '配置热更 / 变更决定位',
+    writer: 'governance-drafts.changeSegmentDraft',
+    gate: '链前段（不可跳段）＋三门不合并（验证授权/独立验证/激活批准）＋CAP-01/02 前件（能力包）',
+    ref: 'v2/11 §八/§14.4-2',
+  },
+  'REC-REV-01': {
+    phase: '终局后 / 周期复盘',
+    writer: 'close-drafts.reviewDraft',
+    gate: 'EVD-04 代价账＋WORK-09 验收引用（须已落）＋复盘位置独立性（自填即拒）',
+    ref: 'v2/11 §十',
+  },
+  'REC-MEM-03': {
+    phase: '结清 / 复盘前置',
+    writer: 'governance-drafts.memoryDisposalDraft',
+    gate: '处置授权位置（须独立于请求方）＋三路分流凭证（归档/清除/转出）＋转层双授权',
+    ref: 'v2/11 §十三',
+  },
+  'REC-EVD-04': {
+    phase: '结清 / 复盘前置',
+    writer: 'governance-drafts.valueEvaluationDraft',
+    gate: '四本账（不得压总分）＋判断者独立性（自填即拒）＋负价值单列＋外部反馈为空只能「价值不明」',
+    ref: 'v2/11 §六',
+  },
+}
+
 /** 拒写族草案（供调用方统一判定：主循环对应相位有事件但记录面关） */
 export function blockedDraftFor(recordType: string): DraftOutcome {
   const blocked = BLOCKED_RECORD_FAMILIES[recordType]
   if (blocked === undefined) {
+    const unblocked = UNBLOCKED_RECORD_FAMILIES[recordType]
+    if (unblocked !== undefined) {
+      return {
+        ok: false,
+        recordType,
+        code: 'record-prereq-missing',
+        reason: `记录类型 ${recordType} 写面已解除阻断（${unblocked.writer}）；前置闸：${unblocked.gate}（${unblocked.ref}）`,
+      }
+    }
     return {
       ok: false,
       recordType,

@@ -9,6 +9,9 @@
  *   - `envelope.ts`：草案 → 契约信封（形状唯一源＝contract ALL_RECORD_SCHEMAS）；
  *   - `state-map.ts`：平台流状态 ↔ 工作十态桥接与 §14.1 边解析（缺口登记在头注）；
  *   - `drafts.ts`：相位 → 记录草案（请求型可直写；决定型前置不齐即拒）；
+ *   - `close-drafts.ts` / `governance-drafts.ts`：刀D 七族＋ACC-02 草案（前置闸交 contract 判定件＋被引在库）；
+ *   - `gate.ts`：跨记录前置闸（引用类型/匿名位置/同体判定；不改族内判据）；
+ *   - `hooks.ts`：相位钩子（相位 5/6 结清、相位 6/断路异常、变更链、复盘）；
  *   - `wire.ts`：写面实现（PORT-HIST append；幂等/去重/失败不打断拍）；
  *   - `projection.ts`：records ↔ events 双向对账（记录为事实源，events 为可重建投影）。
  */
@@ -18,6 +21,16 @@ export {
   RECORD_WRITTEN_BY,
   RECORD_REFUSAL_CODES,
   NO_DISSENT_LITERAL,
+  type DraftDecisionFaceInput,
+  type DraftRecordRef,
+  type RecordAccountabilityArgs,
+  type RecordChangeSegmentArgs,
+  type RecordExceptionArgs,
+  type RecordMemoryDisposalArgs,
+  type RecordRemedyArgs,
+  type RecordReviewArgs,
+  type RecordSettlementArgs,
+  type RecordValueEvaluationArgs,
   type RecordDraft,
   type RecordIdempotencyKey,
   type RecordIntakeArgs,
@@ -41,16 +54,32 @@ export {
 } from './state-map.ts'
 export {
   BLOCKED_RECORD_FAMILIES,
+  UNBLOCKED_RECORD_FAMILIES,
   INTAKE_DEADLINE_MS,
   blockedDraftFor,
   harvestBatchDraft,
   isoAt,
   workIntakeDraft,
   workTransitionDraft,
-  type DraftDecisionFaceInput,
   type DraftOutcome,
-  type DraftRecordRef,
 } from './drafts.ts'
+export { exceptionDraft, reviewDraft, settlementDraft } from './close-drafts.ts'
+export {
+  accountabilityDraft,
+  changeSegmentDraft,
+  memoryDisposalDraft,
+  remedyDraft,
+  valueEvaluationDraft,
+} from './governance-drafts.ts'
+export {
+  PHASE_RECORD_FAMILIES,
+  recordChangePhase,
+  recordClosingPhase,
+  recordExceptionPhase,
+  recordReviewPhase,
+  type PhaseRecordResults,
+} from './hooks.ts'
+export { refMatches, isAnonymousSubject, samePosition } from './gate.ts'
 export { createRecordWire, type RecordWire, type RecordWireDeps } from './wire.ts'
 export {
   RECORDED_TYPES,
