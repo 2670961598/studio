@@ -6,7 +6,9 @@
  *
  * 冻结验收：
  *   ① MCP-16 分组声明 = 四组 16 行（HR 4 / FIN 3 / DEV 3 / GEN 6），ID 唯一、组前缀一致；
- *   ② 声明不是注册面：STUDIO_TOOLS 仍六条，existing 行与六工具一一对应，target 行零实现；
+ *   ② 声明与注册面：STUDIO_TOOLS 仍六条（existing 行与六工具一一对应）；11 行 target
+ *      由 studio-dev-548 实装为场景工具面（status=registered，见 scenario-tools.test.ts），
+ *      target 行零残留；
  *   ③ 既有六工具 happy path 走真网关（action/payload/署名），tools/list 广告面不漂移；
  *   ④ 无 key 六工具全 auth/missing-wkey，网关零调用。
  */
@@ -27,6 +29,7 @@ import {
   STUDIO_TOOLS,
   mcpScenarioToolOf,
 } from '../../src/tools.ts'
+import { SCENARIO_TOOL_NAMES } from '../../src/scenario-tools.ts'
 import type { KbHit, StudioToolsDeps } from '../../src/tools.ts'
 
 const SECRET = new Uint8Array(32).fill(11)
@@ -197,12 +200,13 @@ describe('MCP-16 场景分组声明（只声明，不注册）', () => {
       expect(declaration.summary.length).toBeGreaterThan(4)
       for (const name of declaration.names) expect(name.length).toBeGreaterThan(3)
     }
-    expect(MCP_SCENARIO_TOOLS.filter((t) => t.status === 'target')).toHaveLength(11)
+    expect(MCP_SCENARIO_TOOLS.filter((t) => t.status === 'registered')).toHaveLength(11)
+    expect(MCP_SCENARIO_TOOLS.filter((t) => t.status === 'target')).toHaveLength(0)
     expect(MCP_SCENARIO_TOOLS.filter((t) => t.status === 'existing')).toHaveLength(5)
     expect(STUDIO_TOOLS).toHaveLength(6)
   })
 
-  it('existing 行与六工具一一对应；target 行零实现映射（反向索引每工具恰命中一行）', () => {
+  it('existing 行与六工具一一对应；registered/target 行无既有工具映射（反向索引每工具恰命中一行）', () => {
     const mapped = MCP_SCENARIO_TOOLS.flatMap((t) => t.existingTools)
     expect([...mapped].sort()).toEqual([...STUDIO_TOOL_NAMES].sort())
     expect(mapped).toHaveLength(STUDIO_TOOL_NAMES.length)
@@ -212,8 +216,8 @@ describe('MCP-16 场景分组声明（只声明，不注册）', () => {
       expect(declaration?.existingTools).toContain(action)
     }
     for (const declaration of MCP_SCENARIO_TOOLS) {
-      if (declaration.status === 'target') expect(declaration.existingTools).toEqual([])
-      else expect(declaration.existingTools.length).toBeGreaterThan(0)
+      if (declaration.status === 'existing') expect(declaration.existingTools.length).toBeGreaterThan(0)
+      else expect(declaration.existingTools).toEqual([])
     }
   })
 })
@@ -231,10 +235,10 @@ describe('既有六工具行为（V2 版，真网关链路）', () => {
     await fixture.close()
   })
 
-  it('tools/list 广告面 = GATEWAY_ACTIONS（描述齐备、inputSchema 为 object）', async () => {
+  it('tools/list 广告面 = 既有六工具 + 场景 11 工具（描述齐备、inputSchema 为 object）', async () => {
     const fixture = await makeFixture()
     const tools = await fixture.client.listTools()
-    expect(tools.map((t) => t.name)).toEqual([...GATEWAY_ACTIONS])
+    expect(tools.map((t) => t.name)).toEqual([...GATEWAY_ACTIONS, ...SCENARIO_TOOL_NAMES])
     for (const tool of tools) {
       expect((tool.description ?? '').length).toBeGreaterThan(8)
       expect(tool.inputSchema?.type).toBe('object')

@@ -5,7 +5,9 @@
  * 职责（只做传输与进程生命周期，不新增业务）：
  *   - stdin 读 JSON-RPC 行 / stdout 只写 JSON-RPC（MCP stdio 绑定；日志一律 stderr）；
  *   - stderr 单行诊断（启动/失败；不写 wkey、不写 secret）；
- *   - 复用 createStudioToolsServer 的同一注册面（六工具；MCP-16 分组声明不注册新工具）；
+ *   - 复用 createStudioToolsServer 的同一注册面（既有六工具 + 场景工具面 11 个；场景端口由
+ *     库形态 opts.scenario 注入，bin 形态缺省未装配 → 场景工具 deps/scenario-port-unavailable
+ *     fail-closed，不伪造回执）；
  *   - 不依赖 daemon：gateway/deps 由 env（bin 形态）或调用方注入（库形态）。
  *
  * 凭据通道（fail-closed）：
@@ -36,6 +38,7 @@ import type { Gateway, SignatureContext } from '@studio-next/gateway'
 import { createStudioToolsServer } from './server.ts'
 import type { StudioToolsServer } from './server.ts'
 import type { StudioToolsDeps } from './tools.ts'
+import type { ScenarioPort } from './scenario-tools.ts'
 
 /** stdio 入口读取的环境键（只读；不写回） */
 export const STDIO_ENV_KEYS = {
@@ -218,6 +221,11 @@ export interface StudioToolsStdioOptions {
   readonly wkey?: string | undefined
   readonly serverInfo?: Implementation | undefined
   readonly env?: NodeJS.ProcessEnv | undefined
+  /**
+   * 场景工具端口（MCP-16 target 行路由面）。bin 形态缺省不装配——场景工具 fail-closed；
+   * daemon 装配时注入真实端口（PORT-AUTH.verify + 对应端口方法）。
+   */
+  readonly scenario?: ScenarioPort | undefined
   readonly stdin?: Readable | undefined
   readonly stdout?: Writable | undefined
   readonly stderr?: Writable | undefined
@@ -266,9 +274,13 @@ export async function startStudioToolsStdio(
     deps: opts.deps ?? createFailClosedDeps(),
     ...(wkey !== undefined ? { wkey } : {}),
     ...(opts.serverInfo !== undefined ? { serverInfo: opts.serverInfo } : {}),
+    ...(opts.scenario !== undefined ? { scenario: opts.scenario } : {}),
   })
   const transport = new StdioServerTransport(opts.stdin ?? process.stdin, opts.stdout ?? process.stdout)
-  writeDiagnostic(stderr, `stdio listening (gateway=${resolved.mode}, wkey=${wkeySource})`)
+  writeDiagnostic(
+    stderr,
+    `stdio listening (gateway=${resolved.mode}, wkey=${wkeySource}, scenario=${opts.scenario === undefined ? 'unconfigured' : 'injected'})`,
+  )
   try {
     await server.connect(transport)
   } catch (err) {

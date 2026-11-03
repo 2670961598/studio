@@ -38,6 +38,16 @@ export const TOOL_SUBCAUSES = {
   depsKbSearch: 'kb-search-failed',
   /** deps：注入的预算视图后端失败 */
   depsBudgetQuery: 'budget-query-failed',
+  /** auth：工具面速率闸超限（四族冻结不扩，速率/判权归 auth 族） */
+  rateLimited: 'rate-limited',
+  /** deps：场景工具端口未装配（装配方未注入 ScenarioPort；不渲染成功） */
+  scenarioPortUnavailable: 'scenario-port-unavailable',
+  /** gateway：工具侧跨字段语义校验拒（非网关码；与网关结构化校验同族） */
+  scenarioInvalidArgs: 'invalid-args',
+  /** internal：场景端口回执类型与规格不符（端口回执错型=内部故障） */
+  scenarioReceiptMismatch: 'receipt-type-mismatch',
+  /** internal：场景端口结果类别与工具类别不符（request/read 错型=内部故障） */
+  scenarioOutcomeMismatch: 'outcome-kind-mismatch',
   /** internal：执行体意外抛错（无伪造、如实上报） */
   internalUnexpected: 'unexpected',
 } as const
@@ -48,8 +58,8 @@ export interface ToolError {
   readonly message: string
 }
 
-/** 拒绝形态的输出 schema（六工具共用的 deny 分支） */
-const DenyOutput = z.strictObject({
+/** 拒绝形态的输出 schema（既有六工具 + 场景工具共用的 deny 分支） */
+export const DenyOutput = z.strictObject({
   ok: z.literal(false),
   error: z.strictObject({
     category: z.enum(TOOL_ERROR_CATEGORIES),
@@ -318,17 +328,21 @@ export const STUDIO_TOOL_NAMES: readonly GatewayAction[] = STUDIO_TOOLS.map((t) 
 // ---------------------------------------------------------------------------
 // MCP-16 场景分组面（v2/14 §三；IMPL-06-10）
 //
-// 只声明「分组 / 工具名 / 对应哪条既有工具」，不实现新业务、不注册新工具：
-// 注册面仍是 STUDIO_TOOLS（= GATEWAY_ACTIONS 一一对应）。target 行是「目标（未证）」
-// 的落位声明，落地须各自立单并走契约批示流（v2/14 §三铁律 3/4）；本表不产生 server 注册。
+// 声明「分组 / 工具名 / 对应哪条既有工具」；既有六工具仍走 STUDIO_TOOLS（= GATEWAY_ACTIONS
+// 一一对应）。11 行 target 已由 studio-dev-548 实装并注册为**场景工具面**（scenario-tools.ts，
+// server.ts 逐个 registerTool）——但 GATEWAY_ACTIONS 动词表/wkey scope 未扩面（契约面子项，
+// 须报 Lead/制作人批），故状态记 registered，不冒充 existing。
 // 16 行 = MCP-HR-01..04 + MCP-FIN-01..03 + MCP-DEV-01..03 + MCP-GEN-01..06。
 // ---------------------------------------------------------------------------
 
 export const MCP_SCENARIO_GROUP_NAMES = ['hr', 'fin', 'dev', 'gen'] as const
 export type McpScenarioGroup = (typeof MCP_SCENARIO_GROUP_NAMES)[number]
 
-/** 既有（已与 GATEWAY_ACTIONS 对齐）｜目标（未证，只有声明没有实现） */
-export type McpScenarioToolStatus = 'existing' | 'target'
+/**
+ * existing=已与 GATEWAY_ACTIONS 对齐的既有工具；registered=已实装并注册（场景工具面，
+ * 见 scenario-tools.ts；网关动词/scope 未扩面故不冒充 existing）；target=仅声明未实现。
+ */
+export type McpScenarioToolStatus = 'existing' | 'registered' | 'target'
 
 export interface McpScenarioToolDeclaration {
   /** v2/14 §三行号（MCP-<组>-<两位序号>） */
@@ -338,7 +352,7 @@ export interface McpScenarioToolDeclaration {
   readonly names: readonly string[]
   readonly summary: string
   readonly status: McpScenarioToolStatus
-  /** 既有工具映射（status=target 时必为空；existing 行逐条指向 STUDIO_TOOLS 的名字） */
+  /** 既有工具映射（existing 行逐条指向 STUDIO_TOOLS 的名字；registered/target 行为空） */
   readonly existingTools: readonly GatewayAction[]
 }
 
@@ -361,7 +375,7 @@ export const MCP_SCENARIO_GROUPS: readonly McpScenarioGroupDeclaration[] = [
         group: 'hr',
         names: ['hr.profileAmend'],
         summary: '本人/授权范围档案修订（回执=RevisionTicket，不是直接改档）',
-        status: 'target',
+        status: 'registered',
         existingTools: [],
       },
       {
@@ -369,7 +383,7 @@ export const MCP_SCENARIO_GROUPS: readonly McpScenarioGroupDeclaration[] = [
         group: 'hr',
         names: ['hr.appointmentPropose'],
         summary: '拟任登记提议（按位置 +1 链；幂等键四元组）',
-        status: 'target',
+        status: 'registered',
         existingTools: [],
       },
       {
@@ -377,7 +391,7 @@ export const MCP_SCENARIO_GROUPS: readonly McpScenarioGroupDeclaration[] = [
         group: 'hr',
         names: ['hr.transitionRequest'],
         summary: '人事状态迁移申请（按边触发者校验后进决定链）',
-        status: 'target',
+        status: 'registered',
         existingTools: [],
       },
       {
@@ -385,7 +399,7 @@ export const MCP_SCENARIO_GROUPS: readonly McpScenarioGroupDeclaration[] = [
         group: 'hr',
         names: ['hr.interestDeclare'],
         summary: '利益关系申报（任职者申报＋独立检查位置检查）',
-        status: 'target',
+        status: 'registered',
         existingTools: [],
       },
     ],
@@ -401,7 +415,7 @@ export const MCP_SCENARIO_GROUPS: readonly McpScenarioGroupDeclaration[] = [
         group: 'fin',
         names: ['fin.ledgerRead'],
         summary: '账视图只读（预算/事件/月报，按 readScope 过滤）',
-        status: 'target',
+        status: 'registered',
         existingTools: [],
       },
       {
@@ -417,7 +431,7 @@ export const MCP_SCENARIO_GROUPS: readonly McpScenarioGroupDeclaration[] = [
         group: 'fin',
         names: ['fin.costguardStatus'],
         summary: '成本警戒线状态只读视图（core costguard 投影）',
-        status: 'target',
+        status: 'registered',
         existingTools: [],
       },
     ],
@@ -433,7 +447,7 @@ export const MCP_SCENARIO_GROUPS: readonly McpScenarioGroupDeclaration[] = [
         group: 'dev',
         names: ['dev.permissionRequest'],
         summary: '申请授予面（purpose/scope/期限；回执=REC-CMD-01，申请不是授权）',
-        status: 'target',
+        status: 'registered',
         existingTools: [],
       },
       {
@@ -441,7 +455,7 @@ export const MCP_SCENARIO_GROUPS: readonly McpScenarioGroupDeclaration[] = [
         group: 'dev',
         names: ['dev.capabilityDeclare'],
         summary: '九维能力声明（声明是主张非认定）',
-        status: 'target',
+        status: 'registered',
         existingTools: [],
       },
       {
@@ -449,7 +463,7 @@ export const MCP_SCENARIO_GROUPS: readonly McpScenarioGroupDeclaration[] = [
         group: 'dev',
         names: ['dev.assetRegister'],
         summary: '资产项登记申请（写入者=daemon/部署）',
-        status: 'target',
+        status: 'registered',
         existingTools: [],
       },
     ],
@@ -465,7 +479,7 @@ export const MCP_SCENARIO_GROUPS: readonly McpScenarioGroupDeclaration[] = [
         group: 'gen',
         names: ['work.intake'],
         summary: '意图信封受理（回执 intentRef，REC-WORK-01）',
-        status: 'target',
+        status: 'registered',
         existingTools: [],
       },
       {
@@ -481,7 +495,7 @@ export const MCP_SCENARIO_GROUPS: readonly McpScenarioGroupDeclaration[] = [
         group: 'gen',
         names: ['work.handoverSubmit'],
         summary: '交接包提交（提交≠接收确认）',
-        status: 'target',
+        status: 'registered',
         existingTools: [],
       },
       {

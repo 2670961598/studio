@@ -23,6 +23,26 @@
 AGENTS.md 生成器请引用 `studioToolSummaries()`（name + action + title + description +
 inputSchema 的 JSON Schema 摘要），不要手抄本表。
 
+## 场景工具面（MCP-16 target 行；studio-dev-548）
+
+`src/scenario-tools.ts` 把 docs/v2/14-§三 的 11 行 target 实装并注册（与既有六工具同
+server、不同注册组；`tools/list` 广告序=六工具 → 场景 11）：
+
+`hr.profileAmend`｜`hr.appointmentPropose`｜`hr.transitionRequest`｜`hr.interestDeclare`｜
+`fin.ledgerRead`｜`fin.costguardStatus`｜`dev.permissionRequest`｜`dev.capabilityDeclare`｜
+`dev.assetRegister`｜`work.intake`｜`work.handoverSubmit`
+
+- **路由**：经注入端口 `opts.scenario`（`ScenarioPort.invoke`）——装配方实现
+  PORT-AUTH.verify + 对应端口方法。9 个请求/申报类工具落「请求/申报」记录并返回回执
+  （`decided:false`）；财务查看两行（`fin.ledgerRead`/`fin.costguardStatus`）为**只读投影**
+  （`{ok:true, tool, view}`，不落记录、缺源段=unknown 不补 0）。状态推进不经工具（v2/14 §三铁律 1/2）。
+- **fail-closed**：无 wkey→`auth/missing-wkey`；端口未装配→`deps/scenario-port-unavailable`；
+  速率超限→`auth/rate-limited`（60s 窗，按工具）；跨字段语义非法→`gateway/invalid-args`；
+  端口判权拒→原样透传；端口意外→`internal/unexpected`；回执错型→`internal/receipt-type-mismatch`；
+  只读工具收到回执（或反之）→`internal/outcome-kind-mismatch`。
+- **契约面子项**：`GATEWAY_ACTIONS` 动词表与 wkey scope 未扩面（须报 Lead/制作人批），
+  故声明表状态记 `registered`，不冒充 `existing`；迁移逐条留痕见 `SCENARIO_TOOL_MIGRATIONS`。
+
 ## 组装
 
 ```typescript
@@ -59,9 +79,13 @@ await server.connect(serverT)
 cd packages/studio-tools && bun run typecheck && bun run test
 ```
 
-- 43 例：六工具 happy path（真网关链路断言 gateWrite 收到正确 action/payload）、
-  无 key/坏 key/异密/scope 外/过期/重放 fail-closed、协议层 schema 拒、deps 失败分类、
-  两表对齐双钉。
+- 旧套件（`src/*.test.ts`）：六工具 happy path（真网关链路断言 gateWrite 收到正确
+  action/payload）、无 key/坏 key/异密/scope 外/过期/重放 fail-closed、协议层 schema 拒、
+  deps 失败分类、两表对齐双钉。
+- V2 套件（`test/v2/`）：场景 11 工具注册面/权限/速率/端口门序/happy path/迁移留痕
+  （`scenario-tools.test.ts` 27 例）；11 个入参 schema 收/拒（`scenario-schemas.test.ts` 16 例）；
+  MCP-16 声明面与既有六工具回归（`groups.test.ts` 10 例）；真子进程 stdio 冒烟
+  （`stdio.test.ts` 6 例）；共用夹具 `scenario-fixtures.ts`。
 - 不起真 stdio：`InMemoryTransport` + 手搓极简 JSON-RPC 客户端驱动真实协议层；
   未引 `@modelcontextprotocol/client`（新依赖纪律：仅 `@modelcontextprotocol/server`）。
 

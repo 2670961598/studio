@@ -5,7 +5,7 @@
  * （stdio 入口＋bin，结果面库/stdio 一致性治 L3P-09/10）、plan/05 IMPL-06-10。
  *
  * 冻结验收：
- *   ① 真子进程 stdio 冒烟：initialize → tools/list（= GATEWAY_ACTIONS）→ 六工具无 key
+ *   ① 真子进程 stdio 冒烟：initialize → tools/list（既有六工具 + 场景 11 工具）→ 无 key
  *     全 fail-closed → stdin EOF 进程 0 退出；stdout 只含 JSON-RPC；stderr 一行诊断；
  *   ② 配置 fail-closed：有 wkey 无 secret = 启动失败（非零退出、stdout 零帧、不打印 key）；
  *   ③ 库/stdio 结果面一致：同 token/同配置/同入参 → 同 structuredContent；comment 成功
@@ -27,6 +27,7 @@ import { createGateway } from '@studio-next/gateway'
 import type { Gateway } from '@studio-next/gateway'
 import { createStudioToolsServer } from '../../src/server.ts'
 import { createFailClosedDeps } from '../../src/stdio.ts'
+import { SCENARIO_TOOL_NAMES } from '../../src/scenario-tools.ts'
 import type { StudioToolsDeps } from '../../src/tools.ts'
 
 const STDIO_ENTRY = fileURLToPath(new URL('../../src/stdio.ts', import.meta.url))
@@ -319,11 +320,11 @@ async function connectLibrary(opts: {
 }
 
 describe('真子进程 stdio 冒烟（无 daemon、零配置 sealed）', () => {
-  it('initialize → tools/list → 六工具无 key 全 fail-closed → EOF 退出 0；stdout 只含 JSON-RPC', async () => {
+  it('initialize → tools/list → 既有六工具+场景 11 工具无 key 全 fail-closed → EOF 退出 0；stdout 只含 JSON-RPC', async () => {
     const child = startChild(cleanEnv({}))
     await child.initialize()
     const tools = await child.listTools()
-    expect(tools.map((t) => t.name)).toEqual([...GATEWAY_ACTIONS])
+    expect(tools.map((t) => t.name)).toEqual([...GATEWAY_ACTIONS, ...SCENARIO_TOOL_NAMES])
     for (const t of tools) expect((t.description ?? '').length).toBeGreaterThan(8)
     for (const action of GATEWAY_ACTIONS) {
       const result = await child.callTool(action, NO_KEY_ARGS[action])
@@ -333,11 +334,23 @@ describe('真子进程 stdio 冒烟（无 daemon、零配置 sealed）', () => {
         error: { category: 'auth', subcause: 'missing-wkey' },
       })
     }
+    // 场景工具（抽一条代表；11 条全量协议级断言归 test/v2/scenario-tools.test.ts）
+    const scenario = await child.callTool('work.intake', {
+      company: '演示公司',
+      rawContent: 'stdio 冒烟',
+      source: 'test',
+    })
+    expect(scenario.isError).toBe(true)
+    expect(scenario.structuredContent).toMatchObject({
+      ok: false,
+      error: { category: 'auth', subcause: 'missing-wkey' },
+    })
     const exit = await child.close()
     expect(exit).toEqual({ code: 0, signal: null })
     expect(child.parseErrors).toEqual([])
-    expect(child.stdoutLineCount()).toBe(2 + GATEWAY_ACTIONS.length)
-    expect(child.stderr()).toContain('[studio-tools] stdio listening (gateway=sealed, wkey=none)')
+    // initialize + tools/list + 既有六工具各 1 次 + 场景工具抽查 1 次 = 2 + 6 + 1
+    expect(child.stdoutLineCount()).toBe(2 + GATEWAY_ACTIONS.length + 1)
+    expect(child.stderr()).toContain('[studio-tools] stdio listening (gateway=sealed, wkey=none, scenario=unconfigured)')
   })
 
   it('配置 fail-closed：有 wkey 无 secret → 非零退出、stdout 零帧、stderr 稳定码且不打印 key', async () => {

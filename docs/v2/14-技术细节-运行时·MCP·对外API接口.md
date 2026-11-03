@@ -213,7 +213,9 @@ emergencyStop(req: EmergencyStopRequest, ctx): PortResult<StopReceipt>  // REC-W
 3. **署名与公司维随调用必带**（§0.2 CallContext）；wkey 按单签发、关单吊销（SEC-T4；stdio 注入与 challenge-proof 注册协议沿 v1 80-§11.4.1 口径，目标未证）。
 4. **内/外两面不得同名同表**（治 V11-02）：MCP- 面只对挂载的 CLI/worker；对外 MCP 若建，复用 API- 资源语义与凭证三档，独立命名——**目标（未证）**。
 
-**工具表（每行：入参｜出参｜所需权限（引 v2/03 权力树）｜署名主体（SEC-SIG-01）｜公司维）**。现状事实：studio-tools 六工具（comment/heartbeat/article/kb-search/evidence-write/budget-query）已与网关白名单一一对应并有进程内 server（已有）；**下表场景分组面（人事/财务/研发）与 stdio 形态全部为新增面＝目标（未证）**。
+**工具表（每行：入参｜出参｜所需权限（引 v2/03 权力树）｜署名主体（SEC-SIG-01）｜公司维）**。现状事实：studio-tools 六工具（comment/heartbeat/article/kb-search/evidence-write/budget-query）已与网关白名单一一对应并有进程内 server（已有）。
+
+> **实现状态（2026-11-03，studio-dev-548）**：下表 11 行 target（HR-01..04／FIN-01、FIN-03／DEV-01..03／GEN-01、GEN-03）已按本表「入参/出参/所需权限/公司维」实装为**场景工具面**并注册进同一 MCP server（`packages/studio-tools/src/scenario-tools.ts`；stdio 形态同面，`test/v2/scenario-tools.test.ts` 钉死）。路由经注入端口 `ScenarioPort`（装配方实现 PORT-AUTH.verify＋对应端口方法，落「请求/申报」记录；回执 `decided:false`——申请不是办成；FIN-01/FIN-03 两行为只读投影 `{ok:true,tool,view}`，不落记录）。**契约面子项仍未闭合**：`GATEWAY_ACTIONS` 动词表与 wkey scope 未扩面，故声明状态记 `registered`（不冒充 existing），扩面须报 Lead/制作人批（§三铁律 3/4）。端口缺省未装配＝`deps/scenario-port-unavailable` fail-closed，不伪造回执。
 
 | ID | 工具名 | 入参（简） | 出参 | 所需权限 | 署名 | 公司维 |
 |---|---|---|---|---|---|---|

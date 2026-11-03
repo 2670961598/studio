@@ -3,7 +3,9 @@
  *
  * 冻结口径（拟稿，改动先过批示）：
  *   - createStudioToolsServer({ gateway, deps })：用 @modelcontextprotocol/server 2.x
- *     注册六个工具（STUDIO_TOOLS 一一对应 GATEWAY_ACTIONS）。worker 经 MCP 调网关工具，
+ *     注册两组工具面：①既有六工具（STUDIO_TOOLS 一一对应 GATEWAY_ACTIONS，走 gateWrite）；
+ *     ②场景工具面 11 个（MCP-16 target 行，scenario-tools.ts，走注入端口 ScenarioPort——
+ *     不动 GATEWAY_ACTIONS 契约面，端口未装配即 deps/scenario-port-unavailable 拒）。worker 经 MCP 调网关工具，
  *     AGENTS.md 只教「什么时候用哪个」，怎么调由 schema 承担（格式错误协议层拒）。
  *   - **wkey 从 MCP 初始化注入**（24-§二）：优先级为
  *     ① initialize 请求参数 `_meta['studio-wkey']`（连接捕获，见 withInitWkeyCapture——
@@ -47,6 +49,8 @@ import {
   HeartbeatTool,
   KbSearchTool,
 } from './tools.ts'
+import { SCENARIO_TOOL_SPECS, ScenarioPortError, ScenarioRateLimiter } from './scenario-tools.ts'
+import type { ScenarioPort, ScenarioReceipt, ScenarioToolName, ScenarioToolSpec } from './scenario-tools.ts'
 
 /**
  * zod schema → MCP StandardSchemaWithJSON 的类型桥（只弥合类型层，零运行时行为）。
@@ -94,6 +98,14 @@ export interface StudioToolsServerOptions {
   readonly wkey?: string | undefined
   /** serverInfo（默认 { name:'studio-tools', version:'0.1.0' }） */
   readonly serverInfo?: Implementation | undefined
+  /**
+   * 场景工具端口（MCP-16 target 行 11 个工具的路由面）：装配方实现 PORT-AUTH.verify +
+   * 对应端口方法并落「请求/申报」记录。缺省=未装配 → 场景工具全部 deps/scenario-port-unavailable
+   * fail-closed（不伪造回执）。既有六工具不经此端口。
+   */
+  readonly scenario?: ScenarioPort | undefined
+  /** 执行时钟（速率窗/端口请求时点；缺省 Date.now；测试注入求确定性） */
+  readonly now?: (() => number) | undefined
 }
 
 export interface StudioToolsServer {
@@ -218,15 +230,148 @@ async function runTool<A extends GatewayAction>(spec: StudioToolSpec<A>, args: T
   }
 }
 
+// ---------------------------------------------------------------------------
+// 场景工具执行：fail-closed 鉴权 → 端口装配门 → 速率闸 → 语义校验 → 端口路由 → 回执
+// ---------------------------------------------------------------------------
+
+/** 场景工具执行环境（端口由装配方注入；缺省=未装配 → deps 族 fail-closed） */
+interface ScenarioEnv {
+  readonly wkey: () => string | undefined
+  readonly port: ScenarioPort | undefined
+  readonly now: () => number
+  readonly rate: ScenarioRateLimiter
+}
+
+/** 请求/申报类成功回执：decided 恒 false（工具面只产申请，决定归有权位置） */
+function okReceiptResult(tool: ScenarioToolName, receipt: ScenarioReceipt): CallToolResult {
+  const structured = {
+    ok: true,
+    tool,
+    receipt: { receiptType: receipt.receiptType, receiptRef: receipt.receiptRef, decided: false as const },
+  }
+  return {
+    content: [{ type: 'text', text: JSON.stringify(structured) }],
+    structuredContent: structured,
+  }
+}
+
+/** 只读类成功投影（v2/14 §三 FIN 行：缺源段=unknown，不补 0——投影值原样透传） */
+function okViewResult(tool: ScenarioToolName, view: Readonly<Record<string, unknown>>): CallToolResult {
+  const structured = { ok: true, tool, view: { ...view } }
+  return {
+    content: [{ type: 'text', text: JSON.stringify(structured) }],
+    structuredContent: structured,
+  }
+}
+
+async function runScenarioTool(
+  spec: ScenarioToolSpec,
+  args: Record<string, unknown>,
+  env: ScenarioEnv,
+): Promise<CallToolResult> {
+  // 0) fail-closed：凭据未注入即拒（与既有六工具同口径，不碰端口）
+  const token = env.wkey()
+  if (token === undefined || token === '') {
+    return denyResult({
+      category: 'auth',
+      subcause: TOOL_SUBCAUSES.authMissingWkey,
+      message: `wkey 未随 MCP 初始化注入（initialize 参数 _meta['${WKEY_META_KEY}'] 或构造 opts.wkey）——场景工具 ${spec.name} fail-closed`,
+    })
+  }
+  // 1) 端口未装配：依赖不可用即拒（不烧速率窗、不伪造回执）
+  if (env.port === undefined) {
+    return denyResult({
+      category: 'deps',
+      subcause: TOOL_SUBCAUSES.scenarioPortUnavailable,
+      message: `场景端口未装配：${spec.name}（${spec.id}）须由 daemon 装配映射到 PORT-AUTH + 对应端口方法（v2/14 §三铁律 1）；本进程不伪造回执`,
+    })
+  }
+  // 2) 速率闸（auth 族 rate-limited；四族冻结不扩）
+  const limited = env.rate.take(spec.name, spec.limits.perMinute)
+  if (!limited.allowed) {
+    return denyResult({
+      category: 'auth',
+      subcause: TOOL_SUBCAUSES.rateLimited,
+      message: `速率超限：${spec.name} 每分钟至多 ${spec.limits.perMinute} 次（retryAfterMs=${limited.retryAfterMs}）`,
+    })
+  }
+  // 3) 跨字段语义校验（schema 表达不了的部分；拒=结构化错误）
+  const invalid = spec.check?.(args)
+  if (invalid !== undefined) {
+    return denyResult({
+      category: 'gateway',
+      subcause: TOOL_SUBCAUSES.scenarioInvalidArgs,
+      message: `参数语义非法：${invalid}`,
+    })
+  }
+  // 4) 公司维必带（v2/14 §三；schema 已收口，此处防御性兜底）
+  const company = typeof args['company'] === 'string' ? args['company'] : ''
+  if (company === '') {
+    return denyResult({
+      category: 'gateway',
+      subcause: TOOL_SUBCAUSES.scenarioInvalidArgs,
+      message: `缺公司维：${spec.name}（v2/14 §三 公司维必带）`,
+    })
+  }
+  // 5) 端口路由（PORT-AUTH.verify + 端口方法由装配方实现；结果类别/回执错型=内部故障）
+  try {
+    const outcome = await env.port.invoke({
+      id: spec.id,
+      tool: spec.name,
+      group: spec.group,
+      company,
+      args: { ...args },
+      wkey: token,
+      at: env.now(),
+    })
+    if (spec.kind === 'read') {
+      if (outcome.kind !== 'view') {
+        return denyResult({
+          category: 'internal',
+          subcause: TOOL_SUBCAUSES.scenarioOutcomeMismatch,
+          message: `端口结果类别不符：${spec.name} 为只读工具，期望 view，收到 ${outcome.kind}（错型不渲染成功）`,
+        })
+      }
+      return okViewResult(spec.name, outcome.view)
+    }
+    if (outcome.kind !== 'receipt' || outcome.receiptType !== spec.receiptType) {
+      const got = outcome.kind === 'receipt' ? outcome.receiptType : outcome.kind
+      return denyResult({
+        category: 'internal',
+        subcause: TOOL_SUBCAUSES.scenarioReceiptMismatch,
+        message: `端口回执类型不符：${spec.name} 期望 ${String(spec.receiptType)}，收到 ${got}（回执错型不渲染成功）`,
+      })
+    }
+    return okReceiptResult(spec.name, outcome)
+  } catch (err) {
+    if (err instanceof ScenarioPortError) {
+      return denyResult({ category: err.category, subcause: err.subcause, message: err.message })
+    }
+    return denyResult({
+      category: 'internal',
+      subcause: TOOL_SUBCAUSES.internalUnexpected,
+      message: `场景端口 ${spec.name} 意外抛错：${err instanceof Error ? err.message : String(err)}`,
+    })
+  }
+}
+
 /**
  * createStudioToolsServer —— 组装 studio-tools 内部 MCP server。
  *
- * 六个工具全部走 runTool 公共闸（无旁路）；注册面=STUDIO_TOOLS 单一事实源，
+ * 既有六工具全部走 runTool 公共闸（无旁路）；注册面=STUDIO_TOOLS 单一事实源，
  * 与 GATEWAY_ACTIONS 的对齐由 tools.test.ts / server.test.ts（tools/list）双钉。
+ * 场景工具面 11 个走 runScenarioTool（端口注入 + 速率闸 + 语义校验），注册面=SCENARIO_TOOL_SPECS。
  */
 export function createStudioToolsServer(opts: StudioToolsServerOptions): StudioToolsServer {
   const cell: { token: string | undefined } = { token: opts.wkey }
   const env: ToolEnv = { gateway: opts.gateway, deps: opts.deps, wkey: () => cell.token }
+  const now = opts.now ?? Date.now
+  const scenarioEnv: ScenarioEnv = {
+    wkey: () => cell.token,
+    port: opts.scenario,
+    now,
+    rate: new ScenarioRateLimiter(now),
+  }
   const mcp = new McpServer(opts.serverInfo ?? SERVER_INFO_DEFAULT)
 
   const register = <A extends GatewayAction>(spec: StudioToolSpec<A>): void => {
@@ -250,6 +395,22 @@ export function createStudioToolsServer(opts: StudioToolsServerOptions): StudioT
   register(KbSearchTool)
   register(EvidenceWriteTool)
   register(BudgetQueryTool)
+
+  // 场景工具面（MCP-16 target 行 11 个；与既有六工具同 server、不同注册组）
+  const registerScenario = (spec: ScenarioToolSpec): void => {
+    const cb = (args: Record<string, unknown>): Promise<CallToolResult> => runScenarioTool(spec, args, scenarioEnv)
+    mcp.registerTool(
+      spec.name,
+      {
+        title: spec.title,
+        description: spec.description,
+        inputSchema: spec.input as unknown as McpSchemaOf<typeof spec.input>,
+        outputSchema: spec.output as unknown as McpSchemaOf<typeof spec.output>,
+      },
+      cb as unknown as ToolCallback<McpSchemaOf<typeof spec.input>>,
+    )
+  }
+  for (const spec of SCENARIO_TOOL_SPECS) registerScenario(spec)
 
   return {
     mcp,

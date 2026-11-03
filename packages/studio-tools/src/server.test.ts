@@ -21,6 +21,7 @@ import type { GatewayAction } from '@studio-next/contract'
 import { randomUUID } from 'node:crypto'
 import { createStudioToolsServer } from './server.ts'
 import type { StudioToolsServer } from './server.ts'
+import { SCENARIO_TOOL_NAMES } from './scenario-tools.ts'
 import type { KbHit, StudioToolsDeps, ToolErrorCategory } from './tools.ts'
 
 // ---------------------------------------------------------------------------
@@ -267,11 +268,11 @@ describe('六工具 happy path（真网关链路）', () => {
 })
 
 describe('tools/list 广告面（防漂移第二道钉）', () => {
-  it('与 GATEWAY_ACTIONS 同名同序，且描述齐备、schema 是 object 形', async () => {
+  it('既有六工具与 GATEWAY_ACTIONS 同名同序、场景 11 工具随后注册，且描述齐备、schema 是 object 形', async () => {
     const f = makeFixture()
     const c = await connectClient(f.server, { 'studio-wkey': f.issueKey() })
     const tools = await c.listTools()
-    expect(tools.map((t) => t.name)).toEqual([...GATEWAY_ACTIONS])
+    expect(tools.map((t) => t.name)).toEqual([...GATEWAY_ACTIONS, ...SCENARIO_TOOL_NAMES])
     for (const t of tools) {
       expect((t.description ?? '').length).toBeGreaterThan(8)
       expect((t.inputSchema as { type?: string }).type).toBe('object')

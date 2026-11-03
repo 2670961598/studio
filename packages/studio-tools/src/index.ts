@@ -4,8 +4,10 @@
  * 组成：
  *   - tools.ts   工具表单一事实源：STUDIO_TOOLS ↔ GATEWAY_ACTIONS 一一对应；
  *                typed input/output schema + 两级错误分类 + deps 注入形状
- *   - server.ts  createStudioToolsServer：McpServer 工厂（六工具注册/wkey 初始化注入
- *                fail-closed/网关拒绝码透传）+ withInitWkeyCapture transport 包装
+ *   - server.ts  createStudioToolsServer：McpServer 工厂（既有六工具 + 场景工具面 11 个注册/
+ *                wkey 初始化注入 fail-closed/网关拒绝码透传/端口注入）+ withInitWkeyCapture 包装
+ *   - scenario-tools.ts    场景工具规格/端口/速率闸/迁移留痕（MCP-16 target 行实装）
+ *   - scenario-schemas.ts  场景工具输入 schema（v2/14 §三「入参」列）
  *
  * 协议依据：docs/24-§二（工具集=网关白名单的机器化、AGENTS.md 只教「什么时候用哪个」、
  * 状态推进永不在工具集）、docs/25-§4.1（GATEWAY_ACTIONS 与 studio-tools 同一张表）、
@@ -18,3 +20,5 @@
  */
 export * from './tools.ts'
 export * from './server.ts'
+export * from './scenario-schemas.ts'
+export * from './scenario-tools.ts'
