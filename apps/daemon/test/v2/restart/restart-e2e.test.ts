@@ -17,7 +17,8 @@ import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
 import { createLocalPlatform } from '@studio-next/localplatform'
 import { makeUlid } from '../../../src/engine/tools/id.ts'
-import { writeRestartRequest } from '../../../src/control/restart/channel.ts'
+import { writeJsonAtomic } from '../../../src/control/channel/file-io.ts'
+import { controlFileOf } from '../../../src/control/channel/paths.ts'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(HERE, '../../../../..')
@@ -149,14 +150,20 @@ describe('受权重启 E2E（隔离实例：在途不打断 + 四口径自检）
         return false
       }
     }, 'A 派发且在途 running=1')
-    writeRestartRequest(varDir, {
-      id: makeUlid(Date.now()),
-      requestedAt: Date.now(),
-      reason: '制作人令：s504 在途 E2E',
-      authorizationRef: authRef,
-      actor: { personId: 'AGENT-1', role: '工程部长', level: 2 },
-      drainTimeoutMs: 20_000,
-    })
+    // 模拟 CLI 写请求（生产写面=通用控制面通道 protocol.ts；本测试只走同一原子写原语）
+    const requestId = makeUlid(Date.now())
+    writeJsonAtomic(
+      controlFileOf(varDir, 'restart.request.json'),
+      {
+        id: requestId,
+        requestedAt: Date.now(),
+        reason: '制作人令：s504 在途 E2E',
+        authorizationRef: authRef,
+        actor: { personId: 'AGENT-1', role: '工程部长', level: 2 },
+        drainTimeoutMs: 20_000,
+      },
+      { mode: 0o600, tmpSuffix: requestId },
+    )
     const exitA = await A.exited
     expect(exitA.code, A.out.join('')).toBe(0)
 

@@ -1,5 +1,5 @@
 /**
- * control/restart/channel —— 受权重启控制通道（studio-dev-504 S1）
+ * control/restart/channel —— 受权重启控制通道（studio-dev-504 S1；studio-dev-555 去重）
  *
  * 依据（实现单引用）：#497 plan §4.6（控制通道/授权链/反伪造反重放）与 §10.1（接口签名）；
  *   docs/17-§2（拍边界纪律——控制面请求在 tick 收口后消费）；docs/17-§3（事件枚举冻结：
@@ -8,33 +8,39 @@
  *   （worker 写域不含 control/，防伪造靠写域+owner/mode/lstat 而非读面保密）；
  *   docs/v2/15 §二 SEC-SIG-01/§五 SEC-RD-02（同进程信封闸，不冒充独立验签）。
  *
- * 文件协议（与 stop/reload 同款，拍边界消费）：
- *   CLI/高层：writeRestartRequest → <rootDir>/control/restart.request.json（0600，原子写）
+ * 文件协议（**三通道单源**：`control/channel/protocol.ts` + `channel/file-io.ts`；studio-dev-555
+ *   消除了 #504 的第 3 套并行实现与第 7 处 sha256/平行原子写）：
+ *   CLI/高层：写请求（通用通道原子写口）→ <rootDir>/control/restart.request.json（0600）
  *   daemon：inspectRestartRequest（lstat/owner/mode/size → 严格 schema）→ 授权面
  *           validateRestartAuthorization（预登记 ref/期限/一次性/组织相对谓词）
- *           → writeRestartResult 回执；consumeRestartRequest 改名 .consume（live 面清空）
+ *           → writeRestartResult 回执；consume 改名 .consume（live 面清空）
+ *   本件只留 restart 薄语义：形状/schema/授权谓词/留痕；文件 IO 与错误分类归通用 helper。
  *
  * 纪律：
  *   - 未知字段/坏 JSON/符号链接/硬链接/宽权限/owner 不符一律 fail-closed，不改运行态；
+ *   - **权限错/IO 错 ≠ 不存在**（studio-dev-555 要求④）：lstat/read 分类后 fail-closed 拒绝
+ *     （reason=control-io-error + 回执/事件留痕），不再静默当 absent（低危 fail-open 收口）；
  *   - 拒绝也要留痕（serve 编排落 SCHEMA_EVOLVE;RESTART;phase=rejected），不落授权原文；
  *   - 授权 ref 只在检查点提交后 burn（burn-at-commit），draining 中途崩溃仍可用一次。
  */
-import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import type { Stats } from 'node:fs'
 import type { EventRecord } from '@studio-next/contract'
 import type { Ledger } from '@studio-next/store'
 import { makeUlid } from '../../engine/tools/id.ts'
-import { controlDirOf } from '../hot-reload.ts'
+import { lstatOutcome, readTextOutcome, type FsProblem } from '../channel/file-io.ts'
+import { controlDirOf } from '../channel/paths.ts'
+import { defineControlChannel } from '../channel/protocol.ts'
 
-export const RESTART_REQUEST_FILE = 'restart.request.json'
-export const RESTART_RESULT_FILE = 'restart.result.json'
-export const RESTART_REQUEST_CONSUMED_FILE = `${RESTART_REQUEST_FILE}.consume`
+const RESTART_REQUEST_FILE = 'restart.request.json'
+const RESTART_RESULT_FILE = 'restart.result.json'
+const RESTART_REQUEST_CONSUMED_FILE = `${RESTART_REQUEST_FILE}.consume`
 /** 请求幂等位（同 id 不二次执行；跨重启读回） */
 export const RESTART_LAST_SEEN_KV_KEY = 'restart.lastSeenId'
 /** 一次性授权 burn 位（成功检查点后写；值=requestId） */
 export const RESTART_USED_KV_PREFIX = 'restart.used.'
 /** 检查点/退出标记目录（<rootDir>/restart；非 control 写域——daemon 专属） */
-export const RESTART_DIR = 'restart'
+const RESTART_DIR = 'restart'
 
 /** 触发方（组织相对谓词的输入；level/role 只作审计，不做放行依据） */
 export interface RestartActor {
@@ -80,6 +86,7 @@ export interface RestartAuthorization {
 /** 拒绝理由（机器可比对；note/回执同源） */
 export type RestartReject =
   | 'control-file-provenance'
+  | 'control-io-error'
   | 'bad-json'
   | 'unknown-field'
   | 'id-invalid'
@@ -132,13 +139,27 @@ export function restartDirOf(rootDir: string): string {
   return path.join(rootDir, RESTART_DIR)
 }
 
-/** 请求文件绝对路径（control 面） */
-export function restartRequestFileOf(rootDir: string): string {
-  return path.join(controlDirOf(rootDir), RESTART_REQUEST_FILE)
-}
+/**
+ * 重启通道（三通道通用协议实例）：请求/回执均 0600（含授权 ref 与 actor 面——比 stop/reload 严）。
+ * 请求写面**不再**单独导出（studio-dev-555 要求③：原写请求函数全仓仅测试引用 → 收口到通用
+ * 协议，stop/reload 的生产 CLI 已覆盖同一实现；消费/读回执同理，只剩内部调用）。
+ */
+const RESTART_CHANNEL = defineControlChannel<RestartRequest, RestartResult>({
+  files: { request: RESTART_REQUEST_FILE, result: RESTART_RESULT_FILE, consumed: RESTART_REQUEST_CONSUMED_FILE },
+  requestMode: 0o600,
+  resultMode: 0o600,
+  decodeResult: (raw) => ({
+    id: raw['id'] as string,
+    ok: raw['ok'] === true,
+    accepted: raw['accepted'] === true,
+    state: (raw['state'] ?? 'rejected') as RestartResult['state'],
+    ...(typeof raw['reason'] === 'string' ? { reason: raw['reason'] } : {}),
+    ...(typeof raw['detail'] === 'string' ? { detail: raw['detail'] } : {}),
+  }),
+})
 
 /** 单行 note 值清洗（不落换行/分号；长度有界——审计可读且不破坏 note 结构） */
-export function noteValue(value: string, max = 240): string {
+function noteValue(value: string, max = 240): string {
   const flat = value.replace(/[\r\n;]+/g, ' ').trim()
   return flat.length > max ? `${flat.slice(0, max)}…` : flat
 }
@@ -223,30 +244,34 @@ function rejected(reason: RestartReject, detail: string, file: string): RestartI
   return { kind: 'rejected', reason, detail, file }
 }
 
+/** 权限/IO 面描述（fail-closed 拒绝留痕用；不含敏感原文） */
+function problemDetail(problem: FsProblem): string {
+  return `${problem.errorClass}/${problem.code}：${problem.message}`
+}
+
 /**
  * 读请求并做文件面 provenance 闸（N6）：control/ 目录 0700+owner；请求 lstat 普通文件
  * （拒符号链接/硬链接歧义）、owner==daemon uid、非 group/other 可写、size≤8192。
+ *
+ * 错误分类（studio-dev-555 要求④）：lstat/read 的**权限错与 IO 错一律 fail-closed 拒绝**
+ * （reason=control-io-error）；只有 ENOENT/ENOTDIR 才是「无 live 请求」（absent）。
  */
 export function inspectRestartRequest(rootDir: string, opts?: { expectedUid?: number }): RestartInspection {
   const controlDir = controlDirOf(rootDir)
-  const file = path.join(controlDir, RESTART_REQUEST_FILE)
-  let dirStat
-  try {
-    dirStat = lstatSync(controlDir)
-  } catch {
-    return { kind: 'absent' } // control 目录未建=无请求（不是拒绝；CLI 首次写会 0700 建）
-  }
+  const file = RESTART_CHANNEL.requestFileOf(rootDir)
+  const dirOutcome = lstatOutcome(controlDir)
+  if (dirOutcome.kind === 'absent') return { kind: 'absent' } // control 目录未建=无请求（不是拒绝；CLI 首次写会 0700 建）
+  if (dirOutcome.kind === 'problem') return rejected('control-io-error', `control 目录不可访问（${problemDetail(dirOutcome.problem)}）`, file)
+  const dirStat = dirOutcome.stat
   const expectedUid = opts?.expectedUid ?? uidOf()
   if (!dirStat.isDirectory()) return rejected('control-file-provenance', 'control 不是目录', file)
   if (dirStat.uid !== expectedUid) return rejected('control-file-provenance', `control owner=${dirStat.uid} 非 daemon uid=${expectedUid}`, file)
   if (modeOf(dirStat.mode) !== 0o700) return rejected('control-file-provenance', `control mode=${modeOf(dirStat.mode).toString(8)} 非 0700`, file)
 
-  let stat
-  try {
-    stat = lstatSync(file)
-  } catch {
-    return { kind: 'absent' }
-  }
+  const fileOutcome = lstatOutcome(file)
+  if (fileOutcome.kind === 'absent') return { kind: 'absent' }
+  if (fileOutcome.kind === 'problem') return rejected('control-io-error', `请求文件 lstat 失败（${problemDetail(fileOutcome.problem)}）`, file)
+  const stat = fileOutcome.stat
   if (stat.isSymbolicLink()) return rejected('control-file-provenance', '请求文件是符号链接（拒）', file)
   if (!stat.isFile()) return rejected('control-file-provenance', '请求文件不是普通文件（拒）', file)
   if (stat.nlink > 1) return rejected('control-file-provenance', `请求文件存在硬链接（nlink=${stat.nlink}）`, file)
@@ -254,9 +279,12 @@ export function inspectRestartRequest(rootDir: string, opts?: { expectedUid?: nu
   if ((stat.mode & 0o022) !== 0) return rejected('control-file-provenance', `请求文件 group/other 可写（mode=${modeOf(stat.mode).toString(8)}）`, file)
   if (stat.size > MAX_REQUEST_BYTES) return rejected('control-file-provenance', `请求文件 ${stat.size}B > ${MAX_REQUEST_BYTES}B`, file)
 
+  const read = readTextOutcome(file)
+  if (read.kind === 'absent') return { kind: 'absent' } // 检查与读取之间被消费（拍内竞态，非拒绝）
+  if (read.kind === 'problem') return rejected('control-io-error', `请求文件不可读（${problemDetail(read.problem)}）`, file)
   let parsed: unknown
   try {
-    parsed = JSON.parse(readFileSync(file, 'utf8'))
+    parsed = JSON.parse(read.text)
   } catch {
     return rejected('bad-json', '请求文件不是合法 JSON', file)
   }
@@ -328,35 +356,9 @@ function validateRequestShape(value: unknown): { ok: true; request: RestartReque
   }
 }
 
-/** 原子写请求（tmp+rename；0600——CLI/高层侧写，daemon 侧只读） */
-export function writeRestartRequest(rootDir: string, request: RestartRequest): void {
-  const dir = controlDirOf(rootDir)
-  mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const target = path.join(dir, RESTART_REQUEST_FILE)
-  const tmp = `${target}.tmp-${request.id}`
-  writeFileSync(tmp, `${JSON.stringify(request, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
-  renameSync(tmp, target)
-}
-
-/** 原子写回执（daemon 侧；CLI 按 id 匹配） */
+/** 原子写回执（daemon 侧，0600；CLI 按 id 匹配） */
 export function writeRestartResult(rootDir: string, result: RestartResult): void {
-  const dir = controlDirOf(rootDir)
-  mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const target = path.join(dir, RESTART_RESULT_FILE)
-  const tmp = `${target}.tmp-${result.id}`
-  writeFileSync(tmp, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
-  renameSync(tmp, target)
-}
-
-/** 消费请求（原子改名 .consume；live 面清空；失败=false 不抛——serve 以 kv 去重兜底） */
-export function consumeRestartRequest(rootDir: string): boolean {
-  const dir = controlDirOf(rootDir)
-  try {
-    renameSync(path.join(dir, RESTART_REQUEST_FILE), path.join(dir, RESTART_REQUEST_CONSUMED_FILE))
-    return true
-  } catch {
-    return false
-  }
+  RESTART_CHANNEL.writeResult(rootDir, result)
 }
 
 // ————————————————————————— 部署面授权预登记 —————————————————————————
@@ -400,16 +402,32 @@ export function loadRestartAuthorizations(source: {
   expectedUid?: number
 }): RestartAuthorization[] {
   if (source.file !== undefined) {
-    const stat = lstatSync(source.file)
+    const stat = lstatSyncOf(source.file)
     const expectedUid = source.expectedUid ?? uidOf()
     if (stat.isSymbolicLink() || !stat.isFile()) throw new Error('CONFIG_INVALID：重启授权文件须为普通文件（拒符号链接）')
     if (stat.uid !== expectedUid) throw new Error(`CONFIG_INVALID：重启授权文件 owner=${stat.uid} 非 daemon uid=${expectedUid}`)
     if ((stat.mode & 0o077) !== 0) throw new Error('CONFIG_INVALID：重启授权文件须 0600（group/other 无权限）')
     if (stat.size > 65_536) throw new Error('CONFIG_INVALID：重启授权文件 >64KiB')
-    return parseAuthorizationEntries(JSON.parse(readFileSync(source.file, 'utf8')))
+    return parseAuthorizationEntries(JSON.parse(readFileSyncText(source.file)))
   }
   if (source.inline !== undefined) return parseAuthorizationEntries(JSON.parse(source.inline))
   throw new Error('CONFIG_INVALID：restartEnabled=true 须配 restartAuthorizationFile 或 restartAuthorizations')
+}
+
+/** 部署面文件 lstat（失败即抛——装载期 fail-closed，不静默降级为「无授权」） */
+function lstatSyncOf(file: string): Stats {
+  const outcome = lstatOutcome(file)
+  if (outcome.kind === 'ok') return outcome.stat
+  const why = outcome.kind === 'absent' ? '不存在' : problemDetail(outcome.problem)
+  throw new Error(`CONFIG_INVALID：授权文件不可用（${why}）`)
+}
+
+/** 部署面文件读取（失败即抛——装载期 fail-closed） */
+function readFileSyncText(file: string): string {
+  const outcome = readTextOutcome(file)
+  if (outcome.kind === 'ok') return outcome.text
+  const why = outcome.kind === 'absent' ? '不存在' : problemDetail(outcome.problem)
+  throw new Error(`CONFIG_INVALID：授权文件不可读（${why}）`)
 }
 
 // ————————————————————————— 授权与组织谓词（纯函数） —————————————————————————
@@ -494,7 +512,7 @@ export function rejectRestartRequest(
   } catch {
     // 台账不可写：回执仍落（CLI 可见），事件缺口由日志/回执如实承担
   }
-  consumeRestartRequest(args.rootDir)
+  RESTART_CHANNEL.consumeRequest(args.rootDir)
 }
 
 /** 事件署名元数据（level/dept 取名册；未知人回退首部门/公司 slug——事件必填面不空） */
@@ -507,39 +525,3 @@ export function eventMetaOf(
   return { level: person?.level ?? 1, dept: person?.dept ?? snapshot.departments[0]?.path ?? fallback }
 }
 
-/** 读回执（测试/CLI 面；坏 JSON=undefined） */
-export function readRestartResult(rootDir: string): RestartResult | undefined {
-  try {
-    const parsed = JSON.parse(readFileSync(path.join(controlDirOf(rootDir), RESTART_RESULT_FILE), 'utf8')) as Partial<RestartResult>
-    if (typeof parsed.id !== 'string') return undefined
-    return {
-      id: parsed.id,
-      ok: parsed.ok === true,
-      accepted: parsed.accepted === true,
-      state: (parsed.state ?? 'rejected') as RestartResult['state'],
-      ...(typeof parsed.reason === 'string' ? { reason: parsed.reason } : {}),
-      ...(typeof parsed.detail === 'string' ? { detail: parsed.detail } : {}),
-    }
-  } catch {
-    return undefined
-  }
-}
-
-/** 目录 fsync（检查点原子写用；失败即抛——不静默） */
-export function fsyncPath(file: string): void {
-  const fd = openSync(file, 'r')
-  try {
-    fsyncSync(fd)
-  } finally {
-    closeSync(fd)
-  }
-}
-
-/** 删除临时件（写失败清理；不存在不抛） */
-export function removeQuietly(file: string): void {
-  try {
-    unlinkSync(file)
-  } catch {
-    // 已不存在：清理幂等
-  }
-}

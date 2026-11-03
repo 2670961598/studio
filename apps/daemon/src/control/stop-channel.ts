@@ -6,8 +6,9 @@
  * daemon 自身优雅停（runtime.stop：停唤起源 → 在途 drain → engine.dispose() 对 worker
  * 整树 SIGTERM→SIGKILL），运维经控制面文件请求，不再依赖进程树外部信号猜 PID。
  *
- * 协议与 reload 手动通道同款（src/control/hot-reload.ts 控制面文件通道；拍边界纪律 docs/38-§2）：
- *   CLI：writeStopRequest（tmp+rename 原子写）→ awaitStopResult（轮询至 id 匹配）
+ * 协议与 reload / restart 手动通道同款（**实现单源**：`src/control/channel/protocol.ts`；
+ * studio-dev-555 三通道合并——本件只留停机薄语义：形状/解码/去重位；拍边界纪律 docs/17-§2）：
+ *   CLI：writeStopRequest（tmp+fsync+rename 原子写）→ awaitStopResult（轮询至 id 匹配）
  *   daemon：拍边界读请求（hotReload.check() 之后——停机前先把积压 reload 应答掉）→
  *           置停机标 → 主循环退出 → 优雅停收口 → writeStopResult 回执落盘
  *   幂等（DEV-41 修复，2026-10-20 daemon-taiga6 一拍自停事故——旧口径「请求文件不删 +
@@ -23,9 +24,7 @@
  * 守卫 600 行阈「先拆再增」）：本件只留停机文件协议，并在文末再出口记录面公共名——既有导入
  * 路径（装配/测试/CLI）不破。记录面语义（fail-closed 三闸/REC-WORK-18 必填面）见 landing.ts。
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import path from 'node:path'
-import { controlDirOf } from './hot-reload.ts'
+import { defineControlChannel } from './channel/protocol.ts'
 
 export const STOP_REQUEST_FILE = 'stop.request.json'
 export const STOP_RESULT_FILE = 'stop.result.json'
@@ -58,22 +57,33 @@ export interface StopResult {
   detail?: string
 }
 
-/** CLI 侧：原子写请求（tmp+rename——daemon 读到的恒是完整 JSON） */
+/**
+ * 停机通道（三通道通用协议的一个实例）：形状=StopRequest/StopResult；
+ * 权限沿用原缺省（进程 umask 口径——停机请求不含授权原文，无需 0600 收紧）。
+ */
+const STOP_CHANNEL = defineControlChannel<StopRequest, StopResult>({
+  files: { request: STOP_REQUEST_FILE, result: STOP_RESULT_FILE, consumed: STOP_REQUEST_CONSUMED_FILE },
+  decodeResult: (raw) => ({
+    id: raw['id'] as string,
+    ok: raw['ok'] === true,
+    stopped: raw['stopped'] === true,
+    ...(raw['reason'] !== undefined ? { reason: String(raw['reason']) } : {}),
+    ...(raw['detail'] !== undefined ? { detail: String(raw['detail']) } : {}),
+  }),
+})
+
+/** CLI 侧：原子写请求（tmp+fsync+rename——daemon 读到的恒是完整 JSON） */
 export function writeStopRequest(rootDir: string, request: StopRequest): void {
-  const dir = controlDirOf(rootDir)
-  mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const target = path.join(dir, STOP_REQUEST_FILE)
-  const tmp = `${target}.tmp-${request.id}`
-  writeFileSync(tmp, `${JSON.stringify(request, null, 2)}\n`, 'utf8')
-  renameSync(tmp, target)
+  STOP_CHANNEL.writeRequest(rootDir, request)
 }
 
 /** daemon 侧：读请求（无文件/坏 JSON → undefined——控制面文件坏不当停机，下拍再看） */
 export function readStopRequest(rootDir: string): StopRequest | undefined {
-  const target = path.join(controlDirOf(rootDir), STOP_REQUEST_FILE)
-  if (!existsSync(target)) return undefined
+  const read = STOP_CHANNEL.readRequest(rootDir)
+  // 权限/IO 面同样按「无 live 请求」降级（不当停机=不误停）；分类保留在 read.kind 里不冒充 absent
+  if (read.kind !== 'ok') return undefined
   try {
-    const parsed = JSON.parse(readFileSync(target, 'utf8')) as Partial<StopRequest>
+    const parsed = JSON.parse(read.text) as Partial<StopRequest>
     if (typeof parsed.id !== 'string' || parsed.id === '') return undefined
     return {
       id: parsed.id,
@@ -87,12 +97,7 @@ export function readStopRequest(rootDir: string): StopRequest | undefined {
 
 /** daemon 侧：写回执（原子写；CLI 按 id 匹配消费——在优雅停收口**之后**落） */
 export function writeStopResult(rootDir: string, result: StopResult): void {
-  const dir = controlDirOf(rootDir)
-  mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const target = path.join(dir, STOP_RESULT_FILE)
-  const tmp = `${target}.tmp-${result.id}`
-  writeFileSync(tmp, `${JSON.stringify(result, null, 2)}\n`, 'utf8')
-  renameSync(tmp, target)
+  STOP_CHANNEL.writeResult(rootDir, result)
 }
 
 /**
@@ -103,39 +108,12 @@ export function writeStopResult(rootDir: string, result: StopResult): void {
  * 由 kv 读回去重兜底。返回是否成功：失败（并发覆写/fs 异常）不阻断停机——去重已在 kv。
  */
 export function consumeStopRequest(rootDir: string): boolean {
-  const dir = controlDirOf(rootDir)
-  try {
-    renameSync(path.join(dir, STOP_REQUEST_FILE), path.join(dir, STOP_REQUEST_CONSUMED_FILE))
-    return true
-  } catch {
-    return false
-  }
+  return STOP_CHANNEL.consumeRequest(rootDir)
 }
 
 /** CLI 侧：轮询回执至 id 匹配（超时 undefined——daemon 不在跑或拍太慢；提示见命令面） */
 export async function awaitStopResult(rootDir: string, id: string, timeoutMs: number, pollMs = 100): Promise<StopResult | undefined> {
-  const target = path.join(controlDirOf(rootDir), STOP_RESULT_FILE)
-  const deadline = Date.now() + timeoutMs
-  for (;;) {
-    if (existsSync(target)) {
-      try {
-        const parsed = JSON.parse(readFileSync(target, 'utf8')) as Partial<StopResult>
-        if (parsed.id === id) {
-          return {
-            id: parsed.id as string,
-            ok: parsed.ok === true,
-            stopped: parsed.stopped === true,
-            ...(parsed.reason !== undefined ? { reason: String(parsed.reason) } : {}),
-            ...(parsed.detail !== undefined ? { detail: String(parsed.detail) } : {}),
-          }
-        }
-      } catch {
-        // 坏 JSON/读到写一半：下轮再读（daemon 侧原子写使本分支近不可达——兜底不炸）
-      }
-    }
-    if (Date.now() >= deadline) return undefined
-    await new Promise((resolve) => setTimeout(resolve, pollMs))
-  }
+  return STOP_CHANNEL.awaitResult(rootDir, id, timeoutMs, pollMs)
 }
 
 // —— PORT-OPS 记录/证据面再出口（OPS 补形 A 拆件：实现在 control/ops/landing.ts）——

@@ -32,11 +32,13 @@
  * 岗移除＝快照消失的岗 removeJob；不用 fs.watch（watch-file 盲窗教训见 sources.ts 头注）；
  * 稳定窗 minStableMs（缺省 500）＝首见记 pending，连续两拍不变且距首见≥窗才动手（半写防护）。
  */
-import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
+import { sha256Hex } from '@studio-next/core'
 
 // 控制面文件通道拆至 hot-reload/channel.ts（docs/20-§十五.三）；此处再出口保持既有导入面零改行。
+// 通道实现单源=`control/channel/protocol.ts`（studio-dev-555 三通道合并：stop/reload/restart 同一套
+// 原子写/分类读/消费/轮询）；channel.ts 只留 reload 薄语义（形状/解码）。
 export * from './hot-reload/channel.ts'
 import { readReloadRequest, writeReloadResult } from './hot-reload/channel.ts'
 import {
@@ -120,11 +122,11 @@ export function fingerprintDirectory(files: Record<string, string>): DirectoryFi
   const perFile: Record<string, string> = {}
   const lines: string[] = []
   for (const rel of Object.keys(files).sort()) {
-    const hash = createHash('sha256').update(files[rel] ?? '', 'utf8').digest('hex')
+    const hash = sha256Hex(files[rel] ?? '')
     perFile[rel] = hash
     lines.push(`${rel}:${hash}`)
   }
-  return { overall: `sha256:${createHash('sha256').update(lines.join('\n'), 'utf8').digest('hex')}`, files: perFile }
+  return { overall: `sha256:${sha256Hex(lines.join('\n'))}`, files: perFile }
 }
 
 /** 变更清单渲染（note 用：`+a、+b、-c、~d`——RELOAD note 的资产清单段） */

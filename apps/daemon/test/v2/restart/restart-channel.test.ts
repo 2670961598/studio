@@ -5,34 +5,49 @@
  * 负向 N1–N7 与 N6 provenance 两形；拒绝留痕走 `SCHEMA_EVOLVE;RESTART;` 过渡口径（C-1）。
  * 不碰生产：全部 tmp 根 + 临时台账。
  */
-import { chmodSync, linkSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, linkSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { openLedger, type Ledger } from '@studio-next/store'
 import {
-  consumeRestartRequest,
   effectiveDrainTimeoutMs,
   inspectRestartRequest,
   loadRestartAuthorizations,
-  readRestartResult,
   rejectRestartRequest,
   RESTART_LAST_SEEN_KV_KEY,
-  RESTART_REQUEST_CONSUMED_FILE,
-  RESTART_REQUEST_FILE,
   restartDirOf,
   restartNote,
   validateRestartAuthorization,
-  writeRestartRequest,
   type RestartAuthorization,
   type RestartOrgSnapshot,
   type RestartRequest,
+  type RestartResult,
 } from '../../../src/control/restart/channel.ts'
+import { writeJsonAtomic } from '../../../src/control/channel/file-io.ts'
+import { controlFileOf } from '../../../src/control/channel/paths.ts'
 import { makeUlid } from '../../../src/engine/tools/id.ts'
 
 let root = ''
 let ledger: Ledger
 const NOW = 1_793_000_000_000
+
+/** 线协议文件名（restart 通道薄语义；常量已降级为 channel 内部——studio-dev-555 要求③） */
+const RESTART_REQUEST_FILE = 'restart.request.json'
+const RESTART_RESULT_FILE = 'restart.result.json'
+const RESTART_REQUEST_CONSUMED_FILE = `${RESTART_REQUEST_FILE}.consume`
+
+/** 模拟 CLI 侧写请求（生产写面已收口到通用协议 `channel/file-io.ts`；这里只走同一原子写原语） */
+function writeRequestFile(request: RestartRequest): void {
+  writeJsonAtomic(controlFileOf(root, RESTART_REQUEST_FILE), request, { mode: 0o600, tmpSuffix: request.id })
+}
+
+/** 读回执（读回执函数已降级为通道内部；测试按线协议解码同一形状） */
+function readResultFile(): RestartResult | undefined {
+  const read = readFileSync(controlFileOf(root, RESTART_RESULT_FILE), 'utf8')
+  const parsed = JSON.parse(read) as RestartResult
+  return parsed
+}
 
 const auth: RestartAuthorization = {
   ref: 'sha256:approved-ref-504',
@@ -90,21 +105,15 @@ afterAll(() => {
 describe('S1 文件面：写/读/消费（原子协议）', () => {
   it('合法请求：写→读回深等，control 面 0700 / 文件 0600', () => {
     const request = validRequest()
-    writeRestartRequest(root, request)
+    writeRequestFile(request)
     const inspected = inspectRestartRequest(root, process.getuid === undefined ? {} : { expectedUid: process.getuid() })
     expect(inspected.kind).toBe('ok')
     if (inspected.kind === 'ok') expect(inspected.request).toEqual(request)
     expect(restartDirOf(root)).toBe(path.join(root, 'restart'))
   })
 
-  it('消费请求：原子改名 .consume，live 面清空；重复消费 false 不炸', () => {
-    expect(consumeRestartRequest(root)).toBe(true)
-    expect(inspectRestartRequest(root).kind).toBe('absent')
-    expect(consumeRestartRequest(root)).toBe(false)
-  })
-
   it('N7 坏 JSON → bad-json（不崩、不当授权）', () => {
-    writeFileSync(path.join(root, 'control', RESTART_REQUEST_FILE), '{oops', { encoding: 'utf8', mode: 0o600 })
+    writeFileSync(controlFileOf(root, RESTART_REQUEST_FILE), '{oops', { encoding: 'utf8', mode: 0o600 })
     const inspected = inspectRestartRequest(root)
     expect(inspected.kind).toBe('rejected')
     if (inspected.kind === 'rejected') expect(inspected.reason).toBe('bad-json')
@@ -112,7 +121,7 @@ describe('S1 文件面：写/读/消费（原子协议）', () => {
 
   it('N7 未知字段 → unknown-field（strict schema）', () => {
     const request = { ...validRequest(), extra: true }
-    writeFileSync(path.join(root, 'control', RESTART_REQUEST_FILE), JSON.stringify(request), { encoding: 'utf8', mode: 0o600 })
+    writeFileSync(controlFileOf(root, RESTART_REQUEST_FILE), JSON.stringify(request), { encoding: 'utf8', mode: 0o600 })
     const inspected = inspectRestartRequest(root)
     expect(inspected.kind).toBe('rejected')
     if (inspected.kind === 'rejected') expect(inspected.reason).toBe('unknown-field')
@@ -120,14 +129,14 @@ describe('S1 文件面：写/读/消费（原子协议）', () => {
 
   it('N1 缺 authorizationRef → auth-ref-missing', () => {
     const { authorizationRef: _dropped, ...rest } = validRequest()
-    writeFileSync(path.join(root, 'control', RESTART_REQUEST_FILE), JSON.stringify(rest), { encoding: 'utf8', mode: 0o600 })
+    writeFileSync(controlFileOf(root, RESTART_REQUEST_FILE), JSON.stringify(rest), { encoding: 'utf8', mode: 0o600 })
     const inspected = inspectRestartRequest(root)
     expect(inspected.kind).toBe('rejected')
     if (inspected.kind === 'rejected') expect(inspected.reason).toBe('auth-ref-missing')
   })
 
   it('id 非 ULID → id-invalid', () => {
-    writeFileSync(path.join(root, 'control', RESTART_REQUEST_FILE), JSON.stringify(validRequest({ id: 'not-a-ulid' })), {
+    writeFileSync(controlFileOf(root, RESTART_REQUEST_FILE), JSON.stringify(validRequest({ id: 'not-a-ulid' })), {
       encoding: 'utf8',
       mode: 0o600,
     })
@@ -137,29 +146,29 @@ describe('S1 文件面：写/读/消费（原子协议）', () => {
   })
 
   it('N6 符号链接 → control-file-provenance', () => {
-    unlinkSync(path.join(root, 'control', RESTART_REQUEST_FILE))
+    unlinkSync(controlFileOf(root, RESTART_REQUEST_FILE))
     const target = path.join(root, 'request-target.json')
     writeFileSync(target, JSON.stringify(validRequest()), { encoding: 'utf8', mode: 0o600 })
-    symlinkSync(target, path.join(root, 'control', RESTART_REQUEST_FILE))
+    symlinkSync(target, controlFileOf(root, RESTART_REQUEST_FILE))
     const inspected = inspectRestartRequest(root)
     expect(inspected.kind).toBe('rejected')
     if (inspected.kind === 'rejected') expect(inspected.reason).toBe('control-file-provenance')
-    unlinkSync(path.join(root, 'control', RESTART_REQUEST_FILE))
+    unlinkSync(controlFileOf(root, RESTART_REQUEST_FILE))
   })
 
   it('N6 硬链接 → control-file-provenance（nlink>1）', () => {
     const target = path.join(root, 'hardlink-target.json')
     writeFileSync(target, JSON.stringify(validRequest()), { encoding: 'utf8', mode: 0o600 })
-    linkSync(target, path.join(root, 'control', RESTART_REQUEST_FILE))
+    linkSync(target, controlFileOf(root, RESTART_REQUEST_FILE))
     const inspected = inspectRestartRequest(root)
     expect(inspected.kind).toBe('rejected')
     if (inspected.kind === 'rejected') expect(inspected.reason).toBe('control-file-provenance')
-    unlinkSync(path.join(root, 'control', RESTART_REQUEST_FILE))
+    unlinkSync(controlFileOf(root, RESTART_REQUEST_FILE))
     unlinkSync(target)
   })
 
   it('N6 control 目录宽权限 0777 → control-file-provenance', () => {
-    writeRestartRequest(root, validRequest())
+    writeRequestFile(validRequest())
     chmodSync(path.join(root, 'control'), 0o777)
     const inspected = inspectRestartRequest(root)
     expect(inspected.kind).toBe('rejected')
@@ -168,14 +177,14 @@ describe('S1 文件面：写/读/消费（原子协议）', () => {
   })
 
   it('owner 不符（expectedUid 错配）→ control-file-provenance', () => {
-    writeRestartRequest(root, validRequest())
+    writeRequestFile(validRequest())
     const inspected = inspectRestartRequest(root, { expectedUid: (process.getuid?.() ?? 0) + 1 })
     expect(inspected.kind).toBe('rejected')
     if (inspected.kind === 'rejected') expect(inspected.reason).toBe('control-file-provenance')
   })
 
   it('文件超 8192B → control-file-provenance', () => {
-    writeFileSync(path.join(root, 'control', RESTART_REQUEST_FILE), 'x'.repeat(8193), { encoding: 'utf8', mode: 0o600 })
+    writeFileSync(controlFileOf(root, RESTART_REQUEST_FILE), 'x'.repeat(8193), { encoding: 'utf8', mode: 0o600 })
     const inspected = inspectRestartRequest(root)
     expect(inspected.kind).toBe('rejected')
     if (inspected.kind === 'rejected') expect(inspected.reason).toBe('control-file-provenance')
@@ -183,14 +192,14 @@ describe('S1 文件面：写/读/消费（原子协议）', () => {
 
   it('drainTimeoutMs 越界（<5000/>1800000）→ timeout-invalid；合法值可读', () => {
     writeFileSync(
-      path.join(root, 'control', RESTART_REQUEST_FILE),
+      controlFileOf(root, RESTART_REQUEST_FILE),
       JSON.stringify(validRequest({ id: makeUlid(NOW + 1), drainTimeoutMs: 1 })),
       { encoding: 'utf8', mode: 0o600 },
     )
     let inspected = inspectRestartRequest(root)
     expect(inspected.kind).toBe('rejected')
     if (inspected.kind === 'rejected') expect(inspected.reason).toBe('timeout-invalid')
-    writeRestartRequest(root, validRequest({ id: makeUlid(NOW + 2), drainTimeoutMs: 5000 }))
+    writeRequestFile(validRequest({ id: makeUlid(NOW + 2), drainTimeoutMs: 5000 }))
     inspected = inspectRestartRequest(root)
     expect(inspected.kind).toBe('ok')
     if (inspected.kind === 'ok') expect(inspected.request.drainTimeoutMs).toBe(5000)
@@ -268,7 +277,7 @@ describe('S1 授权链：ref/期限/一次性/组织相对谓词（N2–N5）', 
 
 describe('S1 拒绝留痕/期限/事件 note（C-1 过渡口径）', () => {
   it('rejectRestartRequest：回执+事件 note 前缀+请求消费（拒绝不改运行态）', () => {
-    writeRestartRequest(root, validRequest({ id: makeUlid(NOW + 3) }))
+    writeRequestFile(validRequest({ id: makeUlid(NOW + 3) }))
     const requestId = inspectRestartRequest(root)
     expect(requestId.kind).toBe('ok')
     rejectRestartRequest(ledger, {
@@ -280,10 +289,10 @@ describe('S1 拒绝留痕/期限/事件 note（C-1 过渡口径）', () => {
       reason: 'actor-not-authorized',
       detail: '测试拒绝',
       actorId: 'ENG-1',
-      file: path.join(root, 'control', RESTART_REQUEST_FILE),
+      file: controlFileOf(root, RESTART_REQUEST_FILE),
       now: NOW,
     })
-    const result = readRestartResult(root)
+    const result = readResultFile()
     expect(result?.ok).toBe(false)
     expect(result?.state).toBe('rejected')
     const event = ledger.queryEvents().find((e) => (e.note ?? '').startsWith('SCHEMA_EVOLVE;RESTART;phase=rejected'))

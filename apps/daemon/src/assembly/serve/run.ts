@@ -20,26 +20,8 @@ import type { InvokeSource } from '@studio-next/contract'
 import { openLedgerWriter, type Ledger } from '@studio-next/store'
 import { answerReloadNoCompanyDir } from '../../control/hot-reload.ts'
 import { consumeStopRequest, readStopRequest, STOP_LAST_SEEN_KV_KEY, writeStopResult } from '../../control/stop-channel.ts'
-import {
-  appendDaemonEvent,
-  appendRestartEvent,
-  rejectRestartRequest,
-  type RestartReject,
-  effectiveDrainTimeoutMs,
-  inspectRestartRequest,
-  loadRestartAuthorizations,
-  RESTART_LAST_SEEN_KV_KEY,
-  RESTART_USED_KV_PREFIX,
-  restartNote,
-  eventMetaOf,
-  toRestartOrgSnapshot,
-  validateRestartAuthorization,
-  writeRestartResult,
-} from '../../control/restart/channel.ts'
-import { authorizerOf, readCheckpoint, readLastExit, writeExitMarkOnStop, writeLastExit } from '../../control/restart/checkpoint.ts'
-import { alarmRestartCheckpointMissing, runRestartSelfcheckAtBoundary } from '../../control/restart/selfcheck-run.ts'
+import { writeExitMarkOnStop } from '../../control/restart/checkpoint.ts'
 import type { TickReport } from '../../engine/tick-report/types.ts'
-import type { DrainSettleResult } from '../../engine/drain/drain.ts'
 import { takeOverRunningWorkRecords } from '../../engine/harvest/inflight-takeover.ts'
 import { noopLinesOf, renderTick } from '../render/tick.ts'
 import { DEMO_SNAPSHOT } from '../demo/demo-snapshot.ts'
@@ -49,9 +31,8 @@ import type { MatrixHrFace } from '../../engine/hrsync/hrsync.ts'
 import type { NotifyBroadcastFace } from '../../engine/notify/broadcast.ts'
 import type { MatrixRoomFace, MatrixRoomFaceContext } from '../../engine/rooms/room-duty.ts'
 import { parseDaemonConfig, type ServeConfig } from './config.ts'
-import { parseRestartAuthorizers } from '../serveconfig/restart.ts'
 import { buildServeRuntime } from './runtime.ts'
-import { writeRestartCheckpointStep, type RestartRunCtx } from './restart-checkpoint.ts'
+import { RestartOrchestrator, readRestartStartupFace } from './restart/orchestrator.ts'
 
 /** runServe 启动日志的闸门形态（buildServeRuntime 同判据：acceptance 配置给定=真单模式） */
 function realGateMode(config: ServeConfig): boolean {
@@ -102,19 +83,10 @@ export async function runServe(
 ): Promise<ServeResult> {
   const config = parseDaemonConfig(readFileSync(path.resolve(configPath), 'utf8'))
   const rootDirAbs = path.resolve(config.rootDir)
-  // —— 受权重启启动面（studio-dev-504 S3/S5）：上一命 last-exit/checkpoint 读回（仅开面时）；
-  //    开面即装载部署面预登记授权（坏文件/空表/全过期在 config 校验已拒，此处再取运行期副本）——
-  const priorLastExit = config.restartEnabled ? readLastExit(rootDirAbs) : undefined
-  const priorCheckpoint =
-    priorLastExit?.exitClass === 'restart' && priorLastExit.checkpoint !== undefined
-      ? readCheckpoint(priorLastExit.checkpoint.path)
-      : undefined
-  const restartAuthorizations = config.restartEnabled
-    ? loadRestartAuthorizations({
-        ...(config.restartAuthorizationFile !== undefined ? { file: path.resolve(config.restartAuthorizationFile) } : {}),
-        ...(config.restartAuthorizations !== undefined ? { inline: config.restartAuthorizations } : {}),
-      })
-    : []
+  // —— 受权重启启动面（studio-dev-504 S3/S5；编排体=assembly/serve/restart/orchestrator.ts）：
+  //    上一命 last-exit/checkpoint 读回（仅开面时）+ 部署面预登记授权装载——须在
+  //    openLedgerWriter **之前**（坏授权文件在拿写者围栏前拒启，与原内联实现同序）。
+  const restartStartup = readRestartStartupFace(config, rootDirAbs)
   // 台账写者围栏（PB-5 / PRB-14 正面；store/src/writer-lease.ts）：daemon 启动即取
   // `<db>.writer.lock`——另一 daemon 持锁且进程存活 ⇒ STALL/writer-lease-held 拒启
   // （message 含持有者 pid/owner，不覆盖锁文件）；前命崩溃留下的死 pid 锁清理一次后接管。
@@ -147,12 +119,20 @@ export async function runServe(
     snapshot = await loadCompanyAtBoot({ companyDir: config.companyDir, rootDir: rootDirAbs, log: (line) => console.log(line), onRefuse: () => ledger.close(), ...(config.agentYaml !== undefined ? { agentYaml: config.agentYaml } : {}) })
   }
 
-  // —— 重启检查点缺失面：restart 标记在但摘要读不回——ALARM 如实上报，不静默跳自检 ——
-  if (config.restartEnabled && priorLastExit?.exitClass === 'restart' && priorCheckpoint === undefined) {
-    const meta = eventMetaOf(snapshot, undefined, config.company)
-    alarmRestartCheckpointMissing(ledger, { company: config.company, ...meta, requestId: priorLastExit.requestId, now: Date.now() })
-    console.error('[serve] 受权重启标记存在但检查点摘要读不回——自检无法执行，落 ALARM（不宣称已恢复）')
-  }
+  // —— 受权重启编排器（studio-dev-504 S3/S5；studio-dev-555 把 run.ts 内联的 253 行重启块
+  //    析出为独立编排件，run.ts 只留 step() 调用与退出映射）：启动期读回面注入 + 检查点缺失
+  //    ALARM（restart 标记在但摘要读不回——如实上报，不静默跳自检）。
+  const restart = new RestartOrchestrator({
+    config,
+    ledger,
+    rootDir: rootDirAbs,
+    snapshot,
+    startup: restartStartup,
+    now: () => Date.now(),
+    log: (line) => console.log(line),
+    errorLine: (line) => console.error(line),
+  })
+  restart.alarmIfCheckpointMissing()
 
   // —— Taiga 启动探针（fail-fast，platform: taiga 时）：一次只读 fields.schema() 拉通
   //    网络→auth→项目解析→状态集四层任一不通=启动期明报 exit 1（不等首拍炸）；探针只读
@@ -180,6 +160,15 @@ export async function runServe(
   // REC-WORK-18 → PORT-HIST（assembly/ops）。runServe **只持有装配面、不自动触发**
   // emergencyStop——控制面停机仍走 stop-channel 文件协议（行为/顺序不变）。
   void ops
+  // 编排器注入运行栈面（engine 派发闸/在途结算、唤起源停、优雅停、退出前信号解绑）
+  restart.bindRuntime({
+    engine,
+    sources,
+    stop,
+    detachSignals: () => {
+      for (const sig of ['SIGINT', 'SIGTERM'] as const) process.off(sig, onSignal)
+    },
+  })
 
   // 未挂公司目录的 daemon：L1 热重载不适用——reload 请求仍回执拒绝（不悬空 CLI 轮询）
   let answeredRequestId: string | null = null
@@ -188,11 +177,6 @@ export async function runServe(
   let stopLastSeenId: string | null = ledger.kvGet(STOP_LAST_SEEN_KV_KEY)
   // 本进程已应答的停机请求 id（回执面：只对本进程消费的请求落回执——kv 读回的旧 id 不复回）
   let honoredStopId: string | null = null
-  // —— 受权重启编排态（studio-dev-504 S3）：idle → draining → checkpointing → exit(0) ——
-  let restartLastSeenId: string | null = ledger.kvGet(RESTART_LAST_SEEN_KV_KEY)
-  let restartState: 'idle' | 'draining' | 'checkpointing' = 'idle'
-  let restartCtx: RestartRunCtx | undefined
-  let selfcheckDone = priorCheckpoint === undefined
   const processStartedAt = Date.now()
   let cursorLoopSeen = false
   // 残留请求去重观测（静默去重=观察黑洞）：启动期 live 请求与 kv 去重位命中即落一行
@@ -227,29 +211,6 @@ export async function runServe(
     engine.ingest([intent])
   })
 
-  // —— 重启留痕/拒绝辅助（拍边界单线程；失败只影响留痕不炸主循环） ——
-  const rejectRestart = (id: string, reason: string, detail: string, actorId: string | undefined, file: string): void => {
-    const meta = eventMetaOf(snapshot, actorId, config.company)
-    try {
-      rejectRestartRequest(ledger, {
-        rootDir: rootDirAbs,
-        company: config.company,
-        ...meta,
-        id,
-        reason: reason as RestartReject,
-        detail,
-        ...(actorId !== undefined ? { actorId } : {}),
-        file,
-        now: Date.now(),
-      })
-    } catch (err) {
-      console.error(`[serve] 重启拒绝收口失败：${err instanceof Error ? err.message : String(err)}`)
-    }
-    restartLastSeenId = id
-    ledger.kvSet(RESTART_LAST_SEEN_KV_KEY, id)
-    console.error(`[serve] 受权重启请求拒绝（id=${id} reason=${reason}）：${detail}`)
-  }
-
   let ticks = 0
   let lastReport: TickReport | undefined
   while (!stopped) {
@@ -282,203 +243,22 @@ export async function runServe(
       answeredRequestId = answerReloadNoCompanyDir(path.resolve(config.rootDir), config.company, answeredRequestId)
     }
     // —— 重启后自检（studio-dev-504 S5；#497 §4.8）：tick 窗口/总超时到即跑一次，四口径
-    //    ＋takeover 交叉核对；结果落 selfcheck-*.json，失败 DAILY_ALARM+ESCALATE，不宣称恢复。
-    if (!selfcheckDone && priorCheckpoint !== undefined) {
-      const due = ticks >= config.restartSelfcheckTicks || Date.now() - processStartedAt >= config.restartSelfcheckTimeoutMs
-      if (due) {
-        selfcheckDone = true
-        await runRestartSelfcheckAtBoundary({
-          ledger,
-          rootDir: rootDirAbs,
-          company: config.company,
-          checkpoint: priorCheckpoint,
-          ticksSinceStart: ticks,
-          processStartedAt,
-          cursorLoopSeen,
-          takeover: takeover.takenOver,
-          versionAlignPolicy: config.restartVersionAlignPolicy,
-          minTicks: config.restartSelfcheckTicks,
-          restartProbe,
-          metaOf: (personId) => eventMetaOf(snapshot, personId, config.company),
-          log: (line) => console.log(line),
-          error: (line) => console.error(line),
-          now: () => Date.now(),
-        })
-      }
-    }
+    //    ＋takeover 交叉核对；幂等闸/落盘/失败 ALARM+ESCALATE 全在编排器内（不宣称恢复）。
+    await restart.maybeRunSelfcheck({
+      ticks,
+      processStartedAt,
+      cursorLoopSeen,
+      takeover: takeover.takenOver,
+      restartProbe,
+    })
 
-    // —— 受权重启控制面（studio-dev-504 S3；#497 §4.1/§4.2）：授权通过→RESTART_STARTED→
-    //    draining；拒绝/重放/越级一律回执+事件，不改运行态（fail-closed）。
-    if (config.restartEnabled && restartState === 'idle') {
-      const inspection = inspectRestartRequest(rootDirAbs)
-      if (inspection.kind === 'rejected') {
-        // 无 id 面（坏 JSON/provenance）以「reason」去重：消费失败时防每拍重复落拒绝事件
-        const rejectionKey = `rejected:${inspection.reason}`
-        if (restartLastSeenId !== rejectionKey) {
-          rejectRestart('-', inspection.reason, inspection.detail, undefined, inspection.file)
-          restartLastSeenId = rejectionKey
-          ledger.kvSet(RESTART_LAST_SEEN_KV_KEY, rejectionKey)
-        }
-      } else if (inspection.kind === 'ok' && inspection.request.id !== restartLastSeenId) {
-        const request = inspection.request
-        const org = toRestartOrgSnapshot(snapshot)
-        const usedRefs = new Set<string>()
-        if (ledger.kvGet(`${RESTART_USED_KV_PREFIX}${request.authorizationRef}`) !== null) usedRefs.add(request.authorizationRef)
-        const verdict = validateRestartAuthorization({
-          request,
-          authorizations: restartAuthorizations,
-          org,
-          now: Date.now(),
-          usedRefs,
-          extraAuthorizers: parseRestartAuthorizers(config.restartAuthorizers),
-        })
-        if (!verdict.ok) {
-          rejectRestart(request.id, verdict.reason, verdict.detail, request.actor.personId, inspection.file)
-        } else {
-          const person = org.people.find((p) => p.id === request.actor.personId)
-          const authorizer = authorizerOf(request.actor, person?.level ?? request.actor.level, person?.role ?? request.actor.role)
-          const timeoutMs = effectiveDrainTimeoutMs(config.restartDrainTimeoutMs, request.drainTimeoutMs)
-          const running = ledger.listWorkRecords().filter((r) => r.status === 'running')
-          restartCtx = {
-            request,
-            authorizationRef: request.authorizationRef,
-            authorizer,
-            deadline: Date.now() + timeoutMs,
-            inflightAtRequest: running.length,
-            startRunningIds: running.map((r) => r.id),
-            inconsistent: false,
-          }
-          restartLastSeenId = request.id
-          ledger.kvSet(RESTART_LAST_SEEN_KV_KEY, request.id)
-          writeRestartResult(rootDirAbs, {
-            id: request.id,
-            ok: true,
-            accepted: true,
-            state: 'draining',
-            detail: `authorized; drain_timeout_ms=${timeoutMs}`,
-          })
-          const meta = eventMetaOf(snapshot, request.actor.personId, config.company)
-          appendRestartEvent(ledger, {
-            company: config.company,
-            ...meta,
-            now: Date.now(),
-            note: restartNote('started', [
-              ['reason', request.reason],
-              ['authorizer', authorizer.personId],
-              ['authorization_ref', request.authorizationRef],
-              ['inflight_before', running.length],
-              ['drain_timeout_ms', timeoutMs],
-              ['request_id', request.id],
-            ]),
-          })
-          if (request.stopSources === true) sources.stopAll()
-          engine.beginDrain(request.reason)
-          restartState = 'draining'
-          console.log(`[serve] 受权重启进入 draining（id=${request.id} authorizer=${authorizer.personId} 在途=${running.length} deadline=${timeoutMs}ms）——只关派发闸，收割/合并/回收照跑`)
-        }
-      }
-    }
-
-    // —— draining 结算/检查点（#497 §4.4/§4.5）：inflight 与 running work_records 双面清零
-    //    →检查点；到期先整树杀+interrupted 如实收口，再检查点。顺序即正确性。
-    if (restartState === 'draining' && restartCtx !== undefined && lastReport !== undefined) {
-      const runningNow = ledger.listWorkRecords().filter((r) => r.status === 'running')
-      const inflightZero = lastReport.inflightAfter === 0
-      const recordsZero = runningNow.length === 0
-      if (inflightZero !== recordsZero) restartCtx.inconsistent = true
-      let settle: DrainSettleResult | undefined
-      if (inflightZero && recordsZero) {
-        // 自然结算：四要件由既有收割链判定，超时面不发生
-      } else if (Date.now() >= restartCtx.deadline) {
-        settle = await engine.forceSettleTimeout()
-        const meta = eventMetaOf(snapshot, restartCtx.authorizer.personId, config.company)
-        appendRestartEvent(ledger, {
-          company: config.company,
-          ...meta,
-          now: Date.now(),
-          note: restartNote('drain_timeout', [
-            ['interrupted', settle.interrupted.map((i) => `${i.ticket}#att${i.attempt}`).join(',') || 'none'],
-            ['deadline_ms', effectiveDrainTimeoutMs(config.restartDrainTimeoutMs, restartCtx.request.drainTimeoutMs)],
-            ['request_id', restartCtx.request.id],
-          ]),
-        })
-        console.error(`[serve] 受权重启 draining 到期：${settle.interrupted.length} 条在途整树杀并标 interrupted（不判四要件、不烧断路连击）`)
-      }
-      if ((inflightZero && recordsZero) || settle !== undefined) {
-        restartState = 'checkpointing'
-        const ctx = restartCtx
-        const meta = eventMetaOf(snapshot, ctx.authorizer.personId, config.company)
-        try {
-          // 检查点第 5 步先行（WAL 收干；失败=检查点失败，不静默）——随后事件/摘要/close/exit 标记
-          const step = writeRestartCheckpointStep({
-            ledger,
-            company: config.company,
-            dbPath: path.resolve(config.db),
-            rootDir: rootDirAbs,
-            ctx,
-            settle,
-            snapshot,
-          })
-          await stop()
-          writeLastExit(rootDirAbs, {
-            schema: 1,
-            authorized: true,
-            exitClass: 'restart',
-            requestId: ctx.request.id,
-            at: Date.now(),
-            checkpoint: { path: step.written.path, hash: step.written.hash },
-            interrupted: step.interrupted.length,
-          })
-          console.log(
-            `[serve] 受权重启检查点完成（id=${ctx.request.id} tick=${step.tickSeq} settled=${step.settled.length} interrupted=${step.interrupted.length} exit=0 authorized=true）——等待 supervisor 拉起`,
-          )
-          process.off('SIGINT', onSignal)
-          process.off('SIGTERM', onSignal)
-          return {
-            ticks,
-            stopReason: 'restart',
-            restart: { requestId: ctx.request.id, checkpointPath: step.written.path, checkpointHash: step.written.hash, interrupted: step.interrupted.length },
-          }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err)
-          lastError = msg
-          console.error(`[serve] 受权重启检查点失败：${msg}——exit 非 0 + ALARM，不写 authorized 标记`)
-          try {
-            appendRestartEvent(ledger, {
-              company: config.company,
-              ...meta,
-              now: Date.now(),
-              note: restartNote('failed', [
-                ['reason', msg],
-                ['request_id', ctx.request.id],
-                ['exit_class', 'crash'],
-              ]),
-            })
-            appendDaemonEvent(ledger, {
-              event: 'DAILY_ALARM',
-              company: config.company,
-              ...meta,
-              now: Date.now(),
-              note: `RESTART_CHECKPOINT_FAIL;request_id=${ctx.request.id};reason=${msg}`,
-            })
-          } catch {
-            // 台账已不可写：日志已如实上报
-          }
-          try {
-            await stop()
-          } catch {
-            // 收口失败不覆盖 checkpoints 失败分类
-          }
-          try {
-            writeLastExit(rootDirAbs, { schema: 1, authorized: false, exitClass: 'crash', requestId: ctx.request.id, at: Date.now() })
-          } catch {
-            // 退出标记写失败：无标记=supervisor 按 crash 处理（不冒充 authorized）
-          }
-          process.off('SIGINT', onSignal)
-          process.off('SIGTERM', onSignal)
-          return { ticks, stopReason: 'restart-failed', lastError: msg }
-        }
-      }
+    // —— 受权重启拍边界编排（studio-dev-504 S3；#497 §4.1/§4.2/§4.4/§4.5）：受理→draining
+    //    结算→检查点→exit；拒绝/重放/越级一律回执+事件不改运行态（体见 restart/orchestrator.ts）。
+    const restartOutcome = await restart.step({ ticks, lastReport })
+    if (restartOutcome.kind === 'exit') {
+      return restartOutcome.exit.kind === 'restart'
+        ? { ticks, stopReason: 'restart', restart: restartOutcome.exit.restart }
+        : { ticks, stopReason: 'restart-failed', lastError: restartOutcome.exit.lastError }
     }
 
     // —— 控制面停机通道（DEV-9 顺带项，src/control/stop-channel.ts；DEV-41 重启失忆修复）：reload

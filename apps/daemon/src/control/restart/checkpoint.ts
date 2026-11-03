@@ -11,14 +11,14 @@
  * 诚实边界：repoHead/assetFingerprint 在 git 命令面不可用时如实为 null（versionAlign=unknown），
  * 不伪造版本对齐证据（#497 §4.10）。
  */
-import { createHash } from 'node:crypto'
-import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
+import { sha256Hex } from '@studio-next/core'
 import type { Ledger } from '@studio-next/store'
-import { fsyncPath, removeQuietly, restartDirOf, type RestartActor } from './channel.ts'
+import { writeJsonAtomic } from '../channel/file-io.ts'
+import { restartDirOf, type RestartActor } from './channel.ts'
 
-export const LAST_EXIT_FILE = 'last-exit.json'
-export const LAST_EXIT_SCHEMA = 1
+const LAST_EXIT_FILE = 'last-exit.json'
 
 /** 在途结算明细（自然收口/超时收口都在摘要里如实列出） */
 export interface RestartSettledItem {
@@ -66,27 +66,12 @@ export interface WrittenCheckpoint {
   bytes: string
 }
 
-/** sha256（检查点引用/证据哈希） */
+/**
+ * sha256（检查点引用/证据哈希）：**哈希单源**=`@studio-next/core` 的 `sha256Hex`（ENC-08）——
+ * studio-dev-555 消除本仓第 7 处 createHash 直连；本件只保留 `sha256:` 前缀形（既有口径）。
+ */
 export function sha256(text: string): string {
-  return `sha256:${createHash('sha256').update(text, 'utf8').digest('hex')}`
-}
-
-/** 原子写 JSON（tmp+fsync+rename+dir fsync；0600） */
-export function writeJsonAtomic(file: string, value: unknown): string {
-  const dir = path.dirname(file)
-  mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const bytes = `${JSON.stringify(value, null, 2)}\n`
-  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`
-  try {
-    writeFileSync(tmp, bytes, { encoding: 'utf8', mode: 0o600 })
-    fsyncPath(tmp)
-    renameSync(tmp, file)
-    fsyncPath(dir)
-  } catch (err) {
-    removeQuietly(tmp)
-    throw err
-  }
-  return bytes
+  return `sha256:${sha256Hex(text)}`
 }
 
 /** 检查点文件绝对路径（<rootDir>/restart/checkpoint-<requestId>.json） */
@@ -97,14 +82,14 @@ export function checkpointPathOf(rootDir: string, requestId: string): string {
 /** 写检查点摘要；返回路径+内容哈希（哈希=写入字节，事件 note 引用同一值） */
 export function writeRestartCheckpoint(rootDir: string, checkpoint: RestartCheckpoint): WrittenCheckpoint {
   const file = checkpointPathOf(rootDir, checkpoint.requestId)
-  const bytes = writeJsonAtomic(file, checkpoint)
+  const bytes = writeJsonAtomic(file, checkpoint, { mode: 0o600 })
   return { path: file, hash: sha256(bytes), bytes }
 }
 
 /** 写 last-exit.json（最后写：它出现=可以拉起） */
 export function writeLastExit(rootDir: string, mark: LastExitMark): string {
   const file = path.join(restartDirOf(rootDir), LAST_EXIT_FILE)
-  writeJsonAtomic(file, mark)
+  writeJsonAtomic(file, mark, { mode: 0o600 })
   return file
 }
 
@@ -185,7 +170,7 @@ export interface SelfcheckCheck {
 /** 写自检报告（失败也落——「不宣称已恢复」的证据面） */
 export function writeSelfcheckReport(rootDir: string, report: RestartSelfcheckReport): string {
   const file = path.join(restartDirOf(rootDir), `selfcheck-${report.at}.json`)
-  writeJsonAtomic(file, report)
+  writeJsonAtomic(file, report, { mode: 0o600 })
   return file
 }
 
@@ -195,23 +180,6 @@ export function writeSelfcheckReport(rootDir: string, report: RestartSelfcheckRe
  */
 export function walCheckpoint(ledger: Ledger): { walBefore: number; walAfter: number } {
   return ledger.checkpoint()
-}
-
-/** 目录可写探针的显式错误面（N9 注入/诊断用；不吞错） */
-export function assertRestartDirWritable(rootDir: string): void {
-  const dir = restartDirOf(rootDir)
-  mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const probe = path.join(dir, `.probe-${process.pid}`)
-  try {
-    const fd = openSync(probe, 'w', 0o600)
-    try {
-      fsyncSync(fd)
-    } finally {
-      closeSync(fd)
-    }
-  } finally {
-    removeQuietly(probe)
-  }
 }
 
 /** 授权人摘要（检查点/事件同源；level 取组织快照而非请求自述） */
