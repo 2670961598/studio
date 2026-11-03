@@ -159,3 +159,51 @@ export {
   toWebRequest,
 } from './server.ts'
 export type { HonoShellHandle, ListenHonoOptions, PanelApp, PanelAppOptions, PanelHandle, ServePanelOptions } from './server.ts'
+
+// 对话页层（conversation/——studio-dev-647 Phase 2；独立入口同包 ./conversation）：
+// 类型/纯函数/路由/页面四件；存储 Port 由 Phase 1（#646）装配注入，panel 不落盘。
+export {
+  CONVERSATION_PROTOCOL_VERSION,
+  DEFAULT_CONVERSATION_POLL_MS,
+  DEFAULT_PRODUCER_ID,
+  MAX_BODY_BYTES,
+  MAX_CLEAR_REASON,
+  MAX_HISTORY_ENTRIES,
+  MAX_MESSAGE_TEXT,
+  PRODUCER_TOKEN_HEADER,
+  ConversationConflictError,
+  authorizeConversationWrite,
+  compareConversationSummaries,
+  createConversationApp,
+  isPersonId,
+  loadConversationWritePolicy,
+  parseAfterSeq,
+  parseClearConversationBody,
+  parseSendMessageBody,
+  projectConversationView,
+  renderConversationPage,
+  summarizeConversation,
+} from './conversation/index.ts'
+export type {
+  AppendConversationMessageInput,
+  AppendConversationMessageResult,
+  ClearConversationBody,
+  ClearConversationInput,
+  ConversationActor,
+  ConversationActorKind,
+  ConversationAppOptions,
+  ConversationClear,
+  ConversationEntry,
+  ConversationMessage,
+  ConversationPageOptions,
+  ConversationSource,
+  ConversationStore,
+  ConversationSummary,
+  ConversationView,
+  ConversationWriteAllowed,
+  ConversationWriteAuthResult,
+  ConversationWriteDenied,
+  ConversationWritePolicy,
+  Parsed,
+  SendMessageBody,
+} from './conversation/index.ts'

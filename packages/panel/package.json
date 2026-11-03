@@ -21,6 +21,10 @@
     "./judge": {
       "import": "./src/judge.ts",
       "require": "./require-reject.cjs"
+    },
+    "./conversation": {
+      "import": "./src/conversation/index.ts",
+      "require": "./require-reject.cjs"
     }
   },
   "scripts": {

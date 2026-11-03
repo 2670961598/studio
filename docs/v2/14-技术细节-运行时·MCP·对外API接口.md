@@ -287,6 +287,33 @@ emergencyStop(req: EmergencyStopRequest, ctx): PortResult<StopReceipt>  // REC-W
 - 端口类型分区 `contract/src/ports/`（§二表）＝MIG-03；`PORT_VERSION='v0'` experimental 声明沿用；记录族表族＝MIG-03/04。
 - 平台三件套统一签名（bindingProfile/mapState/lossReport＋bindingId 选择器，治 L3J-P1-05）＝MIG-07，形状源=本卷 PORT-WORK 备注列＋v2/12 绑定卡。
 
+### 8.1 面板对话页装配（PANEL-CONV；:8791，studio-dev-647）
+
+> 规范锚：会话存储与双端同步契约=`docs/21-§七`；写权限与 fail-closed=`v2/15-§一 SEC-FC-01`／
+> `§二 SEC-SIG-01`；读面缺省与拒绝语义=`§0.2`。本节只冻结面板侧接口面，**不重复定义存储**。
+
+- 落点：`packages/panel/src/conversation/`（新特性开子目录，域平面纪律 `docs/20-§十五.四`）；
+  存储实现**不落 panel**——`ConversationStore` 由装配侧（Phase 1 daemon，#646）注入。
+- 端面（:8791，全部环回）：
+  | 方法/路径 | 语义 | 权限 |
+  |---|---|---|
+  | GET `/conversation` | 对话页（会话列表＋消息流＋输入＋clear） | 环回读 |
+  | GET `/api/conversations` | 会话摘要列表（personId/lastAt/lastText/count/clearedAt） | 环回读 |
+  | GET `/api/conversations/:personId?after=<seq>` | 历史投影；返回 `version/clearedAt/clearSeq/reset` | 环回读 |
+  | GET `/api/conversations/:personId/stream?after=<seq>` | SSE 增量（轮询存储，缺省 2s） | 环回读 |
+  | POST `/api/conversations/:personId/messages` | 追加 `message(source='panel')` | 制作人凭据 |
+  | POST `/api/conversations/:personId/clear` | 追加 `clear` 审计记录 | 制作人凭据 |
+- 写鉴权（fail-closed）：请求头 `X-Studio-Producer-Token` 与服务端 `STUDIO_PANEL_PRODUCER_TOKEN`
+  常量时间比对；未配置令牌=503；缺令牌=401；不匹配=403；`Content-Type` 必须 `application/json`
+  （CSRF 前置）。署名主体=`person`（SEC-SIG-01），`actorRef`=配置工号
+  `STUDIO_PANEL_PRODUCER_ID`（缺省 `PRIME-0`），**不接受客户端自报身份**。
+- 请求/响应形状：send `{text,clientMsgId?}`（text 1..4000）；clear `{reason?}`（≤200）；
+  错误体沿用 §四唯一错误体 `{error:{failure,category,subcause},traceId}`；幂等键=
+  `(personId, clientMsgId)`，同键同内容→200＋`deduped:true`，同键异内容→409。
+- 存储未接线（`ConversationStore` 缺席）：读/写 API 统一 503 `conversation-store-unavailable`，
+  页面显示降级横幅；**不得**返回空列表冒充「没有会话」，**不得**在 panel 侧落盘代偿。
+- 依赖：Phase 1 `#646` 的会话存储与装配注入；本卷不重复实现存储层（`docs/21-§7.1/§7.4`）。
+
 ## 九、审计处置表
 
 | 来源 | 条目 | 本卷处置 | 状态 |
@@ -334,6 +361,7 @@ emergencyStop(req: EmergencyStopRequest, ctx): PortResult<StopReceipt>  // REC-W
 4. **§四 凭证三档**：新增**凭据分级另轴** `credential_class`＝root／scoped（安全机制 v2/15 §七 SEC-ROOT-01..05；值集 v2/09 ENU-136）——operating root key 只由最高宰相持有、不进任何接口载荷/回执/日志/提示词；子 agent/执行体/外部伙伴只持 scoped key；不得以「持 root」代替授权链核验（语义与字段**登记 v2/09**、形状 v2/11）。审计表 DSF V11-06 行同步标注。
 5. **称谓**：卷内「宰相」改「最高宰相」。
 6. **未改**：PORT- 13 端口与 §二端口-文件映射单点表（F5）、MCP- 16 工具与 API- 16 端点计数、§0.2 接口层总约定、§五 署名与 ctl- 词族、§六 PRM 生成器接口、§七 工作空间端口、§九 审计处置表其余条目。
+7. **§8.1 面板对话页装配（PANEL-CONV，2026-11-04，studio-dev-647 Phase 2）**：补面板 :8791 对话页的端面/写鉴权/幂等/降级口径；存储与双端同步契约锚 `docs/21-§七`，端口实现归 Phase 1 `#646`；不新增 PORT- 端口、不改契约冻结面（端口计数仍＝13）。
 
 ---
 

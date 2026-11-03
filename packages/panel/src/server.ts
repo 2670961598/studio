@@ -62,6 +62,8 @@ import {
   buildJudgeSnapshot,
 } from './judge.ts'
 import { VENDOR_FILES, mountPanelStatic } from './static.ts'
+import { createConversationApp, type ConversationAppOptions } from './conversation/server.ts'
+import { loadConversationWritePolicy } from './conversation/api.ts'
 import {
   DEFAULT_BREAKER_DAYS,
   DEFAULT_COSTS_DAYS,
@@ -92,6 +94,12 @@ export interface PanelAppOptions {
   pageSize?: number
   /** SSE 轮询间隔 ms（缺省 2000；非正整数落回缺省） */
   streamIntervalMs?: number
+  /**
+   * 对话页注入（docs/v2/14-§8.1）：store 由 Phase 1（#646）装配注入；缺省=未接线，
+   * 页面照常渲染但读/写 API 一律 503（不返回空列表冒充无会话）。
+   * 写策略缺省从进程环境读取（STUDIO_PANEL_PRODUCER_TOKEN/PRODUCER_ID）。
+   */
+  conversation?: ConversationAppOptions
 }
 
 function clampLimit(raw: string | undefined, fallback: number): number {
@@ -165,6 +173,14 @@ export function createPanelApp(opts: PanelAppOptions): PanelApp {
   const app: PanelApp = new Hono()
 
   app.onError((err, c) => c.json({ ok: false, error: errText(err) }, 500))
+
+  // 对话页（docs/v2/14-§8.1）：满路径子应用。store 未注入时页面降级、API 503（fail-closed）。
+  app.route(
+    '/',
+    createConversationApp(
+      opts.conversation ?? { store: null, policy: loadConversationWritePolicy(process.env) },
+    ),
+  )
 
   // 静态面（/vendor/:file、/ui/*）先挂：与 /api/* 无路径交叠，位置只表达「业务路由之前」
   mountPanelStatic(app)
