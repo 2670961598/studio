@@ -1,9 +1,9 @@
 /**
- * test/v2/v14-records —— v14 记录族落表（`records`／DOM-05 记录投影）＋ v15 版本序列
+ * test/v2/v14-records —— v14 记录族落表（`records`／DOM-05 记录投影）＋ v15/v16 版本序列
  *
  * 依据（实现单必须引文档章节号——AGENTS §五.1）：
  *   - plan/05 IMPL-04-01（v14 记录族 DDL；验收：B9 复算含 14、`LATEST_VERSION` 单调 +1、
- *     `test:v2` 绿、无双写）／IMPL-04-02（v15 封顶，故本文件同时钉 `LATEST_VERSION=15`）
+ *     `test:v2` 绿、无双写）／IMPL-04-02（v15 触发器）与 GAP-V2-05 哈希链腿（v16，故本文件钉 `LATEST_VERSION=16`）
  *   - docs/v2/11 §〇（通用记录契约：§0.4 身份/幂等、§0.5 时间分层、§0.7 证明边界）／§一（74 类
  *     唯一登记处）／§0.9（13 AREA 封闭登记）
  *   - docs/v2/05 §三 DOM-03/04/05（`records`＝DOM-05 记录投影，**不是第四事实源**）
@@ -24,6 +24,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { openSqlite } from '../../src/driver.ts'
 import { LATEST_VERSION, currentVersion, migrate } from '../../src/migrations.ts'
+import { eventsChainMigration } from '../../src/events-chain.ts'
 import { eventsTriggersMigration, recordsMigration, recordsMigrations } from '../../src/records-migrations.ts'
 
 /** v2/11 §0.9 十三 AREA（封闭登记；AUTH 族含通用骨架 CMD/DEC/RCP/COR/EVT 五前缀） */
@@ -159,25 +160,26 @@ afterAll(async () => {
   await rm(root, { recursive: true, force: true })
 })
 
-describe('版本序列（B9 复算：v1..v15 单调 +1，v12 在 cost.ts、v14/v15 在 records-migrations.ts）', () => {
-  it('LATEST_VERSION=15 且新库直达 15（v14 记录族 + v15 触发器同批落地）', () => {
-    expect(LATEST_VERSION).toBe(15)
-    expect(currentVersion(db)).toBe(15)
-    expect(db.prepare('SELECT MAX(version) AS v FROM schema_version').get()).toEqual({ v: 15 })
+describe('版本序列（B9 复算：v1..v16 单调 +1，v12 在 cost.ts、v14/v15 在 records-migrations.ts、v16 在 events-chain.ts）', () => {
+  it('LATEST_VERSION=16 且新库直达 16（v14 记录族 + v15 触发器 + v16 events 哈希链）', () => {
+    expect(LATEST_VERSION).toBe(16)
+    expect(currentVersion(db)).toBe(16)
+    expect(db.prepare('SELECT MAX(version) AS v FROM schema_version').get()).toEqual({ v: 16 })
   })
 
-  it('schema_version 恰 15 行，版本集合=1..15（无跳号、无重放）', () => {
+  it('schema_version 恰 16 行，版本集合=1..16（无跳号、无重放）', () => {
     const rows = db.prepare('SELECT version FROM schema_version ORDER BY version').all() as unknown as Array<{
       version: number
     }>
     const versions = rows.map((r) => Number(r.version))
-    expect(versions).toEqual(Array.from({ length: 15 }, (_, i) => i + 1))
+    expect(versions).toEqual(Array.from({ length: 16 }, (_, i) => i + 1))
   })
 
-  it('条目序列：recordsMigrations=[14,15]，且 14 条目无触发器 / 15 条目无建表（增量各司其职）', () => {
-    expect(recordsMigrations.map((m) => m.version)).toEqual([14, 15])
+  it('条目序列：recordsMigrations=[14,15,16]，且 14 条目无触发器 / 15 条目无建表 / 16 只建链（增量各司其职）', () => {
+    expect(recordsMigrations.map((m) => m.version)).toEqual([14, 15, 16])
     expect(recordsMigration.version).toBe(14)
     expect(eventsTriggersMigration.version).toBe(15)
+    expect(eventsChainMigration.version).toBe(16)
     // v14 只建表/索引：DDL 内不得出现 DML、触发器、DROP（只建表不写数据）
     expect(recordsMigration.sql).toContain('CREATE TABLE records')
     expect(recordsMigration.sql).not.toMatch(/\b(?:INSERT|UPDATE|DELETE|DROP)\b/)
@@ -365,21 +367,21 @@ describe('插入/查询往返（DOM-05 投影面：信封维可判，payload 交
   })
 })
 
-describe('升级路径：v14 分段库 → v15（触发器补装、records 数据保留）', () => {
-  it('upTo:14 时 records 在库而 events 无触发器；再 migrate() 到 15 后触发器齐、记录不丢', () => {
+describe('升级路径：v14 分段库 → v16（触发器/链补装、records 数据保留）', () => {
+  it('upTo:14 时 records 在库而 events 无触发器；再 migrate() 到 16 后触发器/链齐、记录不丢', () => {
     const staged = new DatabaseSync(':memory:')
     try {
       expect(migrate(staged, { upTo: 14 })).toBe(14)
       expect(tableExists(staged, 'records')).toBe(true)
       expect(triggerNames(staged, 'events')).toEqual([])
       insertRecord(staged, { record_id: '01JUPG00000000000000001', record_area: 'MEM', record_type: 'REC-MEM-01' })
-      expect(migrate(staged)).toBe(15)
+      expect(migrate(staged)).toBe(16)
       expect(triggerNames(staged, 'events')).toEqual(['trg_events_no_delete', 'trg_events_no_update'])
       expect(staged.prepare('SELECT COUNT(*) AS c FROM records').get()).toEqual({ c: 1 })
       // 重开库再 migrate：幂等（版本不涨、不重放）
-      expect(migrate(staged)).toBe(15)
+      expect(migrate(staged)).toBe(16)
       const rows = staged.prepare('SELECT COUNT(*) AS c FROM schema_version').get() as unknown as { c: number }
-      expect(Number(rows.c)).toBe(15)
+      expect(Number(rows.c)).toBe(16)
     } finally {
       staged.close()
     }

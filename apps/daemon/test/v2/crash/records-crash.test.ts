@@ -164,11 +164,11 @@ describe('第 6 点登记与种子基线', () => {
     expect(CRASH_POINTS[5]).toBe(CRASH_POINT_NAME)
   })
 
-  it('崩溃前基线：库 v15、records/events/cost_daily 各 1 行、终态行 effective、integrity ok', () => {
+  it('崩溃前基线：库 v16、records/events/cost_daily 各 1 行、终态行 effective、integrity ok', () => {
     const ledger = openLedger(dbPath)
     try {
-      expect(currentVersion(ledger.db)).toBe(15)
-      expect(snapshot(ledger)).toEqual({ version: 15, records: 1, events: 1, costDaily: 1 })
+      expect(currentVersion(ledger.db)).toBe(16)
+      expect(snapshot(ledger)).toEqual({ version: 16, records: 1, events: 1, costDaily: 1 })
       expect(integrity(ledger.db)).toBe('ok')
       expect(recordRowOf(ledger.db, SEED_RECORD_ID)?.['effective_state']).toBe('effective')
       expect(ledger.queryEvents().map((event) => event.id)).toEqual([SEED_EVENT_ID])
@@ -189,7 +189,7 @@ describe('records-commit 崩溃注入（提交前缝隙）', () => {
 
     const ledger = openLedger(dbPath)
     try {
-      expect(snapshot(ledger)).toEqual({ version: 15, records: 1, events: 1, costDaily: 1 })
+      expect(snapshot(ledger)).toEqual({ version: 16, records: 1, events: 1, costDaily: 1 })
       expect(recordRowOf(ledger.db, CRASHING_RECORD_ID)).toBeUndefined()
     } finally {
       ledger.close()
@@ -206,14 +206,14 @@ describe('records-commit 崩溃注入（提交前缝隙）', () => {
 
     // —— 命中点直证：事务内与 COMMIT 前插入已生效（records=2），随后才死 ——
     const inTx = JSON.parse(evidenceLine(run, 'PRE_COMMIT')) as { version: number; records: number; events: number; costDaily: number; recordId: string }
-    expect(inTx).toMatchObject({ version: 15, records: 2, events: 1, costDaily: 1, recordId: CRASHING_RECORD_ID })
+    expect(inTx).toMatchObject({ version: 16, records: 2, events: 1, costDaily: 1, recordId: CRASHING_RECORD_ID })
 
     // —— 重启同库：未 COMMIT 的事务回滚（无半截行），已提交种子存活 ——
     const ledger = openLedger(dbPath)
     let afterCrash: Snapshot
     try {
       afterCrash = snapshot(ledger)
-      expect(afterCrash).toEqual({ version: 15, records: 1, events: 1, costDaily: 1 })
+      expect(afterCrash).toEqual({ version: 16, records: 1, events: 1, costDaily: 1 })
       expect(recordRowOf(ledger.db, CRASHING_RECORD_ID)).toBeUndefined()
       expect(recordRowOf(ledger.db, SEED_RECORD_ID)).toBeDefined()
       expect(recordRowOf(ledger.db, SEED_RECORD_ID)?.['effective_state']).toBe('effective')
@@ -234,11 +234,11 @@ describe('records-commit 崩溃注入（提交前缝隙）', () => {
     expect(run.code).toBe(0)
     expect(run.signal).toBeNull()
     const committed = JSON.parse(evidenceLine(run, 'COMMITTED')) as Snapshot & { inserted: boolean }
-    expect(committed).toMatchObject({ version: 15, records: 2, events: 1, costDaily: 1, inserted: true })
+    expect(committed).toMatchObject({ version: 16, records: 2, events: 1, costDaily: 1, inserted: true })
 
     const ledger = openLedger(dbPath)
     try {
-      expect(snapshot(ledger)).toEqual({ version: 15, records: 2, events: 1, costDaily: 1 })
+      expect(snapshot(ledger)).toEqual({ version: 16, records: 2, events: 1, costDaily: 1 })
       // 崩溃缝隙行正常提交：字段与场景一致、只一行（回滚无残留、重放不双写）
       const crashRow = recordRowOf(ledger.db, CRASHING_RECORD_ID)
       expect(crashRow).toBeDefined()

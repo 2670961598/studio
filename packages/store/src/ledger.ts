@@ -115,7 +115,8 @@ import type { CostDailyFace } from './cost.ts'
 import { excludedDomainRefs, type ExcludedDomainRef } from './backup.ts'
 import { backupLedgerTo, pruneTicketMirrors } from './mirror-gc.ts'
 import type { LedgerBackupResult, PruneTicketMirrorsOptions, PruneTicketMirrorsResult } from './mirror-gc.ts'
-import { assertRecord, optNum, optStr, str, type SqlRow } from './row-helpers.ts'
+import { assertRecord, optNum, optStr, rowToEvent, str, type SqlRow } from './row-helpers.ts'
+import { anchorEventsChain, computeEventHash, GENESIS_HASH, verifyEventsChain, type EventsChainReport } from './events-chain.ts'
 import { currentVersion, migrate } from './migrations.ts'
 import {
   BudgetRecordSchema,
@@ -238,11 +239,17 @@ export interface Ledger extends HrSyncQueueFace, PricingFace, UsageFace, ProbesF
   checkpoint(): WalCheckpointResult
   /** 当前 schema 版本（schema_version 表 MAX(version)；0=无迁移记录） */
   version(): number
-  /** events 唯一写口：先契约校验后插入（append-only） */
+  /** events 唯一写口：契约校验 → 链式摘要（v16）→ 链行+事件行 SAVEPOINT 原子插入（append-only） */
   appendEvent(record: unknown): AppendResult
   /** events 查询面（缺省升序；order='desc' 倒序——desc+limit=「最近 N 条」，见 EventQuery） */
   queryEvents(query?: EventQuery): EventRecord[]
-  /** events 全量 → JSONL（逐行含 ULID；F2-11 库→JSONL 单向派生） */
+  /**
+   * 事件哈希链全量重算校验（I-17／SEC-FC-04；审计/读命令面）：链断、内容不符、未覆盖事件
+   * → CONFIG_INVALID（fail-closed，detail 带 seq/event id）。打开时已自动校验一次；长跑进程
+   * 可按拍/按需复算（本面必读全表，非每读路径的默认前置）。
+   */
+  verifyEventsChain(): EventsChainReport
+  /** events 全量 → JSONL（逐行含 ULID；F2-11 库→JSONL 单向派生；链列不入导出） */
   dumpEvents(path: string): DumpResult
   insertWorkRecord(record: unknown): string
   getWorkRecord(id: string): WorkRecord | undefined
@@ -386,49 +393,7 @@ function canonicalTokens(tokens: EventRecord['tokens']): string {
   return `{${parts.join(',')}}`
 }
 
-function parseTokens(json: string): EventRecord['tokens'] {
-  const parsed: unknown = JSON.parse(json)
-  if (typeof parsed !== 'object' || parsed === null) {
-    configInvalid('store/evt:tokens-corrupt', `tokens 列不是 JSON 对象：${json}`)
-  }
-  const out: Record<string, number> = {}
-  for (const [k, v] of Object.entries(parsed)) {
-    if (typeof v === 'number') out[k] = v
-  }
-  return out as EventRecord['tokens']
-}
-
-// —— 行 ↔ 记录映射（events；列集逐列对齐 contract EventRecordSchema 字段名） ——
-
-function rowToEvent(row: SqlRow): EventRecord {
-  const rec: EventRecord = {
-    id: str(row, 'id'),
-    ts: Number(row['ts']),
-    company: str(row, 'company'),
-    issue: str(row, 'issue'),
-    event: str(row, 'event'),
-    actor: str(row, 'actor'),
-    attempt: Number(row['attempt']),
-    level: Number(row['level']),
-    dept: str(row, 'dept'),
-    tokens: parseTokens(str(row, 'tokens')),
-  }
-  const correlationId = optStr(row, 'correlation_id')
-  if (correlationId !== undefined) rec.correlation_id = correlationId
-  const causationId = optStr(row, 'causation_id')
-  if (causationId !== undefined) rec.causation_id = causationId
-  const costUsd = optNum(row, 'cost_usd')
-  if (costUsd !== undefined) rec.cost_usd = costUsd
-  const durationMs = optNum(row, 'duration_ms')
-  if (durationMs !== undefined) rec.duration_ms = durationMs
-  const size = optNum(row, 'size')
-  if (size !== undefined) rec.size = size
-  const payloadHash = optStr(row, 'payload_hash')
-  if (payloadHash !== undefined) rec.payload_hash = payloadHash
-  const note = optStr(row, 'note')
-  if (note !== undefined) rec.note = note
-  return rec
-}
+// —— 行 ↔ 记录映射（events；v16 起单一源落 row-helpers.ts，写面/链校验面共用） ——
 
 const INSERT_EVENT_SQL = `INSERT INTO events (
   id, ts, company, issue, event, actor, attempt, level, dept,
@@ -524,10 +489,19 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-/** 打开（或创建）台账库：建库 → PRAGMA 对齐 → migrate()（幂等）→ 返回句柄 */
+/** 打开（或创建）台账库：建库 → PRAGMA 对齐 → migrate()（幂等）→ 锚定/校验事件链 → 返回句柄 */
 export function openLedger(path: string): Ledger {
   const db = openSqlite(path)
-  migrate(db)
+  try {
+    migrate(db)
+    // v16：空链+存量事件=首次锚定；随后全量重算校验——链断/不符/未覆盖即抛错（fail-closed）
+    anchorEventsChain(db)
+  } catch (err) {
+    db.close()
+    // 告警面（拒读）：daemon 启动即校验；失败不返回句柄，调用方只能走人工处置
+    console.error(`[store] events 哈希链校验失败，拒绝打开台账（fail-closed）：${errorMessage(err)}`)
+    throw err
+  }
 
   const appendEvent = (record: unknown): AppendResult => {
     assertValidEvent(record)
@@ -543,25 +517,49 @@ export function openLedger(path: string): Ledger {
         `事件 id=${record.id} 已存在且内容不一致（append-only，拒绝覆盖语义的重复入账）`,
       )
     }
-    db.prepare(INSERT_EVENT_SQL).run(
-      record.id,
-      record.ts,
-      record.company,
-      record.issue,
-      record.event,
-      record.actor,
-      record.attempt,
-      record.level,
-      record.dept,
-      record.correlation_id ?? null,
-      record.causation_id ?? null,
-      canonicalTokens(record.tokens),
-      record.cost_usd ?? null,
-      record.duration_ms ?? null,
-      record.size ?? null,
-      record.payload_hash ?? null,
-      record.note ?? null,
-    )
+    // v16 哈希链：先插链行（触发器校验 prev=链尾）再插 events，SAVEPOINT 原子——
+    // 任一步失败整段回滚＝拒写（fail-closed）；链摘要覆盖整条记录内容 + 前驱 hash。
+    const tail = db.prepare('SELECT hash FROM events_chain ORDER BY seq DESC LIMIT 1').get() as
+      | { hash: unknown }
+      | undefined
+    const prevHash = tail === undefined ? GENESIS_HASH : String(tail.hash)
+    const hash = computeEventHash(prevHash, record)
+    db.exec('SAVEPOINT store_append_event')
+    try {
+      db.prepare('INSERT INTO events_chain (event_id, prev_hash, hash, created_at) VALUES (?, ?, ?, ?)').run(
+        record.id,
+        prevHash,
+        hash,
+        Date.now(),
+      )
+      db.prepare(INSERT_EVENT_SQL).run(
+        record.id,
+        record.ts,
+        record.company,
+        record.issue,
+        record.event,
+        record.actor,
+        record.attempt,
+        record.level,
+        record.dept,
+        record.correlation_id ?? null,
+        record.causation_id ?? null,
+        canonicalTokens(record.tokens),
+        record.cost_usd ?? null,
+        record.duration_ms ?? null,
+        record.size ?? null,
+        record.payload_hash ?? null,
+        record.note ?? null,
+      )
+      db.exec('RELEASE store_append_event')
+    } catch (err) {
+      db.exec('ROLLBACK TO store_append_event')
+      db.exec('RELEASE store_append_event')
+      configInvalid(
+        'store/events-chain:append-rejected',
+        `事件 ${record.id} 链式入账失败（链断裂/触发器拒绝——整条回滚，拒写）：${errorMessage(err)}`,
+      )
+    }
     return { id: record.id, appended: true }
   }
 
@@ -1603,6 +1601,7 @@ export function openLedger(path: string): Ledger {
     version: () => currentVersion(db),
     appendEvent,
     queryEvents,
+    verifyEventsChain: () => verifyEventsChain(db),
     dumpEvents,
     insertWorkRecord,
     getWorkRecord: (id: string) => {

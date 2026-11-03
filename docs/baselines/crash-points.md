@@ -205,7 +205,7 @@ Test Files  1 passed (1)
 1. **记录面只落 1/4 注入点**：plan/04 §1.4 登记的四类记录面注入点为「records 事务提交前后／备份快照写入中／投影重建中／rebuild 排除域报告写入中」；本单只落 `records-commit`（提交前后缝隙），**其余三点未登记、未建测试**——按 2026-10-28 父级登记归 plan/03 MIG-06 补登（`64d4bdc`），本件不冒充已覆盖。
 2. **⑥ 的写入是测试侧 v14 列级 INSERT**：daemon 侧不 import store 记录写面（hist.ts 未从包出口暴露），故崩溃子进程用 node:sqlite 原样写 v14 列——本腿证明的是**提交缝隙的库语义**，不证明 PORT-HIST 形状校验/幂等逻辑（后者归既有 `hist-append.test.ts`/`hist-query.test.ts`）。不因此宣称 hist 写口已被崩溃覆盖。
 3. **对账规则未决（GAP-V2-01）**：NEG-MIG-02 只证「备份恢复值与事件账投影值分列、差异可判」，**不证两账一致**；任何一致性结论仍需对账规则裁决。
-4. **events 哈希链（I-17/GAP-V2-05）仍目标未证**：NEG-SEC-03 只证改/删被行级触发器拒；`DROP TABLE` 不被行级触发器拦（v15 头注既有边界），本件不扩大为「append-only 已机制化」。
+4. **events 哈希链（I-17/GAP-V2-05）**：v16 已建（`packages/store/src/events-chain.ts`＋`test/v2/events-chain.test.ts`），打开即全量校验、篡改/未链化拒开；`DROP TABLE` 仍不被行级触发器拦（v15 头注既有边界），锚定前历史/整链重算边界见该文件头注——本件不扩大为「不可篡改」。
 5. **旧五点未在本单重跑**：旧 `apps/daemon/test/engine/crash-injection.test.ts` 只登记、不扩展（plan/04 §1.4）；V2 五点腿尚未建立，本单新增的 crash 腿只覆盖第 6 点。
 6. **未自行 commit**：本单七件改动（crash-points.ts、crash 测试三件、store NEG 两件、本基线追加）由父级合并流提交（`3e5bed7` 含代码＋基线；`267d381` 措辞收口，`64d4bdc` 余点归 MIG-06 登记）；本代理未执行 `git commit`。
 

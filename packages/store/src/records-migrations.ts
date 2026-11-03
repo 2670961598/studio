@@ -7,9 +7,10 @@
  *   负向行 NEG-SEC-03）；docs/v2/16 §四（cost_daily 限域——本文件不碰 DOM-04）。
  *
  * 落位理由（BC-S2「先拆再增」）：`migrations.ts` 已顶 600 行尺寸阈（v12 条目落 `cost.ts` 同款先例）——
- *   条目体落本文件，`migrations.ts` 只 import 摊入；版本序列仍按 14／15 单调 +1，sha8 由条目自身 SQL
+ *   条目体落本文件，`migrations.ts` 只 import 摊入；版本序列仍按 14／15／16 单调 +1，sha8 由条目自身 SQL
  *   决定（与内联在 `migrations.ts` 等价，`schema_version.sha8` 防漂移口径不变）。
  */
+import { eventsChainMigration } from './events-chain.ts'
 import type { Migration } from './migrations.ts'
 
 /**
@@ -71,8 +72,9 @@ export const recordsMigration: Migration = {
  *
  * 边界（如实登记，不冒充已闭合）：
  *   - DROP TABLE 不被行级触发器拦：删库重建仍是合法演习路径，rebuild 重放可行（B11 零 cost 重放）；
- *   - 哈希链或等价物承接不变量 I-17 仍属**目标（未证）**（GAP-V2-05）——本刀只完成「改/删 events
- *     必须被拒」这一腿，不得据此宣称 append-only 已机制化。
+ *   - 哈希链腿（I-17／GAP-V2-05 残余）由 **v16 `events-chain.ts`** 承接：本刀只完成「改/删 events
+ *     必须被拒」；链面证「改了必被发现且拒读」，两腿合取=append-only + 防篡改（链的诚实边界见
+ *     events-chain.ts 头注：锚定前历史/整链重算不可判）。
  */
 export const eventsTriggersMigration: Migration = {
   version: 15,
@@ -89,7 +91,12 @@ export const eventsTriggersMigration: Migration = {
 }
 
 /**
- * 摊入 `migrations.ts` 的条目序列（**升序**：14 → 15；`LATEST_VERSION` 取末条 version，故运行时＝15）。
+ * 摊入 `migrations.ts` 的条目序列（**升序**：14 → 15 → 16；v16 events 哈希链条目体在
+ * events-chain.ts；`LATEST_VERSION` 取末条 version，故运行时＝16）。
  * 后续 MIG 波次新增迁移条目时按同法追加（版本单调 +1，禁跳号）。
  */
-export const recordsMigrations: readonly Migration[] = [recordsMigration, eventsTriggersMigration]
+export const recordsMigrations: readonly Migration[] = [
+  recordsMigration,
+  eventsTriggersMigration,
+  eventsChainMigration,
+]

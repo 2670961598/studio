@@ -71,7 +71,7 @@ mise exec -- node --input-type=module -e "import{CRASH_POINTS}from'./apps/daemon
 | **GAP-V2-02**｜策略投影传输通道与验签交付通道未建（SEC-SIG-04） | 签名封套＋信任锚＋单调代次建成；PRB-08 executed | **target-not-proven** | 生成器腿已落：`packages/core/src/prm/compile-projection.ts`（九段/digest/unsupportedSegments；PRM-G1..G8 case 在 `packages/core/test/v2/prm.test.ts`）；信任锚 FC-03 已落（`packages/company/src/trust.ts`＋`test/v2/security-baseline.test.ts`） | 生成器件**自述**「验签已成立？否：SEC-SIG-04 通道未建，PRB-08 未执行」（compile-projection.ts:30-32）；`docs/probe/` 截至本件证据时点仅 pb-1（1 executed/6 not-executed） |
 | **GAP-V2-03**｜公司层外部锚未建（董事会/外部审计/宪法程序） | 外部锚落宪（08＋公司层） | **target-not-proven** | 无代码面（本波不涉公司层章程资产） | 归 01/08＋制作人（计划/03 §十一：公司层治理不阻断框架波）；NEG-EVD-03 未覆盖（§四） |
 | **GAP-V2-04**｜派生树登记网关＋执行器选择链未建 | 网关落位（MIG-06/07） | **target-not-proven** | 选择链**代偿校验**已落：`packages/adapters/src/bindcard/selection.ts`（:14 自述「真正的派生树登记网关未建：本件是代偿校验」）；NEG-RUN-05 已覆盖（`packages/adapters/test/v2/bindcard.test.ts`） | **派生树登记网关本体未建**；代偿只拦「经本解析器」的直连 |
-| **GAP-V2-05**｜I-17 哈希链未建；events 无 no-update/no-delete 触发器 | 触发器（MIG-04）＋哈希链（后波） | **open**（触发器腿已闭，哈希链腿未建） | 触发器腿：`packages/store/src/records-migrations.ts`（v15 trg）＋`test/v2/events-trigger.test.ts`（9 用例）＋NEG-SEC-03 已覆盖 | 哈希链：`records-migrations.ts:74` 自述「哈希链或等价物承接不变量 I-17 仍属目标（未证）」 |
+| **GAP-V2-05**｜I-17 哈希链未建；events 无 no-update/no-delete 触发器 | 触发器（MIG-04）＋哈希链（v16） | **closed**（studio-dev-534：触发器腿 v15＋哈希链腿 v16） | 触发器腿：`packages/store/src/records-migrations.ts`（v15 trg）＋`test/v2/events-trigger.test.ts`；哈希链腿：`packages/store/src/events-chain.ts`（v16 `events_chain`＋接链/append-only 触发器＋打开即全量校验）＋`ledger.appendEvent` 链式入账＋`test/v2/events-chain.test.ts`（12 用例）＋NEG-SEC-03 哈希链负向行（改历史事件/改链行/未链化追加→拒开） | 残余诚实边界：锚定前（v15 及更早存量）历史在首次打开时按现状补链、锚定前篡改不可判；整链可被持库文件写权限者重算（哈希链≠签名/外部锚）；`DROP TABLE` 不被行级触发器拦——上述边界见 `events-chain.ts` 头注，不据此宣称「不可篡改」 |
 | **GAP-V2-06**｜任职网关闸门（非在岗态拒绝发起出工）目标态 | 闸门建成前以 REC-LIFE-02＋NEG-REC-02 审计断言代偿 | **target-not-proven** | 代偿已落：REC-LIFE-02 形状（`packages/contract/src/records/life.ts`）＋NEG-REC-02 已覆盖（`rec-life.test.ts`／`life-gates.test.ts`） | `grep 非在岗/in-service apps/daemon/src` 零命中；`packages/contract/src/ports/hr.ts:5` 自述「目标（未证）」——**闸门未建** |
 | **GAP-V2-07**｜老板层缺席继承/代行程序未建（84b §六.R2） | 继承程序裁决落 01 | **target-not-proven** | 无施工面 | 归 01＋制作人；NEG-ORG-08 未覆盖（§四）；不私裁 |
 | **GAP-V2-08**｜旧「多宰相协调」未决 | 已关闭（DEC-OPEN-05 承接，规则落 v2/03 §2.2/§3.4） | **closed** | v2/17 §4.5 已记关闭（2026-10-28）；NEG-ORG-13/14 已覆盖；N 参数正例面落 v2/17 §4.1 | 无（残余＝DEC-OPEN-05 已解，登记在 09 §5.3） |
@@ -313,7 +313,7 @@ $ grep -rhoE 'NEG-[A-Z]+-[0-9]+' packages/contract/cases.json apps packages scri
 | 6 | GAP-V2-02 SEC-SIG-04 通道未建／PRB-08 未执行 | compile-projection 自述；probe 仅 pb-1 | 后续波＋PB-2 |
 | 7 | GAP-V2-06 任职网关闸门未建 | hr.ts 自述「目标（未证）」 | 后续波（02/16） |
 | 8 | GAP-V2-04 派生树登记网关未建（代偿中） | selection.ts 自述 | 后续波 |
-| 9 | GAP-V2-05 I-17 哈希链未建（触发器腿已闭） | records-migrations:74 | 后波 |
+| 9 | ~~GAP-V2-05 I-17 哈希链未建（触发器腿已闭）~~ **已闭（studio-dev-534；v16 `events-chain.ts`＋`test/v2/events-chain.test.ts`）** | `packages/store/src/events-chain.ts` | 已交付（Lead 待合） |
 | 10 | GAP-V2-07 老板层继承/代行程序未裁 | v2/17 §4.5 | 01＋制作人 |
 | 11 | GAP-V2-03 公司层外部锚未建 | v2/17 §4.5 | 公司层/制作人 |
 | 12 | GAP-V2-10/11/14 探针/未证清单/第二实现 | PB-1 1 executed；PB-2..6 截至本件证据时点未落盘（并行单 IMPL-08-05 采集中，结论以其报告为准） | 施工/生态 |

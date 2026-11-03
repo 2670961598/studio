@@ -462,9 +462,9 @@ describe('环境记录（MIG-04 入口条件③：node:sqlite 版本与 user_ver
     // user_version 恒 0 是**事实登记**（版本唯一源＝schema_version 表，见 v14-records.test.ts 口径）
     expect(drill.env.userVersion).toBe(0)
     expect(drill.env.schemaVersion).toBe(LATEST_VERSION)
-    expect(LATEST_VERSION).toBe(15) // MIG-04 封顶：v14 records 表族 + v15 events 触发器
+    expect(LATEST_VERSION).toBe(16) // v14 records 表族 + v15 events 触发器 + v16 events 哈希链
     expect(drill.env.schemaVersions).toEqual(Array.from({ length: LATEST_VERSION }, (_, i) => i + 1))
-    expect(drill.versionBefore).toBe(15)
+    expect(drill.versionBefore).toBe(16)
     expect(drill.env.journalMode).toBe('wal')
     // 报告头两行即环境记录落盘形（docs/baselines/mig-04-drill.md 抄录同一形状）
     expect(drill.report[1]).toContain(`node:sqlite=${drill.env.sqliteModule}`)
@@ -542,7 +542,7 @@ describe('删库重建：events 重放成功、cost_daily 零重放', () => {
     expect(drill.rebuiltEvents).toBe(drill.eventsWritten)
     expect(drill.rebuiltEvents).toBe(DRILL_EVENTS)
     expect(drill.eventsRoundTrip).toBe(true) // 全列 deep-equal（含 ULID 序/四桶 canonical 序）
-    expect(drill.rebuiltVersion).toBe(15)
+    expect(drill.rebuiltVersion).toBe(16)
     expect([...drill.rebuiltExcluded]).toEqual(['cost_daily'])
     expect(drill.replayedCostRows).toBe(0) // 排除域不重放：备份≠重建
     const report = drill.report.join('\n')

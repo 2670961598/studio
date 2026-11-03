@@ -316,3 +316,15 @@ export type { RebuildResult } from './rebuild.ts'
 // 删库重建演习（F2-12 可操作化；`studio-next ledger drill` 的库内通道）
 export { renderDrillReport, runLedgerDrill } from './drill.ts'
 export type { DrillCheck, DrillReport } from './drill.ts'
+
+// v16 events 哈希链（I-17／SEC-FC-04 哈希链腿；GAP-V2-05 残余收口）：
+// 写面 appendEvent 链式摘要＋打开即校验（openLedger）；审计/只读面可显式全量复算。
+export {
+  anchorEventsChain,
+  backfillEventsChain,
+  computeEventHash,
+  eventsChainMigration,
+  GENESIS_HASH,
+  verifyEventsChain,
+  type EventsChainReport,
+} from './events-chain.ts'

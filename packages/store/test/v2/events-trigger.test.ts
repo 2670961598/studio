@@ -6,7 +6,7 @@
  *     append-only 承诺所锚的链）：目标＝两枚行级触发器与既有四表同机制；哈希链或等价物承接 I-17
  *     仍标**目标（未证）**（GAP-V2-05）
  *   - docs/v2/17 §一（I-17 行）＋§三 NEG-SEC-03「改/删 events 行 → 触发器拒」（V5 腿）
- *   - plan/05 IMPL-04-02（v15 条目；验收：`test:v2` 绿、NEG-SEC-03、B9 复算 LATEST=15、
+ *   - plan/05 IMPL-04-02（v15 条目；验收：`test:v2` 绿、NEG-SEC-03、B9 复算 LATEST=16〔v16 链后顺延〕、
  *     **rebuild 兼容**——投影重建仍可行）
  *   - docs/v2/16 §一 B11（rebuild 循环体只 appendEvent，零 cost 重放）——本文件只证「触发器不阻断
  *     重放」，DOM-04 排除域归 IMPL-04-03/04 的测试面
@@ -178,8 +178,8 @@ describe('appendEvent 仍可写入（触发器只拒改/删，不拒追加）', 
   })
 })
 
-describe('升级路径：v14 库无触发器（现状缺口）→ v15 补装后改/删被拒', () => {
-  it('upTo:14 时 UPDATE 可成功（SEC-FC-04 原缺口）；migrate() 到 15 后同一语句被 ABORT', () => {
+describe('升级路径：v14 库无触发器（现状缺口）→ v15/v16 补装后改/删被拒', () => {
+  it('upTo:14 时 UPDATE 可成功（SEC-FC-04 原缺口）；migrate() 到 16 后同一语句被 ABORT', () => {
     const staged = new DatabaseSync(':memory:')
     try {
       expect(migrate(staged, { upTo: 14 })).toBe(14)
@@ -192,13 +192,13 @@ describe('升级路径：v14 库无触发器（现状缺口）→ v15 补装后�
         .run(event.id, event.ts, event.company, event.issue, event.event, event.actor, 1, 2, event.dept, '{}')
       // 缺口证据：v14 库上改史不被拦（正是 SEC-FC-04 现状列描述的行为）
       staged.prepare('UPDATE events SET event = ? WHERE id = ?').run('TAMPER', event.id)
-      expect(migrate(staged)).toBe(15)
+      expect(migrate(staged)).toBe(16)
       expect(triggerRows(staged).map((r) => String(r.name))).toEqual(['trg_events_no_delete', 'trg_events_no_update'])
       expectAppendOnlyAbort(() => staged.prepare('UPDATE events SET event = ? WHERE id = ?').run('TAMPER2', event.id))
       expectAppendOnlyAbort(() => staged.prepare('DELETE FROM events WHERE id = ?').run(event.id))
       // v1 未重放：schema_version 仍 15 行（sha8 防漂移面未破）
       const rows = staged.prepare('SELECT COUNT(*) AS c FROM schema_version').get() as unknown as { c: number }
-      expect(Number(rows.c)).toBe(15)
+      expect(Number(rows.c)).toBe(16)
     } finally {
       staged.close()
     }
@@ -206,7 +206,7 @@ describe('升级路径：v14 库无触发器（现状缺口）→ v15 补装后�
 })
 
 describe('rebuild 兼容：投影重建仍可行（B11 只重放 events）', () => {
-  it('dumpEvents → rebuild 到新库：行数与内容一致、目标库＝15、触发器随 migrate 重装', async () => {
+  it('dumpEvents → rebuild 到新库：行数与内容一致、目标库＝16、触发器与链随 migrate 重装', async () => {
     const source = path.join(root, 'events.jsonl')
     const target = path.join(root, 'rebuilt.db')
     const dumped = ledger.dumpEvents(source)
@@ -216,11 +216,11 @@ describe('rebuild 兼容：投影重建仍可行（B11 只重放 events）', () 
     const result = rebuild(source, target)
     expect(result.events).toBe(dumped.lines)
     expect(result.version).toBe(LATEST_VERSION)
-    expect(result.version).toBe(15)
+    expect(result.version).toBe(16)
 
     const rebuilt = openLedger(target)
     try {
-      expect(currentVersion(rebuilt.db)).toBe(15)
+      expect(currentVersion(rebuilt.db)).toBe(16)
       expect(rebuilt.queryEvents().map((e) => e.id)).toEqual(expected)
       // 重建库同样受保护（触发器由迁移装回，不是源库专有）
       expect(triggerRows(rebuilt.db).map((r) => String(r.name))).toEqual([

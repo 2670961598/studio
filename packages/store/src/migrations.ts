@@ -12,7 +12,7 @@
 import { createHash } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { configInvalid } from '@studio-next/contract'
-// 条目体外置（BC-S2 先拆再增：本文件顶尺寸阈 600）：v12 在 cost.ts、v14/v15 在 records-migrations.ts
+// 条目体外置（BC-S2 先拆再增：本文件顶尺寸阈 600）：v12 在 cost.ts、v14/v15/v16 在 records-migrations.ts
 import { costDailyMigration } from './cost.ts'
 import { recordsMigrations } from './records-migrations.ts'
 

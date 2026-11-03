@@ -105,7 +105,7 @@ describe('NEG-MIG-01 cost_daily 改/删被拒（v12 定型账 append-only）', (
   it('两枚触发器在位：BEFORE UPDATE/DELETE，均 RAISE(ABORT)；迁移条目自含同一机制', () => {
     const ledger = openTemp('triggers')
     try {
-      expect(currentVersion(ledger.db)).toBe(15)
+      expect(currentVersion(ledger.db)).toBe(16)
       const rows = ledger.db
         .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'cost_daily' ORDER BY name")
         .all() as unknown as Array<{ name: string; sql: string }>

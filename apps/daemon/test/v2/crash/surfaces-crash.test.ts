@@ -421,7 +421,7 @@ describe('第 8 点 projection-rebuild（投影重建提交前后，COMMIT 前�
     expect(run.stderr).toContain('CRASH_HOOK_NOT_ARMED')
     const ledger = openLedger(rebuildNegTarget)
     try {
-      expect(currentVersion(ledger.db)).toBe(15)
+      expect(currentVersion(ledger.db)).toBe(16)
       expect(ledger.queryEvents()).toHaveLength(0)
       expect(integrity(ledger)).toBe('ok')
     } finally {
@@ -441,12 +441,12 @@ describe('第 8 点 projection-rebuild（投影重建提交前后，COMMIT 前�
     expect(run.stderr).not.toContain('CRASH_HOOK_NOT_ARMED')
 
     const pre = JSON.parse(evidenceLine(run, 'PRE_COMMIT')) as RebuildEvidence
-    expect(pre).toMatchObject({ point: REBUILD_POINT, replayed: HALF_EVENTS, total: EXPECTED_EVENTS, eventsInTx: HALF_EVENTS, version: 15 })
+    expect(pre).toMatchObject({ point: REBUILD_POINT, replayed: HALF_EVENTS, total: EXPECTED_EVENTS, eventsInTx: HALF_EVENTS, version: 16 })
 
     // 重启同库：未 COMMIT 的事务回滚（事务内 3 行 → 重启后 0 行），无半投影
     const ledger = openLedger(rebuildTarget)
     try {
-      expect(currentVersion(ledger.db)).toBe(15)
+      expect(currentVersion(ledger.db)).toBe(16)
       expect(countRows(ledger, 'events')).toBe(0)
       expect(ledger.queryEvents()).toHaveLength(0)
       expect(countRows(ledger, 'cost_daily')).toBe(0)
@@ -468,7 +468,7 @@ describe('第 8 点 projection-rebuild（投影重建提交前后，COMMIT 前�
     expect(first.signal).toBeNull()
     const done = JSON.parse(evidenceLine(first, 'REBUILT')) as RebuildDone
     const expectedIds = eventRows().map((row) => String(row['id']))
-    expect(done).toMatchObject({ point: REBUILD_POINT, events: EXPECTED_EVENTS, version: 15, excludedDomains: ['cost_daily'], dbEvents: EXPECTED_EVENTS, distinctIds: EXPECTED_EVENTS, costDaily: 0 })
+    expect(done).toMatchObject({ point: REBUILD_POINT, events: EXPECTED_EVENTS, version: 16, excludedDomains: ['cost_daily'], dbEvents: EXPECTED_EVENTS, distinctIds: EXPECTED_EVENTS, costDaily: 0 })
     expect(done.ids).toEqual(expectedIds)
 
     const ledger = openLedger(rebuildTarget)
@@ -544,7 +544,7 @@ describe('第 9 点 exclusion-report（排除域报告写入中，rename 前硬�
     expect(run.stderr).not.toContain('CRASH_HOOK_NOT_ARMED')
 
     const pre = JSON.parse(evidenceLine(run, 'PRE_COMMIT')) as ReportEvidence
-    expect(pre).toMatchObject({ point: EXCLUSION_POINT, events: EXPECTED_EVENTS, version: 15, reportLines: 4, partialLines: 2, excludedDomains: ['cost_daily'], reportPath })
+    expect(pre).toMatchObject({ point: EXCLUSION_POINT, events: EXPECTED_EVENTS, version: 16, reportLines: 4, partialLines: 2, excludedDomains: ['cost_daily'], reportPath })
     expect(pre.partialLines).toBeLessThan(pre.reportLines)
 
     // 重启：canonical 报告不存在（rename 未过）；staging 半报告存在
@@ -580,7 +580,7 @@ describe('第 9 点 exclusion-report（排除域报告写入中，rename 前硬�
     expect(run.code).toBe(0)
     expect(run.signal).toBeNull()
     const done = JSON.parse(evidenceLine(run, 'COMMITTED')) as ReportDone
-    expect(done).toMatchObject({ point: EXCLUSION_POINT, events: EXPECTED_EVENTS, version: 15, reportLines: 4, excludedDomains: ['cost_daily'], reportPath })
+    expect(done).toMatchObject({ point: EXCLUSION_POINT, events: EXPECTED_EVENTS, version: 16, reportLines: 4, excludedDomains: ['cost_daily'], reportPath })
 
     expect(existsSync(reportPath)).toBe(true)
     expect(existsSync(`${reportPath}.partial`)).toBe(false) // rename 后 staging 不残留

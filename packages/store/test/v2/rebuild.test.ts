@@ -71,7 +71,7 @@ function countRows(db: DatabaseSync, table: string): number {
 
 describe('rebuild 重放范围（只 events；B11 不回退）', () => {
   it('目标库 events 全量重放、cost_daily 恒 0 行；源库两表原样', () => {
-    expect(LATEST_VERSION).toBe(15) // MIG-04 波前版本（v14 records＋v15 events 触发器）
+    expect(LATEST_VERSION).toBe(16) // v14 records + v15 events 触发器 + v16 events 哈希链
     const { dbPath, jsonl } = seedSource('basic')
     const target = path.join(root, 'basic-target.db')
 
