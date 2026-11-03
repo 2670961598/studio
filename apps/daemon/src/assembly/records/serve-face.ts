@@ -8,14 +8,30 @@
  * 拆件动机（照 assembly/ops 先例）：runtime.ts 守卫 600 行阈——本件收口「装配＋相位 0 启动装载＋
  * 装配日志」，runtime 只留一行 `records:` 注入。行为边界：装配后**只跑相位 0 名册装载**（启动装载
  * 即把任职/授权链写入台账——docs/17-§2 映射表的相位 0 位）；派发/收割相位由引擎在拍内触发。
+ *
+ * studio-dev-537 增量（返工版；#527/#605 已落内容零删改）：五对象记录载体（REC-ACC-01/02、
+ * REC-CHG-01、REC-REV-01、REC-EVAL-01）写口装配也挂在本件——复用 `assembleRecords` 产出的
+ * **同一 HIST 面**（不二次建句柄、不另开第二条 SQL 写口）；本件只提供显式写面＋相位 4 GATE_FAIL
+ * 钩（docs/17-§2、docs/17-§6），决定者由生产位置注入、缺位拒写，不以 daemon 冒充；与 #530
+ * `root-delegation/worker-key-face.ts` 无交集（wkey 签发/吊销仍由 runtime 的 import/调用链持有）。
  */
-import type { Ledger } from '@studio-next/store'
+import type { HistFace, Ledger } from '@studio-next/store'
+import type { RelayWorkSignal } from '../../engine/intents/relay-resume-sources.ts'
 import { recordRosterLoad, type RecordWire, type RecordWriteResult, type RootGrantFact } from '../../engine/records/index.ts'
+import {
+  createObjectRecordWire,
+  type ObjectRecordPositions,
+  type ObjectRecordWire,
+} from '../../engine/records/object-wire.ts'
 import { assembleRecords } from './assemble.ts'
 
 /** ServeRuntime 的记录面（引擎注入端口） */
 export interface ServeRecordsFace {
   readonly records: RecordWire
+  /** 同一 HIST 句柄（五对象载体复用；不另建第二句柄） */
+  readonly hist: HistFace
+  /** 五对象载体面（显式写口＋相位 4 收割钩；装配在本件，runtime 只挂一行钩） */
+  readonly objectRecords: ServeObjectRecordsFace
 }
 
 /** 接线入参 */
@@ -26,6 +42,10 @@ export interface WireServeRecordsArgs {
   readonly rootGrant?: RootGrantFact
   /** 三不入·库闸（runtime 传 outbound.gate.guardStoreRecord；测试可省） */
   readonly guardRecord?: (record: unknown) => unknown
+  /** 记录时刻源（runtime 注入同一 clock；五对象载体与引擎同源，不各自取 Date.now） */
+  readonly clock: () => number
+  /** 五对象载体生产位置（缺省=载体不开面——独立裁判/复盘/评价位置由生产侧注入，不以 daemon 冒充） */
+  readonly positions?: ObjectRecordPositions
   readonly log?: (line: string) => void
 }
 
@@ -73,5 +93,70 @@ export function wireServeRecords(args: WireServeRecordsArgs): ServeRecordsFace {
       '相位 1 采集尾→REC-WORK-01、相位 3/4/6 迁移缝→REC-WORK-06（前置/权源不齐即拒）、' +
       '相位 4 收割尾→REC-LIFE-04→REC-EVD-01（前件不齐即拒）、相位 7 落账尾→records↔events 对账读者→ PORT-HIST append',
   )
-  return { records: assembly.records }
+  const objectRecords = wireServeObjectRecords({
+    ledger: args.ledger,
+    hist: assembly.hist,
+    company: args.company,
+    clock: args.clock,
+    ...(args.positions !== undefined ? { positions: args.positions } : {}),
+    ...(log !== undefined ? { log } : {}),
+  })
+  return { records: assembly.records, hist: assembly.hist, objectRecords }
+}
+
+/** 五对象载体装配入参（hist＝#527 已建 HIST 面；clock 注入令记录时刻与引擎同源） */
+export interface WireServeObjectRecordsArgs {
+  readonly ledger: Ledger
+  /** #527 assembleRecords 产出的 HIST 面（复用；不另建句柄） */
+  readonly hist: HistFace
+  readonly company: string
+  readonly clock: () => number
+  /** 生产位置注入（缺省=对应载体不开面；决定者不得由 daemon 冒充——v2/11 §〇.2-1） */
+  readonly positions?: ObjectRecordPositions
+  readonly log?: (line: string) => void
+}
+
+/** ServeRuntime 的五对象载体面（engine 相位 4 钩子消费 + 显式写口） */
+export interface ServeObjectRecordsFace {
+  /** 五对象写口（显式面：复盘/变更/救济/评价由各自生产位置调用） */
+  readonly records: ObjectRecordWire
+  /** 引擎相位 4 收割完成钩（GATE_FAIL→ACC-01；completed=零行为；钩面异常不炸拍） */
+  readonly afterHarvest: (signal: RelayWorkSignal) => void
+}
+
+/** 钩面结果日志（软失败：只记日志，不改收割结论） */
+function noteOutcome(log: (line: string) => void, signal: RelayWorkSignal, outcome: ReturnType<ObjectRecordWire['afterHarvest']>): void {
+  if (outcome.status === 'written') {
+    log(`[records] 相位4 ${signal.ticket} att${signal.attempt} → REC-ACC-01 #${outcome.ref.recordId}（问责案例开案，结论=暂不能归因）`)
+    return
+  }
+  if (outcome.status === 'refused') log(`[records] 相位4 ${signal.ticket} att${signal.attempt} → 拒写 REC-ACC-01（${outcome.code}）：${outcome.detail}`)
+}
+
+/**
+ * 装配五对象载体写口（#527/#530 边界：HIST 面复用 #527、wkey 面不触）：
+ *   - HIST 面＝调用方传入的 #527 同一 `HistFace`（records 表；v14 迁移由 openLedger 完成）；
+ *   - 相位 4 钩子：GATE_FAIL → REC-ACC-01（独立裁判位置在场才开案）；
+ *   - 装配日志显式（生产装配证据锚）；不调用任何写口。
+ */
+export function wireServeObjectRecords(args: WireServeObjectRecordsArgs): ServeObjectRecordsFace {
+  const log = args.log ?? ((): void => undefined)
+  const records = createObjectRecordWire({
+    hist: args.hist,
+    company: args.company,
+    now: args.clock,
+    ...(args.positions !== undefined ? { positions: args.positions } : {}),
+    log,
+  })
+  log('[serve] 五对象记录载体写口已装配：REC-ACC-01/02、REC-CHG-01、REC-REV-01、REC-EVAL-01 → PORT-HIST（相位 4 GATE_FAIL→ACC-01；其余=生产位置显式写口）')
+  return {
+    records,
+    afterHarvest: (signal: RelayWorkSignal): void => {
+      try {
+        noteOutcome(log, signal, records.afterHarvest(args.ledger, signal))
+      } catch (error) {
+        log(`[records] 相位4 载体钩异常（不阻断收割）：${error instanceof Error ? error.message : String(error)}`)
+      }
+    },
+  }
 }

@@ -27,7 +27,7 @@ import type {
 import type { Ledger } from '@studio-next/store'
 import path from 'node:path'
 import { createEngine, ENGINE_CONFIG_DEFAULTS, parseDataChangeRoutes, type Engine, type EngineConfig } from '../../engine/engine.ts'
-import { runEvolveStartupSelfCheck, type FrozenAsset } from '../../evolve/evolve-guard.ts'
+import type { FrozenAsset } from '../../evolve/evolve-guard.ts'
 import { mergeDataChangeRoutes } from '../../engine/intents/taxonomy.ts'
 import { createCostNotifyOutlet } from '../../engine/intents/escalate.ts'
 import { wirePeopleChangeSource } from '../../engine/hrsync/people-change-source.ts'
@@ -70,11 +70,13 @@ import { loadRootDelegationFace } from './root-delegation/root-face.ts'
 import { wireWorkerKeys } from './root-delegation/worker-key-face.ts'
 import { wireDerivation } from './derivation.ts'
 import { wireExecutorFace } from './executor-face.ts'
+import { wireServeEvolveSelfCheck } from './evolve-face.ts'
 import { wireServeApi } from '../api/serve-face.ts'
 import { wireServeHarvestRecords } from '../harvest/records-wire.ts'
 
 import type { ServeRuntime } from './runtime-types.ts'
 import type { RootGrantFact } from '../../engine/records/index.ts'
+import type { ObjectRecordPositions } from '../../engine/records/object-wire.ts'
 
 export type { ServeRuntime }
 
@@ -133,6 +135,8 @@ export function buildServeRuntime(
      * 缺省＝无外部事实 → REC-AUTH-01 拒写（`record-prereq-missing`，日志如实）；注入即相位 0 转绿。
      */
     recordsRootGrant?: RootGrantFact
+    /** 五对象记录载体生产位置（studio-dev-537；缺省=载体不开面，不以 daemon 冒充决定者） */
+    objectPositions?: ObjectRecordPositions
     /**
      * 进化判负自检注入面（测试确定性；缺省=仓样例集 FROZEN_FRAMEWORK_ASSETS + cwd 真文件
      * 哈希——src/evolve/evolve-guard.ts 头注锚定口径）：manifest/hashFile/fileExists 逐项覆盖。
@@ -176,7 +180,9 @@ export function buildServeRuntime(
     company: config.company,
     guardRecord: outbound.gate.guardStoreRecord,
     log,
+    clock,
     ...(opts?.recordsRootGrant !== undefined ? { rootGrant: opts.recordsRootGrant } : {}),
+    ...(opts?.objectPositions !== undefined ? { positions: opts.objectPositions } : {}),
   })
   const companyState: { snapshot: CompanySnapshot } = { snapshot }
   const observationFace = wireObservationFace({ ledger, snapshot: companyState.snapshot, company: config.company, clock, makeId: makeUlid, log, guardRecord: outbound.gate.guardStoreRecord }) // 观察面 OBS 装配（studio-dev-539/617；搬移说明见 assembly/observe/wire.ts 头注）
@@ -331,6 +337,7 @@ export function buildServeRuntime(
     // 源注册在 engine 之后（22-§一 装配序）——闭包后绑定（下方 relayPublish 绑定位）；
     // relay 源未开=闭包转发空跳零行为（缺省不注入语义等效）
     onWorkComplete: (signal: RelayWorkSignal): void => {
+      recordsFace.objectRecords.afterHarvest(signal)
       relayPublish?.(signal)
     },
   })
@@ -508,16 +515,7 @@ export function buildServeRuntime(
   // —— 进化管线判负闸·启动自检（v0 观察模式，src/evolve/evolve-guard.ts；20-§九 无 candidate id
   //    的生产改动判负）：对框架资产清单逐项 authorize，unauthorized 落 ESCALATE 如实报告、
   //    不阻断启动（阻断模式+资产面扩展归真单刀——头注冻结边界） ——
-  const evolveSelfCheck = runEvolveStartupSelfCheck({
-    ledger,
-    clock,
-    makeId: makeUlid,
-    company: config.company,
-    actor: ENGINE_CONFIG_DEFAULTS.actor,
-    dept: snapshot.departments[0]?.path ?? ENGINE_CONFIG_DEFAULTS.deptFallback,
-    log,
-    ...(opts?.evolveSelfCheck ?? {}),
-  })
+  const evolveSelfCheck = wireServeEvolveSelfCheck({ config, snapshot, ledger, clock, log, ...(opts?.evolveSelfCheck !== undefined ? { overrides: opts.evolveSelfCheck } : {}) })
 
   // —— PORT-GATE 生产装配（studio-dev-542）：交给 serve-face 装配腿的窄接缝只有
   //    engine.ingest（不交引擎本体）——intent 入队后由主循环下一拍消费（docs/17-§2/§6）
