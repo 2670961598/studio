@@ -1,23 +1,22 @@
 /**
- * 分级公司模板规格（DEV-14，docs/36-§4 M-A；逐级部门表=docs/33-§3 已批示范表）。
+ * 分级公司模板规格 V2（GAP-V2-18；DEV-14 复活＋MIG-05 迁移面收口）。
  *
- * 本文件是 company-{3..9}-level 七套模板的**单一事实源**：结构与人事骨架逐行转写 docs/33-§3
- * （studio-dev-29 plan §5 冻结稿随 DEV-14 复活）；gen-template.ts 渲染消费，模板产物手改会被
- * 再生成覆盖——改结构先改这里（文档先行，docs/33 与本表冲突时停手改文档）。
+ * 本文件是 company-{3..9}-level 七套模板的**单一事实源**：结构与人事骨架 V2 化——部门 D 级
+ * 由负责人职级决定（v2/03 §6.2 表 E）、最高宰相 G9 恒定为拟任（表 A）、CL4+ 部门审计周期岗、
+ * 一级单元 N/units[] 字段级承载（GAP-V2-17；docs/v2/10 §4.3）。gen-template.ts 渲染消费；
+ * 模板产物手改会被再生成覆盖——改结构先改这里（文档先行，docs/v2/03/06/10 与本表冲突时停手改文档）。
  *
- * 骨架口径（docs/33 §3 与 2 级模板双口径，plan §4 冻结）：
- *   - 每级只放「负责人 + 单岗 + 代表执行」的**骨架**（10-16 人）；编制区间（15-10000）作注释
- *     双口径呈现，填满编制归 company create 向导（docs/36-§4 M-B，范围外）；
- *   - 每个根部门挂 2 个定时岗（health-patrol-<部门> ＋ daily-report-<部门>，shape 沿 2 级模板——
- *     patrol 不声明 output：巡查工件不是工单，结构性零产出，studio-dev-127-A）；
- *   - accounts = 根部门负责人的 login（账号=等级锚点，docs/04-§二）；
+ * 骨架口径（docs/v2/06 §六：模板=生成物源，不是公司包本体）：
+ *   - 每级只放「负责人 + 单岗 + 代表执行」的**骨架**；编制区间作注释双口径呈现，
+ *     填满编制归 company create 向导（docs/36-§4 M-B，范围外）；
+ *   - 每个根部门挂 2 个定时岗（health-patrol-<部门>＋daily-report-<部门>）；
+ *     patrol 不声明 output：巡查工件不是工单，结构性零产出（studio-dev-127-A）；
+ *   - CL4 起由部门审计周期岗承载「部门审计制度」（audit-cycle-<部门>，周期记录归 v2/11）；
+ *   - accounts = 根部门负责人 login ＋ 最高宰相 prime-0（账号=等级锚点，docs/04-§二）；
  *   - level_distribution 从 people 表**派生**（不手维护——两口径永不漂移）；
+ *   - 一级单元 N 只是**示例**（N≥1，默认 1；「三省」N=3 只是示例——不写死）；
  *   - 花名不在此表：命名器按模板种子确定性生成（namer.ts，种子=模板名，冻结）。
- *
- * 语义呈批项（plan R1-R6，随 DEV-14 交宰相，代码不先行）：子公司语义（L9）= 独立编制边界；
- * dept.level = 公司等级（沿活公司先例）；命名词池口味=附录 B 初稿。
  */
-
 /** 单个骨架人事条目（花名由命名器按序补齐） */
 export interface LevelPersonSpec {
   id: string
@@ -36,6 +35,24 @@ export interface LevelDeptSpec {
   lanes: string[]
   functions: string[]
   note?: string // 转写为部门 config 注释（如「内设组——组≠部门」）
+  /** 部门规定第三行用硬核规则（v2/03 §6.3）；缺省=跨部门协作行。MIG-05 三个嵌套样例保留。 */
+  hardCoreRule?: boolean
+}
+
+/** 一级单元示例条目（GAP-V2-17 字段级承载：SCH-ORG-01 `units[]`；示例不是规范） */
+export interface LevelUnitSpec {
+  unitId: string
+  domain: string[]
+  headRef: string | null
+  vacancyState?: 'staffed' | 'head-vacant'
+  reviewAt?: string
+}
+
+/** CL4 起部门审计周期岗（template.test 同口径：id=audit-cycle-<部门>） */
+export interface LevelAuditCycleSpec {
+  dept: string
+  role: string
+  level: number
 }
 
 /** 一级模板的结构规格 */
@@ -47,6 +64,10 @@ export interface LevelSpec {
   note: string // 示范要点（注释）
   departments: LevelDeptSpec[]
   people: LevelPersonSpec[]
+  /** N 一级单元示例（unitCount=units.length；N≥1；「三省」N=3 只是示例） */
+  units: LevelUnitSpec[]
+  /** CL4+ 部门审计制度周期岗（拟任；审计记录归台账 v2/11） */
+  auditCycle?: LevelAuditCycleSpec
 }
 
 export const LEVEL_SPECS: LevelSpec[] = [
@@ -58,16 +79,19 @@ export const LEVEL_SPECS: LevelSpec[] = [
     note: '研发部一部＋综合部（人事财务单岗＋情报单岗）——最小可运转闭环',
     departments: [
       { name: '研发部', path: 'departments/研发部', parent: null, leader: 'ENG-0', lanes: ['core', 'qa'], functions: ['交付', '策划', '质量'] },
-      { name: '综合部', path: 'departments/综合部', parent: null, leader: 'PRIME-0', lanes: ['ops'], functions: ['管理', '人事', '财务', '情报'] },
+      { name: '综合部', path: 'departments/综合部', parent: null, leader: 'HF-1', lanes: ['ops'], functions: ['管理', '人事', '财务', '情报'] },
     ],
     people: [
-      { id: 'PRIME-0', role: '总经理（负责人）', level: 3, dept: 'departments/综合部', reportsTo: null },
-      { id: 'HF-1', role: '人事财务（单岗）', level: 2, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
-      { id: 'INT-1', role: '情报（单岗）', level: 2, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
-      { id: 'ENG-0', role: '研发部长', level: 3, dept: 'departments/研发部', reportsTo: 'PRIME-0' },
-      { id: 'PLN-1', role: '策划', level: 2, dept: 'departments/研发部', reportsTo: 'ENG-0' },
+      { id: 'PRIME-0', role: '最高宰相', level: 9, dept: 'departments/综合部', reportsTo: null },
+      { id: 'HF-1', role: '综合组长', level: 2, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
+      { id: 'INT-1', role: '情报（单岗）', level: 3, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
+      { id: 'ENG-0', role: '研发组长', level: 2, dept: 'departments/研发部', reportsTo: 'PRIME-0' },
+      { id: 'PLN-1', role: '策划', level: 3, dept: 'departments/研发部', reportsTo: 'ENG-0' },
       { id: 'ENG-1', role: '程序工程师', level: 1, dept: 'departments/研发部', reportsTo: 'ENG-0' },
       { id: 'QA-1', role: '质量工程师', level: 2, dept: 'departments/研发部', reportsTo: 'ENG-0' },
+    ],
+    units: [
+      { unitId: 'whole-company', domain: ['交付', '人事', '情报', '策划', '管理', '财务', '质量'], headRef: null },
     ],
   },
   {
@@ -78,20 +102,24 @@ export const LEVEL_SPECS: LevelSpec[] = [
     note: '研发部内设策划/程序/QA 组（组≠部门）＋人事/财务/情报三单岗',
     departments: [
       { name: '研发部', path: 'departments/研发部', parent: null, leader: 'ENG-0', lanes: ['core', 'qa'], functions: ['交付', '策划', '质量'], note: '内设策划组/程序组/QA 组——组≠部门（不进部门树，人档案归属即组）' },
-      { name: '综合部', path: 'departments/综合部', parent: null, leader: 'PRIME-0', lanes: ['ops'], functions: ['管理', '人事', '财务', '情报'] },
+      { name: '综合部', path: 'departments/综合部', parent: null, leader: 'HR-1', lanes: ['ops'], functions: ['管理', '人事', '财务', '情报'] },
     ],
     people: [
-      { id: 'PRIME-0', role: '总经理', level: 4, dept: 'departments/综合部', reportsTo: null },
+      { id: 'PRIME-0', role: '最高宰相', level: 9, dept: 'departments/综合部', reportsTo: null },
       { id: 'HR-1', role: '人事（单岗）', level: 2, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
-      { id: 'FIN-1', role: '财务（单岗）', level: 2, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
-      { id: 'INT-1', role: '情报（单岗）', level: 2, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
-      { id: 'ENG-0', role: '研发部长', level: 4, dept: 'departments/研发部', reportsTo: 'PRIME-0' },
-      { id: 'PLN-1', role: '策划组长', level: 3, dept: 'departments/研发部', reportsTo: 'ENG-0' },
-      { id: 'ENG-1', role: '程序组长', level: 3, dept: 'departments/研发部', reportsTo: 'ENG-0' },
+      { id: 'FIN-1', role: '财务（单岗）', level: 3, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
+      { id: 'INT-1', role: '情报（单岗）', level: 4, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
+      { id: 'ENG-0', role: '研发部长', level: 8, dept: 'departments/研发部', reportsTo: 'PRIME-0' },
+      { id: 'PLN-1', role: '策划组长', level: 4, dept: 'departments/研发部', reportsTo: 'ENG-0' },
+      { id: 'ENG-1', role: '程序组长', level: 6, dept: 'departments/研发部', reportsTo: 'ENG-0' },
       { id: 'ENG-2', role: '程序工程师', level: 2, dept: 'departments/研发部', reportsTo: 'ENG-1' },
-      { id: 'QA-1', role: '质量组长', level: 3, dept: 'departments/研发部', reportsTo: 'ENG-0' },
-      { id: 'QA-2', role: '质量工程师', level: 2, dept: 'departments/研发部', reportsTo: 'QA-1' },
+      { id: 'QA-1', role: '质量组长', level: 5, dept: 'departments/研发部', reportsTo: 'ENG-0' },
+      { id: 'QA-2', role: '质量工程师', level: 1, dept: 'departments/研发部', reportsTo: 'QA-1' },
     ],
+    units: [
+      { unitId: 'whole-company', domain: ['交付', '人事', '情报', '策划', '管理', '财务', '质量'], headRef: null },
+    ],
+    auditCycle: { dept: 'departments/综合部', role: '最高宰相', level: 9 },
   },
   {
     level: 5,
@@ -105,30 +133,34 @@ export const LEVEL_SPECS: LevelSpec[] = [
       { name: '产品策划部', path: 'departments/产品策划部', parent: null, leader: 'PLN-0', lanes: ['core'], functions: ['策划'] },
       { name: '人事部', path: 'departments/人事部', parent: null, leader: 'HR-0', lanes: ['ops'], functions: ['人事'] },
       { name: '财务部', path: 'departments/财务部', parent: null, leader: 'FIN-0', lanes: ['ops'], functions: ['财务'] },
-      { name: '综合部', path: 'departments/综合部', parent: null, leader: 'PRIME-0', lanes: ['ops'], functions: ['管理', '对外', '情报'] },
+      { name: '综合部', path: 'departments/综合部', parent: null, leader: 'EXT-1', lanes: ['ops'], functions: ['管理', '对外', '情报'] },
     ],
     people: [
-      { id: 'PRIME-0', role: '总经理', level: 5, dept: 'departments/综合部', reportsTo: null },
-      { id: 'EXT-1', role: '对外（单岗）', level: 3, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
+      { id: 'PRIME-0', role: '最高宰相', level: 9, dept: 'departments/综合部', reportsTo: null },
+      { id: 'EXT-1', role: '综合部负责人（对外）', level: 8, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
       { id: 'INT-1', role: '战略情报（单岗）', level: 3, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
-      { id: 'ENG-0', role: '工程部长', level: 4, dept: 'departments/工程部', reportsTo: 'PRIME-0' },
-      { id: 'ENG-1', role: '工程师', level: 3, dept: 'departments/工程部', reportsTo: 'ENG-0' },
-      { id: 'QA-0', role: '质量部长', level: 4, dept: 'departments/质量部', reportsTo: 'PRIME-0' },
+      { id: 'ENG-0', role: '工程部长', level: 8, dept: 'departments/工程部', reportsTo: 'PRIME-0' },
+      { id: 'ENG-1', role: '工程师（中间层）', level: 7, dept: 'departments/工程部', reportsTo: 'ENG-0' },
+      { id: 'QA-0', role: '质量部长', level: 8, dept: 'departments/质量部', reportsTo: 'PRIME-0' },
       { id: 'QA-1', role: '质量工程师', level: 3, dept: 'departments/质量部', reportsTo: 'QA-0' },
-      { id: 'PLN-0', role: '产品策划部长', level: 4, dept: 'departments/产品策划部', reportsTo: 'PRIME-0' },
+      { id: 'PLN-0', role: '产品策划部长', level: 8, dept: 'departments/产品策划部', reportsTo: 'PRIME-0' },
       { id: 'PLN-1', role: '策划', level: 3, dept: 'departments/产品策划部', reportsTo: 'PLN-0' },
-      { id: 'HR-0', role: '人事部长', level: 4, dept: 'departments/人事部', reportsTo: 'PRIME-0' },
+      { id: 'HR-0', role: '人事部长', level: 8, dept: 'departments/人事部', reportsTo: 'PRIME-0' },
       { id: 'HR-1', role: '人事专员', level: 2, dept: 'departments/人事部', reportsTo: 'HR-0' },
-      { id: 'FIN-0', role: '财务部长', level: 4, dept: 'departments/财务部', reportsTo: 'PRIME-0' },
+      { id: 'FIN-0', role: '财务部长', level: 8, dept: 'departments/财务部', reportsTo: 'PRIME-0' },
       { id: 'FIN-1', role: '财务专员', level: 2, dept: 'departments/财务部', reportsTo: 'FIN-0' },
     ],
+    units: [
+      { unitId: 'whole-company', domain: ['交付', '人事', '对外', '情报', '策划', '管理', '财务', '质量'], headRef: null },
+    ],
+    auditCycle: { dept: 'departments/综合部', role: '最高宰相', level: 9 },
   },
   {
     level: 6,
     form: '多团队',
     headcount: '250-600',
-    span: '6-9',
-    note: '工程部内嵌项目群（物理嵌套——departments/工程部/departments/项目群A）＋审计合规/战略情报部',
+    span: '6-10',
+    note: '工程/质量/产品/人事/财务/审计/战略七职能部＋两项目群＋综合部',
     departments: [
       { name: '工程部', path: 'departments/工程部', parent: null, leader: 'ENG-0', lanes: ['core'], functions: ['交付'] },
       { name: '项目群A', path: 'departments/工程部/departments/项目群A', parent: 'departments/工程部', leader: 'ENG-1', lanes: ['core'], functions: ['交付'] },
@@ -139,32 +171,36 @@ export const LEVEL_SPECS: LevelSpec[] = [
       { name: '财务部', path: 'departments/财务部', parent: null, leader: 'FIN-0', lanes: ['ops'], functions: ['财务'] },
       { name: '审计合规部', path: 'departments/审计合规部', parent: null, leader: 'AUD-0', lanes: ['audit'], functions: ['审计'] },
       { name: '战略情报部', path: 'departments/战略情报部', parent: null, leader: 'INT-0', lanes: ['intel'], functions: ['情报'] },
-      { name: '综合部', path: 'departments/综合部', parent: null, leader: 'PRIME-0', lanes: ['ops'], functions: ['管理', '对外'] },
+      { name: '综合部', path: 'departments/综合部', parent: null, leader: 'EXT-1', lanes: ['ops'], functions: ['管理', '对外'] },
     ],
     people: [
-      { id: 'PRIME-0', role: '总经理', level: 6, dept: 'departments/综合部', reportsTo: null },
-      { id: 'EXT-1', role: '对外（单岗）', level: 3, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
-      { id: 'ENG-0', role: '工程部长', level: 5, dept: 'departments/工程部', reportsTo: 'PRIME-0' },
-      { id: 'ENG-1', role: '项目群A 主管', level: 4, dept: 'departments/工程部/departments/项目群A', reportsTo: 'ENG-0' },
+      { id: 'PRIME-0', role: '最高宰相', level: 9, dept: 'departments/综合部', reportsTo: null },
+      { id: 'EXT-1', role: '综合部负责人（对外）', level: 8, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
+      { id: 'ENG-0', role: '工程部长', level: 8, dept: 'departments/工程部', reportsTo: 'PRIME-0' },
+      { id: 'ENG-1', role: '项目群A 主管', level: 7, dept: 'departments/工程部/departments/项目群A', reportsTo: 'ENG-0' },
       { id: 'ENG-2', role: '程序工程师', level: 3, dept: 'departments/工程部/departments/项目群A', reportsTo: 'ENG-1' },
-      { id: 'ENG-3', role: '项目群B 主管', level: 4, dept: 'departments/工程部/departments/项目群B', reportsTo: 'ENG-0' },
-      { id: 'ENG-4', role: '程序工程师', level: 3, dept: 'departments/工程部/departments/项目群B', reportsTo: 'ENG-3' },
-      { id: 'QA-0', role: '质量部长', level: 5, dept: 'departments/质量部', reportsTo: 'PRIME-0' },
-      { id: 'PLN-0', role: '产品部长', level: 5, dept: 'departments/产品部', reportsTo: 'PRIME-0' },
-      { id: 'HR-0', role: '人事部长', level: 5, dept: 'departments/人事部', reportsTo: 'PRIME-0' },
+      { id: 'ENG-3', role: '项目群B 主管', level: 6, dept: 'departments/工程部/departments/项目群B', reportsTo: 'ENG-0' },
+      { id: 'ENG-4', role: '程序工程师', level: 2, dept: 'departments/工程部/departments/项目群B', reportsTo: 'ENG-3' },
+      { id: 'QA-0', role: '质量部长', level: 8, dept: 'departments/质量部', reportsTo: 'PRIME-0' },
+      { id: 'PLN-0', role: '产品部长', level: 8, dept: 'departments/产品部', reportsTo: 'PRIME-0' },
+      { id: 'HR-0', role: '人事部长', level: 8, dept: 'departments/人事部', reportsTo: 'PRIME-0' },
       { id: 'HR-1', role: '招聘专员', level: 3, dept: 'departments/人事部', reportsTo: 'HR-0' },
-      { id: 'FIN-0', role: '财务部长', level: 5, dept: 'departments/财务部', reportsTo: 'PRIME-0' },
+      { id: 'FIN-0', role: '财务部长', level: 8, dept: 'departments/财务部', reportsTo: 'PRIME-0' },
       { id: 'FIN-1', role: 'FP&A 专员', level: 3, dept: 'departments/财务部', reportsTo: 'FIN-0' },
-      { id: 'AUD-0', role: '审计合规部长', level: 5, dept: 'departments/审计合规部', reportsTo: 'PRIME-0' },
-      { id: 'INT-0', role: '战略情报部长', level: 5, dept: 'departments/战略情报部', reportsTo: 'PRIME-0' },
+      { id: 'AUD-0', role: '审计合规部长', level: 8, dept: 'departments/审计合规部', reportsTo: 'PRIME-0' },
+      { id: 'INT-0', role: '战略情报部长', level: 8, dept: 'departments/战略情报部', reportsTo: 'PRIME-0' },
     ],
+    units: [
+      { unitId: 'whole-company', domain: ['交付', '人事', '审计', '对外', '情报', '策划', '管理', '财务', '质量'], headRef: null },
+    ],
+    auditCycle: { dept: 'departments/审计合规部', role: '审计合规部长', level: 8 },
   },
   {
     level: 7,
     form: '事业部',
     headcount: '600-1500',
-    span: '7-10',
-    note: '事业部内嵌研发/质量闭环（A 双嵌、B 单嵌）＋集团职能（人事/财务/审计/战略/平台工程）',
+    span: '6-9',
+    note: '两事业部（内嵌研发/质量）＋总部职能部＋平台工程部',
     departments: [
       { name: '事业部A', path: 'departments/事业部A', parent: null, leader: 'BU-1', lanes: ['core'], functions: ['经营'] },
       { name: '研发部', path: 'departments/事业部A/departments/研发部', parent: 'departments/事业部A', leader: 'ENG-1', lanes: ['core'], functions: ['交付'] },
@@ -176,30 +212,35 @@ export const LEVEL_SPECS: LevelSpec[] = [
       { name: '审计合规部', path: 'departments/审计合规部', parent: null, leader: 'AUD-0', lanes: ['audit'], functions: ['审计'] },
       { name: '战略部', path: 'departments/战略部', parent: null, leader: 'INT-0', lanes: ['intel'], functions: ['战略'] },
       { name: '平台工程部', path: 'departments/平台工程部', parent: null, leader: 'PF-0', lanes: ['platform'], functions: ['平台工程'] },
-      { name: '综合部', path: 'departments/综合部', parent: null, leader: 'PRIME-0', lanes: ['ops'], functions: ['管理', '对外'] },
+      { name: '综合部', path: 'departments/综合部', parent: null, leader: 'EXT-1', lanes: ['ops'], functions: ['管理', '对外'] },
     ],
     people: [
-      { id: 'PRIME-0', role: '总裁', level: 7, dept: 'departments/综合部', reportsTo: null },
-      { id: 'EXT-1', role: '对外（单岗）', level: 4, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
-      { id: 'BU-1', role: '事业部A 总经理', level: 6, dept: 'departments/事业部A', reportsTo: 'PRIME-0' },
-      { id: 'ENG-1', role: '研发部长（A）', level: 5, dept: 'departments/事业部A/departments/研发部', reportsTo: 'BU-1' },
-      { id: 'ENG-2', role: '程序工程师', level: 4, dept: 'departments/事业部A/departments/研发部', reportsTo: 'ENG-1' },
-      { id: 'QA-1', role: '质量部长（A）', level: 5, dept: 'departments/事业部A/departments/质量部', reportsTo: 'BU-1' },
-      { id: 'BU-2', role: '事业部B 总经理', level: 6, dept: 'departments/事业部B', reportsTo: 'PRIME-0' },
-      { id: 'ENG-3', role: '研发部长（B）', level: 5, dept: 'departments/事业部B/departments/研发部', reportsTo: 'BU-2' },
-      { id: 'HR-0', role: '人事部长', level: 6, dept: 'departments/人事部', reportsTo: 'PRIME-0' },
-      { id: 'FIN-0', role: '财务部长', level: 6, dept: 'departments/财务部', reportsTo: 'PRIME-0' },
-      { id: 'AUD-0', role: '审计合规部长', level: 6, dept: 'departments/审计合规部', reportsTo: 'PRIME-0' },
-      { id: 'INT-0', role: '战略部长', level: 6, dept: 'departments/战略部', reportsTo: 'PRIME-0' },
-      { id: 'PF-0', role: '平台工程部长', level: 6, dept: 'departments/平台工程部', reportsTo: 'PRIME-0' },
+      { id: 'PRIME-0', role: '最高宰相', level: 9, dept: 'departments/综合部', reportsTo: null },
+      { id: 'EXT-1', role: '综合部负责人（对外）', level: 8, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
+      { id: 'BU-1', role: '事业部A 总经理', level: 7, dept: 'departments/事业部A', reportsTo: 'PRIME-0' },
+      { id: 'ENG-1', role: '研发部长（A）', level: 7, dept: 'departments/事业部A/departments/研发部', reportsTo: 'BU-1' },
+      { id: 'ENG-2', role: '程序工程师', level: 2, dept: 'departments/事业部A/departments/研发部', reportsTo: 'ENG-1' },
+      { id: 'QA-1', role: '质量部长（A）', level: 7, dept: 'departments/事业部A/departments/质量部', reportsTo: 'BU-1' },
+      { id: 'BU-2', role: '事业部B 总经理', level: 7, dept: 'departments/事业部B', reportsTo: 'PRIME-0' },
+      { id: 'ENG-3', role: '研发部长（B）', level: 6, dept: 'departments/事业部B/departments/研发部', reportsTo: 'BU-2' },
+      { id: 'HR-0', role: '人事部长', level: 8, dept: 'departments/人事部', reportsTo: 'PRIME-0' },
+      { id: 'FIN-0', role: '财务部长', level: 8, dept: 'departments/财务部', reportsTo: 'PRIME-0' },
+      { id: 'AUD-0', role: '审计合规部长（专职部门审计位置）', level: 8, dept: 'departments/审计合规部', reportsTo: 'PRIME-0' },
+      { id: 'INT-0', role: '战略部长', level: 8, dept: 'departments/战略部', reportsTo: 'PRIME-0' },
+      { id: 'PF-0', role: '平台工程部长', level: 8, dept: 'departments/平台工程部', reportsTo: 'PRIME-0' },
     ],
+    units: [
+      { unitId: 'unit-1', domain: ['人事'], headRef: 'HR-0', vacancyState: 'staffed' },
+      { unitId: 'unit-2', domain: ['财务'], headRef: 'FIN-0', vacancyState: 'staffed' },
+    ],
+    auditCycle: { dept: 'departments/审计合规部', role: '审计合规部长（专职部门审计位置）', level: 8 },
   },
   {
     level: 8,
     form: '集团',
     headcount: '1500-4000',
-    span: '8-10',
-    note: '多事业部（A 内嵌研发/质量闭环）＋职能层级化＋共享服务平台（三脚架示范）',
+    span: '7-12',
+    note: '三事业部＋集团职能部（人事/财务/审计/战略/平台/共享服务）',
     departments: [
       { name: '事业部A', path: 'departments/事业部A', parent: null, leader: 'BU-1', lanes: ['core'], functions: ['经营'] },
       { name: '研发部', path: 'departments/事业部A/departments/研发部', parent: 'departments/事业部A', leader: 'ENG-1', lanes: ['core'], functions: ['交付'] },
@@ -212,31 +253,40 @@ export const LEVEL_SPECS: LevelSpec[] = [
       { name: '战略部', path: 'departments/战略部', parent: null, leader: 'INT-0', lanes: ['intel'], functions: ['战略'] },
       { name: '平台工程部', path: 'departments/平台工程部', parent: null, leader: 'PF-0', lanes: ['platform'], functions: ['平台工程'] },
       { name: '共享服务平台部', path: 'departments/共享服务平台部', parent: null, leader: 'SSC-0', lanes: ['ops'], functions: ['共享服务'] },
-      { name: '综合部', path: 'departments/综合部', parent: null, leader: 'PRIME-0', lanes: ['ops'], functions: ['管理', '对外'] },
+      { name: '综合部', path: 'departments/综合部', parent: null, leader: 'EXT-1', lanes: ['ops'], functions: ['管理', '对外'] },
+      { name: '项目群A', path: 'departments/事业部A/departments/研发部/departments/项目群A', parent: 'departments/事业部A/departments/研发部', leader: 'ENG-2', lanes: ['core'], functions: ['交付'], hardCoreRule: true },
     ],
     people: [
-      { id: 'PRIME-0', role: '总裁', level: 8, dept: 'departments/综合部', reportsTo: null },
-      { id: 'EXT-1', role: '对外（单岗）', level: 5, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
-      { id: 'BU-1', role: '事业部A 总经理', level: 7, dept: 'departments/事业部A', reportsTo: 'PRIME-0' },
-      { id: 'ENG-1', role: '研发部长（A）', level: 6, dept: 'departments/事业部A/departments/研发部', reportsTo: 'BU-1' },
-      { id: 'QA-1', role: '质量部长（A）', level: 6, dept: 'departments/事业部A/departments/质量部', reportsTo: 'BU-1' },
+      { id: 'PRIME-0', role: '最高宰相', level: 9, dept: 'departments/综合部', reportsTo: null },
+      { id: 'EXT-1', role: '综合部负责人（对外）', level: 8, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
+      { id: 'BU-1', role: '事业部A 总经理', level: 8, dept: 'departments/事业部A', reportsTo: 'PRIME-0' },
+      { id: 'ENG-1', role: '研发部长（A）', level: 7, dept: 'departments/事业部A/departments/研发部', reportsTo: 'BU-1' },
+      { id: 'QA-1', role: '质量部长（A）', level: 7, dept: 'departments/事业部A/departments/质量部', reportsTo: 'BU-1' },
       { id: 'BU-2', role: '事业部B 总经理', level: 7, dept: 'departments/事业部B', reportsTo: 'PRIME-0' },
       { id: 'BU-3', role: '事业部C 总经理', level: 7, dept: 'departments/事业部C', reportsTo: 'PRIME-0' },
-      { id: 'HR-0', role: '人事总监', level: 7, dept: 'departments/人事部', reportsTo: 'PRIME-0' },
-      { id: 'FIN-0', role: '财务总监', level: 7, dept: 'departments/财务部', reportsTo: 'PRIME-0' },
-      { id: 'AUD-0', role: '审计合规总监', level: 7, dept: 'departments/审计合规部', reportsTo: 'PRIME-0' },
-      { id: 'INT-0', role: '战略总监', level: 7, dept: 'departments/战略部', reportsTo: 'PRIME-0' },
-      { id: 'PF-0', role: '平台工程总监', level: 7, dept: 'departments/平台工程部', reportsTo: 'PRIME-0' },
+      { id: 'HR-0', role: '人事总监', level: 8, dept: 'departments/人事部', reportsTo: 'PRIME-0' },
+      { id: 'FIN-0', role: '财务总监', level: 8, dept: 'departments/财务部', reportsTo: 'PRIME-0' },
+      { id: 'AUD-0', role: '审计合规总监（专职部门审计位置）', level: 8, dept: 'departments/审计合规部', reportsTo: 'PRIME-0' },
+      { id: 'INT-0', role: '战略总监', level: 8, dept: 'departments/战略部', reportsTo: 'PRIME-0' },
+      { id: 'PF-0', role: '平台工程总监', level: 8, dept: 'departments/平台工程部', reportsTo: 'PRIME-0' },
       { id: 'SSC-0', role: '共享服务平台部长', level: 6, dept: 'departments/共享服务平台部', reportsTo: 'PRIME-0' },
       { id: 'SSC-1', role: '财务共享专员', level: 5, dept: 'departments/共享服务平台部', reportsTo: 'SSC-0' },
-      { id: 'SSC-2', role: '人事共享专员', level: 5, dept: 'departments/共享服务平台部', reportsTo: 'SSC-0' },
-      { id: 'SSC-3', role: '计算平台工程师', level: 5, dept: 'departments/共享服务平台部', reportsTo: 'SSC-0' },
+      { id: 'SSC-2', role: '人事共享专员', level: 4, dept: 'departments/共享服务平台部', reportsTo: 'SSC-0' },
+      { id: 'SSC-3', role: '计算平台工程师', level: 3, dept: 'departments/共享服务平台部', reportsTo: 'SSC-0' },
+      { id: 'ENG-2', role: '项目群A 主管', level: 6, dept: 'departments/事业部A/departments/研发部/departments/项目群A', reportsTo: 'ENG-1' },
+      { id: 'ENG-3', role: '执行成员', level: 2, dept: 'departments/事业部A/departments/研发部/departments/项目群A', reportsTo: 'ENG-2' },
     ],
+    units: [
+      { unitId: 'unit-1', domain: ['经营'], headRef: 'BU-1', vacancyState: 'staffed' },
+      { unitId: 'unit-2', domain: ['人事'], headRef: 'HR-0', vacancyState: 'staffed' },
+      { unitId: 'unit-3', domain: ['财务'], headRef: 'FIN-0', vacancyState: 'staffed' },
+    ],
+    auditCycle: { dept: 'departments/审计合规部', role: '审计合规总监（专职部门审计位置）', level: 8 },
   },
   {
     level: 9,
     form: '控股',
-    headcount: '3000-10000',
+    headcount: '4000+',
     span: '8-12',
     note: '子公司群＋控股职能（战略/资本/审计/法务）——子公司语义=独立编制边界（R1 呈批项随单）',
     departments: [
@@ -244,25 +294,38 @@ export const LEVEL_SPECS: LevelSpec[] = [
       { name: '资本部', path: 'departments/资本部', parent: null, leader: 'CAP-0', lanes: ['capital'], functions: ['资本'] },
       { name: '审计部', path: 'departments/审计部', parent: null, leader: 'AUD-0', lanes: ['audit'], functions: ['审计'] },
       { name: '法务部', path: 'departments/法务部', parent: null, leader: 'LAW-0', lanes: ['law'], functions: ['法务'] },
-      { name: '综合部', path: 'departments/综合部', parent: null, leader: 'PRIME-0', lanes: ['ops'], functions: ['管理', '对外', '人事', '财务'] },
+      { name: '综合部', path: 'departments/综合部', parent: null, leader: 'EXT-1', lanes: ['ops'], functions: ['管理', '对外', '人事', '财务'] },
       { name: '子公司A', path: 'departments/子公司A', parent: null, leader: 'SUB-1', lanes: ['core'], functions: ['经营'] },
       { name: '子公司B', path: 'departments/子公司B', parent: null, leader: 'SUB-2', lanes: ['core'], functions: ['经营'] },
       { name: '子公司C', path: 'departments/子公司C', parent: null, leader: 'SUB-3', lanes: ['core'], functions: ['经营'] },
+      { name: '研发部', path: 'departments/子公司A/departments/研发部', parent: 'departments/子公司A', leader: 'SUB-4', lanes: ['core'], functions: ['交付'], hardCoreRule: true },
+      { name: '项目组', path: 'departments/子公司A/departments/研发部/departments/项目组', parent: 'departments/子公司A/departments/研发部', leader: 'OPS-1', lanes: ['core'], functions: ['交付'], hardCoreRule: true },
     ],
     people: [
-      { id: 'PRIME-0', role: '董事长', level: 9, dept: 'departments/综合部', reportsTo: null },
-      { id: 'INT-0', role: '首席战略', level: 8, dept: 'departments/战略部', reportsTo: 'PRIME-0' },
+      { id: 'PRIME-0', role: '最高宰相', level: 9, dept: 'departments/综合部', reportsTo: null },
+      { id: 'INT-0', role: '首席战略（战略部）', level: 8, dept: 'departments/战略部', reportsTo: 'PRIME-0' },
       { id: 'CAP-0', role: '资本部长', level: 8, dept: 'departments/资本部', reportsTo: 'PRIME-0' },
-      { id: 'AUD-0', role: '审计部长', level: 8, dept: 'departments/审计部', reportsTo: 'PRIME-0' },
+      { id: 'AUD-0', role: '审计部长（专职部门审计位置）', level: 8, dept: 'departments/审计部', reportsTo: 'PRIME-0' },
       { id: 'LAW-0', role: '法务部长', level: 8, dept: 'departments/法务部', reportsTo: 'PRIME-0' },
       { id: 'SUB-1', role: '子公司A 负责人', level: 7, dept: 'departments/子公司A', reportsTo: 'PRIME-0' },
       { id: 'SUB-2', role: '子公司B 负责人', level: 7, dept: 'departments/子公司B', reportsTo: 'PRIME-0' },
       { id: 'SUB-3', role: '子公司C 负责人', level: 7, dept: 'departments/子公司C', reportsTo: 'PRIME-0' },
-      { id: 'EXT-1', role: '对外（单岗）', level: 6, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
-      { id: 'HF-1', role: '人事财务（控股面单岗）', level: 6, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
+      { id: 'EXT-1', role: '综合部负责人（对外）', level: 6, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
+      { id: 'HF-1', role: '人事财务（控股面单岗）', level: 5, dept: 'departments/综合部', reportsTo: 'PRIME-0' },
+      { id: 'OPS-1', role: '项目组组长', level: 4, dept: 'departments/子公司A/departments/研发部/departments/项目组', reportsTo: 'SUB-4' },
+      { id: 'OPS-2', role: '运营助理', level: 3, dept: 'departments/子公司A', reportsTo: 'SUB-1' },
+      { id: 'OPS-3', role: '执行成员', level: 2, dept: 'departments/子公司A', reportsTo: 'OPS-1' },
+      { id: 'SUB-4', role: '研发部长（子公司A）', level: 7, dept: 'departments/子公司A/departments/研发部', reportsTo: 'SUB-1' },
     ],
+    units: [
+      { unitId: 'unit-1', domain: ['战略'], headRef: 'INT-0', vacancyState: 'staffed' },
+      { unitId: 'unit-2', domain: ['资本'], headRef: 'CAP-0', vacancyState: 'staffed' },
+      { unitId: 'unit-3', domain: ['审计'], headRef: 'AUD-0', vacancyState: 'staffed' },
+    ],
+    auditCycle: { dept: 'departments/审计部', role: '审计部长', level: 8 },
   },
 ]
+
 
 /** 模板名（=命名器种子，冻结——改名=换花名序列，属口味变更） */
 export function levelTemplateName(level: number): string {
@@ -283,7 +346,9 @@ export function rootDepartments(spec: LevelSpec): LevelDeptSpec[] {
 
 /**
  * 规格自洽断言（生成器装载期自检第一步，红即拒绝渲染——绝不产出校验不过的模板）：
- * leader 悬空 / people.dept 悬空 / parent 链断环 / 嵌套 path 与父前缀不符。
+ * leader 悬空 / people.dept 悬空 / parent 链断环 / 嵌套 path 与父前缀不符；
+ * 一级单元 N/units[] 形状（unitCount=units.length、unitId 唯一、domain 非空不重、
+ * headRef 在 people 表、vacancyState 值集、head-vacant 必有 ISO 复审期限、域不得重叠）。
  */
 export function assertLevelSpec(spec: LevelSpec): void {
   const ids = new Set(spec.people.map((p) => p.id))
@@ -309,6 +374,35 @@ export function assertLevelSpec(spec: LevelSpec): void {
       const next = spec.people.find((x) => x.id === cursor)
       if (next === undefined) throw new Error(`L${spec.level} reports_to 链悬空（涉 ${p.id}）`)
       cursor = next.reportsTo
+    }
+  }
+  assertLevelUnits(spec, ids)
+}
+
+/** 一级单元示例断言（N≥1、字段形状 fail-closed；域重叠=结构违规 v2/03 §八） */
+export function assertLevelUnits(spec: LevelSpec, ids: ReadonlySet<string> = new Set(spec.people.map((p) => p.id))): void {
+  if (spec.units.length < 1) throw new Error(`L${spec.level} units 须 ≥1（N≥1；默认 1）`)
+  const seenIds = new Set<string>()
+  const seenDomains = new Set<string>()
+  for (const unit of spec.units) {
+    if (unit.unitId.trim() === '') throw new Error(`L${spec.level} unitId 不得为空`)
+    if (seenIds.has(unit.unitId)) throw new Error(`L${spec.level} unitId ${unit.unitId} 重复`)
+    seenIds.add(unit.unitId)
+    if (unit.domain.length === 0) throw new Error(`L${spec.level} 单元 ${unit.unitId} domain 不得为空`)
+    for (const token of unit.domain) {
+      if (token.trim() === '') throw new Error(`L${spec.level} 单元 ${unit.unitId} domain 含空串`)
+      if (seenDomains.has(token)) throw new Error(`L${spec.level} 域 ${token} 跨单元重叠（v2/03 §八）`)
+      seenDomains.add(token)
+    }
+    if (unit.headRef !== null && !ids.has(unit.headRef)) throw new Error(`L${spec.level} 单元 ${unit.unitId} headRef ${unit.headRef} 不在 people 表`)
+    if (unit.vacancyState !== undefined && unit.vacancyState !== 'staffed' && unit.vacancyState !== 'head-vacant') {
+      throw new Error(`L${spec.level} 单元 ${unit.unitId} vacancyState ${String(unit.vacancyState)} 不在值集`)
+    }
+    if (unit.vacancyState === 'head-vacant' && unit.reviewAt === undefined) {
+      throw new Error(`L${spec.level} 单元 ${unit.unitId} head-vacant 缺 reviewAt（空编静默=违规）`)
+    }
+    if (unit.vacancyState === 'staffed' && unit.headRef === null) {
+      throw new Error(`L${spec.level} 单元 ${unit.unitId} staffed 但无 headRef（不得默认放行）`)
     }
   }
 }

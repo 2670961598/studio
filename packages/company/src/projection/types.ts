@@ -22,10 +22,10 @@
  * 不复制矩阵本体：表 A（必设矩阵）与表 A′（保留权力表）的唯一主表在 docs/v2/03 §2.2/§2.3；
  * 本模块只输出**判据输入**与**行号引用**（ReservedPowerRefsProjection），不内联归属表。
  *
- * 一级单元字段载形（GAP-V2-17）：`unitCount`/`units[]`（`unitId`/`domain`/`headRef`/
- * `vacancyState`）在 SCH-ORG-01 尚无字段级承载（docs/v2/10 §4.3、v2/17 §4.5）。本模块把
- * 该载形冻结在**投影输入边界**（ParsedUnit），不新增 YAML 键、不新增记录类；YAML/SCH 侧
- * 落位归 MIG-08 前的定义包修订（登记见 docs/baselines/split-plan-company.md §五）。
+ * 一级单元字段载形（GAP-V2-17，2026-11-03 刀B 定形）：`unitCount`/`units[]`（`unitId`/
+ * `domain`/`headRef`/`vacancyState`/`reviewAt`）已落 SCH-ORG-01（docs/v2/10 §4.3；
+ * `vacancyState` 值集 v2/09 ENU-140）。本模块消费已解析件并**输出 v2 字段**
+ * （`structure.units.unitCount`／`units[].vacancyState`），不新增记录类、不产写路径。
  */
 
 // ───────────────────────── 权威面（O3-01） ─────────────────────────
@@ -121,9 +121,10 @@ export interface ParsedPerson {
   status?: string
 }
 
-/** 单元空编态（GAP-V2-17 载形：`vacancyState`）。 */
-export const UNIT_VACANCY_STATES = ['staffed', 'head-vacant'] as const
-export type UnitVacancyState = (typeof UNIT_VACANCY_STATES)[number]
+/** 单元空编态（GAP-V2-17 载形：`vacancyState`；值集单一实现 src/unit-vocab.ts，ENU-140）。 */
+export { UNIT_VACANCY_STATES } from '../unit-vocab.ts'
+export type { UnitVacancyState } from '../unit-vocab.ts'
+import type { UnitVacancyState } from '../unit-vocab.ts'
 
 /**
  * 已解析一级单元声明（GAP-V2-17 投影载形）。
@@ -194,8 +195,10 @@ export interface ParsedOrgConfig {
   /** departments 索引（可缺省：只给 departmentFiles 时走逐文件契约面）。 */
   departments?: readonly ParsedDepartment[]
   people?: readonly ParsedPerson[]
-  /** 一级单元声明（GAP-V2-17 投影载形；缺省=N=1 隐式单元）。 */
+  /** 一级单元声明（GAP-V2-17 字段级承载：SCH-ORG-01 `units[]`；缺省=N=1 隐式单元）。 */
   units?: readonly ParsedUnit[]
+  /** N 一级单元数量（SCH-ORG-01 `unitCount`；缺省=units.length 或 1；声明时须与 units 等长）。 */
+  unitCount?: number
   /** 空编登记声明（缺省=未登记，不发明）。 */
   vacancies?: readonly ParsedVacancy[]
   /**
@@ -301,6 +304,8 @@ export interface ProjectedUnit {
   domain: readonly string[]
   headRef: string | null
   headState: UnitHeadState
+  /** v2 字段直出（声明面的 vacancyState；缺省 null=未声明，派生态见 headState）。 */
+  vacancyState: 'staffed' | 'head-vacant' | null
   /** 空编复审期限（headState='vacant' 时必有；其余 null）。 */
   reviewAt: string | null
   authority: OrganizationAuthority
@@ -310,6 +315,8 @@ export interface ProjectedUnit {
 export interface FirstLevelUnitsProjection {
   /** N（未阻断时 ≥1；units:[] 显式空声明会阻断并保留 0 供判读）。 */
   count: number
+  /** v2 字段直出（=count；消费方按 SCH-ORG-01 `unitCount` 读取）。 */
+  unitCount: number
   /** default-single=无声明（N=1 隐式单元）；declared=输入声明。 */
   source: 'default-single' | 'declared'
   units: readonly ProjectedUnit[]

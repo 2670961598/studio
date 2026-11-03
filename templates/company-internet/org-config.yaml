@@ -20,10 +20,8 @@
 #   - 部长 G8／中间层 G7+/部门审计制度：保留（CL3 不设）
 # 保留（可不设，缺位时权力按表 A′ 显式归老板；本文件不复制表 A′ 正文）：未列出的更高岗位。
 #
-# 一级单元 N（GAP-V2-17；v2/06 §5.2）：N≥1，**默认 1**。N 是**设立记录参数**，不是本文件字段
-# （SCH-ORG-01 无 unitCount/units 字段——docs/v2/10 §4.3；本波按记录面方案定形，MIG-05 入口；
-# MIG-03 未冻结该字段）。unitCount/units[]/domain/headRef/vacancyState 的记录面承载见投影输入
-# 边界（ParsedUnit），本文件不新增 YAML 键。
+# 一级单元 N（GAP-V2-17；v2/06 §5.2）：字段级承载已定形——`unitCount`（≥1，默认 1）＋
+# `units[]`（unitId/domain/headRef/vacancyState/reviewAt；docs/v2/10 §4.3；vacancyState 值集 ENU-140）。
 # 本模板结构示例 N（示例）= 1（单元域=交付（研发部班组）＋增长（增长部班组）；最高宰相直管）——**示例不是规范**：
 # 「三省」N=3 只是示例；任何 N 由设立记录确认；增删单元=组织变更（v2/03 §7.2），不靠改字段。
 #
@@ -120,6 +118,14 @@ people:
     status: active
     executor: dsh
     file: departments/研发部/people/PRIME-0.md
+
+# 一级单元（GAP-V2-17 字段级承载；docs/v2/10 §4.3）——本模板示例不是规范：
+# unitCount≥1（默认 1）；units[] 每项 unitId/domain/headRef/vacancyState/reviewAt。
+unitCount: 1
+units:
+  - unitId: whole-company
+    domain: [交付, 增长]
+    headRef: null
 
 # 定时岗清单（04-§三 定时岗通用模型）：互联网公司的两岗=站点巡逻 + 增长日报
 jobs:

@@ -186,7 +186,7 @@ export function createRuntime(deps: EngineDeps, seams: EngineSeams): EngineRunti
     flowOf: (issue) => flowOf(rt, issue),
     transitionHostOf: (tickEvents) => transitionHostOf(rt, tickEvents),
     harvestHostOf: (tickEvents, errors) => harvestHostOf(rt, tickEvents, errors),
-    stallHostOf: () => stallHostOf(rt),
+    stallHostOf: (errors) => stallHostOf(rt, errors),
     latestRecordOf: (ticket) => latestRecordOf(rt, ticket),
     strikeBreaker: (ticket, fresh, attempt, signature, detail, tickEvents) =>
       strikeBreakerAndMaybeTrip(rt, ticket, fresh, attempt, signature, detail, tickEvents),

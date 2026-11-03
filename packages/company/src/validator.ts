@@ -44,6 +44,7 @@ import { hooksCrossRules, OrgHooksSchema, toHooks } from './hooks.ts'
 import { CostGuardSectionSchema, costGuardRules, PersonCostCapsSchema, toCostGuard } from './cost-guard.ts'
 import { toJobs } from './jobs.ts'
 import { ORG_CONFIG_SCHEMA_LITERALS, lineOfPath, multifileRules, zodIssuesToDirectoryIssues } from './multifile.ts'
+import { UNIT_FIELDS, unitCrossRules } from './unit-fields.ts'
 
 const ORG_CONFIG_FILE = 'org-config.yaml'
 
@@ -231,9 +232,11 @@ const WorkflowsSchema = z.strictObject({
 // 结构闸/内容引用闸/快照装载拆至 groups.ts（20-§十五「先拆再增」；同源 import 消费）
 
 const OrgConfigSchema = z.strictObject({
+  schema: z.enum(ORG_CONFIG_SCHEMA_LITERALS),
+  // GAP-V2-17 字段级承载（docs/v2/10 §4.3）：形状/规则体在 unit-fields.ts（validator 只接线）
+  ...UNIT_FIELDS,
   // DEV-32（docs/51-§三 B-1）：canonical=studio-next/org@1；org-config/v1=迁移期兼容
   // （templates/DEV-27 夹具/契约 cases.json 语料仍在用——收口计划见 multifile.ts 头注）
-  schema: z.enum(ORG_CONFIG_SCHEMA_LITERALS),
   company: z.strictObject({
     name: z.string().min(1),
     // slug 语法域（docs/43-附录A-4）：与 init 通道同规——单一校验平面（SLUG_RE 单表，
@@ -351,7 +354,7 @@ function crossRules(doc: ReturnType<typeof parseDocument>, lc: LineCounter, org:
   out.push(...groupCrossRules(doc, lc, org, deptPaths, peopleIds))
   out.push(...hooksCrossRules(doc, lc, org, peopleIds))
   // 成本警戒段内容规则 CG-1..CG-3（132-§6.4 单C）——规则体拆至 cost-guard.ts
-  out.push(...costGuardRules(doc, lc, org.cost_guard))
+  out.push(...costGuardRules(doc, lc, org.cost_guard), ...unitCrossRules(doc, lc, org))
   return out
 }
 

@@ -7,12 +7,11 @@
  * 本件职责（纯函数、零 IO）：
  *   - 一级单元声明收口（O3-01：legacy/definition 同对象不得两权威）＋域校验＋权威面记录；
  *   - 空编声明收口（同则）＋空编对象 id 前缀（`vacancy:<kind>:<ref>`）；
- *   - 单元 N 的投影载形常量（`unitCount`/`units[]` 的 `unitId`/`domain`/`headRef`/
- *     `vacancyState`/`reviewAt`——GAP-V2-17；本件不新增 YAML 键/记录类）；
+ *   - 单元 N 的投影载形（`unitCount`/`units[]` 的 `unitId`/`domain`/`headRef`/
+ *     `vacancyState`/`reviewAt`——GAP-V2-17，SCH-ORG-01 字段级承载已落 v2/10 §4.3）；
  *   - 单元字段运行时**形状闸**（`unitFieldShapeViolations`：domain/headRef/vacancyState/
  *     reviewAt 非法形状一律拒——不静默强转、不按字符拆域、不把未知态退化成默认形态；
- *     仍在投影输入边界内加固，不改 SCH-ORG-01 schema/契约面，
- *     登记见 docs/baselines/split-plan-company.md §六）；
+ *     #552 刀A 的 fail-closed 形状闸不放宽；登记见 split-plan §六）；
  *   - `reviewAt` ISO 8601 形状闸（是否逾期归消费方按时钟判，投影不取时钟）。
  */
 import { compareText, ISSUE_CODES, projectionIssue } from './issues.ts'
@@ -30,8 +29,9 @@ import type {
 /** 隐式 N=1 单元 id（投影默认值，不是声明；不写死「三省」）。 */
 export const IMPLICIT_UNIT_ID = '(whole-company)'
 
-/** ISO 8601 形状闸（日期或日期时刻；是否逾期归消费方按时钟判）。 */
-export const ISO_8601_RE = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2}))?$/
+/** ISO 8601 形状闸（单一实现 src/iso8601.ts；是否逾期归消费方按时钟判）。 */
+import { ISO_8601_RE } from '../iso8601.ts'
+export { ISO_8601_RE }
 
 /** 结构面对象（单元/空编）的权威面记录（部门对象面见 org-tree 的 authority）。 */
 export interface StructureAuthority {

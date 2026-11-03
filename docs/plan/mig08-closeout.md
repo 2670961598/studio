@@ -83,7 +83,7 @@ mise exec -- node --input-type=module -e "import{CRASH_POINTS}from'./apps/daemon
 | **GAP-V2-14**｜V3 跨实现互操作无第二实现 | 第二实现＋共同用例 | **target-not-proven** | 无第二实现（仓内单实现） | 归生态/后续；v2/17 §4.5 口径不变 |
 | **GAP-V2-15**｜contract 新增端口类型文件落位与 F-ID 发放 | MIG-03 冻结工件发放 | **closed** | 端口落位 20 件（`ls packages/contract/src/ports` = 20）；`scripts/verify/port-map-rescan.mjs` **PASS 6/6**（13 PORT ↔ 20 文件；0 缺失/0 多余/0 冲突，2026-10-29 实测）；`packages/contract/test/v2/port-map-rescan.test.ts`（4 用例） | 无（F-ID 发放规则按 MIG-03 工件口径落位；未见发布动作，属登记口径） |
 | **GAP-V2-16**｜裸字母残余与撞号族（待修 20 条） | 清偿后 F6 复扫=0 | **closed** | v2/17 §二.7 20/20 条已标注「✅已修」；§二.8-二 F6 真待修=0；`verify:docs` 检查③「真待修 0」 | 无 |
-| **GAP-V2-17**｜N 一级单元在 SCH-ORG-01 无字段级承载 | MIG-05 入口前定形（字段方案或记录面方案；定形后登记 09 §二值集） | **target-not-proven**（部分定形） | 投影边界定形已落：`docs/baselines/split-plan-company.md` §六（`units.count`/`units[]`/`unitId`/`domain`/`headRef`/`vacancyState` 投影载形；16 处代码引用） | 该件明写「**部分定形（投影边界）**；不得写成『GAP-V2-17 已关闭』」；**SCH-ORG-01 字段与 units[] 值集未登记**（闭口条件未达） |
+| **GAP-V2-17**｜N 一级单元在 SCH-ORG-01 无字段级承载 | MIG-05 入口前定形（字段方案或记录面方案；定形后登记 09 §二值集） | **partial→定形完成（2026-11-03 刀B；字段面批示随 studio-dev-603）** | 投影边界定形已落：`docs/baselines/split-plan-company.md` §六（`units.count`/`units[]`/`unitId`/`domain`/`headRef`/`vacancyState` 投影载形；16 处代码引用） | split-plan §六 状态已更新：投影边界定形＋字段级定形（`unitCount`/`units[]`＋ENU-140）；**待制作人批**，不冒称已冻结 |
 | **GAP-V2-18**｜模板生成器仍是 v1（gen-template/level-specs） | 重写为 v2 或退役；重写后逐字节等值；旧测试复绿或退役登记 | **open** | `packages/company/src/gen-template.ts`/`level-specs.ts` 仍在且由 `src/index.ts:88` 导出；旧测试 `packages/company/test/gen-template.test.ts` **7 红**（台账 §八登记，归本 GAP） | 生成器未重写、未退役；再生成仍会覆盖 MIG-05 迁移的 v2 模板——**收口时仍开放**，需重写/退役单 |
 
 **GAP 表尾注**：
@@ -308,7 +308,7 @@ $ grep -rhoE 'NEG-[A-Z]+-[0-9]+' packages/contract/cases.json apps packages scri
 | 1 | **NEG 覆盖 76/119 未达波门**（MIG-07 ④≥112 差 36；MIG-08 终值 118/119 差 42/43）——缺 EMP12/ORG6/WRK11/RING5/RUN1/EVD4/ENG4 | §四 实测；不伪造、不以文档充数 | **制作人裁**（补接线 or 按 MIG-03/05/06 同口径重定检查点并落档）＋施工补接线 |
 | 2 | GAP-V2-01 cost_daily 对账规则未裁（DEC-OPEN-14） | rebuild 限域/备份已落；规则未裁 | 制作人裁（plan/03 §十一） |
 | 3 | GAP-V2-13 执行器值集 ENU-88 仍「待定稿」 | v2/09:246 | 09 登记（制作人/09 卷主编） |
-| 4 | GAP-V2-17 SCH-ORG-01 字段/`units[]` 值集未登记 | 仅投影边界定形（split-plan-company §六） | 06/10/17 卷修订流 |
+| 4 | GAP-V2-17 SCH-ORG-01 字段/`units[]` 值集登记 | 字段级定形已落（v2/10 §4.3＋ENU-140；studio-dev-603） | 制作人批示（字段面；契约包零改） |
 | 5 | GAP-V2-18 生成器仍 v1（gen-template 7 红） | `gen-template.ts` 在、导出在；旧测试 7 红 | 重写/退役单（05/16） |
 | 6 | GAP-V2-02 SEC-SIG-04 通道未建／PRB-08 未执行 | compile-projection 自述；probe 仅 pb-1 | 后续波＋PB-2 |
 | 7 | GAP-V2-06 任职网关闸门未建 | hr.ts 自述「目标（未证）」 | 后续波（02/16） |

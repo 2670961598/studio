@@ -289,6 +289,9 @@ export type {
   WorkRecord,
 } from './records.ts'
 
+// sessions 收口面（studio-dev-551）：EndSession 入参形状与 Ledger.endSession 同源
+export { EndSessionSchema, type EndSession, type EndSessionInput } from './sessions/archive.ts'
+
 // v14 PORT-HIST 记录唯一写口（IMPL-04-06；v2/14 §1.6）——hist.ts 面工厂与读写形状。
 // 记录写口唯一：append/correct；读面 get/query/reconcile/memory 均 fail-closed 于坏行。
 // 生产装配面：daemon assembly/ops（OPS 补形 A：REC-WORK-18 记录经 createHistFace(ledger.db)

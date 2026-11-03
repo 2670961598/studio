@@ -30,6 +30,7 @@ import {
 } from './batch.ts'
 import { tokenBuckets } from '../sentinel/shape.ts'
 import { removeInstructions } from '../instructions-store.ts'
+import { closeSessionArchive } from '../sessions/archive.ts' // 会话归档接线（studio-dev-551）
 import type { EngineRuntime } from '../runtime/types.ts'
 import type { Inflight } from '../tick/types.ts'
 import { applyWorkTransition } from '../work/transition.ts'
@@ -121,6 +122,8 @@ export async function finalizeHarvest(
       ...(gate.summaryPath !== undefined ? { summary_ref: gate.summaryPath } : {}),
       ...(entry.handle.executorSessionId !== undefined ? { executor_session_id: entry.handle.executorSessionId } : {}), // 202-P2：dsh 侧会话 id 收口（v13 列，resume 断点凭据）
     })
+    // 相位 4 收割成功：会话归档收口（ended_at/turns/archive_path＋守护计时 note 锚；缺失明报不补插）
+    const sessionClose = closeSessionArchive(ledger, { ticket, at: endedAt, sessionId: entry.handle.sessionId, entry, turns: stats.turns, onProblem: (message) => errors.push(message) })
     rt.breaker = onSuccess(rt.breaker, ticket).newState
     inflight.delete(ticket)
     syncMirror(transitioned)
@@ -179,7 +182,7 @@ export async function finalizeHarvest(
       cost_usd: harvestCost.usd,
       duration_ms: stats.duration,
       // model 留痕走 note 后缀（132-§6.1 单A：events 列集冻结不动——`model=…` 尾缀）
-      note: `四要件齐（completed/非空/REPORT/exit0）；report=${gate.reportPath}${gate.summaryPath !== undefined ? `;summary=${gate.summaryPath}` : ''}${budgetNote}${harvestCost.noteSuffix}${usageNote}${account.noteSuffix}${pricingNote}${account.sidecarSuffix}${sentinelNote}${stats.model !== undefined ? `;model=${stats.model}` : ''}`,
+      note: `四要件齐（completed/非空/REPORT/exit0）；report=${gate.reportPath}${gate.summaryPath !== undefined ? `;summary=${gate.summaryPath}` : ''}${budgetNote}${harvestCost.noteSuffix}${usageNote}${account.noteSuffix}${pricingNote}${account.sidecarSuffix}${sentinelNote}${sessionClose.noteSegment}${stats.model !== undefined ? `;model=${stats.model}` : ''}`,
     })
     // bridge 通道指令临时文件：保留至收割完成→此刻删（v1.5#1 清理策略；内容指纹已在
     // DISPATCH note/payload_hash 落账——证据不依赖文件存活）
@@ -218,6 +221,8 @@ export async function failHarvest(
   // 断路签名：四要件失败形态（同形态连击才熔断——breaker streak 语义）
   const signature = harvestFailureSignature(requirements)
   ledger.endWorkRecord(entry.workRecordId, { status: 'failed', ended_at: now(), ...(entry.handle.executorSessionId !== undefined ? { executor_session_id: entry.handle.executorSessionId } : {}) })
+  // 相位 4 收割失败：会话归档同体收口（失败面同样不留 ended_at=NULL；行缺失明报进 GATE_FAIL note）
+  const sessionClose = closeSessionArchive(ledger, { ticket, at: now(), sessionId: entry.handle.sessionId, entry })
   inflight.delete(ticket)
   lanes.release(entry.lane, ticket)
   // 回首批位（DEFAULT_ROLLBACK_EDGES：已派发→新单；断路器停重派语义，breaker.ts 头注）——
@@ -226,7 +231,7 @@ export async function failHarvest(
   const wkeyNote = wkeyDiscarded ? ';wkey=env-离场（凭据随子进程终结；重派重签新 credentials）' : ''
   const gateFailEvent = {
     name: 'GATE_FAIL' as const,
-    extra: { note: `${detail};rollback=${rollbackAnchor ?? '跳过（等级未登记流）'}${wkeyNote}` },
+    extra: { note: `${detail};rollback=${rollbackAnchor ?? '跳过（等级未登记流）'}${wkeyNote}${sessionClose.noteSegment}` },
   }
   await (rollbackAnchor !== undefined
     ? applyWorkTransition(transitionHostOf(tickEvents), { ticket, attempt: entry.attempt, toState: rollbackAnchor, event: gateFailEvent })

@@ -24,15 +24,15 @@ import { LEVEL_SPECS, assertLevelSpec, levelSpec, levelTemplateName } from '../s
 const templatesRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../templates')
 const LEVELS = [3, 4, 5, 6, 7, 8, 9] as const
 
-/** docs/33-§3 逐级部门表形状锚（部门数/骨架人数/根部门数——根部门×2=定时岗数；form=表列名） */
+/** V2 逐级部门表形状锚（部门数/骨架人数/根部门数——根部门×2=定时岗数；form=表列名） */
 const SHAPE: Record<number, { deptCount: number; peopleCount: number; rootCount: number; form: string }> = {
   3: { deptCount: 2, peopleCount: 7, rootCount: 2, form: '小团队' },
   4: { deptCount: 2, peopleCount: 10, rootCount: 2, form: '团队' },
   5: { deptCount: 6, peopleCount: 13, rootCount: 6, form: '部门化' },
   6: { deptCount: 10, peopleCount: 15, rootCount: 8, form: '多团队' },
   7: { deptCount: 11, peopleCount: 13, rootCount: 8, form: '事业部' },
-  8: { deptCount: 12, peopleCount: 16, rootCount: 10, form: '集团' },
-  9: { deptCount: 8, peopleCount: 10, rootCount: 8, form: '控股' },
+  8: { deptCount: 13, peopleCount: 18, rootCount: 10, form: '集团' },
+  9: { deptCount: 10, peopleCount: 14, rootCount: 8, form: '控股' },
 }
 
 describe('分级模板仓资产对账（DEV-14）', () => {

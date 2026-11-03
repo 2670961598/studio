@@ -18,6 +18,7 @@ import {
   type WorkRecord,
 } from '../records.ts'
 import { assertRecord, optNum, optStr, str, type SqlRow } from '../row-helpers.ts'
+import { endSessionRecord, type EndSessionInput } from '../sessions/archive.ts'
 
 /** work_records / sessions 读写面 + 收口面（Ledger extends 本面——方法名恒平，ledger.ts 摊入） */
 export interface WorkRecordsFace {
@@ -25,6 +26,8 @@ export interface WorkRecordsFace {
   getWorkRecord(id: string): WorkRecord | undefined
   listWorkRecords(query?: { issue?: string }): WorkRecord[]
   insertSession(record: unknown): string
+  /** 会话收口面（studio-dev-551）：false=行缺失（明报不补插）；已收口再收=CONFIG_INVALID */
+  endSession(sessionId: string, end: EndSessionInput): boolean
   getSession(sessionId: string): SessionRecord | undefined
   listSessions(query?: { issue?: string }): SessionRecord[]
   /** work_records 收口面（在途→终态，一次性）：已 ended 再收=CONFIG_INVALID；cost_usd/tokens/
@@ -203,6 +206,7 @@ export function createWorkRecordsFace(db: DatabaseSync): WorkRecordsFace {
       return row === undefined ? undefined : rowToSession(row)
     },
     listSessions,
+    endSession: (sessionId, end) => endSessionRecord(db, sessionId, end),
     endWorkRecord,
   }
 }

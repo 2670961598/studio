@@ -135,8 +135,8 @@ export interface EngineRuntime {
   readonly transitionHostOf: (tickEvents: EventRecord[]) => WorkTransitionHost
   /** 收割尝试宿主（编排体=harvest/batch.ts；判定体见 harvest/finalize.ts） */
   readonly harvestHostOf: (tickEvents: EventRecord[], errors: string[]) => HarvestAttemptHost
-  /** STALL 响置宿主（响置体=watchdog/stall-response.ts） */
-  readonly stallHostOf: () => StallResponseHost
+  /** STALL 响置宿主（响置体=watchdog/stall-response.ts；errors=会话归档收口问题明报位） */
+  readonly stallHostOf: (errors: string[]) => StallResponseHost
   /** 该单最新工时行（work_records 按 started_at 升序取末） */
   readonly latestRecordOf: (ticket: TicketId) => WorkRecord | undefined
   /** 断路器入账+熔断链（failHarvest / STALL 响置共用单一实现） */

@@ -20,9 +20,9 @@
  * （docs/v2/17 O3-01 行「V2 已消解；随 MIG-05 复验」）。
  *
  * ── 四、GAP-V2-17（一级单元字段级承载）──────────────────────────────────────────────
- * `unitCount`/`units[]`（`unitId`/`domain`/`headRef`/`vacancyState`）在本模块的**投影输入
- * 边界**定形（ParsedUnit），不新增 YAML 键、不新增记录类；SCH-ORG-01 的字段级落位归
- * MIG-08 前的定义包修订（docs/v2/10 §4.3、docs/v2/17 §4.5；登记见 split-plan §五）。
+ * `unitCount`/`units[]`（`unitId`/`domain`/`headRef`/`vacancyState`/`reviewAt`）已落
+ * SCH-ORG-01（docs/v2/10 §4.3；ENU-140，2026-11-03 刀B）。本模块输出 v2 字段
+ * （`structure.units.unitCount`／`units[].vacancyState`），并保留 #552 刀A 的输入形状闸。
  *
  * ── 五、出口面说明（诚实登记）──────────────────────────────────────────────────────
  * 本单领土不含 `packages/company/src/index.ts`，故投影暂以**相对路径**消费（同包内

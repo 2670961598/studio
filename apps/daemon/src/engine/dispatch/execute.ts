@@ -47,6 +47,7 @@ import type { EventIndex } from '../sentinel/events-index.ts'
 import { modelTierDispatchFace, resolveModelTier } from '../tier/model-tier.ts'
 import type { TickActionResult, TickPhaseDispatchBudget } from '../tick-report/types.ts'
 import { dropQueueCarry, queueDispatchAnchor } from '../todoqueue/queue.ts'
+import { startSessionArchive } from '../sessions/archive.ts' // 会话归档接线（studio-dev-551）
 import { mintWorkerKey, workerKeyCredentials, workerKeyGuidance, WORKER_WKEY_ENV_KEY } from '../worker-key.ts'
 import type { EngineRuntime } from '../runtime/types.ts'
 
@@ -265,6 +266,7 @@ export async function executeDispatch(
       }
       launched = await adapter.launch(launchBrief)
       rt.crash.dispatchLaunched() // 崩溃注入②（F3-11）：launch 已返回、work_records 在途落账前——受控测试缝，默认零行为
+      startSessionArchive(ledger, { ticket, personId: person.id, sessionId: launched.sessionId, at }) // 相位 3 会话归档 start 行（写失败抛→DISPATCH_FAIL，无归档不派）
       lanes.acquire(action.lane, ticket, at)
       const transitioned = await platform.issues.transition(ticket, action.toState)
       const workRecordId = makeId(at)

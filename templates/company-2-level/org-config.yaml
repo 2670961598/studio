@@ -19,12 +19,10 @@
 #   - 执行成员 G2-G1：保留（本骨架放 1 名执行成员作 N=1 单层样例）
 # 保留（可不设，缺位时权力按表 A′ 显式归老板；本文件不复制表 A′ 正文）：未列出的更高岗位。
 #
-# 一级单元 N（GAP-V2-17；v2/06 §5.2）：N≥1，**默认 1**。N 是**设立记录参数**，不是本文件字段
-# （SCH-ORG-01 无 unitCount/units 字段——docs/v2/10 §4.3；本波按记录面方案定形，MIG-05 入口；
-# MIG-03 未冻结该字段）。unitCount/units[]/domain/headRef/vacancyState 的记录面承载见投影输入
-# 边界（ParsedUnit），本文件不新增 YAML 键。
+# 一级单元 N（GAP-V2-17；v2/06 §5.2）：字段级承载已定形——`unitCount`（≥1，默认 1）＋
+# `units[]`（unitId/domain/headRef/vacancyState/reviewAt；docs/v2/10 §4.3；vacancyState 值集 ENU-140）。
 # 本模板结构示例 N（示例）= 1（单元域=交付；最高宰相直管，N=1 不单设 G8 首长）——**示例不是规范**：
-# 「三省」N=3 只是示例；任何 N 由设立记录确认；增删单元=组织变更（v2/03 §7.2），不靠改字段。
+# 「三省」N=3 只是示例；任何 N 由设立记录确认；增删单元=组织变更（v2/03 §7.2）。
 #
 # 部门结构（v2/03 §6.2 表 E）：本骨架部门等级 D2（班组：负责人 G2，不享有部门硬核；表 A′ 行 8 权力归最高宰相）
 # 最高宰相为**公司层岗位**（不在部门硬核内）：people[].dept 仅作派工索引挂靠，不参与部门 Dn 判定。
@@ -86,6 +84,14 @@ people:
     status: active
     executor: dsh
     file: departments/工程部/people/PRIME-0.md
+
+# 一级单元（GAP-V2-17 字段级承载；docs/v2/10 §4.3）——本模板示例不是规范：
+# unitCount≥1（默认 1）；units[] 每项 unitId/domain/headRef/vacancyState/reviewAt。
+unitCount: 1
+units:
+  - unitId: whole-company
+    domain: [交付]
+    headRef: null
 
 # 定时岗清单（定时岗通用模型）：一切唤起都是定时任务，挂在部门节点下
 # 报表岗 / 财务审查 / 人事审查 / 项目审查 / 升级审查……都只是这个模型的实例，公司可自行增删

@@ -107,10 +107,20 @@ interface OrgPerson {
   dept: string
   role: string
 }
+interface OrgUnitDoc {
+  unitId: string
+  domain: string[]
+  headRef: string | null
+  vacancyState?: string
+  reviewAt?: string | null
+}
+
 interface OrgDoc {
   company: { level: number; name: string; slug: string; charter_ref: string; level_distribution: Record<string, number> }
   departments: OrgDept[]
   people: OrgPerson[]
+  unitCount?: number
+  units?: OrgUnitDoc[]
 }
 
 function parseOrg(src: string): OrgDoc {
@@ -486,9 +496,9 @@ describe('CL 与部门结构符合 v2/03（表 A/表 E；NEG-PKG-08/NEG-ORG-06/N
   })
 })
 
-describe('N 一级单元参数不写死（GAP-V2-17 记录面方案；默认 1）', () => {
+describe('N 一级单元字段级承载（GAP-V2-17 字段方案；默认 1；示例不是规范）', () => {
   for (const spec of ALL_TEMPLATES) {
-    it(`${spec.dir}：N 声明=示例 ${spec.nExample}（默认 1）且不新增 SCH-ORG-01 字段`, async () => {
+    it(`${spec.dir}：N 声明=示例 ${spec.nExample}（默认 1）且 unitCount/units[] 字段在场`, async () => {
       const src = (await readTemplate(spec.dir))['org-config.yaml'] ?? ''
       expect(src).toContain('一级单元 N（GAP-V2-17')
       expect(src).toContain('默认 1')
@@ -497,10 +507,16 @@ describe('N 一级单元参数不写死（GAP-V2-17 记录面方案；默认 1�
       expect(matched, '缺 N 参数声明行（一级单元数量由设立记录确认，不写死）').not.toBeNull()
       expect(Number(matched === null ? Number.NaN : matched[1])).toBe(spec.nExample)
       expect(spec.nExample).toBeGreaterThanOrEqual(1)
-      // 本轮不新增字段（v2/10 §4.3）：units/unitCount 不得出现在 org-config 顶层
+      // 字段级承载（v2/10 §4.3）：unitCount 与 units[] 必须在场且同口径
       const org = parseOrg(src)
-      expect(Object.keys(org)).not.toContain('units')
-      expect(Object.keys(org)).not.toContain('unitCount')
+      expect(org.unitCount).toBe(spec.nExample)
+      expect(org.units).toHaveLength(spec.nExample)
+      for (const unit of org.units ?? []) {
+        expect(unit.unitId.trim()).not.toBe('')
+        expect(unit.domain.length).toBeGreaterThan(0)
+        expect(unit.headRef === null || typeof unit.headRef === 'string').toBe(true)
+        if (unit.vacancyState === 'head-vacant') expect(unit.reviewAt).toMatch(/^\d{4}-\d{2}-\d{2}/)
+      }
     })
   }
 

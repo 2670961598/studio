@@ -38,6 +38,7 @@ import type { EventIndex } from '../sentinel/events-index.ts'
 import { STALL_KILL_CLOSE_ANCHOR, STALL_RENEW_ANCHOR } from '../sentinel/events-index.ts'
 import { applyWorkTransition, type WorkTransitionHost } from '../work/transition.ts'
 import { removeInstructions } from '../instructions-store.ts'
+import { closeSessionArchive } from '../sessions/archive.ts'
 import type { InflightActivity } from './liveness.ts'
 
 /** 响置宿主（引擎闭包注入；本件不持有可变全局态） */
@@ -65,6 +66,8 @@ export interface StallResponseHost {
   readonly probeActivity: (entry: Inflight, at: number) => InflightActivity
   /** 按 executor 分级解析生效阈值 */
   readonly effectiveStallAfterMs: (executor: string | undefined) => number
+  /** 问题明报（会话归档收口缺失/写失败进 tick errors；不静默吞） */
+  readonly reportProblem: (message: string) => void
 }
 
 /** 执行一条 stall_alarm 动作（咬合/只叫/续租三态） */
@@ -144,6 +147,8 @@ export async function executeStallResponse(
       }
     }
     host.ledger.endWorkRecord(entry.workRecordId, { status: 'interrupted', ended_at: host.now() })
+    // 看护面会话同体收口（studio-dev-551）：被杀/消亡会话不留 ended_at=NULL；守护计时进 note 锚
+    const sessionClose = closeSessionArchive(host.ledger, { ticket, at: host.now(), sessionId: entry.handle.sessionId, entry, onProblem: host.reportProblem })
     inflight.delete(ticket)
     host.lanes.release(entry.lane, ticket)
     // 回首批位（迁移与触发记录单一出口＝work/transition.ts）；等级未登记流=无迁移面
@@ -151,7 +156,7 @@ export async function executeStallResponse(
     const stallNote =
       `${silent}${anchorFace}（第 ${nth}/${threshold} 次达阈——咬合）：${killNote}；${STALL_KILL_CLOSE_ANCHOR}（R-B 在途语义：接管≠收割，四要件不可判）；` +
       `rollback=${rollbackNote}；重派=attempt+1 经 rescan 兜底（咬合收口即释放消费键——studio-dev-141 修订：原「activity 键未释放」口径致回退态单 rescan 兜底被 DEDUP_NOOP 压制 3.5h 实证；键释放≠收割结论，GATE_FAIL/预算面不动；预算沿用 adopt 不结算）` +
-      `${host.workerKeysEnabled ? '；wkey=env-离场（凭据随被杀子进程终结；重派重签新 key——不吊销 ticket）' : ''}`
+      `${host.workerKeysEnabled ? '；wkey=env-离场（凭据随被杀子进程终结；重派重签新 key——不吊销 ticket）' : ''}${sessionClose.noteSegment}`
     await (freshAnchor !== undefined
       ? applyWorkTransition(host.transitionHostOf(tickEvents), { ticket, attempt: workAttempt, toState: freshAnchor, event: { name: 'STALL', extra: { note: stallNote } } })
       : applyWorkTransition(host.transitionHostOf(tickEvents), { ticket, attempt: workAttempt, carrier: fresh, event: { name: 'STALL', extra: { note: stallNote } } }))
@@ -186,6 +191,9 @@ export async function executeStallResponse(
   for (const rec of host.ledger.listWorkRecords({ issue: ticket })) {
     if (rec.status === 'running') {
       host.ledger.endWorkRecord(rec.id, { status: 'failed', ended_at: host.now() })
+      if (rec.session_id !== undefined) {
+        closeSessionArchive(host.ledger, { ticket, at: host.now(), sessionId: rec.session_id, onProblem: host.reportProblem })
+      }
     }
   }
   host.lanes.release(fresh.lane ?? config.defaultLane, ticket)

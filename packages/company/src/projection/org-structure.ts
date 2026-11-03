@@ -54,7 +54,23 @@ export function buildStructureProjection(input: OrganizationProjectionInput, tre
   const issues: ProjectionIssue[] = []
   const personIds = collectPersonIds(input)
 
-  // ───────────────── 1. 一级单元 N（GAP-V2-17 载形；默认 1，不写死 3） ─────────────────
+  // ───────────────── 1. 一级单元 N（GAP-V2-17 字段级承载；默认 1，不写死 3） ─────────────────
+  const rawUnitCount: unknown = input.org.unitCount
+  let declaredUnitCount: number | undefined
+  if (rawUnitCount !== undefined) {
+    if (typeof rawUnitCount !== 'number' || !Number.isInteger(rawUnitCount) || rawUnitCount < 1) {
+      issues.push(
+        projectionIssue(
+          'structure',
+          ISSUE_CODES.unitFieldShape,
+          '(unitCount)',
+          `unitCount=${JSON.stringify(rawUnitCount)} 非法——须为整数 ≥1（SCH-ORG-01；不猜不补）`,
+        ),
+      )
+    } else {
+      declaredUnitCount = rawUnitCount
+    }
+  }
   const unitsDeclared = input.org.units !== undefined || input.definition?.units !== undefined
   const unitReconciliation = reconcileUnits(input, issues)
   const canonicalUnits = unitReconciliation.canonical
@@ -143,6 +159,7 @@ export function buildStructureProjection(input: OrganizationProjectionInput, tre
       domain,
       headRef,
       headState,
+      vacancyState: unit.vacancyState ?? null,
       reviewAt: headState === 'vacant' ? reviewAt : null,
       authority: canonical.authority,
     }
@@ -162,21 +179,36 @@ export function buildStructureProjection(input: OrganizationProjectionInput, tre
 
   let unitsProjection: FirstLevelUnitsProjection
   if (!unitsDeclared) {
-    // 默认 N=1（低 CL 默认形态；不单设一级单元首长，最高宰相直管）
-    unitsProjection = {
-      count: 1,
-      source: 'default-single',
-      units: [
-        {
-          unitId: IMPLICIT_UNIT_ID,
-          domain: [],
-          headRef: null,
-          headState: 'default-single',
-          reviewAt: null,
-          // 隐式默认不是声明，不进入 O3-01 对象表；authority 只作形状占位（不冒充新权威）
-          authority: 'legacy-readonly',
-        },
-      ],
+    if (declaredUnitCount !== undefined && declaredUnitCount > 1) {
+      // 只声明 unitCount>1 而无 units[]：无法表达各单元域——拒，不虚构单元
+      issues.push(
+        projectionIssue(
+          'structure',
+          ISSUE_CODES.unitCountMismatch,
+          '(unitCount)',
+          `unitCount=${declaredUnitCount} 但未声明 units[]——N>1 必须逐单元给出 unitId/domain（不猜不补）`,
+        ),
+      )
+      unitsProjection = { count: declaredUnitCount, unitCount: declaredUnitCount, source: 'declared', units: [] }
+    } else {
+      // 默认 N=1（低 CL 默认形态；不单设一级单元首长，最高宰相直管）
+      unitsProjection = {
+        count: 1,
+        unitCount: declaredUnitCount ?? 1,
+        source: 'default-single',
+        units: [
+          {
+            unitId: IMPLICIT_UNIT_ID,
+            domain: [],
+            headRef: null,
+            headState: 'default-single',
+            vacancyState: null,
+            reviewAt: null,
+            // 隐式默认不是声明，不进入 O3-01 对象表；authority 只作形状占位（不冒充新权威）
+            authority: 'legacy-readonly',
+          },
+        ],
+      }
     }
   } else if (totalUnits === 0) {
     issues.push(
@@ -187,9 +219,19 @@ export function buildStructureProjection(input: OrganizationProjectionInput, tre
         'units 显式声明为空——一级单元 N≥1（默认 1；三省=N=3 仅示例，N 不写死）；空声明不猜成默认 1，投影拒绝',
       ),
     )
-    unitsProjection = { count: 0, source: 'declared', units: [] }
+    unitsProjection = { count: 0, unitCount: 0, source: 'declared', units: [] }
   } else {
-    unitsProjection = { count: totalUnits, source: 'declared', units: projectedUnits }
+    if (declaredUnitCount !== undefined && declaredUnitCount !== totalUnits) {
+      issues.push(
+        projectionIssue(
+          'structure',
+          ISSUE_CODES.unitCountMismatch,
+          '(unitCount)',
+          `unitCount=${declaredUnitCount} 与 units.length=${totalUnits} 不符——两口径必须相等（SCH-ORG-01；不静默择一）`,
+        ),
+      )
+    }
+    unitsProjection = { count: totalUnits, unitCount: totalUnits, source: 'declared', units: projectedUnits }
   }
 
   // ───────────────── 2. 空编（登记＋复审期限；缺期限=静默→阻断） ─────────────────

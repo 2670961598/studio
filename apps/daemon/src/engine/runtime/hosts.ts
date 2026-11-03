@@ -29,7 +29,7 @@ export function harvestHostOf(rt: EngineRuntime, tickEvents: EventRecord[], erro
  * STALL 响置宿主（studio-dev-505：响置体拆件 engine/watchdog/stall-response.ts；
  * 本处只装配引擎运行时——活性探测/分级阈值/断路/迁移/事件面同源，判定仍在 core decide）。
  */
-export function stallHostOf(rt: EngineRuntime): StallResponseHost {
+export function stallHostOf(rt: EngineRuntime, errors: string[]): StallResponseHost {
   return {
     platform: rt.platform,
     ledger: rt.ledger,
@@ -46,5 +46,7 @@ export function stallHostOf(rt: EngineRuntime): StallResponseHost {
     workerKeysEnabled: rt.workerKeys !== undefined,
     probeActivity: (entry, at) => probeInflightActivity(entry, at),
     effectiveStallAfterMs: (executor) => effectiveStallAfterMs(rt.config.stallAfterMs, rt.config.stallAfterMsByExecutor, executor),
+    // 会话归档收口问题进 tick errors（studio-dev-551：缺失/写失败明报，不静默）
+    reportProblem: (message) => errors.push(message),
   }
 }

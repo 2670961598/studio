@@ -15,27 +15,27 @@
 # CL 主张（v2/03 §2.4）：company.level=7 只是主张；判据=在编结构可满足的最高层判据。
 # 本骨架声明 CL7 事业部骨架；结构下限（表 A CL7 行）：
 #   - 最高宰相 G9（拟任）
-#   - 一级单元 N≥1（本示例 N=2；默认仍为 1）
-#   - 执行成员 G2-G1 正式任职
-#   - G8 部长与第二个 D8 部门在编
-#   - 中间层 G7 与 G6 在编
-#   - D7 子部门在编（部门内嵌套，CL7 判据）
-#   - 专职部门审计位置在编（审计合规部，CL7 判据）
+#   - 一级单元 N≥1（默认 1）
+#   - 执行成员 G2-G1 正式任职（≥1 名）
+#   - 首个 D8 部门与 G8 部长在编（CL4 判据）
+#   - 中间层 G7 必设（CL5+）
+#   - 中间层 G6 必设（CL6+）
+#   - 第二个 D8 部门必设（CL6+）
+#   - 专职部门审计位置必设（CL7+）
 #   - 部门审计制度（周期记录；本骨架由 audit-cycle 定时岗承载）
 # 保留（可不设，缺位时权力按表 A′ 显式归老板；本文件不复制表 A′ 正文）：未列出的更高岗位。
 #
-# 一级单元 N（GAP-V2-17；v2/06 §5.2）：N≥1，**默认 1**。N 是**设立记录参数**，不是本文件字段
-# （SCH-ORG-01 无 unitCount/units 字段——docs/v2/10 §4.3；本波按记录面方案定形，MIG-05 入口；
-# MIG-03 未冻结该字段）。unitCount/units[]/domain/headRef/vacancyState 的记录面承载见投影输入
-# 边界（ParsedUnit），本文件不新增 YAML 键。
-# 本模板结构示例 N（示例）= 2（单元域=事业部A（研发交付/质量）、事业部B（研发交付）；N=2 仅示例，默认 1）——**示例不是规范**：
-# 「三省」N=3 只是示例；任何 N 由设立记录确认；增删单元=组织变更（v2/03 §7.2），不靠改字段。
+# 一级单元 N（GAP-V2-17；v2/06 §5.2）：字段级承载已定形——`unitCount`（≥1，默认 1）＋
+# `units[]`（unitId/domain/headRef/vacancyState/reviewAt；docs/v2/10 §4.3；vacancyState 值集 ENU-140）。
+# 本模板结构示例 N（示例）= 2（单元域=人事／财务）——**示例不是规范**：
+# 「三省」N=3 只是示例；任何 N 由设立记录确认；增删单元=组织变更（v2/03 §7.2）。
 #
-# 部门结构（v2/03 §6.2 表 E）：本骨架部门等级 D8×6（总部职能）＋D7（事业部A、A/研发部、A/质量部、事业部B）＋D6（B/研发部）
+# 部门结构（v2/03 §6.2 表 E）：本骨架部门等级 D7（事业部A）、D7（研发部）、D7（质量部）、D7（事业部B）、D6（研发部）、D8（人事部）、D8（财务部）、D8（审计合规部）、D8（战略部）、D8（平台工程部）、D8（综合部）；
+# D3-D5 最低设立层 CL8，本层不设；D9 不启用。
 # 最高宰相为**公司层岗位**（不在部门硬核内）：people[].dept 仅作派工索引挂靠，不参与部门 Dn 判定。
 #
-# 部门审计制度（CL4 起必设的周期记录）：由审计岗/公司级审计岗按周期产出审计记录（本文件只声明
-# 拟任与定时岗；审计记录归台账 v2/11，审计者≠本次评价者——v2/03 §4.2/§4.3）。
+# 部门审计制度（CL4 起必设的周期记录）：由 audit-cycle-<部门> 定时岗按周期产出审计记录
+# （本文件只声明拟任与定时岗；审计记录归台账 v2/11，审计者≠本次评价者——v2/03 §4.2/§4.3）。
 #
 # 缺口登记 DEC-OPEN-16（软阻断，未裁）：解散/清算是否纳入公司硬核**未决**——本模板与
 # charter.md **不写**解散/清算条款（不预设裁决结果）；裁决落卷后按批示流补条款并留痕。
@@ -157,7 +157,7 @@ people:
     login: prime-0 # YouTrack 账号锚点（账号=等级锚点，工号=人）
     level: 9
     dept: departments/综合部
-    role: 最高宰相
+    role: 最高宰相 # 岗位（岗位 → 模型档映射见框架级 models.yaml）
     reports_to: null # 汇报线（上级工号）
     skills: [管理] # 技能本体（内部工种映射表，不用自由文本）
     status: active # active | paused | retired（只改状态不删号，历史不悬空）
@@ -295,6 +295,19 @@ people:
     status: active
     executor: dsh
     file: departments/平台工程部/people/PF-0.md
+
+# 一级单元（GAP-V2-17 字段级承载；docs/v2/10 §4.3）——本模板示例不是规范：
+# unitCount≥1（默认 1）；units[] 每项 unitId/domain/headRef/vacancyState/reviewAt。
+unitCount: 2
+units:
+  - unitId: unit-1
+    domain: [人事]
+    headRef: HR-0
+    vacancyState: staffed
+  - unitId: unit-2
+    domain: [财务]
+    headRef: FIN-0
+    vacancyState: staffed
 
 # 定时岗清单（定时岗通用模型）：每个根部门 2 岗——health-patrol-<部门>（巡查：结构性零产出，
 # 不声明 output——127-A）＋ daily-report-<部门>（日报）；shape 沿 2 级模板。
@@ -435,8 +448,6 @@ jobs:
     model_tier: low # 模型档：high | mid | low
     budget_cap: 2 # 预算帽（USD/次；预留-结算，超额在调用前拒绝）
     output: reports/综合部/ # 产出落点（报表按 <date>-<type>-<节点>-<总结>.md 命名）
-
-# YouTrack 账号锚点映射（账号=等级锚点，不随新增公司而新增账号）——根部门负责人
   - id: audit-cycle-审计合规部 # 部门审计制度（CL4 起必设的周期记录；审计者≠本次评价者——v2/03 §4.2/§4.3）
     dept: departments/审计合规部
     triggers:
@@ -449,6 +460,7 @@ jobs:
     budget_cap: 2 # 预算帽（USD/次；预留-结算）
     output: reports/审计合规部/ # 产出落点
 
+# YouTrack 账号锚点映射（账号=等级锚点，不随新增公司而新增账号）——根部门负责人
 accounts:
   - login: bu-1
     level: 7 # 账号锚定的等级（与人档案的工号解耦）

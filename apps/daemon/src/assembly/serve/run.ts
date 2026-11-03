@@ -99,7 +99,7 @@ export async function runServe(
   const takeover = takeOverRunningWorkRecords(ledger, Date.now())
   console.log(
     takeover.takenOver > 0
-      ? `[serve] 在途接管（R-B）：${takeover.takenOver} 条前命孤儿 running 工位收口 interrupted（${takeover.items.map((i) => `${i.issue}#att${i.attempt}`).join('、')}）——接管≠收割（四要件无据不判）；重派走新 attempt、预算沿用未结预留`
+      ? `[serve] 在途接管（R-B）：${takeover.takenOver} 条前命孤儿 running 工位收口 interrupted（${takeover.items.map((i) => `${i.issue}#att${i.attempt}`).join('、')}）——接管≠收割（四要件无据不判）；重派走新 attempt、预算沿用未结预留；会话归档同体收口 ${takeover.sessionsClosed} 条${takeover.sessionProblems.length > 0 ? `（问题 ${takeover.sessionProblems.length} 条：${takeover.sessionProblems[0]}）` : ''}`
       : '[serve] 在途接管（R-B）：0 条前命孤儿 running 工位（无在途账待接管）',
   )
 

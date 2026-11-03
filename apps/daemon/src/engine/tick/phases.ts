@@ -104,7 +104,7 @@ export async function runPhases(
     // 复验通过面（collect 动作；体=work/transition.ts runCollectTransitions——取拍末真态定流）
     await runCollectTransitions(workPhaseHost, collectQ)
     // —— 相位 4 收割末段：STALL 响置（DEV-44——告警达阈咬合：kill 面/消亡面，executeStallResponse） ——
-    const stallHost = stallHostOf()
+    const stallHost = stallHostOf(errors)
     for (const action of stallQ) {
       const result = await runStallResponse(stallHost, action, index, tickEvents).catch(
         (err): TickActionResult => ({

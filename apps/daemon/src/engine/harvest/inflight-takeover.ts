@@ -26,6 +26,7 @@
  *     running）与硬杀（SIGKILL）殊途同归，重启即收口。
  */
 import type { Ledger } from '@studio-next/store'
+import { closeSessionsOfRunningRecords } from '../sessions/archive.ts'
 
 /** 在途接管结果（serve 启动例行面的观测锚——启动日志一行 + 测试断言面） */
 export interface InflightTakeoverResult {
@@ -33,15 +34,20 @@ export interface InflightTakeoverResult {
   takenOver: number
   /** 收口明细（单号+attempt——日志归因面） */
   items: ReadonlyArray<{ id: string; issue: string; attempt: number }>
+  /** 会话归档同体收口条数（studio-dev-551：前命孤儿的会话不留 ended_at=NULL） */
+  sessionsClosed: number
+  /** 会话归档收口问题（行缺失/写失败——明报，不静默） */
+  sessionProblems: ReadonlyArray<string>
 }
 
 export function takeOverRunningWorkRecords(ledger: Ledger, now: number): InflightTakeoverResult {
   const items: Array<{ id: string; issue: string; attempt: number }> = []
+  const sessions = closeSessionsOfRunningRecords(ledger, now)
   for (const r of ledger.listWorkRecords()) {
     if (r.status !== 'running' || r.ended_at !== undefined) continue
     if (ledger.endWorkRecord(r.id, { ended_at: now, status: 'interrupted' })) {
       items.push({ id: r.id, issue: r.issue, attempt: r.attempt })
     }
   }
-  return { takenOver: items.length, items }
+  return { takenOver: items.length, items, sessionsClosed: sessions.closed, sessionProblems: sessions.problems }
 }
