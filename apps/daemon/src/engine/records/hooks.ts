@@ -1,14 +1,16 @@
 /**
  * engine/records/hooks —— 主循环相位钩子（把「该写哪条记录」收在本件，engine 只留一行调用）
  *
- * 依据：docs/17-§2「记录族生产写面」段（相位×记录类型×写入者映射表）；docs/17-§6（收割四要件
- * 不改判据）；docs/v2/11 §0.4-4（重放零第二副作用）／§5.2（WORK-06 前置记录）。
+ * 依据：docs/17-§2「记录族生产写面」段（相位×记录类型×写入者映射表；刀B 段=相位 0 名册装载／
+ * 相位 4 出工段／相位 7 对账读者）；docs/17-§6（收割四要件不改判据）；docs/v2/11 §0.4-4
+ * （重放零第二副作用）／§5.2（WORK-06 前置记录）／§3.1（出工必引生效任命）。
  *
  * 拆件动机（20-§十五.三「先拆再增」）：engine.ts 行数基线只减不增——相位钩子的注释/循环/
  * 署名解析全收在此，engine 侧每处只剩一行调用；行为与内联体逐字等价（同一 wire 端口、同一
  * 三态结果，失败不打断拍）。
  */
 import type { IssueRecord } from '@studio-next/contract'
+import type { ProjectionReconciliation } from './projection.ts'
 import type {
   RecordAccountabilityArgs,
   RecordChangeSegmentArgs,
@@ -129,4 +131,108 @@ export function recordReviewPhase(args: {
   readonly reviews: readonly RecordReviewArgs[]
 }): PhaseRecordResults {
   return fold(args.reviews.map((review) => args.records.review(review)))
+}
+
+/**
+ * 相位 0 名册装载（启动装载／人事变更；刀B）：LIFE-05 → AUTH-01 授权链 → LIFE-01 任命。
+ * 幂等（同 recordId 重放 deduped），单条拒写只计数+日志，不打断拍。
+ */
+export function recordRosterLoad(args: {
+  readonly records: RecordWirePort
+  readonly at: number
+  readonly reason: 'boot' | 'hr-change'
+}): readonly RecordWriteResult[] {
+  return args.records.rosterLoad({ at: args.at, reason: args.reason })
+}
+
+/**
+ * 相位 4 收割：出工段 REC-LIFE-04（前件＝生效任命/计划锁/授权结果/资格）→ 收割批次 REC-EVD-01
+ * （segment_ref 只认已落库 LIFE-04）。两写面均 fail-closed：前件未落即拒，不臆造段/批次。
+ */
+export function recordHarvest(args: {
+  readonly records: RecordWirePort
+  readonly ticket: string
+  readonly attempt: number
+  readonly personId: string
+  readonly at: number
+  readonly terminal: 'completed' | 'error' | 'blocked' | 'aborted' | 'limit_exceeded'
+  readonly workspace?: string
+  readonly briefRef?: string
+  readonly usage?: readonly { readonly item: string; readonly amount: number; readonly unit: string }[]
+  readonly cost?: readonly { readonly item: string; readonly amount: number; readonly unit: string }[]
+  readonly gaps?: readonly string[]
+}): void {
+  args.records.workSegment({
+    ticket: args.ticket,
+    attempt: args.attempt,
+    personId: args.personId,
+    at: args.at,
+    ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    ...(args.briefRef !== undefined ? { briefRef: args.briefRef } : {}),
+  })
+  args.records.harvest({
+    ticket: args.ticket,
+    attempt: args.attempt,
+    at: args.at,
+    actor: args.personId,
+    terminal: args.terminal,
+    gaps: args.gaps ?? [],
+    usage: args.usage ?? [],
+    cost: args.cost ?? [],
+  })
+}
+
+/** 对账读者节流（每 N 拍一跑；与 harvestReconEveryTicks 同量级——观测面不追每拍） */
+export const RECORDS_RECONCILE_EVERY_TICKS = 30
+
+/** 对账窗口重叠量（1h）：窗口下界回退一段，避免「记录在窗内、其事件锚在窗前」的假 missing */
+export const RECORDS_RECONCILE_OVERLAP_MS = 60 * 60 * 1000
+
+/** 对账读者所需的 kv 面（daemon_kv；装配面注入 ledger） */
+export interface RecordsReconcileKv {
+  kvGet(key: string): string | null
+  kvSet(key: string, value: string): void
+}
+
+/** 对账锚键（daemon_kv；不新增事件名——事件枚举冻结） */
+export const RECORDS_RECONCILE_AT_KEY = 'records.recon.at'
+export const RECORDS_RECONCILE_LAST_KEY = 'records.recon.last'
+
+/**
+ * 相位 7 落账尾·records↔events 对账读者（#559 验收项：对账读者接入生产对账循环）。
+ * 节流：每 `everyTicks` 拍一跑；增量窗口＝上次对账时刻回退 1h；结论落 kv＋日志（只留痕，不写事件、
+ * 不改决策）。差异非空不抛错（fail-safe）——欠账由观测面暴露，不静默吞。
+ */
+export function recordReconcileTick(args: {
+  readonly records: RecordWirePort
+  readonly kv: RecordsReconcileKv
+  readonly seq: number
+  readonly at: number
+  readonly everyTicks?: number
+  readonly log?: (line: string) => void
+}): ProjectionReconciliation | undefined {
+  const every = args.everyTicks ?? RECORDS_RECONCILE_EVERY_TICKS
+  if (every <= 0 || args.seq % every !== 0) return undefined
+  const lastRaw = args.kv.kvGet(RECORDS_RECONCILE_AT_KEY)
+  const last = lastRaw !== null && lastRaw !== '' ? Number(lastRaw) : 0
+  const since = Math.max(0, (Number.isFinite(last) ? last : 0) - RECORDS_RECONCILE_OVERLAP_MS)
+  const reconciled = args.records.reconcile(since)
+  args.kv.kvSet(RECORDS_RECONCILE_AT_KEY, String(args.at))
+  args.kv.kvSet(
+    RECORDS_RECONCILE_LAST_KEY,
+    JSON.stringify({
+      at: args.at,
+      seq: args.seq,
+      since,
+      checked: reconciled.checked,
+      settled: reconciled.settled,
+      differences: reconciled.differences.length,
+      sample: reconciled.differences.slice(0, 5),
+    }),
+  )
+  args.log?.(
+    `[records] 对账读者 tick#${args.seq}：checked=${reconciled.checked} differences=${reconciled.differences.length}` +
+      (reconciled.settled ? '（对平）' : '（差异非空——见 daemon_kv records.recon.last）'),
+  )
+  return reconciled
 }

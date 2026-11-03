@@ -13,6 +13,7 @@
 import { afterAll, describe, expect, it } from 'vitest'
 import {
   BLOCKED_RECORD_FAMILIES,
+  PENDING_PREREQ_FAMILIES,
   PHASE_RECORD_FAMILIES,
   UNBLOCKED_RECORD_FAMILIES,
   blockedDraftFor,
@@ -69,11 +70,15 @@ describe('刀D 族清单（逐族解除 BLOCKED 并留表）', () => {
     }
     expect(Object.keys(UNBLOCKED_RECORD_FAMILIES).sort()).toEqual(expected.sort())
     // 未解锁族仍 fail-closed（不误写）
-    for (const type of ['REC-WORK-08', 'REC-WORK-09', 'REC-WORK-10', 'REC-WORK-13', 'REC-EVD-01']) {
+    for (const type of ['REC-WORK-08', 'REC-WORK-09', 'REC-WORK-10', 'REC-WORK-13']) {
       expect(BLOCKED_RECORD_FAMILIES[type]).toBeDefined()
       const outcome = blockedDraftFor(type)
       expect(outcome.ok).toBe(false)
     }
+    // 刀B（studio-dev-605）：EVD-01 写面已接 → 从 BLOCKED 移入 PENDING（前件未落仍拒写，理由逐项点名）
+    expect(BLOCKED_RECORD_FAMILIES['REC-EVD-01']).toBeUndefined()
+    expect(PENDING_PREREQ_FAMILIES['REC-EVD-01']).toBeDefined()
+    expect(blockedDraftFor('REC-EVD-01').ok).toBe(false)
     const unblocked = blockedDraftFor('REC-WORK-12')
     expect(unblocked.ok).toBe(false)
     if (!unblocked.ok) expect(unblocked.reason).toContain('写面已解除阻断')

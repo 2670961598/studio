@@ -19,6 +19,7 @@
  *     但前置件未落时仍由契约校验器＋被引记录存在性闸拒写（fail-closed）。
  */
 import type { IssueRecord } from '@studio-next/contract'
+import { validateHarvestBatch } from '@studio-next/contract/records'
 import type { DraftDecisionFaceInput, DraftRecordRef, RecordDraft, RecordDraftGate } from './types.ts'
 import { requiredEvidenceOf, workEdgeOf, workStateOf } from './state-map.ts'
 
@@ -102,6 +103,8 @@ export function workTransitionDraft(args: {
   readonly company: string
   readonly evidenceRefs?: readonly DraftRecordRef[]
   readonly ruleBasisRef?: DraftRecordRef
+  /** 权源引用（决定型 authority_ref；由授权链派生注入——调用方不得自填，缺即拒；§0.3-2/§2.2） */
+  readonly authorityRef?: DraftRecordRef
   readonly decision?: DraftDecisionFaceInput
 }): DraftOutcome {
   const fromState = workStateOf(args.fromPlatformState)
@@ -165,6 +168,18 @@ export function workTransitionDraft(args: {
       reason: '决定面未提供（decidedBy/authorityRef/rationale/basisRefs/scopeJudged）——决定面封闭清单类型不得缺决定面（§0.3-2）',
     }
   }
+  // 权源闸（刀B）：决定型记录写入前须有可验证权源——由授权链派生注入，调用方不得自填
+  const resolvedAuthority = args.authorityRef ?? decision.authorityRef
+  if (resolvedAuthority === undefined) {
+    return {
+      ok: false,
+      recordType: 'REC-WORK-06',
+      code: 'record-prereq-missing',
+      reason:
+        `边 ${edge.edge}（${fromState}→${toState}）缺权源引用（authority_ref）——决定型记录不得无源落库；` +
+        '权源须由 REC-AUTH-01 授权链派生（engine/records/authority.ts），调用方不得自填（§0.3-2/§2.2）',
+    }
+  }
   const recordedAt = isoAt(args.at)
   const draft: RecordDraft = {
     recordType: 'REC-WORK-06',
@@ -189,7 +204,7 @@ export function workTransitionDraft(args: {
       producer_type: 'rule',
       rule_basis_ref: args.ruleBasisRef,
       trigger_ref: decision.basisRefs[0],
-      authority_ref: decision.authorityRef,
+      authority_ref: resolvedAuthority,
       precondition_results: [],
       expected_version: `${edge.edge}@attempt-${args.attempt}`,
       actual_actor: args.actor,
@@ -202,7 +217,7 @@ export function workTransitionDraft(args: {
       produced_refs: [],
       decision_face: {
         decided_by: decision.decidedBy,
-        authority_ref: decision.authorityRef,
+        authority_ref: resolvedAuthority,
         rationale: decision.rationale,
         basis_refs: decision.basisRefs,
         scope_judged: { judged: decision.scopeJudged.judged, not_judged: decision.scopeJudged.notJudged },
@@ -239,12 +254,16 @@ export function harvestBatchDraft(args: {
       ok: false,
       recordType: 'REC-EVD-01',
       code: 'record-prereq-missing',
-      reason: 'REC-EVD-01 首项 segment_ref（→REC-LIFE-04 出工段）未落——任职/出工链无生产者，收割批次不臆造',
+      reason:
+        'REC-EVD-01 首项 segment_ref（→REC-LIFE-04 出工段）未落——LIFE-04 写面已接（刀B）但『生效任命／REC-WORK-05／REC-AUTH-02／CAP-02』前件未落，' +
+        '收割批次不臆造（§六 首项）；前件到货即按记录 id 约定自动转绿',
     }
   }
   const at = isoAt(args.at)
   return {
     ok: true,
+    // 族不变量二道闸：收割批次三不变量（§六）——判据唯一源=contract，本件不复制
+    gate: { validate: (record) => validateHarvestBatch(record) },
     draft: {
       recordType: 'REC-EVD-01',
       recordId: `rec-evd-01:${args.company}:${args.ticket}:${args.attempt}`,
@@ -306,9 +325,30 @@ export const BLOCKED_RECORD_FAMILIES: Readonly<
     blocker: 'REC-WORK-03 任务合同（work_ref）未落——协作请求必须引合同（§5.3 字段首项）',
     ref: 'v2/11 §5.3',
   },
-  'REC-EVD-01': {
+}
+
+/**
+ * 写面已实现、前件未落族（刀B，studio-dev-605 承接 #559）——**与 BLOCKED 区分**：
+ *   - BLOCKED＝写面未实现（族清单见上表，刀C 交付前一律拒写）；
+ *   - PENDING＝写面**已接**（族不变量/前置闸逐条实现），仅因前件记录生产者未落而拒写（fail-closed）；
+ *     前件到货即自动转绿，**不需再改本件代码**（前件引用按记录 id 约定解析，见 wire.ts 头注）。
+ */
+export const PENDING_PREREQ_FAMILIES: Readonly<
+  Record<string, { readonly phase: string; readonly missing: readonly string[]; readonly ref: string }>
+> = {
+  'REC-LIFE-04': {
     phase: '收割',
-    blocker: 'REC-LIFE-04 出工段引用未落（§六 首项 segment_ref）',
+    missing: [
+      'REC-LIFE-01 生效面（本轮只落拟任面 pending：资格 CAP-02/交接 LIFE-03/接受回执无生产者）',
+      'REC-WORK-05 计划锁',
+      'REC-AUTH-02 授权行使结果',
+      'REC-CAP-02 资格记录（六面交集的资格面）',
+    ],
+    ref: 'v2/11 §3.1',
+  },
+  'REC-EVD-01': {
+    phase: '收割尾',
+    missing: ['REC-LIFE-04 出工段（segment_ref 只认已落库记录）'],
     ref: 'v2/11 §六',
   },
 }
@@ -374,6 +414,16 @@ export const UNBLOCKED_RECORD_FAMILIES: Readonly<
 
 /** 拒写族草案（供调用方统一判定：主循环对应相位有事件但记录面关） */
 export function blockedDraftFor(recordType: string): DraftOutcome {
+  // 写面已接、前件未落的族：拒绝理由必须逐项点名缺件（不压成一句「未实现」）
+  const pending = PENDING_PREREQ_FAMILIES[recordType]
+  if (pending !== undefined) {
+    return {
+      ok: false,
+      recordType,
+      code: 'record-prereq-missing',
+      reason: `相位「${pending.phase}」→ ${recordType} 写面已接、前件未落：${pending.missing.join('；')}（${pending.ref}）`,
+    }
+  }
   const blocked = BLOCKED_RECORD_FAMILIES[recordType]
   if (blocked === undefined) {
     const unblocked = UNBLOCKED_RECORD_FAMILIES[recordType]

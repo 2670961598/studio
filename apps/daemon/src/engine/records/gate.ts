@@ -16,7 +16,7 @@
  *     本件不复制、不改写判据（契约面零变更）；
  *   - 拒写是合法终态：返回 `record-prereq-missing`，不抛错、不补造、不重试。
  */
-import { FORBIDDEN_DECISION_SUBJECTS } from '../../../../../packages/contract/src/records/index.ts'
+import { FORBIDDEN_DECISION_SUBJECTS } from '@studio-next/contract/records'
 import type { DraftOutcome } from './drafts.ts'
 import type { DraftDecisionFaceInput, DraftRecordRef, RecordRefRequirement } from './types.ts'
 

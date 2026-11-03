@@ -6,15 +6,23 @@
  *   - docs/17-§6（收割四要件；记录落库是相位结果留痕，不参与判据）；
  *   - docs/v2/14 §1.6（PORT-HIST 唯一记录写口：`createHistFace(...).append`）；
  *   - docs/v2/11 §〇.4-1（身份一经分配不复用）／§0.4-4（同单重放返回既有结果、零第二副作用）／
- *     §0.4-5（幂等五元组）／§0.7（证明边界随记录走）。
+ *     §0.4-5（幂等五元组）／§0.7（证明边界随记录走）／§2.2（AUTH-01 根授予三闸）／§3.1（LIFE-01 五条件）；
+ *   - docs/v2/02 §二/§六（任命五条件、出工段）；docs/v2/15 §七（独立性：自填即拒）。
  *
  * 纪律（与 mainloop 事件的位别）：
  *   - 记录是事实源，`events` 保留为可重建投影（docs/17-§2；本件**不改**事件写面语义）；
  *   - 记录写入失败/拒写**不得打断拍**：结果三态回报调用方（ok/deduped/refused/failed），
  *     错误进 log＋计数器，事件面照旧（fail-safe，记录面欠账可对账发现）；
  *   - 同 recordId 幂等：先读既有行（`hist.get`），命中即 deduped，不再 append（同 id 异内容由
- *     store 拒收——记录身份不复用的机械保证）。
+ *     store 拒收——记录身份不复用的机械保证）；
+ *   - **契约族判定不只在形状闸**：AUTH-01/LIFE-01/EVD-01 落库前再过 contract 的 `validateAuthGrant` /
+ *     `validateAppointment` / `validateHarvestBatch`（族不变量：根授予三闸、任命五条件、收割三不变量），
+ *     判定输入（权源解析/位置职级）由名册派生，不由调用方给；
+ *   - **对账读者**（#559 验收项）：本件暴露 `reconcile()` 读面消费者，生产对账循环
+ *     （`hooks.recordReconcileTick` ← 相位 7 落账）按拍节流调用 `reconcileProjection`，
+ *     欠账不吞、只留痕（不新增事件名——事件枚举冻结）。
  */
+import type { EventRecord } from '@studio-next/contract'
 import type { HistFace, HistRecordRef } from '@studio-next/store'
 import { buildEnvelope } from './envelope.ts'
 import { harvestBatchDraft, workIntakeDraft, workTransitionDraft, type DraftOutcome } from './drafts.ts'
@@ -26,9 +34,15 @@ import {
   remedyDraft,
   valueEvaluationDraft,
 } from './governance-drafts.ts'
+import { coveringGrantOf, type RootGrantFact } from './authority.ts'
+import { appointmentRecordId, workSegmentDraft, workSegmentRecordId } from './life.ts'
+import { resolveAuthorityRef, runRosterLoad } from './lifecycle.ts'
+import { personOf, positionRefIdOf, type RosterPort } from './roster.ts'
+import { reconcileProjection, type ProjectionReconciliation } from './projection.ts'
 import {
   RECORD_WRITTEN_BY,
   type RecordAccountabilityArgs,
+  type RecordAuthorityArgs,
   type RecordChangeSegmentArgs,
   type RecordExceptionArgs,
   type RecordHarvestArgs,
@@ -37,6 +51,8 @@ import {
   type RecordRefusalCode,
   type RecordRemedyArgs,
   type RecordReviewArgs,
+  type RecordRosterLoadArgs,
+  type RecordSegmentArgs,
   type RecordSettlementArgs,
   type RecordTransitionArgs,
   type RecordValueEvaluationArgs,
@@ -48,6 +64,12 @@ import {
 export interface RecordWireDeps {
   readonly hist: HistFace
   readonly company: string
+  /** 名册端口（只读；装配面从 ledger 派生。缺省＝名册不可得 → 派生类写面一律拒写） */
+  readonly roster?: RosterPort
+  /** 根授予外部事实（#530 生产者注入；缺省＝无外部事实 → AUTH-01 拒写，见 authority.ts 纪律） */
+  readonly rootGrant?: RootGrantFact
+  /** 事件读面（对账读者；since＝events.ts 下界 epoch ms。缺省＝事件面不可读 → 对账只跑记录侧） */
+  readonly readEvents?: (since: number) => readonly EventRecord[]
   /** 三不入·库闸（runtime 传 outbound.gate.guardStoreRecord；测试可省） */
   readonly guardRecord?: (record: unknown) => unknown
   readonly log?: (line: string) => void
@@ -59,10 +81,28 @@ export interface RecordWire extends RecordWirePort {
   readonly writtenBy: string
 }
 
-/** 结果折叠（draft 拒写 → refused；形状拒收 → failed；store 冲突 → failed 不重试） */
+/** 结果折叠（draft 拒写 → refused；形状/族不变量拒收 → failed；store 冲突 → failed 不重试） */
 function failureOf(recordType: string, code: RecordRefusalCode, reason: string): RecordWriteResult {
   return { ok: false, recordType, code, reason }
 }
+
+/** 前件引用解析约定：刀C/授权行使面生产件按此 id 约定落库（异约定走 deps 注入换 id） */
+export function planLockRecordId(company: string, ticket: string, attempt: number): string {
+  return `rec-work-05:${company}:${ticket}:${attempt}`
+}
+
+/** 授权行使（REC-AUTH-02）记录 id 约定 */
+export function authorizationRecordId(company: string, ticket: string, attempt: number): string {
+  return `rec-auth-02:${company}:${ticket}:${attempt}`
+}
+
+/** 资格（REC-CAP-02）记录 id 约定（六面交集的资格面） */
+export function qualificationRecordId(company: string, personId: string): string {
+  return `rec-cap-02:${company}:${personId}`
+}
+
+/** 引用形版本（§十五-4：初始类型版本一律 1.0.0） */
+const REF_VERSION = '1.0.0'
 
 /**
  * 建记录写面。`hist` 必须已迁移到 v14/v15（`openLedger` 完成）——本件不自开库、不建表。
@@ -83,6 +123,10 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
     review: 0,
     memory: 0,
     value: 0,
+    lifecycle: 0,
+    segment: 0,
+    authority: 0,
+    reconcile: 0,
   }
 
   const refuse = (outcome: Extract<DraftOutcome, { ok: false }>): RecordWriteResult => {
@@ -168,6 +212,51 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
     }
   }
 
+  /** 前件记录引用解析（只认**已落库**记录；未落＝undefined → 调用方拒写，不引用未来记录） */
+  const refOf = (recordId: string): { refType: string; refId: string; refVersion: string } | undefined => {
+    const row = hist.get(recordId)
+    if (row === undefined) return undefined
+    return { refType: row.recordType, refId: row.recordId, refVersion: REF_VERSION }
+  }
+
+  /** 工号 → 覆盖授予引用（迁移缝权源闸；无覆盖／授予未落库＝undefined → drafts 拒写并点名） */
+  const authorityRefOf = (actorId: string): { refType: string; refId: string; refVersion: string } | undefined => {
+    const roster = deps.roster?.roster()
+    if (roster === undefined) return undefined
+    const person = personOf(roster, actorId)
+    if (person === undefined) return undefined
+    // 动作范围＝本部门（成员/主管的转授边均含 `dept:<path>`；跨部门写入在 forbidden 内）
+    const ref = resolveAuthorityRef({
+      roster: () => deps.roster?.roster(),
+      company,
+      personId: actorId,
+      actionScope: `dept:${person.dept}`,
+      refOf,
+      covering: coveringGrantOf,
+    })
+    // 只认已落库授予：未落库＝无源（不引用未来记录——先跑相位 0 名册装载）
+    return ref !== undefined && refOf(ref.refId) !== undefined ? ref : undefined
+  }
+
+  /** 相位 0 名册装载（编排体=lifecycle.runRosterLoad；本件只持计数器与三态回报） */
+  const rosterLoad = (args: RecordRosterLoadArgs): RecordWriteResult[] => {
+    counters.lifecycle += 1
+    return runRosterLoad(
+      {
+        company,
+        roster: () => deps.roster?.roster(),
+        rootGrant: deps.rootGrant,
+        write,
+        refOf,
+        onRefused: () => {
+          counters.refused += 1
+        },
+        ...(deps.log !== undefined ? { log: deps.log } : {}),
+      },
+      args,
+    )
+  }
+
   return {
     writtenBy: RECORD_WRITTEN_BY,
     counters,
@@ -176,9 +265,10 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
       counters.intake += 1
       return write(workIntakeDraft({ ...args, company }))
     },
-    /** 相位 3/4/6 迁移执行缝：REC-WORK-06（决定型；边集/前置/规则依据/决定面四闸） */
+    /** 相位 3/4/6 迁移执行缝：REC-WORK-06（决定型；边集/前置/规则依据/权源/决定面五闸） */
     transition(args: RecordTransitionArgs): RecordWriteResult {
       counters.transition += 1
+      const authorityRef = authorityRefOf(args.actor)
       return write(
         workTransitionDraft({
           ticket: args.ticket,
@@ -190,11 +280,13 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
           company,
           ...(args.evidenceRefs !== undefined ? { evidenceRefs: args.evidenceRefs } : {}),
           ...(args.ruleBasisRef !== undefined ? { ruleBasisRef: args.ruleBasisRef } : {}),
+          ...(authorityRef !== undefined ? { authorityRef } : {}),
         }),
       )
     },
-    /** 相位 4 收割尾：REC-EVD-01（事件型；需 REC-LIFE-04 出工段） */
+    /** 相位 4 收割尾：REC-EVD-01（事件型；segment_ref 只认已落库 LIFE-04） */
     harvest(args: RecordHarvestArgs): RecordWriteResult {
+      const segment = refOf(workSegmentRecordId(company, args.ticket, args.attempt))
       return write(
         harvestBatchDraft({
           ticket: args.ticket,
@@ -206,8 +298,77 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
           gaps: args.gaps,
           usage: args.usage,
           cost: args.cost,
+          ...(segment !== undefined ? { segmentRef: segment } : {}),
         }),
       )
+    },
+    rosterLoad,
+    /** 相位 4：出工段（前件＝生效 LIFE-01／REC-WORK-05／REC-AUTH-02／REC-CAP-02；缺一即拒） */
+    workSegment(args: RecordSegmentArgs): RecordWriteResult {
+      counters.segment += 1
+      const roster = deps.roster?.roster()
+      if (roster === undefined) {
+        counters.refused += 1
+        const reason = '名册端口未注入（records.roster 缺省）——出工段无可派生事实源'
+        deps.log?.(`[records] 拒写 REC-LIFE-04：${reason}`)
+        return failureOf('REC-LIFE-04', 'record-prereq-missing', reason)
+      }
+      const person = personOf(roster, args.personId)
+      const appointment = person !== undefined ? hist.get(appointmentRecordId(company, person.id, positionRefIdOf(person))) : undefined
+      // 只认**生效**任命（拟任面 pending 不得作为出工前件——§3.1/§十五-2）
+      const appointmentRef =
+        appointment !== undefined && appointment.effectiveState === 'effective'
+          ? { refType: appointment.recordType, refId: appointment.recordId, refVersion: REF_VERSION }
+          : undefined
+      const planRef = refOf(planLockRecordId(company, args.ticket, args.attempt))
+      const authorizationRef = refOf(authorizationRecordId(company, args.ticket, args.attempt))
+      const qualificationRef = person !== undefined ? refOf(qualificationRecordId(company, person.id)) : undefined
+      return write(
+        workSegmentDraft({
+          roster,
+          company,
+          at: args.at,
+          ticket: args.ticket,
+          attempt: args.attempt,
+          personId: args.personId,
+          ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+          ...(args.briefRef !== undefined ? { briefRef: args.briefRef } : {}),
+          prereqs: {
+            ...(appointmentRef !== undefined ? { appointmentRef } : {}),
+            ...(planRef !== undefined ? { planRef } : {}),
+            ...(authorizationRef !== undefined ? { authorizationRef } : {}),
+            ...(qualificationRef !== undefined ? { qualificationRef } : {}),
+          },
+        }),
+      )
+    },
+    /** 权源面：覆盖授予引用（决定型记录 authority_ref 来源） */
+    authorityRefFor(args: RecordAuthorityArgs): RecordWriteResult {
+      counters.authority += 1
+      const roster = deps.roster?.roster()
+      if (roster === undefined) {
+        counters.refused += 1
+        return failureOf('REC-AUTH-01', 'record-prereq-missing', '名册端口未注入——权源链不可解析')
+      }
+      const ref = resolveAuthorityRef({
+        roster: () => deps.roster?.roster(),
+        company,
+        personId: args.personId,
+        actionScope: args.actionScope,
+        refOf,
+        covering: coveringGrantOf,
+      })
+      if (ref === undefined) {
+        counters.refused += 1
+        const reason = `${args.personId} 在动作范围 ${args.actionScope} 上无覆盖授予（REC-AUTH-01 链未覆盖）——决定型记录不得无源落库`
+        deps.log?.(`[records] 拒写 权源解析：${reason}`)
+        return failureOf('REC-AUTH-01', 'record-prereq-missing', reason)
+      }
+      if (hist.get(ref.refId) === undefined) {
+        counters.refused += 1
+        return failureOf('REC-AUTH-01', 'record-prereq-missing', `覆盖授予 ${ref.refId} 尚未落库——不引用未来记录（先跑名册装载相位）`)
+      }
+      return { ok: true, recordId: ref.refId, recordType: ref.refType, deduped: true, ref: { recordId: ref.refId, recordType: ref.refType, appended: false } }
     },
     /** 相位 5 合并 / 相位 6 回收：REC-WORK-12（决定型；MEM-03＋EVD-04＋独立核验） */
     settlement(args: RecordSettlementArgs): RecordWriteResult {
@@ -248,6 +409,25 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
     valueEvaluation(args: RecordValueEvaluationArgs): RecordWriteResult {
       counters.value += 1
       return write(valueEvaluationDraft({ ...args, company }))
+    },
+    /**
+     * 对账读者（#559 验收项）：records（事实源）× events（可重建投影）双向覆盖。
+     * `since` 为增量窗口下界（epoch ms；缺省 0＝全量）——窗口内差异不吞；只读、不写、不补造。
+     */
+    reconcile(since = 0): ProjectionReconciliation {
+      counters.reconcile += 1
+      const roster = deps.roster?.roster()
+      const records = hist.query({ company, ...(since > 0 ? { since } : {}) })
+      const events = deps.readEvents !== undefined ? deps.readEvents(since) : []
+      const rosterSubjects = roster !== undefined ? new Set(roster.people.map((person) => person.id)) : undefined
+      const reconciled = reconcileProjection(records, events, rosterSubjects !== undefined ? { rosterSubjects } : {})
+      if (!reconciled.settled) {
+        deps.log?.(
+          `[records] 对账差异 ${reconciled.differences.length} 条（checked=${reconciled.checked}）：` +
+            reconciled.differences.slice(0, 5).map((diff) => `${diff.kind}:${diff.recordType}:${diff.subjectId}`).join(' | '),
+        )
+      }
+      return reconciled
     },
   }
 }

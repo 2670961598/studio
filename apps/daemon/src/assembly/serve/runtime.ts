@@ -38,7 +38,7 @@ import { createDefaultMergeRunDeps } from '../../engine/merge/default-deps.ts'
 import { createHotReload, type HotReload, type HotReloadApplyReport } from '../../control/hot-reload.ts'
 import { PLUGINS_DIR, executorFamiliesOf, wireCompanyAssets } from '../assets/wire.ts'
 import { wireServeOps } from '../ops/index.ts'
-import { wireServeRecords } from '../records/index.ts'
+import { bootRecordRoster, wireServeRecords } from '../records/index.ts'
 import { makeUlid } from '../../engine/tools/id.ts'
 import { logJobContractWarnings } from '../../engine/jobs/freshness.ts'
 import { registerJobSources } from '../sources/jobs.ts'
@@ -72,6 +72,7 @@ import { wireServeApi } from '../api/serve-face.ts'
 import { wireServeHarvestRecords } from '../harvest/records-wire.ts'
 
 import type { ServeRuntime } from './runtime-types.ts'
+import type { RootGrantFact } from '../../engine/records/index.ts'
 
 export type { ServeRuntime }
 
@@ -126,6 +127,11 @@ export function buildServeRuntime(
     /** 出站脱敏补充秘密面（DEV-48，docs/52-§十二；matrix shared_secret 等装配单元持有物） */
     hrKnownSecrets?: readonly string[]
     /**
+     * 记录面根授予外部事实（studio-dev-605 刀B；#530 根委任生产件注入）：
+     * 缺省＝无外部事实 → REC-AUTH-01 拒写（`record-prereq-missing`，日志如实）；注入即相位 0 转绿。
+     */
+    recordsRootGrant?: RootGrantFact
+    /**
      * 进化判负自检注入面（测试确定性；缺省=仓样例集 FROZEN_FRAMEWORK_ASSETS + cwd 真文件
      * 哈希——src/evolve/evolve-guard.ts 头注锚定口径）：manifest/hashFile/fileExists 逐项覆盖。
      */
@@ -164,7 +170,13 @@ export function buildServeRuntime(
   const opsFace = wireServeOps({ ledger, clock, guardRecord: outbound.gate.guardStoreRecord, log })
   // —— 记录族生产写面（studio-dev-527；docs/17-§2 映射表）：PORT-HIST append 唯一写口。
   //   记录写失败不打断拍（wire 三态回报）；事件面照旧，欠账由 projection 对账发现。
-  const recordsFace = wireServeRecords({ ledger, company: config.company, guardRecord: outbound.gate.guardStoreRecord, log })
+  const recordsFace = wireServeRecords({
+    ledger,
+    company: config.company,
+    guardRecord: outbound.gate.guardStoreRecord,
+    log,
+    ...(opts?.recordsRootGrant !== undefined ? { rootGrant: opts.recordsRootGrant } : {}),
+  })
   // —— 公司面活持有者（docs/38-§2 L1 热重载替换点）：快照整组换，闭包零重建
   const companyState: { snapshot: CompanySnapshot } = { snapshot }
 
@@ -240,6 +252,9 @@ export function buildServeRuntime(
     platformIssues: rawPlatform.issues,
     makeId: makeUlid,
   })
+  // —— 记录面相位 0 启动装载（studio-dev-605 刀B）：**必须在上面 assembleHrSync 的 syncCompany 镜像之后**——
+  //    否则新库名册为空、任职/授权链必然拒写；幂等（同 recordId 重放 deduped），随每次启动重跑即可。
+  bootRecordRoster({ records: recordsFace.records, at: clock(), ...(log !== undefined ? { log } : {}) })
   // —— 频道供给面装配（130-P3，130 提案 §6.7.3；装配体拆至 assembly/channels/）：
   //    matrixChannels 关=零装配零注入，既有行为字节不变（同 hrSync 纪律）。
   let roomFace: MatrixRoomFace | undefined

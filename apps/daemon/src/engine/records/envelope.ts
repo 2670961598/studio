@@ -17,7 +17,7 @@ import {
   issuesFromZod,
   type AllRecordType,
   type RecordEnvelope,
-} from '../../../../../packages/contract/src/records/index.ts'
+} from '@studio-next/contract/records'
 import {
   RECORD_SCHEMA_REF,
   RECORD_SPEC_VERSION,

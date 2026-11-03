@@ -46,8 +46,14 @@ export function rowOf(record: HistRecord): RecordProjectionRow | undefined {
   return { recordId: record.recordId, recordType: record.recordType, subjectId, producedAt: record.producedAt }
 }
 
-/** 迁移类记录（本件已接生产写面的两类；其余族按 drafts.BLOCKED_RECORD_FAMILIES 面关） */
-export const RECORDED_TYPES = ['REC-WORK-01', 'REC-WORK-06', 'REC-EVD-01'] as const
+/**
+ * 已接生产写面的记录类（刀A：WORK-01/06＋EVD-01 观察面；刀B：LIFE-05/01/04、AUTH-01；
+ * 其余族按 drafts.BLOCKED_RECORD_FAMILIES 面关）。
+ */
+export const RECORDED_TYPES = ['REC-WORK-01', 'REC-WORK-06', 'REC-EVD-01', 'REC-LIFE-05', 'REC-LIFE-01', 'REC-LIFE-04', 'REC-AUTH-01'] as const
+
+/** 名册派生族（锚是公司目录镜像而非事件流：须有幂等键 subjectId，且 subject 须在名册内） */
+export const ROSTER_ANCHORED_TYPES = ['REC-LIFE-05', 'REC-LIFE-01', 'REC-AUTH-01'] as const
 
 /** events → 被派发单集（DISPATCH 为派发相位唯一锚；事件词表冻结不改） */
 export function dispatchedTicketsOf(events: readonly EventRecord[]): Set<string> {
@@ -74,8 +80,30 @@ export function phaseAnchorsOf(events: readonly EventRecord[]): Map<string, Set<
 export function reconcileProjection(
   records: readonly HistRecord[],
   events: readonly EventRecord[],
+  options: { readonly rosterSubjects?: ReadonlySet<string> } = {},
 ): ProjectionReconciliation {
   const differences: ProjectionDifference[] = []
+  // 名册派生族对账（刀B）：①缺幂等键 subjectId＝不可判定坏行 ②subject 不在名册＝凭空主体
+  for (const record of records.filter((row) => (ROSTER_ANCHORED_TYPES as readonly string[]).includes(row.recordType))) {
+    const subject = record.idempotencyKey?.subjectId
+    if (subject === undefined) {
+      differences.push({
+        kind: 'undeterminable',
+        recordType: record.recordType,
+        subjectId: record.recordId,
+        detail: `${record.recordType} 缺幂等键 subjectId（名册派生族不可判——记录面坏行）`,
+      })
+      continue
+    }
+    if (options.rosterSubjects !== undefined && !options.rosterSubjects.has(subject)) {
+      differences.push({
+        kind: 'undeterminable',
+        recordType: record.recordType,
+        subjectId: subject,
+        detail: `${record.recordType} 的 subject 不在公司目录名册（凭空主体：任职/授权记录不得脱离名册）`,
+      })
+    }
+  }
   const intakes = records.filter((record) => record.recordType === 'REC-WORK-01')
   const bySubject = new Map<string, string[]>()
   for (const record of intakes) {

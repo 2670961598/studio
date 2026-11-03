@@ -19,13 +19,13 @@ import type {
   ExceptionRecordPayload,
   ReviewPayload,
   WorkSettlementPayload,
-} from '../../../../../packages/contract/src/records/index.ts'
+} from '@studio-next/contract/records'
 import {
   deriveWorkSettledState,
   validateExceptionRecord,
   validateReview,
   validateWorkSettlement,
-} from '../../../../../packages/contract/src/records/index.ts'
+} from '@studio-next/contract/records'
 import type { DraftOutcome } from './drafts.ts'
 import {
   checkDecisionFace,

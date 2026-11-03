@@ -11,6 +11,7 @@ import type { TicketId } from '@studio-next/contract'
 import { costCloseDeps, runCostCloseTick } from '../cost-close/close.ts'
 import type { HrSyncTickReport } from '../hrsync/hrsync.ts'
 import { runPricingStaleCheck, type PricingStaleTickReport } from '../pricing/pricing.ts'
+import { recordReconcileTick } from '../records/hooks.ts'
 import { heartbeatSentinelRecord } from '../sentinel/sentinels.ts'
 import {
   projectTodoQueue,
@@ -140,6 +141,22 @@ export async function accountPhase(
       errors.push(`定价 stale 检查失败：${msg}`)
     }
     const costClose = runCostCloseTick(costCloseDeps({ ledger, config, tiers: rt.deps.catalog !== undefined ? rt.deps.catalog.tiers() : undefined, now, makeId, makeEvent, tickEvents, errors, heartbeatSentinelRecord, bumpMutations: (n) => { ctx.mutations += n } })) // 相位7尾·日终收口 132-§6.3 单D
+    // —— 相位 7 尾·records↔events 对账读者（studio-dev-605 刀B；#559 验收项「对账读者接入生产对账循环」）：
+    //    每 N 拍一跑、增量窗口（上次对账时刻回退 1h），结论落 daemon_kv＋日志；只留痕，
+    //    不写事件、不改决策、差异不吞（fail-safe：异常只进 errors，不打断拍）。
+    if (rt.records !== undefined) {
+      try {
+        recordReconcileTick({
+          records: rt.records,
+          kv: { kvGet: (key) => ledger.kvGet(key), kvSet: (key, value) => ledger.kvSet(key, value) },
+          seq,
+          at: now(),
+        })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        errors.push(`记录面对账读者失败：${msg}`)
+      }
+    }
   return {
     heartbeat,
     hrSync,

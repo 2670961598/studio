@@ -3,7 +3,7 @@
  *
  * 依据（实现单必须引文档章节号）：
  *   - docs/v2/11 §5.2 / §14.1（工作十态 M-01..M-28 边集与「前置记录」列——边集唯一源
- *     `packages/contract/src/records/work-state.ts: WORK_TRANSITIONS`，本件不重述边）；
+ *     契约包 records 入口的 `WORK_TRANSITIONS`（work-state），本件不重述边）；
  *   - docs/18-§2.1（v0.5 平台流状态模板：新单/待批/已派发/证据就绪/复验通过/已交付）；
  *   - docs/17-§2（相位×记录类型映射表）。
  *
@@ -20,7 +20,7 @@ import {
   WORK_TRANSITIONS,
   type WorkState,
   type WorkTransitionEdge,
-} from '../../../../../packages/contract/src/records/index.ts'
+} from '@studio-next/contract/records'
 
 /** v0.5 平台流状态字面量（docs/18-§2.1 冻结模板；core DEFAULT_STATES 同值——本地不复述来源） */
 export const PLATFORM_STATES = {

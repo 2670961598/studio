@@ -10,6 +10,7 @@
  */
 import type { CompanyRuntimeUpdate } from './contract.ts'
 import { buildDirectiveAuthorizer } from '../directive/index.ts'
+import { recordRosterLoad } from '../records/hooks.ts'
 import type { EngineRuntime } from './types.ts'
 
 /**
@@ -21,6 +22,9 @@ export function applyCompanyUpdate(rt: EngineRuntime, update: CompanyRuntimeUpda
   // 整组替换（不半换）：people+assembler 绑定与快照派生三键一起换——调用方保证
   // 拍边界（serve 主循环）；本方法自身纯赋值不抛，失败面归调用方前置校验
   rt.people = update.people
+  // 记录族生产写面·人事变更相位（studio-dev-605 刀B）：名册整组换 → 任职/授权链增量重派生（幂等，
+  // 缺前置即拒；记录面关=records 缺省不注入=零行为）
+  if (rt.records !== undefined) recordRosterLoad({ records: rt.records, at: rt.now(), reason: 'hr-change' })
   rt.assembler = update.assembler
   rt.costGuard = update.costGuard // 恒换（132-§6.4 单C）：摘段即关面
   rt.config.defaultPersonId = update.defaultPersonId

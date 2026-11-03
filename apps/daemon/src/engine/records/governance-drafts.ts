@@ -19,14 +19,14 @@ import type {
   MemoryDisposalPayload,
   RemedyDecisionPayload,
   ValueEvaluationPayload,
-} from '../../../../../packages/contract/src/records/index.ts'
+} from '@studio-next/contract/records'
 import {
   validateAccountabilityCase,
   validateChangeSegment,
   validateMemoryDisposal,
   validateRemedyDecision,
   validateValueEvaluation,
-} from '../../../../../packages/contract/src/records/index.ts'
+} from '@studio-next/contract/records'
 import type { DraftOutcome } from './drafts.ts'
 import {
   checkDecisionFace,

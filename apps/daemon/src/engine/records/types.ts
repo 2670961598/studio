@@ -31,9 +31,9 @@ import type {
   ValueEvaluationPayload,
   WorkSettlementContext,
   WorkSettlementPayload,
-} from '../../../../../packages/contract/src/records/index.ts'
+} from '@studio-next/contract/records'
 import type { HistRecordRef } from '@studio-next/store'
-import type { RecordValidationIssue } from '../../../../../packages/contract/src/records/index.ts'
+import type { RecordValidationIssue } from '@studio-next/contract/records'
 
 /** 写入路径名（producer.writtenBy；与 mainloop 事件写面分开——v2/11 §0.2-1） */
 export const RECORD_WRITTEN_BY = 'daemon:engine/records'
@@ -41,7 +41,7 @@ export const RECORD_WRITTEN_BY = 'daemon:engine/records'
 /** 冻结 schema 工件引用（v2/10 §4.1；与 assembly/ops 同口径——仓库内记录工件唯一引用） */
 export const RECORD_SCHEMA_REF = { schemaId: 'studio-next.records.v2', schemaVersion: '1.0.0' } as const
 
-/** 依循的 V2 规范版本（与 packages/contract/src/artifacts/generate.ts SPEC_VERSION 同值） */
+/** 依循的 V2 规范版本（与契约包 spec 版本常量 artifacts/generate.ts: SPEC_VERSION 同值） */
 export const RECORD_SPEC_VERSION = '2.0.0'
 
 /** 异议位置合法缺省（v2/11 §5.2 白名单：不得因「无异议」本身拒写） */
@@ -166,7 +166,7 @@ export interface RecordRefRequirement {
 /** 记录草案闸（contract 校验器＋被引前置记录清单；随草案返回，wire 统一执行） */
 export interface RecordDraftGate {
   readonly requires?: readonly RecordRefRequirement[]
-  readonly validate?: (record: unknown) => import('../../../../../packages/contract/src/records/index.ts').RecordValidationOutcome
+  readonly validate?: (record: unknown) => import('@studio-next/contract/records').RecordValidationOutcome
 }
 
 /** 结清入参（相位 5 合并/相位 6 回收；REC-WORK-12 决定型） */
@@ -244,6 +244,34 @@ export interface RecordValueEvaluationArgs {
   readonly context?: { readonly negativeValueUnlisted?: boolean }
 }
 
+// —— 刀B（任职/授权链；studio-dev-605 承接 #559 重出）——
+//
+// 入参一律只有「时刻/工号/单号」：任职与授权事实由名册端口（`roster.ts`）派生，调用方没有可填字段
+// ＝「自填即拒」的类型面（docs/17-§2 刀B 段；v2/11 §七 独立性）。
+
+/** 相位 0 名册装载入参（启动装载／人事变更）——**只有时刻与原因** */
+export interface RecordRosterLoadArgs {
+  readonly at: number
+  readonly reason: 'boot' | 'hr-change'
+}
+
+/** 相位 4 出工段入参（前件记录引用由写面按记录 id 约定解析，调用方不得自带） */
+export interface RecordSegmentArgs {
+  readonly ticket: string
+  readonly attempt: number
+  readonly personId: string
+  readonly at: number
+  readonly workspace?: string
+  readonly briefRef?: string
+}
+
+/** 权源解析入参（决定型记录写前取 authority_ref；引用由授权链派生，调用方不得自带记录引用） */
+export interface RecordAuthorityArgs {
+  readonly personId: string
+  /** 动作范围词（须落在授予 scope.included 内且不在 forbidden 内） */
+  readonly actionScope: string
+}
+
 /** 记录写面端口（EngineDeps.records；缺省不注入＝记录面关、行为零变） */
 export interface RecordWirePort {
   readonly counters: {
@@ -260,10 +288,26 @@ export interface RecordWirePort {
     review: number
     memory: number
     value: number
+    /** 刀B：名册装载轮次（相位 0／人事变更） */
+    lifecycle: number
+    /** 刀B：出工段尝试次数（相位 4） */
+    segment: number
+    /** 刀B：权源解析次数（决定型记录写入前） */
+    authority: number
+    /** 刀B：#559 验收项「对账读者」——records↔events 对账轮次 */
+    reconcile: number
   }
   intake(args: RecordIntakeArgs): RecordWriteResult
   transition(args: RecordTransitionArgs): RecordWriteResult
   harvest(args: RecordHarvestArgs): RecordWriteResult
+  /** 刀B 相位 0：名册 → LIFE-05 禁配申报 → AUTH-01 授权链 → LIFE-01 任命（逐条三态，不打断拍） */
+  rosterLoad(args: RecordRosterLoadArgs): readonly RecordWriteResult[]
+  /** 刀B 相位 4：出工段 LIFE-04（生效任命／WORK-05／AUTH-02／CAP-02 前件缺一即拒——不臆造段） */
+  workSegment(args: RecordSegmentArgs): RecordWriteResult
+  /** 刀B 权源面：该工号在该动作范围上的覆盖授予引用（无覆盖即拒，调用方不得自填） */
+  authorityRefFor(args: RecordAuthorityArgs): RecordWriteResult
+  /** #559 验收项：records ↔ events 双向对账（生产对账循环的读面消费者，只读不写） */
+  reconcile(since?: number): import('./projection.ts').ProjectionReconciliation
   settlement(args: RecordSettlementArgs): RecordWriteResult
   exception(args: RecordExceptionArgs): RecordWriteResult
   accountability(args: RecordAccountabilityArgs): RecordWriteResult

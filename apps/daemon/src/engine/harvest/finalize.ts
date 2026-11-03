@@ -21,7 +21,7 @@ import { accountJobOutput } from '../jobs/output-account.ts'
 import { sentinelDutyForTicket, verifySidecarSentinelAtPath } from '../jobs/sentinel.ts'
 import { closeOutMergeHarvest, failMergeHarvest } from '../merge/merge-run.ts'
 import { consumePricingPublish } from '../pricing/pricing.ts'
-import { recordTransition } from '../records/hooks.ts'
+import { recordHarvest, recordTransition } from '../records/hooks.ts'
 import {
   harvestFailureDetail,
   harvestFailureSignature,
@@ -87,6 +87,20 @@ export async function finalizeHarvest(
   // 收割批次登记（IMPL-06-03 / REC-EVD-01 观察面）：区间幂等键/证据项草案/gaps/结构位——
   // 零事件零迁移零预算动作（判定与收口仍在下文与 failHarvest）
   harvestBatches.record({ ticket, attempt: entry.attempt, deliverer: entry.personId }, requirements, { reportPath: gate.reportPath })
+  // 记录族生产写面·相位 4 收割尾（studio-dev-605 刀B）：出工段 LIFE-04 → 收割批次 EVD-01
+  // （前件＝生效任命/计划锁/授权结果/资格；缺一即拒，不臆造段与批次——拒写只计数+日志，不打断拍）
+  if (records !== undefined) {
+    recordHarvest({
+      records,
+      ticket,
+      attempt: entry.attempt,
+      personId: entry.personId,
+      at: now(),
+      terminal: requirements.fourOk ? 'completed' : 'error',
+      ...(entry.workspace !== undefined ? { workspace: entry.workspace } : {}),
+      ...(entry.briefPath !== undefined ? { briefRef: entry.briefPath } : {}),
+    })
+  }
   rt.crash.harvestVerdict() // 崩溃注入③（F3-11）：收割四要件判定后、GATE_PASS 落账前——受控测试缝，默认零行为
   if (flow === undefined) {
     return failHarvest(rt, entry, tickEvents, 'CONFIG_INVALID：等级未登记状态流（收割去向不可定）', requirements)

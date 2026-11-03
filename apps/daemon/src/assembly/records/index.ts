@@ -1,5 +1,5 @@
 /**
- * assembly/records —— 记录族生产写面装配（studio-dev-527）
+ * assembly/records —— 记录族生产写面装配（studio-dev-527 刀A／studio-dev-605 刀B 重出 #559）
  *
  * 依据：docs/17-§2「记录族生产写面」段；docs/v2/14 §1.6（PORT-HIST 唯一记录写口）；
  * docs/v2/11 §0.2/§0.7（责任主体与证明边界）。
@@ -9,4 +9,5 @@
  * 子域目录（assembly/records/）按域平面纪律新增，不占 assembly/ 直属散件基线。
  */
 export { assembleRecords, type AssembleRecordsDeps, type RecordsAssembly } from './assemble.ts'
-export { wireServeRecords, type ServeRecordsFace, type WireServeRecordsArgs } from './serve-face.ts'
+export { bootRecordRoster, wireServeRecords, type ServeRecordsFace, type WireServeRecordsArgs } from './serve-face.ts'
+export type { RootGrantFact } from '../../engine/records/index.ts'
