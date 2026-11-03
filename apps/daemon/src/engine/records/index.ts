@@ -1,5 +1,5 @@
 /**
- * engine/records —— 记录族生产写面接线子域（studio-dev-527 刀A／studio-dev-605 刀B 重出 #559）
+ * engine/records —— 记录族生产写面接线子域（studio-dev-527 刀A／studio-dev-605 刀B 重出 #559／studio-dev-560 刀C）
  *
  * 依据：docs/17-§2「记录族生产写面」段（相位×记录类型×写入者映射表）、docs/17-§6
  * （收割四要件不改判据）；docs/v2/11 §〇/§1.4-1.9/§5.2/§六/§七/§八/§十；docs/v2/14 §1.6。
@@ -15,6 +15,7 @@
  *   - `roster.ts`：公司目录名册端口（people/departments 镜像＝任职/授权链唯一事实源，刀B）；
  *   - `authority.ts`：REC-AUTH-01 授权链派生（root 外部事实唯一注入口；转授边由名册派生，刀B）；
  *   - `life.ts`：REC-LIFE-05 禁配申报／REC-LIFE-01 任命／REC-LIFE-04 出工段派生（五条件逐面判，刀B）；
+ *   - `work-chain.ts` / `work-chain-wire.ts`：开工/完成/验收链八族草案与链编排（studio-dev-560 刀C）；
  *   - `wire.ts`：写面实现（PORT-HIST append；幂等/去重/失败不打断拍；族不变量二道闸；对账读者）；
  *   - `projection.ts`：records ↔ events 双向对账（记录为事实源，events 为可重建投影）。
  */
@@ -27,6 +28,8 @@ export {
   type DraftDecisionFaceInput,
   type DraftRecordRef,
   type RecordAccountabilityArgs,
+  type RecordAcceptanceChainArgs,
+  type RecordChainPhaseArgs,
   type RecordChangeSegmentArgs,
   type RecordExceptionArgs,
   type RecordMemoryDisposalArgs,
@@ -38,12 +41,15 @@ export {
   type RecordIdempotencyKey,
   type RecordIntakeArgs,
   type RecordHarvestArgs,
+  type RecordHarvestChainArgs,
+  type RecordPhaseFactsPort,
   type RecordRefusalCode,
   type RecordShapeFailure,
   type RecordTransitionArgs,
   type RecordAuthorityArgs,
   type RecordRosterLoadArgs,
   type RecordSegmentArgs,
+  type RecordStartChainArgs,
   type RecordWirePort,
   type RecordWriteResult,
 } from './types.ts'
@@ -92,9 +98,11 @@ export {
   recordClosingPhase,
   recordExceptionPhase,
   recordHarvest,
+  recordHarvestChain,
   recordReconcileTick,
   recordReviewPhase,
   recordRosterLoad,
+  recordStartChain,
   recordTickIntake,
   recordTransition,
   type PhaseRecordResults,
@@ -145,6 +153,17 @@ export {
   type WorkSegmentPrereqs,
 } from './life.ts'
 export { createRecordWire, authorizationRecordId, planLockRecordId, qualificationRecordId, type RecordWire, type RecordWireDeps } from './wire.ts'
+export {
+  WORK_CHAIN_RECORD_TYPES,
+  chainRecordId,
+  chainRef,
+  type AcceptanceChainFacts,
+  type ChainTransitionDecision,
+  type HarvestChainFacts,
+  type StartChainFacts,
+  type WorkChainPhase,
+  type WorkChainRecordType,
+} from './work-chain.ts'
 export {
   RECORDED_TYPES,
   ROSTER_ANCHORED_TYPES,

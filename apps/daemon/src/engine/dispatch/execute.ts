@@ -44,7 +44,7 @@ import { applyDispatchProjection } from '../prm/dispatch-projection.ts'
 import { preparePricingAttachment } from '../pricing/publish.ts'
 import { aiwsWorkspaceOf } from '../prompt-assembly.ts'
 import { blindArtifactPaths, createView, resolveReadTier, roleOfAssignee } from '../read-tiers.ts'
-import { recordTransition } from '../records/hooks.ts'
+import { recordStartChain } from '../records/hooks.ts'
 import { dispatchRoomDuty } from '../rooms/room-duty.ts'
 import type { EventIndex } from '../sentinel/events-index.ts'
 import { modelTierDispatchFace, resolveModelTier } from '../tier/model-tier.ts'
@@ -311,7 +311,10 @@ export async function executeDispatch(
       })
       syncMirror(transitioned)
       // 记录族生产写面·相位 3 派发（docs/17-§2）：迁移→REC-WORK-06（前置不齐即拒，不臆造）
-      if (records !== undefined) recordTransition({ records, ticket, attempt, fromState: fresh.state, toState: action.toState, at, actor: person.id })
+      if (records !== undefined) {
+        const facts = rt.deps.recordPhaseFacts?.start({ ticket, attempt, at, actor: person.id, fromState: fresh.state, toState: action.toState })
+        recordStartChain({ records, ticket, attempt, fromState: fresh.state, toState: action.toState, at, actor: person.id, ...(facts !== undefined ? { facts } : {}) })
+      }
       // 队列等待锚（129-§6.2-R4）：DISPATCH note 尾携 wait/prio/boost（锚形冻结；
       // 计算体拆入 todoqueue/queue.ts queueDispatchAnchor——轨2 R1① 本单「先拆再增」行基线清偿）
       const queueAnchorInfo = queueDispatchAnchor(queueCarry, ticket, at)

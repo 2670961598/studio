@@ -359,16 +359,6 @@ export function harvestBatchDraft(args: {
 export const BLOCKED_RECORD_FAMILIES: Readonly<
   Record<string, { readonly phase: string; readonly blocker: string; readonly ref: string }>
 > = {
-  'REC-WORK-08': {
-    phase: '收割',
-    blocker: 'REC-WORK-07 效果级判定＋REC-EVD-01/03 收割批次/证据包未落（§5.2 完成判据前置）',
-    ref: 'v2/11 §5.2',
-  },
-  'REC-WORK-09': {
-    phase: '复验/验收',
-    blocker: 'REC-EVD-03 证据包＋REC-WORK-07 效果级＋REC-LIFE-05 独立性核验未落（§5.2 验收前置）',
-    ref: 'v2/11 §5.2',
-  },
   'REC-WORK-10': {
     phase: '返工',
     blocker: '触发记录（REC-WORK-06/08/09）未落——返工记录必须引被触发记录（§2 字段首项）',
@@ -462,6 +452,54 @@ export const UNBLOCKED_RECORD_FAMILIES: Readonly<
     phase: '结清 / 复盘前置',
     writer: 'governance-drafts.valueEvaluationDraft',
     gate: '四本账（不得压总分）＋判断者独立性（自填即拒）＋负价值单列＋外部反馈为空只能「价值不明」',
+    ref: 'v2/11 §六',
+  },  // —— 刀C（studio-dev-560）：开工/完成/验收链八族（写面＝work-chain-wire.ts；前置按相位判） ——
+  'REC-WORK-02': {
+    phase: '3 派发·决定位',
+    writer: 'work-chain-wire.startChain／work-chain.intakeDecisionDraft',
+    gate: 'intent_ref→已落库 WORK-01＋authority_ref→REC-AUTH-01＋决定面齐（§5.1）',
+    ref: 'v2/11 §5.1',
+  },
+  'REC-WORK-07': {
+    phase: '3 派发（合同前）',
+    writer: 'work-chain-wire.startChain／work-chain.effectLevelDraft',
+    gate: 'subject_ref 已落库＋authority_ref 已落库＋决定面齐（未分级/存疑按高侧；§5.1）',
+    ref: 'v2/11 §5.1',
+  },
+  'REC-WORK-03': {
+    phase: '3 派发',
+    writer: 'work-chain-wire.startChain／work-chain.workContractDraft',
+    gate: 'commitment_ref 已落库＋risk_classification_ref→REC-WORK-07＋判据 effect_level_ref（§5.1）',
+    ref: 'v2/11 §5.1',
+  },
+  'REC-WORK-05': {
+    phase: '3 派发',
+    writer: 'work-chain-wire.startChain／work-chain.planLockDraft',
+    gate: 'contract_ref→REC-WORK-03＋qualification_refs→REC-CAP-02＋capability_descriptors→REC-CAP-01（§5.2）',
+    ref: 'v2/11 §5.2',
+  },
+  'REC-WORK-04': {
+    phase: '3 派发',
+    writer: 'work-chain-wire.startChain／work-chain.startDecisionDraft',
+    gate: 'contract_ref→REC-WORK-03＋authority_ref 已落库＋五门各一/三值聚合/计划锁读序（§5.2）',
+    ref: 'v2/11 §5.2',
+  },
+  'REC-WORK-08': {
+    phase: '4 收割',
+    writer: 'work-chain-wire.harvestChain／work-chain.completionRecordDraft',
+    gate: 'work_ref→REC-WORK-03＋effect_level_ref→REC-WORK-07（EX-2+ 另需 REC-EVD-01 收割批次；§5.2）',
+    ref: 'v2/11 §5.2',
+  },
+  'REC-WORK-09': {
+    phase: '4 收尾（QA 面）',
+    writer: 'work-chain-wire.acceptanceChain／work-chain.workAcceptanceDraft',
+    gate: 'work_ref/effect_level_ref＋evidence_refs 必含 REC-EVD-03＋independence_verified_by→REC-LIFE-05＋决定面（§5.2）',
+    ref: 'v2/11 §5.2',
+  },
+  'REC-EVD-03': {
+    phase: '4 收割',
+    writer: 'work-chain-wire.harvestChain／work-chain.evidencePackageDraft',
+    gate: 'work_ref→REC-WORK-03＋八要素逐项表示＋自检恒 self_reported=true（§六）',
     ref: 'v2/11 §六',
   },
 }

@@ -34,6 +34,7 @@ import {
   type DraftOutcome,
   type TransitionDraftsOutcome,
 } from './drafts.ts'
+import { createChainWriter } from './work-chain-wire.ts'
 import { exceptionDraft, reviewDraft, settlementDraft } from './close-drafts.ts'
 import {
   accountabilityDraft,
@@ -60,8 +61,11 @@ import {
   type RecordMemoryDisposalArgs,
   type RecordRefusalCode,
   type RecordRemedyArgs,
+  type RecordAcceptanceChainArgs,
+  type RecordHarvestChainArgs,
   type RecordReviewArgs,
   type RecordRosterLoadArgs,
+  type RecordStartChainArgs,
   type RecordSegmentArgs,
   type RecordSettlementArgs,
   type RecordTransitionArgs,
@@ -205,6 +209,28 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
     return { ok: true, envelope: built.envelope }
   }
 
+  const write = (
+    outcome: DraftOutcome,
+    _subjectId?: string,
+    familyCheck?: (envelope: unknown) => string[],
+  ): RecordWriteResult => {
+    if (!outcome.ok) return refuse(outcome)
+    const prepared = prepare(outcome.draft, outcome.gate)
+    if (!prepared.ok) return prepared.result
+    if (familyCheck !== undefined) {
+      const issues = familyCheck(prepared.envelope)
+      if (issues.length > 0) {
+        return refuse({
+          ok: false,
+          recordType: outcome.draft.recordType,
+          code: 'record-prereq-missing',
+          reason: `族内不变量不成立：${issues.join('; ')}`,
+        })
+      }
+    }
+    return appendBuilt(outcome.draft, prepared.envelope)
+  }
+
   /** 已成信封的单条落库（幂等先读；append 异常＝failed 不重试） */
   const appendBuilt = (draft: RecordDraft, envelope: unknown): RecordWriteResult => {
     // 幂等（§0.4-4）：同 recordId 命中既有行＝重放，不产生第二次副作用
@@ -231,6 +257,9 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
       return failureOf(draft.recordType, 'record-write-failed', `记录未落库（PORT-HIST append 异常）：${message}`)
     }
   }
+
+  // 刀C 链编排（work-chain-wire.ts；同一 write/refuse/计数器注入——不是第二写面）
+  const chainWriter = createChainWriter({ company, hist, counters, write, refuse, ...(deps.log !== undefined ? { log: deps.log } : {}) })
 
   /** 前件记录引用解析（只认**已落库**记录；未落＝undefined → 调用方拒写，不引用未来记录） */
   const refOf = (recordId: string): { refType: string; refId: string; refVersion: string } | undefined => {
@@ -275,13 +304,6 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
       },
       args,
     )
-  }
-
-  const write = (outcome: DraftOutcome): RecordWriteResult => {
-    if (!outcome.ok) return refuse(outcome)
-    const prepared = prepare(outcome.draft, outcome.gate)
-    if (!prepared.ok) return prepared.result
-    return appendBuilt(outcome.draft, prepared.envelope)
   }
 
   /** 迁移边序列：先全量成信封（形状闸）→ 再逐条落库；任一条失败即返回（不补造后续） */
@@ -416,6 +438,18 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
       return { ok: true, recordId: ref.refId, recordType: ref.refType, deduped: true, ref: { recordId: ref.refId, recordType: ref.refType, appended: false } }
     },
     /** 相位 5 合并 / 相位 6 回收：REC-WORK-12（决定型；MEM-03＋EVD-04＋独立核验） */
+    /** 相位 3：开工链（WORK-02→07→03→05→04＋M-05；编排体=work-chain-wire.ts） */
+    startChain(args: RecordStartChainArgs): readonly RecordWriteResult[] {
+      return chainWriter.startChain(args)
+    },
+    /** 相位 4 收割：EVD-03→WORK-08＋M-10（编排体=work-chain-wire.ts） */
+    harvestChain(args: RecordHarvestChainArgs): readonly RecordWriteResult[] {
+      return chainWriter.harvestChain(args)
+    },
+    /** 相位 4 收尾：WORK-09＋M-17（编排体=work-chain-wire.ts） */
+    acceptanceChain(args: RecordAcceptanceChainArgs): readonly RecordWriteResult[] {
+      return chainWriter.acceptanceChain(args)
+    },
     settlement(args: RecordSettlementArgs): RecordWriteResult {
       counters.settlement += 1
       return write(settlementDraft({ ...args, company }))

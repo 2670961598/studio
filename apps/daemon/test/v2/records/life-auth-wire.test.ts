@@ -21,6 +21,7 @@ import { createHistFace, openLedger, type Ledger } from '@studio-next/store'
 import {
   BLOCKED_RECORD_FAMILIES,
   PENDING_PREREQ_FAMILIES,
+  UNBLOCKED_RECORD_FAMILIES,
   RECORDS_RECONCILE_LAST_KEY,
   appointmentDraft,
   appointmentRecordId,
@@ -349,8 +350,11 @@ describe('刀B 族表：已交付族解禁、其余族保持阻断（不顺手�
     expect(BLOCKED_RECORD_FAMILIES['REC-EVD-01']).toBeUndefined()
     expect(PENDING_PREREQ_FAMILIES['REC-EVD-01']).toBeDefined()
     expect(PENDING_PREREQ_FAMILIES['REC-LIFE-04']).toBeDefined()
-    // 刀C 族（写面未实现）：仍在 BLOCKED，一律拒写
-    for (const recordType of ['REC-WORK-08', 'REC-WORK-09', 'REC-WORK-10', 'REC-WORK-13']) {
+    // 刀C 族（studio-dev-560 已交付：写面解禁）→ 八族入 UNBLOCKED；WORK-10/13 仍未接、仍在 BLOCKED
+    for (const recordType of ['REC-WORK-02', 'REC-WORK-03', 'REC-WORK-04', 'REC-WORK-05', 'REC-WORK-07', 'REC-WORK-08', 'REC-WORK-09', 'REC-EVD-03']) {
+      expect(UNBLOCKED_RECORD_FAMILIES[recordType]).toBeDefined()
+    }
+    for (const recordType of ['REC-WORK-10', 'REC-WORK-13']) {
       expect(BLOCKED_RECORD_FAMILIES[recordType]).toBeDefined()
       const outcome = blockedDraftFor(recordType)
       expect(outcome.ok).toBe(false)

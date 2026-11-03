@@ -48,9 +48,25 @@ export function rowOf(record: HistRecord): RecordProjectionRow | undefined {
 
 /**
  * 已接生产写面的记录类（刀A：WORK-01/06＋EVD-01 观察面；刀B：LIFE-05/01/04、AUTH-01；
- * 其余族按 drafts.BLOCKED_RECORD_FAMILIES 面关）。
+ * 刀C：开工/完成/验收链八族（WORK-02/03/04/05/07/08/09＋EVD-03）；其余族按 drafts.BLOCKED 面关）。
  */
-export const RECORDED_TYPES = ['REC-WORK-01', 'REC-WORK-06', 'REC-EVD-01', 'REC-LIFE-05', 'REC-LIFE-01', 'REC-LIFE-04', 'REC-AUTH-01'] as const
+export const RECORDED_TYPES = [
+  'REC-WORK-01',
+  'REC-WORK-06',
+  'REC-EVD-01',
+  'REC-LIFE-05',
+  'REC-LIFE-01',
+  'REC-LIFE-04',
+  'REC-AUTH-01',
+  'REC-WORK-02',
+  'REC-WORK-03',
+  'REC-WORK-04',
+  'REC-WORK-05',
+  'REC-WORK-07',
+  'REC-WORK-08',
+  'REC-WORK-09',
+  'REC-EVD-03',
+] as const
 
 /** 名册派生族（锚是公司目录镜像而非事件流：须有幂等键 subjectId，且 subject 须在名册内） */
 export const ROSTER_ANCHORED_TYPES = ['REC-LIFE-05', 'REC-LIFE-01', 'REC-AUTH-01'] as const

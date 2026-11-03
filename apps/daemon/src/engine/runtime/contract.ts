@@ -34,7 +34,7 @@ import type { HrSyncTickReport } from '../hrsync/hrsync.ts'
 import type { SplitDirectiveInput } from '../split/materialize.ts'
 import type { RoomDuty } from '../rooms/room-duty.ts'
 import type { WorkerKeyDeps } from '../worker-key.ts'
-import type { RecordWirePort } from '../records/index.ts'
+import type { RecordPhaseFactsPort, RecordWirePort } from '../records/index.ts'
 import type { ObservationTickStep } from '../observe/index.ts'
 import type { DispatchDerivationGuard } from '../work/dispatch-seatbelt.ts'
 import type { DispatchDerivationRegistry } from '../work/derivation-registration.ts'
@@ -95,6 +95,8 @@ export interface EngineDeps extends HarvestRecordingDeps {
   costGuard?: CostGuardConfig
   /** 记录族生产写面（studio-dev-527；docs/17-§2 映射表）；缺省不注入＝面关零行为 */
   records?: RecordWirePort
+  /** 记录事实口（studio-dev-560 刀C；决定点→记录事实。缺省＝C 八族 fail-closed，不臆造） */
+  recordPhaseFacts?: RecordPhaseFactsPort
   /**
    * 成本警戒 notify 出口（129-§6.1②：escalate route=notify/dispatch+notify 的即时提醒
    * 通道——批示项④ busy 场景队首+即时提醒；105-刀B IM 链的登记位）。缺省不注入=留痕

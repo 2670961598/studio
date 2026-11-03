@@ -34,6 +34,7 @@ import type {
 } from '@studio-next/contract/records'
 import type { HistRecordRef } from '@studio-next/store'
 import type { RecordValidationIssue } from '@studio-next/contract/records'
+import type { AcceptanceChainFacts, HarvestChainFacts, StartChainFacts } from './work-chain.ts'
 
 /** 写入路径名（producer.writtenBy；与 mainloop 事件写面分开——v2/11 §0.2-1） */
 export const RECORD_WRITTEN_BY = 'daemon:engine/records'
@@ -121,6 +122,40 @@ export interface RecordTransitionArgs {
    * 决定面与逐边前置记录分离：前置记录逐边判，决定面是同一派发决定（docs/17-§2 状态桥接段）。
    */
   readonly decision?: DraftDecisionFaceInput
+}
+
+
+/** 链相位公共入参（ticket/attempt/at/actor；事实由决定点端口给） */
+export interface RecordChainPhaseArgs {
+  readonly ticket: string
+  readonly attempt: number
+  readonly at: number
+  readonly actor: string
+  /** 平台流迁移锚（缺省取该相位缺省锚；映射见 state-map.ts） */
+  readonly fromState?: string
+  readonly toState?: string
+}
+
+/** 派发前置链入参（相位 3；facts 缺省＝决定点未产出 V2 事实 → 五族拒写） */
+export interface RecordStartChainArgs extends RecordChainPhaseArgs {
+  readonly facts?: StartChainFacts | undefined
+}
+
+/** 收割链入参（相位 4 收割；facts 缺省＝EVD-03/08 拒写） */
+export interface RecordHarvestChainArgs extends RecordChainPhaseArgs {
+  readonly facts?: HarvestChainFacts | undefined
+}
+
+/** 验收链入参（相位 4 收尾 QA 面；facts 缺省＝WORK-09 拒写） */
+export interface RecordAcceptanceChainArgs extends RecordChainPhaseArgs {
+  readonly facts?: AcceptanceChainFacts | undefined
+}
+
+/** 决定点 → 记录事实端口（v0 决定点尚未产出 V2 决定事实；缺省不注入＝C 族 fail-closed） */
+export interface RecordPhaseFactsPort {
+  start(args: RecordChainPhaseArgs): StartChainFacts | undefined
+  harvest(args: RecordChainPhaseArgs): HarvestChainFacts | undefined
+  acceptance(args: RecordChainPhaseArgs): AcceptanceChainFacts | undefined
 }
 
 /** 收割批次入参（相位 4 收割；REC-EVD-01 事件型，但仍需出工段引用） */
@@ -312,6 +347,12 @@ export interface RecordWirePort {
   workSegment(args: RecordSegmentArgs): RecordWriteResult
   /** 刀B 权源面：该工号在该动作范围上的覆盖授予引用（无覆盖即拒，调用方不得自填） */
   authorityRefFor(args: RecordAuthorityArgs): RecordWriteResult
+  /** 相位 3：WORK-02→07→03→05→04 五族 + M-05 迁移（逐条三态；前件不齐即拒） */
+  startChain(args: RecordStartChainArgs): readonly RecordWriteResult[]
+  /** 相位 4 收割：EVD-03→WORK-08 + M-10 迁移（逐条三态） */
+  harvestChain(args: RecordHarvestChainArgs): readonly RecordWriteResult[]
+  /** 相位 4 收尾验收：WORK-09 + M-17 迁移（逐条三态） */
+  acceptanceChain(args: RecordAcceptanceChainArgs): readonly RecordWriteResult[]
   /** #559 验收项：records ↔ events 双向对账（生产对账循环的读面消费者，只读不写） */
   reconcile(since?: number): import('./projection.ts').ProjectionReconciliation
   settlement(args: RecordSettlementArgs): RecordWriteResult

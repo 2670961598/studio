@@ -60,17 +60,21 @@ function countOf(stack: PhaseDStack, recordType: string): number {
   return stack.hist.query({ company: COMPANY, type: recordType }).length
 }
 
-describe('刀D 族清单（逐族解除 BLOCKED 并留表）', () => {
-  it('八族解除阻断、逐族留相位/写面/前置闸；其余族仍在阻断表', () => {
-    const expected = ['REC-WORK-12', 'REC-WORK-17', 'REC-ACC-01', 'REC-ACC-02', 'REC-CHG-01', 'REC-REV-01', 'REC-MEM-03', 'REC-EVD-04']
+describe('刀C/刀D 族清单（逐族解除 BLOCKED 并留表）', () => {
+  it('刀C 八族＋刀D 八族解除阻断、逐族留相位/写面/前置闸；未接族仍在阻断表', () => {
+    const expected = [
+      'REC-WORK-12', 'REC-WORK-17', 'REC-ACC-01', 'REC-ACC-02', 'REC-CHG-01', 'REC-REV-01', 'REC-MEM-03', 'REC-EVD-04',
+      // 刀C（studio-dev-560）八族
+      'REC-WORK-02', 'REC-WORK-03', 'REC-WORK-04', 'REC-WORK-05', 'REC-WORK-07', 'REC-WORK-08', 'REC-WORK-09', 'REC-EVD-03',
+    ]
     for (const type of expected) {
       expect(UNBLOCKED_RECORD_FAMILIES[type]).toBeDefined()
       expect(BLOCKED_RECORD_FAMILIES[type]).toBeUndefined()
       expect(UNBLOCKED_RECORD_FAMILIES[type]?.gate.length).toBeGreaterThan(10)
     }
     expect(Object.keys(UNBLOCKED_RECORD_FAMILIES).sort()).toEqual(expected.sort())
-    // 未解锁族仍 fail-closed（不误写）
-    for (const type of ['REC-WORK-08', 'REC-WORK-09', 'REC-WORK-10', 'REC-WORK-13']) {
+    // 未接族仍 fail-closed（不误写）：WORK-10/13 在 BLOCKED
+    for (const type of ['REC-WORK-10', 'REC-WORK-13']) {
       expect(BLOCKED_RECORD_FAMILIES[type]).toBeDefined()
       const outcome = blockedDraftFor(type)
       expect(outcome.ok).toBe(false)

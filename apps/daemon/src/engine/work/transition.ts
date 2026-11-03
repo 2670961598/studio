@@ -29,6 +29,7 @@
 import type { EventRecord, FlowPlatform, IssueRecord, TicketId } from '@studio-next/contract'
 import { flowAnchors, type Action, type StateFlow } from '@studio-next/core'
 import type { TickActionResult } from '../tick-report/types.ts'
+import type { RecordPhaseFactsPort, RecordWirePort } from '../records/index.ts'
 
 // ————————————————————————— 事件面 —————————————————————————
 
@@ -113,6 +114,14 @@ export async function applyWorkTransition(
 export interface WorkPhaseHost extends WorkTransitionHost {
   /** 该单在册誓号（事件 attempt 列；RESUME/QA/CLOSE 同源） */
   readonly attemptOf: (ticket: TicketId) => number
+  /** 拍时钟（验收链记录时点；与引擎 now 同源） */
+  readonly now: () => number
+  /** 验收决定点署名（具名工号；记录 producer.decidedBy 不得为框架/系统） */
+  readonly recordActor?: string
+  /** 记录写面（studio-dev-560 刀C；缺省＝验收链不写，行为零变） */
+  readonly records?: RecordWirePort
+  /** 记录事实口（缺省＝WORK-09 fail-closed） */
+  readonly recordPhaseFacts?: RecordPhaseFactsPort | undefined
   /** 流解析（T:<type> 优先→L<level> 回退；flow 缺＝等级未登记流） */
   readonly flowOf: (issue: IssueRecord) => StateFlow | undefined
   /** 拍错误面（明报不吞） */
@@ -182,9 +191,22 @@ export async function runCollectTransitions(
         continue
       }
       const anchors = flowAnchors(flow)
+      const attempt = host.attemptOf(action.ticket)
+      const recordActor = host.recordActor ?? 'unknown'
+      if (host.records !== undefined) {
+        host.records.acceptanceChain({
+          ticket: action.ticket,
+          attempt,
+          at: host.now(),
+          actor: recordActor,
+          ...(host.recordPhaseFacts !== undefined
+            ? { facts: host.recordPhaseFacts.acceptance({ ticket: action.ticket, attempt, at: host.now(), actor: recordActor }) }
+            : {}),
+        })
+      }
       await applyWorkTransition(host, {
         ticket: action.ticket,
-        attempt: host.attemptOf(action.ticket),
+        attempt,
         toState: anchors.verified,
         event: { name: 'QA_PASS', extra: { note: '证据就绪→复验通过（收割相位 QA 面）' } },
       })

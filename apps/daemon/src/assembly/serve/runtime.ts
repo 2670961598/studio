@@ -74,8 +74,7 @@ import { wireServeEvolveSelfCheck } from './evolve-face.ts'
 import { wireServeApi } from '../api/serve-face.ts'
 import { wireServeHarvestRecords } from '../harvest/records-wire.ts'
 
-import type { ServeRuntime } from './runtime-types.ts'
-import type { RootGrantFact } from '../../engine/records/index.ts'
+import type { ServeRecordsOptions, ServeRuntime } from './runtime-types.ts'
 import type { ObjectRecordPositions } from '../../engine/records/object-wire.ts'
 
 export type { ServeRuntime }
@@ -130,11 +129,6 @@ export function buildServeRuntime(
     notifyBroadcast?: NotifyBroadcastFace
     /** 出站脱敏补充秘密面（DEV-48，docs/52-§十二；matrix shared_secret 等装配单元持有物） */
     hrKnownSecrets?: readonly string[]
-    /**
-     * 记录面根授予外部事实（studio-dev-605 刀B；#530 根委任生产件注入）：
-     * 缺省＝无外部事实 → REC-AUTH-01 拒写（`record-prereq-missing`，日志如实）；注入即相位 0 转绿。
-     */
-    recordsRootGrant?: RootGrantFact
     /** 五对象记录载体生产位置（studio-dev-537；缺省=载体不开面，不以 daemon 冒充决定者） */
     objectPositions?: ObjectRecordPositions
     /**
@@ -146,7 +140,7 @@ export function buildServeRuntime(
       hashFile?: (assetPath: string) => string
       fileExists?: (assetPath: string) => boolean
     }
-  },
+  } & ServeRecordsOptions,
 ): ServeRuntime {
   const rawLog = opts?.log ?? ((line: string): void => console.log(line))
   const clock = opts?.clock ?? ((): number => Date.now())
@@ -303,6 +297,7 @@ export function buildServeRuntime(
     ledger, // 已在装配序开头过三不入·库闸（appendEvent 写前扫描）
     records: recordsFace.records, // 记录族生产写面（docs/17-§2「记录族生产写面」段）
     ...(observationFace !== undefined ? { obs: observationFace.step } : {}), // 观察面 OBS（相位 1 尾；无观察位置＝面关）
+    ...(opts?.recordsPhaseFacts !== undefined ? { recordPhaseFacts: opts.recordsPhaseFacts } : {}),
     ...(config.seatbelt !== undefined ? { dispatchSeatbelt: config.seatbelt } : {}), capabilitySupply, // IMPL-07-09 配置通道＋CAP 记录/五出口决策（studio-dev-540）
     dispatchSelection, // studio-dev-620：执行器选择链（serve 恒注入——非主绑定未登记=拒派；NEG-RUN-05/GAP-V2-04 代偿）
     derivationGuard: derivation.guard, // GAP-V2-04 派发 0 号闸（撤回面）

@@ -16,11 +16,26 @@ import type { HotReload } from '../../control/hot-reload.ts'
 import type { ServeApiWiring } from '../api/serve-face.ts'
 import type { ServeConfig } from './config.ts'
 import type { RestartProbeFace } from './executor-face.ts'
+import type { RecordPhaseFactsPort, RootGrantFact } from '../../engine/records/index.ts'
 import type { ServeOpsFace } from '../ops/index.ts'
 import type { DerivationServeFace } from './derivation.ts'
 import type { RootDelegationTrace } from './root-delegation/root-face.ts'
 
 /** serve 运行栈（engine + 唤起源注册表 + PORT-OPS 面 + 统一停机面；runServe 与测试共用装配） */
+/** 记录族生产写面注入面（刀B 根授予事实／刀C 决定事实口；#605/#560 两轮落仓，runtime.ts 只留装配行） */
+export interface ServeRecordsOptions {
+  /**
+   * 记录面根授予外部事实（studio-dev-605 刀B；#530 根委任生产件注入）：
+   * 缺省＝无外部事实 → REC-AUTH-01 拒写（`record-prereq-missing`，日志如实）；注入即相位 0 转绿。
+   */
+  recordsRootGrant?: RootGrantFact
+  /**
+   * 记录事实口（studio-dev-560 刀C；决定点→开工/完成/验收链事实）：
+   * 缺省＝v0 决定点未产出 V2 决定事实 → C 八族 fail-closed（不臆造）；注入即按相位转绿。
+   */
+  recordsPhaseFacts?: RecordPhaseFactsPort
+}
+
 export interface ServeRuntime extends ServeOpsFace, RestartProbeFace {
   engine: Engine
   scheduler: Scheduler | null

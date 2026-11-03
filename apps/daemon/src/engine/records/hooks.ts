@@ -22,6 +22,7 @@ import type {
   RecordWirePort,
   RecordWriteResult,
 } from './types.ts'
+import type { HarvestChainFacts, StartChainFacts } from './work-chain.ts'
 
 /** 相位 1 采集尾：本拍受活动影响的单 → REC-WORK-01（请求型；幂等由 recordId 恒定保证） */
 export function recordTickIntake(args: {
@@ -179,6 +180,86 @@ export function recordHarvest(args: {
     gaps: args.gaps ?? [],
     usage: args.usage ?? [],
     cost: args.cost ?? [],
+  })
+}
+
+/** 相位 3 派发：开工链（WORK-02→07→03→05→04）＋ M-05；事实缺省时回落到刀A 迁移缝（行为不缩水） */
+export function recordStartChain(args: {
+  readonly records: RecordWirePort
+  readonly ticket: string
+  readonly attempt: number
+  readonly at: number
+  readonly actor: string
+  readonly fromState: string
+  readonly toState: string
+  readonly facts?: StartChainFacts | undefined
+}): void {
+  if (args.facts === undefined) {
+    args.records.transition({
+      ticket: args.ticket,
+      attempt: args.attempt,
+      fromState: args.fromState,
+      toState: args.toState,
+      at: args.at,
+      actor: args.actor,
+    })
+    return
+  }
+  args.records.startChain({
+    ticket: args.ticket,
+    attempt: args.attempt,
+    at: args.at,
+    actor: args.actor,
+    fromState: args.fromState,
+    toState: args.toState,
+    facts: args.facts,
+  })
+}
+
+/** 相位 4 收割：B 面收割批次（LIFE-04→EVD-01）＋ C 面 EVD-03→WORK-08＋M-10；事实缺省回落刀A 迁移缝 */
+export function recordHarvestChain(args: {
+  readonly records: RecordWirePort
+  readonly ticket: string
+  readonly attempt: number
+  readonly at: number
+  readonly actor: string
+  readonly personId: string
+  readonly fromState: string
+  readonly toState: string
+  readonly terminal: 'completed' | 'error' | 'blocked' | 'aborted' | 'limit_exceeded'
+  readonly workspace?: string
+  readonly briefRef?: string
+  readonly facts?: HarvestChainFacts | undefined
+}): void {
+  recordHarvest({
+    records: args.records,
+    ticket: args.ticket,
+    attempt: args.attempt,
+    personId: args.personId,
+    at: args.at,
+    terminal: args.terminal,
+    ...(args.workspace !== undefined ? { workspace: args.workspace } : {}),
+    ...(args.briefRef !== undefined ? { briefRef: args.briefRef } : {}),
+  })
+  if (args.facts === undefined) {
+    args.records.transition({
+      ticket: args.ticket,
+      attempt: args.attempt,
+      fromState: args.fromState,
+      toState: args.toState,
+      at: args.at,
+      actor: args.actor,
+    })
+    return
+  }
+  args.records.harvestChain({
+    ticket: args.ticket,
+    attempt: args.attempt,
+    at: args.at,
+    actor: args.actor,
+    fromState: args.fromState,
+    toState: args.toState,
+    facts: args.facts,
   })
 }
 

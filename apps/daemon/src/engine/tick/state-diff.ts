@@ -48,7 +48,8 @@ export async function stateDiffPhase(
   collected: CollectOutcome,
 ): Promise<StateDiffOutcome> {
   // 逐字迁移的宿主别名（闭包名不变，语义=同一实例/同一绑定）
-  const { platform, ledger, config, lanes, inflight, now, makeEvent, syncMirror, flowOf, resolvePerson, latestRecordOf, costGuard } = rt
+  const { platform, ledger, config, lanes, inflight, now, makeEvent, syncMirror, flowOf, resolvePerson, latestRecordOf, costGuard, records } = rt
+  const deps = rt.deps
   const transitionHostOf = rt.transitionHostOf
   const errors = ctx.errors
   const decisions = ctx.decisions
@@ -339,6 +340,10 @@ export async function stateDiffPhase(
       flowOf,
       errors,
       actionResults,
+      now,
+      recordActor: config.defaultPersonId,
+      ...(records !== undefined ? { records } : {}),
+      ...(deps.recordPhaseFacts !== undefined ? { recordPhaseFacts: deps.recordPhaseFacts } : {}),
       onMutation: () => {
         ctx.mutations += 1
       },

@@ -21,7 +21,7 @@ import { accountJobOutput } from '../jobs/output-account.ts'
 import { sentinelDutyForTicket, verifySidecarSentinelAtPath } from '../jobs/sentinel.ts'
 import { closeOutMergeHarvest, failMergeHarvest } from '../merge/merge-run.ts'
 import { consumePricingPublish } from '../pricing/pricing.ts'
-import { recordHarvest, recordTransition } from '../records/hooks.ts'
+import { recordHarvest, recordHarvestChain } from '../records/hooks.ts'
 import {
   harvestFailureDetail,
   harvestFailureSignature,
@@ -110,7 +110,23 @@ export async function finalizeHarvest(
     const anchors = flowAnchors(flow)
     const transitioned = await platform.issues.transition(ticket, anchors.evidenceReady)
     // 记录族生产写面·相位 4 收割（docs/17-§2）：证据就绪迁移→REC-WORK-06（前置不齐即拒）
-    if (records !== undefined) recordTransition({ records, ticket, attempt: entry.attempt, fromState: fresh.state, toState: anchors.evidenceReady, at: now(), actor: entry.personId })
+    if (records !== undefined) {
+      const facts = rt.deps.recordPhaseFacts?.harvest({ ticket, attempt: entry.attempt, at: now(), actor: entry.personId, fromState: fresh.state, toState: anchors.evidenceReady })
+      recordHarvestChain({
+        records,
+        ticket,
+        attempt: entry.attempt,
+        at: now(),
+        actor: entry.personId,
+        personId: entry.personId,
+        fromState: fresh.state,
+        toState: anchors.evidenceReady,
+        terminal: 'completed',
+        workspace: entry.workspace,
+        briefRef: entry.briefPath,
+        ...(facts !== undefined ? { facts } : {}),
+      })
+    }
     const endedAt = now()
     ledger.endWorkRecord(entry.workRecordId, {
       ended_at: endedAt,
