@@ -159,3 +159,75 @@ describe('guardian bad-command（spawn ENOENT；F1 回归）', () => {
     expect(existsSync(path.join(dir, 'daemon.pid'))).toBe(false)
   }, 10_000)
 })
+
+describe('部署隔离 preflight（ref=708：部署树不干净/漂移则拒绝起 daemon）', () => {
+  function writePreflightConfig(dir: string, daemonExtra: Record<string, unknown>): string {
+    const configPath = path.join(dir, 'guardian-pf.json')
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        daemon: { command: ['/usr/bin/true'], cwd: dir, ...daemonExtra },
+        health: { url: 'http://127.0.0.1:9/healthz', intervalMs: 50, timeoutMs: 50, failuresBeforeRestart: 1, startupGraceMs: 10 },
+        restart: { initialBackoffMs: 50, maxBackoffMs: 100, multiplier: 2, stopGraceMs: 100 },
+        crashLoop: { windowMs: 5_000, maxRestarts: 3, brakeMs: 200 },
+        paths: { logDir: dir },
+      }),
+      'utf8',
+    )
+    return configPath
+  }
+
+  function readGuardianEvents(logPath: string): { event: string }[] {
+    return readFileSync(logPath, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { event: string })
+  }
+
+  it('配置校验：daemon.preflight 非字符串数组 → exit 1 并明报', () => {
+    const dir = tempDir()
+    const configPath = path.join(dir, 'guardian-pf-bad.json')
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        daemon: { command: ['/usr/bin/true'], cwd: dir, preflight: 'not-an-array' },
+        health: { url: 'http://127.0.0.1:9/healthz' },
+        paths: { logDir: dir },
+      }),
+      'utf8',
+    )
+    const result = runCli(['--config', configPath])
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('daemon.preflight')
+  })
+
+  it('preflight 失败：不 spawn daemon，记 preflight-failed 并重试（fail-closed）', async () => {
+    const dir = tempDir()
+    const configPath = writePreflightConfig(dir, { preflight: ['/usr/bin/false'], preflightRetryMs: 200 })
+    const child = spawn(process.execPath, [GUARDIAN, '--config', configPath], { stdio: 'ignore' })
+    await new Promise((resolve) => setTimeout(resolve, 1_200))
+    child.kill('SIGTERM')
+    const code = await new Promise<number | null>((resolve) => child.once('exit', (value) => resolve(value)))
+    expect(code).toBe(0)
+    const events = readGuardianEvents(path.join(dir, 'guardian.jsonl'))
+    expect(events.filter((line) => line.event === 'preflight-failed').length).toBeGreaterThanOrEqual(1)
+    expect(events.some((line) => line.event === 'daemon-start')).toBe(false)
+    expect(events.some((line) => line.event === 'preflight-ok')).toBe(false)
+  }, 10_000)
+
+  it('preflight 成功：先 preflight-ok 才 daemon-start', async () => {
+    const dir = tempDir()
+    const configPath = writePreflightConfig(dir, { preflight: ['/usr/bin/true'] })
+    const child = spawn(process.execPath, [GUARDIAN, '--config', configPath], { stdio: 'ignore' })
+    await new Promise((resolve) => setTimeout(resolve, 1_200))
+    child.kill('SIGTERM')
+    const code = await new Promise<number | null>((resolve) => child.once('exit', (value) => resolve(value)))
+    expect(code).toBe(0)
+    const events = readGuardianEvents(path.join(dir, 'guardian.jsonl'))
+    const preflightOkIndex = events.findIndex((line) => line.event === 'preflight-ok')
+    const daemonStartIndex = events.findIndex((line) => line.event === 'daemon-start')
+    expect(preflightOkIndex).toBeGreaterThanOrEqual(0)
+    expect(daemonStartIndex).toBeGreaterThanOrEqual(0)
+    expect(preflightOkIndex).toBeLessThan(daemonStartIndex)
+  }, 10_000)
+})

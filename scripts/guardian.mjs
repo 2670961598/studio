@@ -16,7 +16,7 @@
  * 用法：node scripts/guardian.mjs --config <guardian.json>（配置/安装见 ops/launchd/README.md）
  * 退出码：0=正常停；1=配置非法；2=异常。
  */
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
@@ -46,11 +46,24 @@ export function validateConfig(raw) {
   }
   if (typeof daemon.cwd !== 'string' || daemon.cwd === '') throw new Error('daemon.cwd 必须是非空路径')
   if (!existsSync(daemon.cwd)) throw new Error(`daemon.cwd 不存在：${daemon.cwd}`)
+  const preflight = daemon.preflight
+  if (preflight !== undefined && (!Array.isArray(preflight) || preflight.length === 0 || !preflight.every((x) => typeof x === 'string' && x !== ''))) {
+    throw new Error('daemon.preflight 必须是非空字符串数组（argv；部署隔离 preflight，见 docs/90-§六）')
+  }
+  const preflightRetryMs = daemon.preflightRetryMs ?? 30_000
+  if (typeof preflightRetryMs !== 'number' || !Number.isFinite(preflightRetryMs) || preflightRetryMs <= 0) {
+    throw new Error('daemon.preflightRetryMs 必须是正整数毫秒')
+  }
   const healthUrl = cfg.health?.url
   if (typeof healthUrl !== 'string' || !/^https?:\/\//.test(healthUrl)) throw new Error('health.url 必须是 http(s) URL')
   if (typeof cfg.paths?.logDir !== 'string' || cfg.paths.logDir === '') throw new Error('paths.logDir 必须是非空路径')
   return {
-    daemon: { command: command.slice(), cwd: daemon.cwd, env: daemon.env !== undefined && daemon.env !== null ? { ...daemon.env } : {} },
+    daemon: {
+      command: command.slice(),
+      cwd: daemon.cwd,
+      env: daemon.env !== undefined && daemon.env !== null ? { ...daemon.env } : {},
+      ...(preflight !== undefined ? { preflight: preflight.slice(), preflightRetryMs: Math.trunc(preflightRetryMs) } : {}),
+    },
     health: { ...GUARDIAN_DEFAULTS.health, ...(cfg.health ?? {}), url: healthUrl },
     restart: { ...GUARDIAN_DEFAULTS.restart, ...(cfg.restart ?? {}) },
     crashLoop: { ...GUARDIAN_DEFAULTS.crashLoop, ...(cfg.crashLoop ?? {}) },
@@ -93,6 +106,18 @@ export async function runGuardian(config, overrides = {}) {
   const probeImpl = overrides.probe
   const fetchImpl = overrides.fetch ?? globalThis.fetch
   const stderr = overrides.stderr ?? ((line) => process.stderr.write(`${line}\n`))
+  // 部署隔离 preflight（ref=708）：起 daemon 前先跑外部校验（默认调 deploy.mjs check）；
+  // 非 0 = 部署树不干净/漂移/依赖缺失 → 拒绝启动（fail-closed），只告警并隔 preflightRetryMs 重试。
+  const preflightImpl =
+    overrides.preflight ??
+    ((argv) => {
+      const result = spawnSync(argv[0], argv.slice(1), { encoding: 'utf8', timeout: 120_000 })
+      return {
+        exitCode: result.error !== undefined ? -1 : result.status,
+        error: result.error === undefined ? undefined : result.error.message,
+        output: `${result.stdout ?? ''}${result.stderr ?? ''}`.trim(),
+      }
+    })
 
   mkdirSync(config.paths.logDir, { recursive: true })
   const guardianLog = config.paths.guardianLog ?? path.join(config.paths.logDir, 'guardian.jsonl')
@@ -157,6 +182,21 @@ export async function runGuardian(config, overrides = {}) {
 
   try {
     while (!stopping) {
+      // 部署隔离 preflight：部署树必须是已验证 commit 且干净；失败则不 spawn daemon（fail-closed）
+      if (config.daemon.preflight !== undefined) {
+        const pf = preflightImpl(config.daemon.preflight)
+        if (pf.exitCode !== 0) {
+          alert('preflight-failed', {
+            exitCode: pf.exitCode,
+            error: pf.error ?? null,
+            output: pf.output === '' ? null : pf.output.slice(0, 2_000),
+            retryMs: config.daemon.preflightRetryMs,
+          })
+          await sleepImpl(config.daemon.preflightRetryMs)
+          continue
+        }
+        log('preflight-ok', {})
+      }
       let child
       try {
         child = spawnImpl(config.daemon.command[0], config.daemon.command.slice(1), {

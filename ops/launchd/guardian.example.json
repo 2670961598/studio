@@ -1,14 +1,23 @@
 {
-  "_comment": "守护核配置模板（studio-dev-697）。安装时替换 <...> 占位；本文件不含任何主机真实路径/凭据，可直接入仓。",
+  "_comment": "守护核配置模板（studio-dev-697；2026-11-04 ref=708 更新：daemon 只从部署树运行）。安装时替换 <...> 占位；本文件不含任何主机真实路径/凭据，可直接入仓。",
+  "_deployment": "主工作区（<WORKSPACE>）只用于施工，可脏；daemon 的 cwd/入口全部指向部署树 <DEPLOY_WORKSPACE>（已验证 commit）。preflight = deploy.mjs check：部署树不干净/HEAD 漂移/tree digest 不符/依赖缺失时 guardian 拒绝启动 daemon（fail-closed，告警重试）。",
   "daemon": {
     "command": [
       "<NODE_BIN>",
-      "<WORKSPACE>/apps/daemon/src/index.ts",
-      "serve",
-      "--config",
+      "apps/boot/src/main.ts",
       "<COMPANY_DIR>/daemon.yaml"
     ],
-    "cwd": "<WORKSPACE>",
+    "cwd": "<DEPLOY_WORKSPACE>",
+    "preflight": [
+      "<NODE_BIN>",
+      "<DEPLOY_WORKSPACE>/scripts/ops/deploy.mjs",
+      "check",
+      "--deploy",
+      "<DEPLOY_WORKSPACE>",
+      "--state",
+      "<DEPLOY_STATE>"
+    ],
+    "preflightRetryMs": 30000,
     "env": {
       "NODE_ENV": "production"
     }

@@ -145,6 +145,23 @@ node apps/daemon/src/cli/main.ts serve --help  # serve 配置项
 - `8788` 对外 API（默认只落单、不派工）
 - `8789` 公司概览
 
+## 部署形态（运行代码隔离）
+
+> 2026-11-04 事故后确立（ref=708，完整设计见 `docs/90-§六`）：**主工作区只用于施工、可以脏；
+> 运行中的 daemon 只执行「部署树」里的已提交/已验证代码**——任何重启（含守护核自动拉起）都不会加载工作区未提交改动。
+
+- **部署树**：主仓之外的独立检出，固定在已验证 commit。首次准备（一次）：
+  `git clone --no-checkout <主仓路径> <部署树路径>` → `git -C <部署树路径> checkout --detach <已验证 commit sha>`
+  （`--no-checkout` 后索引为空、`git status` 会显示全部文件 staged deletions，属预期态；**必须先显式 checkout 一次**，
+  否则 `deploy` 会按「部署树不干净」拒绝。此后禁止手工 checkout/pull，一律走 `deploy.mjs`）。
+  依赖在部署树内 `bun install --frozen-lockfile`（不同步主工作区 `node_modules`，避免 workspace 软链指回主工作区）。
+- **部署**：`node scripts/ops/deploy.mjs deploy --repo <主仓路径> --deploy <部署树路径> --ref <已验证 commit sha>`
+  （checkout→tree digest 校验→依赖→`launchctl kickstart` 重启守护核→`/healthz` 验证→落 `deploy-state`）。
+- **兜底**：guardian 起 daemon 前跑 `deploy.mjs check`（`daemon.preflight`）；部署树不干净/HEAD 漂移/digest 不符/依赖缺失 →
+  **拒绝启动**（fail-closed，`preflight-failed` 告警重试）。
+- **回滚**：同一命令 `--ref <上一 commit sha>`（不重写历史）。
+- launchd 安装、部署与演练步骤见 `ops/launchd/README.md`；多公司（如 studio-profit）部署形态见 `docs/90-§六 6.8`。
+
 ## 验证
 
 ```bash
