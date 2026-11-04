@@ -36,6 +36,7 @@ import type { SecretDeclarationInput } from '../trust/wire.ts'
 import { RestartOrchestrator, readRestartStartupFace } from './restart/orchestrator.ts'
 import { buildHealthz } from '../api/healthz.ts'
 import { createReportsCommitFace } from './reports-commit.ts'
+import { resolveRootGrantAbsenceState } from './root-grant-absence-state.ts'
 
 /** runServe 启动日志的闸门形态（buildServeRuntime 同判据：acceptance 配置给定=真单模式） */
 function realGateMode(config: ServeConfig): boolean {
@@ -162,6 +163,10 @@ export async function runServe(
     ...(opts?.hrMatrixFace !== undefined ? { hrMatrixFace: opts.hrMatrixFace } : {}),
     ...(opts?.secretDeclarations !== undefined ? { secretDeclarations: opts.secretDeclarations } : {}),
   })
+  // —— 根授予无锚启动判定（studio-dev-707 段1；docs/v2/03 §3.1.1）：必须在 records 相位 0
+  //    装载（buildServeRuntime 内 bootRecordRoster）之后读 REC-AUTH-01 计数——声明/冲突/过期
+  //    在此 CONFIG_INVALID 拒启；状态行写启动日志（kv/面板/ESCALATE 归段2）。
+  resolveRootGrantAbsenceState({ config, ledger, log: (line) => console.log(line) })
   // PORT-OPS 装配面（OPS 补形 A）：runtime 已把 emergencyStop/circuitBreak 接到
   // REC-WORK-18 → PORT-HIST（assembly/ops）。runServe **只持有装配面、不自动触发**
   // emergencyStop——控制面停机仍走 stop-channel 文件协议（行为/顺序不变）。

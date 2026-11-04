@@ -40,6 +40,7 @@ import { coerceHrServeKey, validateHrServeCross } from '../hrsync/config.ts'
 import { crossValidateMatrixChannels } from '../channels/channels.ts'
 import { coerceRestartServeKey, isRestartKey, validateRestartCross } from '../serveconfig/restart.ts'
 import { coerceAnchorAbsenceDeclaration, type AnchorAbsenceRaw } from './anchor-absence.ts'
+import { coerceRootGrantAbsenceDeclaration, type RootGrantAbsenceRaw } from './root-grant-absence.ts'
 import { coerceSignatureServeKey } from '../serveconfig/signature.ts'
 import { coerceAuthorityServeKey } from '../serveconfig/authority.ts'
 import { DEFAULT_SERVE_CONFIG, type ServeConfig } from './config-types.ts'
@@ -116,6 +117,8 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
   const seatbeltRaw: SeatbeltConfigRaw = {}
   // 无锚声明两键原文（同上：成对/消费面校验在循环后一次收口——SEC-FC-03）
   const anchorAbsenceRaw: AnchorAbsenceRaw = {}
+  // 根授予无锚三键原文（studio-dev-707；成对/日期/消费面校验在循环后一次收口）
+  const rootGrantAbsenceRaw: RootGrantAbsenceRaw = {}
   for (const [key, value] of Object.entries(raw)) {
     switch (key) {
       case 'db': cfg.db = str(value, key); break
@@ -255,6 +258,10 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       // —— 无锚显式声明（SEC-FC-03；docs/44-§2.3-4）：两键成对，循环后一次收口 ——
       case 'reloadAnchorAbsenceDeclaredBy': anchorAbsenceRaw.declaredBy = str(value, key); break
       case 'reloadAnchorAbsenceReason': anchorAbsenceRaw.reason = str(value, key); break
+      // —— 根授予无锚显式声明（studio-dev-707；#648 方案 c）：三键成对，循环后一次收口 ——
+      case 'recordRootGrantAbsenceDeclaredBy': rootGrantAbsenceRaw.declaredBy = str(value, key); break
+      case 'recordRootGrantAbsenceReason': rootGrantAbsenceRaw.reason = str(value, key); break
+      case 'recordRootGrantAbsenceUntil': rootGrantAbsenceRaw.until = str(value, key); break
       // —— seatbelt 配置通道（IMPL-07-09 随动；缺省不写=read-only；交叉校验在循环后）——
       case 'seatbeltTier': seatbeltRaw.tier = value; break
       case 'seatbeltWriteRoots': seatbeltRaw.writeRoots = value; break
@@ -303,6 +310,9 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
   //    ＝CONFIG_INVALID 拒启（不静默放行；缺省 undefined＝未声明，无锚仍拒）——
   const reloadAnchorAbsence = coerceAnchorAbsenceDeclaration(anchorAbsenceRaw, { companyDir: cfg.companyDir })
   if (reloadAnchorAbsence !== undefined) cfg.reloadAnchorAbsence = reloadAnchorAbsence
+  // —— 根授予无锚显式声明（studio-dev-707）：三键成对＋真日历日/未过期/companyDir 消费面 ——
+  const recordRootGrantAbsence = coerceRootGrantAbsenceDeclaration(rootGrantAbsenceRaw, { companyDir: cfg.companyDir })
+  if (recordRootGrantAbsence !== undefined) cfg.recordRootGrantAbsence = recordRootGrantAbsence
   // —— seatbelt 三键交叉校验（IMPL-07-09）：缺省不写＝undefined（read-only 最严）；任何
   //    read-only 携带放宽键/workspace-write 缺键或根非法＝CONFIG_INVALID 拒启（不静默放宽）
   const seatbelt = coerceSeatbeltGrant(seatbeltRaw)

@@ -15,6 +15,7 @@ import { RESTART_SERVE_DEFAULTS, type RestartServeConfig } from '../serveconfig/
 import type { SignatureServeConfig } from '../serveconfig/signature.ts'
 import type { AuthorityServeConfig } from '../serveconfig/authority.ts'
 import type { AnchorAbsenceDeclaration } from '../../control/hot-reload.ts'
+import type { RootGrantAbsenceDeclaration } from './root-grant-absence.ts'
 
 
 /**
@@ -183,6 +184,12 @@ export interface ServeConfig extends HrServeConfig, RestartServeConfig, Signatur
    * assembly/serve/anchor-absence.ts 头注。
    */
   reloadAnchorAbsence?: AnchorAbsenceDeclaration
+  /**
+   * 根授予无锚「显式声明」（studio-dev-707；#648 方案 c；docs/v2/03 §3.1.1）。
+   * 缺省 undefined＝未声明（无锚仍 fail-closed；面板/日志标欠账）；声明不是授予、不是外部事实。
+   * 解析规则见 assembly/serve/root-grant-absence.ts 头注。
+   */
+  recordRootGrantAbsence?: RootGrantAbsenceDeclaration
   /** 公司目录路径（可选：装载 CompanySnapshot；缺省用内置 demo 快照） */
   companyDir?: string
   /**
