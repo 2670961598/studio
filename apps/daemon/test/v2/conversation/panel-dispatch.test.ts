@@ -143,6 +143,9 @@ describe('面板源派单 watcher（C）', () => {
     expect(h.createCalls[0]?.title).toContain('[对话] PRIME-0')
     expect(h.createCalls[0]?.title).toContain('面板上的问题')
     expect(h.createCalls[0]?.assignee).toBe('PRIME-0')
+    // studio-dev-678：面板源派单同用聊天式回复纪律
+    expect(h.createCalls[0]?.description).toContain('本轮是聊天，不是交付/汇报')
+    expect(h.createCalls[0]?.description).toContain('超过 300 字的回复视为不合格')
     expect(h.candidates).toHaveLength(1)
     expect(h.mutations).toBe(1)
     expect(h.patrows[0]?.name).toBe('PATROL')

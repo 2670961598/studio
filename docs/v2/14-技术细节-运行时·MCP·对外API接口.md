@@ -213,6 +213,8 @@ interface ConversationSessionFace {
   不变，覆盖为空数组=fail-closed 不判过。
 - **出站回复来源**：轮次收割四要件齐（docs/17-§6）→ `work_records.report_ref` 的 REPORT
   正文（去 front-matter/首个一级标题）→ notify room 定向；回复同时追加 `msg(role=person)`。
+  回复口径=**聊天不是交付**（docs/21-§7.3，studio-dev-678）：默认 1–3 句/≤300 字、禁标题/清单/
+  证据段/自检段；仅制作人明确要求详细/取证/清单时展开——任务书 L4 已注入该纪律（>300 字判不合格）。
   失败轮次只发一次不含正文的回执。发送失败积压在 `reply` 队列，`delivered` 回执后出队。
 - **命令面鉴权**：`/bind`/`/clear`/`/status` 只接受 `matrixProducerMxid`；其余发送者丢弃。
   `clear` 审计行含 actor/时刻/清空前最后消息 id/条数，**不物理删除历史**。
