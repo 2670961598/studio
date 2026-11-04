@@ -51,10 +51,20 @@ function hasCustomDims(ctx: TaigaContext): boolean {
  */
 export class AttrValueCache {
   private readonly map = new Map<string, Record<string, string>>()
-  private readonly max: number
+  private max: number
 
   constructor(max = 512) {
     this.max = Math.max(1, Math.floor(max))
+  }
+
+  /**
+   * 容量自适应（studio-dev-790 v2）：顺序遍历 N 单时若 max<N，第二遍必然逐出后续还要用的键 →
+   * **全 miss 抖动**（live 实测 763 单/512 容量：两遍各 763 次 attrs）。按实体数×2 扩容，
+   * 上限 max(4096, entities×2)；763 单→1526 键，内存约 <1MB（每键约 ~200B 量级）。
+   */
+  ensureCapacity(entities: number): void {
+    const target = Math.max(4096, Math.ceil(Math.max(0, entities) * 2))
+    if (target > this.max) this.max = target
   }
 
   get size(): number {
@@ -166,6 +176,8 @@ export async function listIssues(ctx: TaigaContext, q: IssueQuery): Promise<Issu
     (v) => parseEntityList(v, 'entity-list'), // 列表形态无 description（实测）——照常解析，该维自然缺省
     LIST_PAGE_SIZE,
   )
+  // 清单量≥缓存容量时按实体数扩容（防顺序扫描 LRU 抖动；studio-dev-790 v2）
+  attrCacheOf(ctx).ensureCapacity(raws.length)
   const out: IssueRecord[] = []
   for (const raw of raws) {
     const rec = await toIssueRecord(ctx, raw)

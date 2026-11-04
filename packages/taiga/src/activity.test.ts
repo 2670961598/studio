@@ -43,7 +43,9 @@ describe('游标语义：连续三轮 since()', () => {
     const r3 = await p.activity.since(e3)
     expect(r3.items).toEqual([])
     expect(r3.nextCursor).not.toBeNull()
-    expect(await p.activity.since(r3.nextCursor)).toEqual({ items: [], nextCursor: null })
+    const steady = await p.activity.since(r3.nextCursor)
+    expect(steady.items).toEqual([])
+    expect(steady.nextCursor).not.toBeNull()
   })
 
   it('canonical 游标（nextCursor 产出形态）与裸 id 等价续问', async () => {
@@ -65,7 +67,9 @@ describe('游标语义：连续三轮 since()', () => {
     const upgraded = await p.activity.since(lastId)
     expect(upgraded.items).toEqual([])
     expect(upgraded.nextCursor).not.toBeNull()
-    expect(await p.activity.since(upgraded.nextCursor)).toEqual({ items: [], nextCursor: null })
+    const steady = await p.activity.since(upgraded.nextCursor)
+    expect(steady.items).toEqual([])
+    expect(steady.nextCursor).not.toBeNull()
   })
 
   it('分页不重不漏（pageSize=2 五条活动翻三页）', async () => {
@@ -152,7 +156,8 @@ describe('剪枝（成本面：modified_date 早于边界的单不拉 history）
     const fetched = fake.countHistoryFetches() - before
     // 候选=乙（边界所在单，modified_date=边界 ts）；甲丙 modified_date 早于边界 → 剪掉
     expect(fetched).toBe(1)
-    expect(page).toEqual({ items: [], nextCursor: null })
+    expect(page.items).toEqual([])
+    expect(page.nextCursor).not.toBeNull() // canonical 稳态写回同值
     void c
   })
 
@@ -198,7 +203,9 @@ describe('studio-dev-409 回归①：剪枝不变量破坏不触发全量重放�
     // 全量重放回最旧页（nextCursor 回拉 → 生产环境游标回退环 A→B→C→A）
     expect(ids(page.items)).toEqual([newer])
     expect(page.nextCursor).not.toBeNull() // 790：末页 canonical（不回拉裸 id）
-    expect(await p.activity.since(page.nextCursor)).toEqual({ items: [], nextCursor: null })
+    const steady = await p.activity.since(page.nextCursor)
+    expect(steady.items).toEqual([])
+    expect(steady.nextCursor).not.toBeNull()
   })
 })
 
@@ -247,7 +254,9 @@ describe('studio-dev-790：裸 UUID 游标升级（禁止永久全量 history）
     expect(upgrade.nextCursor).not.toBeNull()
     // 下一拍 canonical：无新增 → 空 + null；候选只含 modified>=边界（不重拉全部 5 单历史）
     const beforeCalls = fake.calls.length
-    expect(await p.activity.since(upgrade.nextCursor)).toEqual({ items: [], nextCursor: null })
+    const steady = await p.activity.since(upgrade.nextCursor)
+    expect(steady.items).toEqual([])
+    expect(steady.nextCursor).not.toBeNull()
     const historyCalls = fake.calls.slice(beforeCalls).filter((c) => c.path.includes('/history/')).length
     expect(historyCalls).toBeLessThanOrEqual(5) // 不复位全量（5 单全拉也可接受；关键=调用数不随存量增长）
   })

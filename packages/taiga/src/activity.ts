@@ -84,9 +84,56 @@ export function decodeCursor(cursor: string): Boundary {
   return { ts, id }
 }
 
+/**
+ * activityId → entity 内部 id 的 owner 缓存（studio-dev-790 v2）：live 根因=canonical 边界 ts 可能
+ * 大于其所属单的 modified_date（Taiga history created_at 与 modified_date 不保证同源），
+ * `modified_date >= boundary.ts` 剪枝会漏掉边界单 → 旧「边界不在候选=不可达」慢路径每拍全量。
+ * 缓存让已知边界的所属单**始终并入候选**（1 次 history 即可验证可达）；owner 未知时全量学习一次。
+ * LRU 容量 4096（仅存活动 id→内部 id，约几十 KB；超出逐最旧）。
+ */
+export class ActivityOwnerCache {
+  private readonly map = new Map<string, number>()
+  private readonly max: number
+
+  constructor(max = 4096) {
+    this.max = Math.max(1, Math.floor(max))
+  }
+  get size(): number {
+    return this.map.size
+  }
+  get(activityId: string): number | undefined {
+    const hit = this.map.get(activityId)
+    if (hit === undefined) return undefined
+    this.map.delete(activityId)
+    this.map.set(activityId, hit)
+    return hit
+  }
+  set(activityId: string, entityId: number): void {
+    if (this.map.has(activityId)) this.map.delete(activityId)
+    this.map.set(activityId, entityId)
+    while (this.map.size > this.max) {
+      const oldest = this.map.keys().next().value
+      if (oldest === undefined) break
+      this.map.delete(oldest)
+    }
+  }
+}
+
+const activityOwnerCaches = new WeakMap<TaigaContext, ActivityOwnerCache>()
+
+function ownerCacheOf(ctx: TaigaContext): ActivityOwnerCache {
+  let cache = activityOwnerCaches.get(ctx)
+  if (cache === undefined) {
+    cache = new ActivityOwnerCache()
+    activityOwnerCaches.set(ctx, cache)
+  }
+  return cache
+}
+
 interface MergedEntry {
   entry: HistoryEntry
   issue: TicketId
+  entityId: number
 }
 
 /** (created_at,id) 字典序严格新于边界（边界 ts 已知时用） */
@@ -127,9 +174,13 @@ async function collect(ctx: TaigaContext, entities: EntityRaw[]): Promise<Merged
     }
     for (const entry of entries) {
       if (entry.hidden || entry.snapshot) continue
-      merged.push({ entry, issue: ctx.ticketId(raw.ref) })
+      const issue = ctx.ticketId(raw.ref)
+      merged.push({ entry, issue, entityId: raw.id })
     }
   }
+  // owner 缓存登记（每次 collect 都更新；bounded LRU）
+  const owners = ownerCacheOf(ctx)
+  for (const item of merged) owners.set(item.entry.id, item.entityId)
   return merged
 }
 
@@ -146,14 +197,21 @@ export async function activitySince(
     LIST_PAGE_SIZE,
   )
 
-  // 候选集：canonical 边界（有 ts）走剪枝；裸 id 边界/全量模式全扫
+  // 候选集（studio-dev-790 v2）：
+  //   - canonical 边界：`modified_date >= boundary.ts` 剪枝 ∪ **边界所属单（owner 缓存）**；
+  //   - 裸 id/全量模式：全扫（无 ts 不能剪枝）。
+  const owners = ownerCacheOf(ctx)
+  const boundaryTs = boundary !== null ? boundary.ts : null
+  const boundaryOwner = boundary !== null && boundaryTs !== null ? owners.get(boundary.id) : undefined
   let candidates: EntityRaw[]
-  if (boundary === null || boundary.ts === null) {
+  if (boundary === null || boundaryTs === null) {
     candidates = all
   } else {
-    const bts: string = boundary.ts // 收窄快照（闭包内属性收窄失效，先落 const）
-    // 剪枝：modified_date 严格早于边界 ts 的单不可能有新活动；相等也保留（同秒写入防漏）
-    candidates = all.filter((raw) => !(raw.modifiedDate < bts))
+    const bts: string = boundaryTs
+    // 剪枝：modified_date 早于边界 ts 的单通常无新活动；相等保留（同秒防漏）。
+    // studio-dev-790 v2：边界所属单恒并入——Taiga history created_at 可能晚于 modified_date，
+    // 「边界不在候选」不得再判不可达（live 根因：每拍全量 763 history）。
+    candidates = all.filter((raw) => !(raw.modifiedDate < bts) || raw.id === boundaryOwner)
   }
   const merged = sortAscending(await collect(ctx, candidates))
 
@@ -161,22 +219,25 @@ export async function activitySince(
     return pageOf(ctx, merged, pageSize)
   }
 
-  if (boundary.ts !== null) {
-    const bts: string = boundary.ts // 收窄快照（闭包内属性收窄失效，先落 const）
+  if (boundaryTs !== null) {
+    const bts: string = boundaryTs
     const bid: string = boundary.id
-    // 快路径：可达性=候选集中见到边界条目
+    // 快路径：候选/边界所属单见到边界条目 → 严格增量（items 可为空；游标不动=稳态）
     if (merged.some((m) => m.entry.id === bid)) {
-      return pageOf(ctx, merged.filter((m) => strictlyAfter(m.entry, { ts: bts, id: bid })), pageSize)
+      const tail = merged.filter((m) => strictlyAfter(m.entry, { ts: bts, id: bid }))
+      // 空增量：返回边界自身 canonical（上游写回同值=稳态；避免 null 触发回落裸 id）
+      return tail.length === 0 ? { items: [], nextCursor: encodeCursor(bts, bid) } : pageOf(ctx, tail, pageSize)
     }
-    // 慢路径（studio-dev-409 根因①）：剪枝未见 ≠ 不可达——边界所在单可能被误剪
-    // （modified_date 精度/后缀与 created_at 不一致，或 2026-10-31 历史行受损）。
-    // 全量集复核（与全量重放同一次 collect，零额外成本）：命中=可达，按严格增量
-    // 走，绝不回退重放（游标回退环根治面）
+    // 边界未见：
+    //  - owner 未知（新边界首见）→ 全量 collect 一次学习 owner（之后稳态只拉 1 单）；
+    //  - owner 已知但 history 仍无该条目（条目被隐藏/删除/历史损坏）→ 全量复核一次。
+    // 全量复核命中=可达→严格增量；真不可达→**本拍全量重放**（docs/25-§3.2 yt(a)：上游把
+    // cursor 推进到最新 canonical，下一拍可达；只慢一拍，绝不每拍全量）。
     const full = sortAscending(await collect(ctx, all))
     if (full.some((m) => m.entry.id === bid)) {
-      return pageOf(ctx, full.filter((m) => strictlyAfter(m.entry, { ts: bts, id: bid })), pageSize)
+      const tail = full.filter((m) => strictlyAfter(m.entry, { ts: bts, id: bid }))
+      return tail.length === 0 ? { items: [], nextCursor: encodeCursor(bts, bid) } : pageOf(ctx, tail, pageSize)
     }
-    // 全量集也未见=真不可达（单据被删/条目被隐藏=作用域漂移）→ 全量重放（裁决(a) 对齐）
     return pageOf(ctx, full, pageSize)
   }
 
