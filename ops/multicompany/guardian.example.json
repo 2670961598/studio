@@ -1,0 +1,50 @@
+{
+  "_comment": "Per-company guardian template (ref=786). Copy to ~/.config/studio-next/guardian-<slug>.json; no secrets in this file. Replace all <...> placeholders.",
+  "daemon": {
+    "command": [
+      "/bin/bash",
+      "<COMPANY_ROOT>/ops/start.sh"
+    ],
+    "cwd": "<DEPLOY_WORKSPACE>",
+    "preflight": [
+      "<NODE_BIN>",
+      "<DEPLOY_WORKSPACE>/scripts/ops/deploy.mjs",
+      "check",
+      "--repo", "<MAIN_REPO>",
+      "--deploy", "<DEPLOY_WORKSPACE>",
+      "--state", "<DEPLOY_STATE>",
+      "--node", "<NODE_BIN>"
+    ],
+    "preflightRetryMs": 30000,
+    "env": {
+      "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+      "HOME": "<HOME>",
+      "NODE_ENV": "production"
+    }
+  },
+  "health": {
+    "url": "http://127.0.0.1:<API_PORT>/healthz",
+    "intervalMs": 10000,
+    "timeoutMs": 5000,
+    "failuresBeforeRestart": 3,
+    "startupGraceMs": 60000
+  },
+  "restart": {
+    "initialBackoffMs": 2000,
+    "maxBackoffMs": 60000,
+    "multiplier": 2,
+    "stopGraceMs": 15000
+  },
+  "crashLoop": {
+    "windowMs": 600000,
+    "maxRestarts": 5,
+    "brakeMs": 900000
+  },
+  "paths": {
+    "logDir": "<LOGDIR>",
+    "daemonLog": "<LOGDIR>/daemon.log",
+    "guardianLog": "<LOGDIR>/guardian.jsonl",
+    "pidFile": "<LOGDIR>/daemon.pid",
+    "alertsFile": "<LOGDIR>/alerts.jsonl"
+  }
+}

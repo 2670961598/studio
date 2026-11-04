@@ -1,0 +1,29 @@
+# Per-company daemon.yaml example (ref=786). Copy to <companyRoot>/company/daemon.yaml and fill.
+# Flat YAML only; unknown keys cause CONFIG_INVALID. Staged: platform localfile, jobs/matrix/hrSync=false.
+db: "<COMPANY_ROOT>/var/ledger.sqlite"
+platform: taiga                     # staged 用 localfile；生产切 Taiga 时 org-config company.platform 同步改一行
+company: "<SLUG>"
+companyDir: "<COMPANY_ROOT>/company"
+rootDir: "<COMPANY_ROOT>/var"
+apiPort: <API_PORT>                 # 唯一环回端口：studio-dev 8788、profit 8792、新公司 8793+
+tickMs: 1000
+maxInflight: 4                      # 首开小值；按容量门调
+maxInflightPerPerson: 2
+jobs: true
+models: "<HOME>/.config/studio-next/models.yaml"
+agentYaml: "<COMPANY_ROOT>/company/agent.yaml"
+acceptance: test -s REPORT.md && test -s deliverables/plan.md
+taigaUrl: http://127.0.0.1:9000
+taigaProject: "<SLUG>"
+taigaEntity: userstory
+taigaAuth: password
+taigaFieldsFile: "<COMPANY_ROOT>/var/taiga-fields.json"
+seatbeltTier: workspace-write
+seatbeltWriteRoots: '["<COMPANY_ROOT>/.AIWS", "<COMPANY_ROOT>/company/workspaces", "<HOME>/.dsh", "/private/tmp", "/private/var/folders"]'
+seatbeltOutboundTcp: '[{"host":"*","port":443}]'
+seatbeltAuthorization: '制作人/公司设立授权：worker 写域=本公司 .AIWS/workspaces；网域=模型 API 443（按需收口）'
+# Optional:
+# budgetTicketCapUsd: <USD>
+# budgetPersonCapUsd: <USD>
+# matrix/matrixChannels/matrixUserId/matrixDeptMap/hrMatrixRooms: 仅生产 Matrix 配置后填
+# recordRootGrantAbsenceDeclaredBy/Reason/Until: 仅临时无锚公司（<=90 天）；声明不是授予

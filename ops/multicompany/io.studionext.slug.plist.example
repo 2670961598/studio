@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Per-company guardian launchd template (ref=786).
+  Copy to ~/Library/LaunchAgents/io.studionext.<slug>.plist.
+  Replace __SLUG__, __NODE_BIN__, __MAIN_REPO__, __HOME__, __DEPLOY_WORKSPACE__.
+  The guardian and daemon run from the shared deploy tree (verified commit), never from the main worktree.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.studionext.__SLUG__</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE_BIN__</string>
+    <string>__MAIN_REPO__/scripts/guardian.mjs</string>
+    <string>--config</string>
+    <string>__HOME__/.config/studio-next/guardian-__SLUG__.json</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__DEPLOY_WORKSPACE__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/studio-next/__SLUG__/guardian.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/studio-next/__SLUG__/guardian.err.log</string>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

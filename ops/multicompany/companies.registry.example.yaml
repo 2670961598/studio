@@ -1,0 +1,27 @@
+# Framework operator registry (ref=786) — place at <workRoot>/registry.yaml, NOT in git.
+# Used by overview start args, watchdog/ops runbook and capacity accounting.
+companies:
+  - slug: studio-dev
+    level: 3
+    root: <workRoot>/companies/studio-dev
+    company_dir: <workRoot>/companies/studio-dev/company
+    api_port: 8788
+    panel_port: 8791
+    guardian_label: io.studionext.daemon   # legacy label for studio-dev
+    status: active
+  - slug: studio-profit
+    level: 3
+    root: <workRoot>/companies/studio-profit
+    company_dir: <workRoot>/companies/studio-profit
+    api_port: 8792
+    panel_port: null
+    guardian_label: io.studionext.profit
+    status: migrated
+  - slug: <SLUG>
+    level: <LEVEL>
+    root: <workRoot>/companies/<SLUG>
+    company_dir: <workRoot>/companies/<SLUG>/company
+    api_port: <8793+>
+    panel_port: null
+    guardian_label: io.studionext.<SLUG>
+    status: staging|active|archived
