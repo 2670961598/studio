@@ -35,6 +35,7 @@ import { buildServeRuntime } from './runtime.ts'
 import type { SecretDeclarationInput } from '../trust/wire.ts'
 import { RestartOrchestrator, readRestartStartupFace } from './restart/orchestrator.ts'
 import { buildHealthz } from '../api/healthz.ts'
+import { createReportsCommitFace } from './reports-commit.ts'
 
 /** runServe 启动日志的闸门形态（buildServeRuntime 同判据：acceptance 配置给定=真单模式） */
 function realGateMode(config: ServeConfig): boolean {
@@ -223,6 +224,34 @@ export async function runServe(
     }
     return chainSnapshot
   }
+  // —— 报表产出挂单 commit 面（studio-dev-705，docs/17-§2/docs/43-§十一）——
+  //    收账/补收把进度落进 <companyDir>/reports/，拍边界收敛为挂单 commit（只处理 reports/ 前缀；
+  //    org-config 等其它脏路径不纳入；失败回滚索引、下拍再试；状态切换才打日志防刷屏）。
+  const reportsCommit = createReportsCommitFace({
+    ...(config.companyDir !== undefined ? { companyDir: config.companyDir } : {}),
+    log: (line) => console.log(line),
+  })
+  let reportsCommitState = 'init'
+  const kickReportsCommit = (): void => {
+    void reportsCommit
+      .commitPending()
+      .then((result) => {
+        const key =
+          result.status === 'committed'
+            ? `committed:${result.commit ?? ''}`
+            : result.status === 'clean'
+              ? `clean:${String(result.otherDirty)}`
+              : `${result.status}:${result.reason ?? ''}`
+        if (key === reportsCommitState) return
+        reportsCommitState = key
+        if (result.status === 'error' || result.status === 'blocked') {
+          console.error(`[serve] 报表挂单 commit 状态=${result.status}${result.reason !== undefined ? `（${result.reason}）` : ''}`)
+        }
+      })
+      .catch((err: unknown) => {
+        console.error(`[serve] 报表挂单 commit 异常：${err instanceof Error ? err.message : String(err)}`)
+      })
+  }
   // —— 对外 API 起监听 + 只读探活（MIG-06 欠账收口；v2/14 §四）：同进程装配已在 buildServeRuntime 完成，
   //    此处只起 node:http 壳（apiPort 缺省 0=ephemeral）——监听/探活失败=CONFIG_INVALID 拒启（探活体在 serve-face）。
   try {
@@ -280,6 +309,9 @@ export async function runServe(
       if (conversationRelay !== undefined) {
         void conversationRelay.relay().catch((): void => {})
       }
+      // —— 报表产出挂单 commit（studio-dev-705）：拍边界收敛 reports/ 脏路径（fire-and-forget，
+      //    失败只留 error 状态日志、不打断拍；下一拍自动重试）。
+      kickReportsCommit()
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err)
       stopReason = 'error'
