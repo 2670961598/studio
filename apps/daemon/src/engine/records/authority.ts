@@ -51,6 +51,11 @@ export interface RootGrantFact {
   readonly proofVerified: boolean
   /** 指纹比对结论（false＝不得落库） */
   readonly fingerprintMatches: boolean
+  /**
+   * 外部事实形态（studio-dev-773；缺省=未声明，按外部签名件语义）：offline-approval=离线批准件
+   * （章程+授权留档+登记公钥指纹；非密码学签名验签）；cryptographic=密码学签名验签。
+   */
+  readonly proofBasis?: 'offline-approval' | 'cryptographic'
 }
 
 /**
@@ -193,6 +198,9 @@ export function rootGrantDraft(args: {
       },
       proofBoundary:
         '本记录证明：外部老板已按 v2/11 §2.2 根授予子类型向顶位授予权源（目的/对象/范围含不可为边界/条件/期限/退出/公开指纹/外部证明件引用）；' +
+        (fact.proofBasis === 'offline-approval'
+          ? '外部事实形态=offline-approval（离线批准件核验＋登记公钥指纹哈希一致；**非密码学签名验签**）；'
+          : '') +
         '不证明密钥持有与行使（REC-AUTH-02 未落）；不证明本记录引用之外的外部法律效力；不证明下属转授边已成立（逐边另记）。',
       payload: {
         grantor: { refId: EXTERNAL_OWNER.refId, refVersion: EXTERNAL_OWNER.refVersion },

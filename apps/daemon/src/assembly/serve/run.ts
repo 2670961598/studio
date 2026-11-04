@@ -37,6 +37,7 @@ import { RestartOrchestrator, readRestartStartupFace } from './restart/orchestra
 import { buildHealthz } from '../api/healthz.ts'
 import { createReportsCommitFace } from './reports-commit.ts'
 import { resolveRootGrantAbsenceState } from './root-grant-absence-state.ts'
+import { anchorGrantForInjection, loadRootGrantFromAnchors } from '../records/anchor-grant.ts'
 
 /** runServe 启动日志的闸门形态（buildServeRuntime 同判据：acceptance 配置给定=真单模式） */
 function realGateMode(config: ServeConfig): boolean {
@@ -156,12 +157,25 @@ export async function runServe(
     }
   }
 
+  // —— 外部锚章程 → RootGrantFact（studio-dev-773；docs/v2/11 §2.2 离线批准模式）——
+  //    公司目录 anchors 齐全且哈希/指纹核对通过才注入 records 装配（缺件/不符=fail-closed 不注入，
+  //    保持 707 declared/undeclared 态；不猜、不拿章程哈希冒充 key）。形态=offline-approval。
+  const anchorGrant = loadRootGrantFromAnchors({
+    ...(config.companyDir !== undefined ? { companyDir: config.companyDir } : {}),
+    log: (line) => console.log(line),
+  })
+  const injection = anchorGrantForInjection({
+    ...(anchorGrant.fact !== undefined ? { fact: anchorGrant.fact } : {}),
+    declarationPresent: config.recordRootGrantAbsence !== undefined,
+  })
+  if (injection.skippedReason !== undefined) console.log(`[records][anchor-grant] ${injection.skippedReason}`)
   const { engine, sources, stop, hotReload, notifyRelay, conversationRelay, api, ops, restartProbe } = buildServeRuntime(config, ledger, snapshot, {
     ...(opts?.matrixSource !== undefined ? { matrixSource: opts.matrixSource } : {}),
     ...(opts?.matrixRoomFace !== undefined ? { matrixRoomFace: opts.matrixRoomFace } : {}),
     ...(opts?.notifyBroadcast !== undefined ? { notifyBroadcast: opts.notifyBroadcast } : {}),
     ...(opts?.hrMatrixFace !== undefined ? { hrMatrixFace: opts.hrMatrixFace } : {}),
     ...(opts?.secretDeclarations !== undefined ? { secretDeclarations: opts.secretDeclarations } : {}),
+    ...(injection.fact !== undefined ? { recordsRootGrant: injection.fact } : {}),
   })
   // —— 根授予无锚启动判定（studio-dev-707 段1；docs/v2/03 §3.1.1）：必须在 records 相位 0
   //    装载（buildServeRuntime 内 bootRecordRoster）之后读 REC-AUTH-01 计数——声明/冲突/过期
