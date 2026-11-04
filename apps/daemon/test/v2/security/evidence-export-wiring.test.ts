@@ -132,16 +132,27 @@ describe('第 5 出口 gate 语义：拒发档 + 完整性引用保留（v2/15 �
     expect(gate.guardEvidenceExport(text)).toBe(text)
   })
 
-  it('凭据形态（非完整性引用）＝拒发（unknown-shape 可判定）', () => {
+  it('证据正文含英文 slug/UUID/长标题（≥32 位标识）→ 放行且逐字节不变（studio-dev-733）', () => {
     const gate = gateOf([])
-    let failure: OutboundBlockedError | undefined
-    try {
-      gate.guardEvidenceExport(`Authorization: Bearer ${'A1b2C3d4E5f6G7h8I9j0K1l2'}`)
-    } catch (err) {
-      if (err instanceof OutboundBlockedError) failure = err
-    }
-    expect(failure?.failure.code).toBe('unknown-shape')
-    expect(failure?.failure.point).toBe('evidence-export')
+    const text = [
+      '# REPORT',
+      '去重键 worker-9d4469aa-4de8-459a-9f10-534dd457b244',
+      'uuid 6be29ffa-c38d-4446-956b-6651ae65fa47',
+      '标题 clearroute-releases-open-source-platform-to-govern-enterprise-ai-agents',
+      'slug delivered_with_declared_cost_source_break',
+    ].join('\n')
+    expect(gate.guardEvidenceExport(text)).toBe(text)
+    expect(gate.failures()).toHaveLength(0)
+    expect(gate.coverage().exits.find((e) => e.id === 'evidence-export')?.blocked).toBe(0)
+  })
+
+  it('仅形状文本（未命中 knowns）不再按 unknown-shape 拒发；已知秘密值仍由第一用例拒发（口径变更见 REPORT）', () => {
+    // studio-dev-733 口径：证据导出面关闭形态兜底（slug/UUID/长标题是合法证据内容）；
+    // 只拒已知秘密值残留（见上方「命中已知秘密值」用例）。本用例显式锁定新旧语义差。
+    const gate = gateOf([])
+    const bearer = `Authorization: Bearer ${'A1b2C3d4E5f6G7h8I9j0K1l2'}`
+    expect(gate.guardEvidenceExport(bearer)).toBe(bearer)
+    expect(gate.coverage().exits.find((e) => e.id === 'evidence-export')?.blocked).toBe(0)
   })
 })
 
@@ -303,6 +314,51 @@ describe('生产接线②：相位 4 尾 P3 对账补收（harvest-recon）归�
       const archivedDir = path.join(companyDir, 'reports/研发部')
       expect(existsSync(archivedDir) ? readdirCount(archivedDir) : 0).toBe(0)
       expect(gate.failures()[0]?.point).toBe('evidence-export')
+    } finally {
+      ledger.close()
+    }
+  })
+
+  it('确定性拒发：同单同 srcHash 只过闸一次（跨拍跳过、不刷事件）；内容变化/new 单正常补收', () => {
+    const ledger = openLedger(path.join(root, 'recon-blocked-retry.sqlite'))
+    try {
+      const companyDir = path.join(root, 'recon-blocked-retry-company')
+      const ws = path.join(root, 'recon-blocked-retry-ws')
+      mkdirSync(ws, { recursive: true })
+      const blockedPath = path.join(ws, 'REPORT.md')
+      writeFileSync(blockedPath, `# REPORT\n证据 ${PROBE_TOKEN}\n结论：通过\n`, 'utf8')
+      seedJobTicket(ledger, 'T-5R', 'report-job', 'reports/研发部/', blockedPath)
+      const gate = gateOf()
+      let guardCalls = 0
+      const guard = (t: string): string => {
+        guardCalls += 1
+        return gate.guardEvidenceExport(t)
+      }
+      const emitted: string[] = []
+      const problems: string[] = []
+      const run = (): ReturnType<typeof runHarvestRecon> =>
+        runHarvestRecon({ ledger, companyDir, emit: (name, ticket): void => { emitted.push(`${name}:${ticket}`) }, onProblem: (m) => problems.push(m), guardEvidenceExport: guard })
+      const first = run()
+      expect(first.repaired).toBe(0)
+      expect(guardCalls).toBe(1)
+      expect(emitted.filter((line) => line === 'HARVEST_INVALID:T-5R')).toHaveLength(1)
+      // 第二拍（模拟下一轮 recon）：同内容——不再过闸、不再落事件
+      const second = run()
+      expect(second.repaired).toBe(0)
+      expect(guardCalls).toBe(1)
+      expect(emitted.filter((line) => line === 'HARVEST_INVALID:T-5R')).toHaveLength(1)
+      expect(gate.failures()).toHaveLength(1) // 出站闸只记首次阻断
+      // 内容修好（hash 变）→ 自动重试并放行
+      writeFileSync(blockedPath, `# REPORT\n证据已清理\n结论：通过\n`, 'utf8')
+      const third = run()
+      expect(third.repaired).toBe(1)
+      expect(guardCalls).toBe(2)
+      // 新增单（新 ticket）正常补收，不受旧单跳过表影响
+      const cleanPath = path.join(ws, 'REPORT-clean.md')
+      writeFileSync(cleanPath, '# REPORT\n结论：通过\n', 'utf8')
+      seedJobTicket(ledger, 'T-6R', 'report-job', 'reports/研发部/', cleanPath)
+      const fourth = run()
+      expect(fourth.repaired).toBe(1)
     } finally {
       ledger.close()
     }

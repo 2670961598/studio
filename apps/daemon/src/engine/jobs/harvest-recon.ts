@@ -49,6 +49,26 @@ import { reportFileName } from './output-account.ts'
 import { expectedSentinel, verifySidecarSentinelAtPath } from './sentinel.ts'
 
 /**
+ * 确定性拒发跳过表（studio-dev-733；进程内、跨拍持久）：key=`ticket|srcHash16` → 出站失败码。
+ * 证据导出闸对同一份内容（同 srcHash）命中已知秘密值＝确定性拒发——重试无意义且每 30 拍
+ * 制造日志/ESCALATE 噪声；本表让同内容只过闸一次，内容变化（hash 变）自然重试。
+ * 上限保护：超 4096 键整体清空（可重建的进程内观测面，不落盘、不进台账）。
+ */
+const blockedArchives = new Map<string, string>()
+const BLOCKED_ARCHIVES_MAX = 4096
+
+/**
+ * 结构化识别出站闸拦截错误（engine 不 import assembly/出站闸实现，防分层倒置；
+ * 以既有错误契约 name+failure.code 判定，不复制闸逻辑）。
+ */
+function outboundBlockedCodeOf(err: unknown): string | undefined {
+  if (!(err instanceof Error) || err.name !== 'OutboundBlockedError') return undefined
+  const failure = (err as { failure?: { code?: unknown } }).failure
+  return typeof failure?.code === 'string' ? failure.code : 'unknown'
+}
+
+
+/**
  * 证据导出归档写（第 5 出口）：有闸=正文过闸后落盘（拒发档不改写正文，命中即抛→调用面
  * 转人工/欠账，不落未扫描文本）；无闸=既有直拷（旧调用零行为变化）。闸放行时正文与源
  * 逐字节一致，故 P3「回读核哈希」判据不受影响。
@@ -383,6 +403,7 @@ export function runHarvestRecon(deps: HarvestReconDeps): HarvestReconResult {
         // 目标在位——哈希核对（重复收割跳过 / 迟到写入冲突转人工）
         const srcHash = source !== undefined ? sha256Of(source) : undefined
         if (srcHash === undefined || srcHash === targetHash) {
+          if (srcHash !== undefined) blockedArchives.delete(`${ticket}|${srcHash.slice(0, 16)}`)
           result.inPlace += 1
           postArchiveGates(ticket, anchor, gate, target) // 127-A R4：读回门（内容门+哨兵门）
         } else {
@@ -423,6 +444,12 @@ export function runHarvestRecon(deps: HarvestReconDeps): HarvestReconResult {
       if (!reported.has(key)) {
         emit('REPORT_MISSING', ticket, gate.attempt, `缺归档→补收（先事件后搬运）；recon-key=${key}；target=${target}；src=${source}；hash=${srcHash.slice(0, 12)}`)
       }
+      // 确定性拒发跳过（studio-dev-733）：同单同内容（srcHash 前 16）已判负→不再过闸/不再搬运；
+      // 内容变化（hash 变）自然回到下方重试；目标被别处补入（inPlace 分支）会清掉本键。
+      if (blockedArchives.has(`${ticket}|${srcHash.slice(0, 16)}`)) {
+        result.manual += 1
+        continue
+      }
       try {
         mkdirSync(targetDir, { recursive: true })
         if (existsSync(target)) {
@@ -440,6 +467,7 @@ export function runHarvestRecon(deps: HarvestReconDeps): HarvestReconResult {
         // 补收后回读核哈希（spike-3 判负线：不核=负）
         const after = sha256Of(target)
         if (after === srcHash) {
+          blockedArchives.delete(`${ticket}|${srcHash.slice(0, 16)}`)
           result.repaired += 1
           postArchiveGates(ticket, anchor, gate, target) // 127-A R4：补收件同过读回门
         } else {
@@ -448,6 +476,30 @@ export function runHarvestRecon(deps: HarvestReconDeps): HarvestReconResult {
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
+        const blockedCode = outboundBlockedCodeOf(err)
+        if (blockedCode !== undefined) {
+          // 确定性拒发（同内容重试无意义）：记一次欠账 + 进程内跳过；内容变化（hash 变）自动重试。
+          const blockKey = `${ticket}|${srcHash.slice(0, 16)}`
+          const firstTime = !blockedArchives.has(blockKey)
+          if (blockedArchives.size >= BLOCKED_ARCHIVES_MAX) blockedArchives.clear()
+          blockedArchives.set(blockKey, blockedCode)
+          const key = `${ticket}|blocked|${srcHash.slice(0, 12)}`
+          if (firstTime && !reported.has(key)) {
+            emit(
+              'HARVEST_INVALID',
+              ticket,
+              gate.attempt,
+              `证据导出确定性拒发（${blockedCode}）→跳过自动重试；src=recon;kind=outbound-blocked;ticket=${ticket};srcHash=${srcHash.slice(0, 12)};code=${blockedCode};recon-key=${key}；处置=修内容/人工核对（同内容不再重试，内容变化自动重试）`,
+            )
+          }
+          if (firstTime) {
+            deps.onProblem?.(
+              `对账补收 ${ticket}：出站闸拦截（${blockedCode}）＝证据导出确定性拒发——本进程内跳过同内容重试（srcHash=${srcHash.slice(0, 12)}）；内容变化会自动重试`,
+            )
+          }
+          result.manual += 1
+          continue
+        }
         result.manual += 1
         deps.onProblem?.(`对账补收 ${ticket}：搬运失败(${msg})——现场保留待人工`)
       }

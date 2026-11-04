@@ -369,11 +369,13 @@ export function createOutboundGate(options: OutboundGateOptions): OutboundGate {
     guard,
     guardPayload,
     guardEvidenceExport: (text: string): string =>
-      // 第 5 出口（证据导出）：与其他出口同扫描核，但处置=**拒发**（命中/失败即拒绝该次
-      // 归档，不脱敏改写——归档件须与工位副本逐字节一致，否则 P3 哈希对账恒冲突）；
-      // 完整性引用（40/64 hex 证据摘要）不按 long-token 处理（防毁证据链）。
+      // 第 5 出口（证据导出）：与其他出口同扫描核，但处置=**拒发**（命中即拒绝该次归档，
+      // 不脱敏改写——归档件须与工位副本逐字节一致，否则 P3 哈希对账恒冲突）。
+      // studio-dev-733：证据正文常含英文 slug/UUID/记录 id/长标题（≥32 位 base62/-_），
+      // LONG_TOKEN_RE 形态兜底会把合法证据误判为 unknown-shape；本出口**关闭形态兜底**，
+      // 只拒**已知秘密值残留**（redaction-failed）；完整性引用（40/64 hex）本就不参与形态。
       guardTextAt('exit', 'evidence-export', text, {
-        shapeFallback: true,
+        shapeFallback: false,
         disposition: 'reject',
         preserveIntegrityDigests: true,
       }),
