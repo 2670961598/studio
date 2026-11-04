@@ -69,11 +69,22 @@ function isIsoTime(value) {
   return Number.isFinite(ms)
 }
 
+/** schema 登记键集（additionalProperties=false；手写校验与 schema 同宽，775/C3-4） */
+const REQUEST_KEYS = new Set(['schema', 'version', 'targetCommit', 'tree', 'previousCommit', 'gatesDigest', 'createdAt', 'requestedBy', 'notes'])
+const APPROVAL_KEYS = new Set(['schema', 'version', 'targetCommit', 'tree', 'gatesDigest', 'approver', 'approvedAt', 'expiresAt', 'commentRef'])
+
+/** 多余字段（schema 与手写校验同宽：未登记键即拒） */
+function extraKeys(raw, allowed) {
+  return Object.keys(raw).filter((key) => !allowed.has(key))
+}
+
 /** 校验 request 形状（返回错误数组；[]=通过） */
 export function validateRequest(raw) {
   const errors = []
   if (typeof raw !== 'object' || raw === null) return ['request 不是对象']
   const r = raw
+  const extras = extraKeys(r, REQUEST_KEYS)
+  if (extras.length > 0) errors.push(`request 含未登记字段（schema additionalProperties=false）：${extras.join('/')}`)
   if (r.schema !== SCHEMA.request) errors.push(`schema 须为 ${SCHEMA.request}`)
   if (!nonEmpty(r.version) || !VERSION_RE.test(r.version)) errors.push('version 形状非法')
   if (!nonEmpty(r.targetCommit)) errors.push('targetCommit 缺失')
@@ -90,6 +101,8 @@ export function validateApproval(raw) {
   const errors = []
   if (typeof raw !== 'object' || raw === null) return ['approval 不是对象']
   const a = raw
+  const extras = extraKeys(a, APPROVAL_KEYS)
+  if (extras.length > 0) errors.push(`approval 含未登记字段（schema additionalProperties=false）：${extras.join('/')}`)
   if (a.schema !== SCHEMA.approval) errors.push(`schema 须为 ${SCHEMA.approval}`)
   if (!nonEmpty(a.version) || !VERSION_RE.test(a.version)) errors.push('version 形状非法')
   if (!nonEmpty(a.targetCommit)) errors.push('targetCommit 缺失')
@@ -103,8 +116,11 @@ export function validateApproval(raw) {
 }
 
 /**
- * 绑定校验（request↔approval 全等 version/targetCommit/tree/gatesDigest；批准未过期）。
- * 返回 {ok:true} 或 {ok:false,status:2,reason:'approval-missing'|'binding-mismatch'|'approval-expired',detail}
+ * 绑定校验（request↔approval 全等 version/targetCommit/tree/gatesDigest；批准未过期；
+ * 775/C3：approvedAt 时间纪律纳入工具——不得早于 request.createdAt、不得晚于当前时间
+ * 超过 5min 时钟偏差；多余字段按 schema additionalProperties=false 拒）。
+ * 返回 {ok:true} 或 {ok:false,status:2,reason:'approval-missing'|'binding-mismatch'|
+ * 'approval-expired'|'approval-time-invalid',detail}
  */
 export function checkBinding(request, approval, now) {
   const requestErrors = validateRequest(request)
@@ -123,6 +139,17 @@ export function checkBinding(request, approval, now) {
   }
   if (Date.parse(a.expiresAt) <= now) {
     return { ok: false, status: EXIT.approval, reason: 'approval-expired', detail: `approval 已过期（expiresAt=${a.expiresAt}）` }
+  }
+  // 775/C3：时间纪律由工具执行（模板原为「人工纪律」缺口）
+  const approvedAt = Date.parse(a.approvedAt)
+  const createdAt = Date.parse(r.createdAt)
+  const nowMs = Number.isFinite(now) ? now : Date.now()
+  const skewMs = 5 * 60_000
+  if (approvedAt < createdAt) {
+    return { ok: false, status: EXIT.approval, reason: 'approval-time-invalid', detail: `approvedAt（${a.approvedAt}）早于 request.createdAt（${r.createdAt}）` }
+  }
+  if (approvedAt > nowMs + skewMs) {
+    return { ok: false, status: EXIT.approval, reason: 'approval-time-invalid', detail: `approvedAt（${a.approvedAt}）晚于当前时间超过 5min 时钟偏差` }
   }
   return { ok: true }
 }

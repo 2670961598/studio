@@ -82,6 +82,17 @@ function parseScalar(raw: string): string | number | boolean {
  * 零依赖扁平 YAML 子集解析（v0 占位——真 YAML 装载归依赖登记后）：
  * 只认 `key: value` 行与 # 注释；嵌套/列表/多行标量不收（CONFIG_INVALID 明报不猜）。
  */
+/** 分号/逗号清单解析（775/C2/C3 派工排除与监控配置；空项剔除，全空=非法） */
+function parseTextList(value: unknown, key: string): readonly string[] {
+  const raw = str(value, key)
+  const items = raw
+    .split(/[;,]/)
+    .map((item) => item.trim())
+    .filter((item) => item !== '')
+  if (items.length === 0) throw new Error(`daemon.yaml：${key} 不能为空清单`)
+  return [...new Set(items)]
+}
+
 export function parseDaemonConfig(text: string): ServeConfig {
   const out: Record<string, string | number | boolean> = {}
   const lines = text.split(/\r?\n/)
@@ -201,6 +212,10 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'breakerCooldownMs': cfg.breakerCooldownMs = num(value, key); break
       case 'mirrorRescanEveryTicks': cfg.mirrorRescanEveryTicks = num(value, key); break
       case 'autoAssign': cfg.autoAssign = bool(value, key); break
+      case 'autoAssignExcludePeople': cfg.autoAssignExcludePeople = parseTextList(value, key); break
+      case 'autoAssignExcludeRoles': cfg.autoAssignExcludeRoles = parseTextList(value, key); break
+      case 'executionGuardRoles': cfg.executionGuardRoles = parseTextList(value, key); break
+      case 'executionGuardKeywords': cfg.executionGuardKeywords = parseTextList(value, key); break
       case 'autoApprove': cfg.autoApprove = bool(value, key); break
       case 'directiveProducer': cfg.directiveProducer = str(value, key); break
       case 'directiveWhitelist': {

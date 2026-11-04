@@ -10,10 +10,11 @@
  * 规则三件套（票面冻结）：在途最小者优先 / 同级轮转 / 并发帽。
  *   1. 部门过滤：dept 全等（跨部门不兜底——错人比不派更糟）；
  *   2. 在职过滤：status undefined=active（契约注释）；paused/retired 不派；
- *   3. 并发帽：inflight < limit；limit = overrides[人] ?? defaultLimit ?? 1，<1 视同 1
+ *   3. 排除面（775/C2）：按工号/岗位排除候选（发布岗不得自动派工）——排除后空集=all-excluded；缺省不排除。
+ *   4. 并发帽：inflight < limit；limit = overrides[人] ?? defaultLimit ?? 1，<1 视同 1
  *      （fail-closed；与人闸 personLimitFor 同公式——分配器与人闸共用一套帽）；
- *   4. 在途最小者优先：取过滤后 inflight 最小者的并列集；
- *   5. 同级轮转：并列集序 (level DESC, id ASC)——确定性（同输入必同输出，golden 可
+ *   5. 在途最小者优先：取过滤后 inflight 最小者的并列集；
+ *   6. 同级轮转：并列集序 (level DESC, id ASC)——确定性（同输入必同输出，golden 可
  *      回放）；「同级」=等在途并列集（登记解释：轮转不绕开负载更轻者），游标
  *      cursor 在并列集内取位 tieSet[cursor % |tieSet|]。
  *
@@ -35,12 +36,25 @@ export interface AssignLimits {
   defaultLimit?: number
 }
 
-/** 失败码闭集：no-people（索引空）| dept-empty（部门无人）| no-active（无在职）| all-at-cap（全在帽） */
-export type AssignFailCode = 'no-people' | 'dept-empty' | 'no-active' | 'all-at-cap'
+/** 失败码闭集：no-people（索引空）| dept-empty（部门无人）| no-active（无在职）| all-at-cap（全在帽）| all-excluded（全员被排除） */
+export type AssignFailCode = 'no-people' | 'dept-empty' | 'no-active' | 'all-at-cap' | 'all-excluded'
 
 export type AssignPickResult =
   | { ok: true; personId: string; nextCursor: number; tieCount: number }
   | { ok: false; code: AssignFailCode }
+
+/**
+ * 派工排除面（studio-dev-775/C2）：按工号或岗位排除候选——发布岗 REL-1 不得被自动派工
+ * 选中（其写盘+dsh 能力可绕过 719 审批执行原始 deploy/tag/push）。
+ * 语义：在 dept/在职过滤后、并发帽之前排除；排除后空集=all-excluded（fail-closed 顺延，
+ * 不回退缺省人）。缺省不传=行为零变。
+ */
+export interface AssignExclude {
+  /** 排除的工号（org-config people[].id） */
+  people?: readonly string[]
+  /** 排除的岗位名（org-config people[].role；精确匹配） */
+  roles?: readonly string[]
+}
 
 /** 选人入参（全显式：时刻/状态都经参——纯函数回放面） */
 export interface AssignPickInput {
@@ -53,6 +67,8 @@ export interface AssignPickInput {
   limits: AssignLimits
   /** 轮转游标（持久位=daemon_kv；缺省 0；非整数/负数视同 0——fail-closed 不猜） */
   cursor?: number
+  /** 排除面（775/C2；缺省不排除=行为零变） */
+  exclude?: AssignExclude
 }
 
 /** 单人并发帽：overrides[人] ?? defaultLimit ?? 1，向下取整，<1 视同 1（与人闸同口径） */
@@ -73,7 +89,14 @@ export function pickAssignee(input: AssignPickInput): AssignPickResult {
   if (inDept.length === 0) return { ok: false, code: 'dept-empty' }
   const active = inDept.filter((p) => p.status === undefined || p.status === 'active')
   if (active.length === 0) return { ok: false, code: 'no-active' }
-  const underCap = active.filter((p) => (inflightByPerson[p.id] ?? 0) < assignLimitOf(p.id, limits))
+  // 775/C2 排除面：在 dept/在职过滤后、并发帽前剔除（排除后空集=fail-closed 顺延）
+  const excludePeople = new Set(input.exclude?.people ?? [])
+  const excludeRoles = new Set(input.exclude?.roles ?? [])
+  const dispatchable = active.filter(
+    (p) => !excludePeople.has(p.id) && !(p.role !== undefined && excludeRoles.has(p.role)),
+  )
+  if (dispatchable.length === 0) return { ok: false, code: 'all-excluded' }
+  const underCap = dispatchable.filter((p) => (inflightByPerson[p.id] ?? 0) < assignLimitOf(p.id, limits))
   if (underCap.length === 0) return { ok: false, code: 'all-at-cap' }
   // 在途最小者优先：先取最小在工数，再收并列集（轮转只发生在并列者之间）
   const minInflight = Math.min(...underCap.map((p) => inflightByPerson[p.id] ?? 0))

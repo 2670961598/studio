@@ -4,7 +4,7 @@
 > `ops/release/README.md`（命令/回滚/证据）、`docs/90-§7.1`（REL-1 职责边界）。
 > 本模板是**填写指引**，不是审批事实本身；审批事实=审批人签发的 approval JSON + `commentRef` 指向的留痕。
 
-## 一、三件套（发布必须四件：request + approval + record + tag）
+## 一、四件套（request + approval + record + tag；缺一即发布流程未完成）
 
 | 件 | 文件 | 谁产出 | 工具 |
 |---|---|---|---|
@@ -21,7 +21,7 @@
 |---|---|---|
 | `schema` | ✓ | 固定 `studio-next/release-request/v1` |
 | `version` | ✓ | 版本串（`^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$`；须符合 docs/90-§7.4 版本纪律） |
-| `targetCommit` | ✓ | 部署目标 commit（40 hex；须为已验证 commit） |
+| `targetCommit` | ✓ | 部署目标 commit（实际 40 hex；工具/schema 只做基础形状校验，真实 commit 由 plan 解析） |
 | `tree` | ✓ | `git rev-parse <targetCommit>^{tree}` |
 | `previousCommit` | ✓ | 部署树上一 commit 或 `null` |
 | `gatesDigest` | ✓ | `sha256("verify:v2@<commit>:" + verify:v2 输出最后一条 PASS 行)`——**只从真实输出取** |
@@ -38,17 +38,18 @@
 | `targetCommit` | ✓ | 与 request **全等** |
 | `tree` | ✓ | 与 request **全等** |
 | `gatesDigest` | ✓ | 与 request **全等**（禁止用自己重算/改写后的值替代） |
-| `approver` | ✓ | 审批人实名（制作人/授权代理人；**非 REL-1、非执行者自签**） |
-| `approvedAt` | ✓ | ISO-8601；不早于 request.createdAt、不晚于当前时间（时钟异常须说明） |
-| `expiresAt` | ✓ | ISO-8601；建议 ≤24h（发布窗口内有效；过期=拒，不得延期复用） |
+| `approver` | ✓ | 审批人实名（制作人/授权代理人；**非 REL-1、非执行者自签**——此条为人工纪律，工具只验非空，775/C3-3） |
+| `approvedAt` | ✓ | ISO-8601；**工具已校验**：不得早于 request.createdAt、不得晚于当前时间超过 5min 时钟偏差（违者 exit 2） |
+| `expiresAt` | ✓ | ISO-8601；建议 ≤24h（**建议非强制**；过期=拒，不得延期复用） |
 | `commentRef` | ✓ | 审批留痕引用（Taiga 评论/批次号等可追溯定位；空=拒） |
 
 ## 四、填写纪律（违反任一条=发布流程未完成）
 
 1. **全等绑定**：version/targetCommit/tree/gatesDigest 四项与 request 必须**逐字节相等**；任一项不等 `execute` exit 2 且不部署。
 2. **审批不可代签**：approver 须为制作人或其书面授权代理人；REL-1/执行者不得自批；`commentRef` 必须能定位到真实批示。
-3. **gatesDigest 不可伪造**：必须来自真实 `verify:v2` 输出文本（`--gates-file`），禁止手写/重算/截断；错误 commit、错误树的 gates 不得复用。
+3. **gatesDigest 不可伪造**：必须来自真实 `verify:v2` 输出文本（`--gates-file` 或 `--gates-line` 二选一，775/C3-6），禁止手写/重算/截断；错误 commit、错误树的 gates 不得复用。
 4. **过期即废**：`expiresAt` 到期后 approval 作废；变更任一绑定项须**重新 request + 重新审批**（不得改 approval 文件复用）。
+4. **schema 宽严一致**：`scripts/ops/release-request.schema.json` 的 `additionalProperties=false` 与 `release-lib.validateRequest/validateApproval` 同宽（775/C3-4）——任何未登记字段都会被拒；填写时不要自创字段。
 5. **执行与准备分离**：REL-1 只准备材料；`execute` 由授权操作者执行；`git tag`/`push` 同属执行权（push 默认关，已推送 tag 重发需制作人批，禁止 force push）。
 6. **记录必留**：`docs/releases/<version>.md` 与本地 tag 缺一=发布未完成；回滚走 `rollback` 写 `docs/releases/rollback-<sha>.md`。
 
@@ -76,6 +77,10 @@ node scripts/ops/release.mjs approve-check --request /tmp/release-request.json -
 # 执行（approve-check 通过 → deploy.mjs deploy → 记录 → 本地 tag；默认不 push）
 node scripts/ops/release.mjs execute --repo <repo> --deploy <deploy-tree> \
   --request /tmp/release-request.json --approval /tmp/release-approval.json --json
+
+# 演练/单测可跳过记录或 tag（775/C3-6；正常发布不得用）：
+#   --no-record  只部署+tag，不写 docs/releases/<v>.md
+#   --no-tag     只部署+记录，不打本地 tag
 ```
 
 ## 七、REL-1 检查清单（准备面；不含执行）

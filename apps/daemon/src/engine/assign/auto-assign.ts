@@ -101,6 +101,16 @@ export function autoAssignPickOf(
 ): AutoAssignCarry | undefined {
   if (rt.config.autoAssign !== true || issue.assignee !== undefined) return undefined
   const dept = issue.dept ?? rt.config.deptFallback
+  // 775/C2：派工排除面（发布岗 REL-1 不得被自动派工选中；缺省空=行为零变）
+  const excludePeople = rt.config.autoAssignExcludePeople
+  const excludeRoles = rt.config.autoAssignExcludeRoles
+  const exclude =
+    excludePeople !== undefined || excludeRoles !== undefined
+      ? {
+          ...(excludePeople !== undefined ? { people: excludePeople } : {}),
+          ...(excludeRoles !== undefined ? { roles: excludeRoles } : {}),
+        }
+      : undefined
   const result = pickAssignee({
     dept,
     people: rt.people(),
@@ -110,6 +120,7 @@ export function autoAssignPickOf(
       ...(rt.personLimits.defaultLimit !== undefined ? { defaultLimit: rt.personLimits.defaultLimit } : {}),
     },
     cursor: readCursor(rt, dept),
+    ...(exclude !== undefined ? { exclude } : {}),
   })
   return result.ok ? { personId: result.personId, nextCursor: result.nextCursor } : undefined
 }

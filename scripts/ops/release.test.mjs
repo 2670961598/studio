@@ -133,6 +133,19 @@ test('形状校验 + 绑定（全等/过期）', () => {
   assert.equal(mismatch.reason, 'binding-mismatch')
   const expired = checkBinding(request, approvalOf(request, { expiresAt: new Date(NOW - 1).toISOString() }), NOW)
   assert.equal(expired.reason, 'approval-expired')
+  // 775/C3-2：approvedAt 时间纪律纳入工具（不得早于 createdAt/不得晚于 now+5min）
+  const early = checkBinding(request, approvalOf(request, { approvedAt: new Date(NOW - 1_000).toISOString() }), NOW)
+  assert.equal(early.reason, 'approval-time-invalid')
+  const future = checkBinding(request, approvalOf(request, { approvedAt: new Date(NOW + 10 * 60_000).toISOString() }), NOW)
+  assert.equal(future.reason, 'approval-time-invalid')
+  const skewOk = checkBinding(request, approvalOf(request, { approvedAt: new Date(NOW + 2 * 60_000).toISOString() }), NOW)
+  assert.equal(skewOk.ok, true) // 5min 时钟偏差内放行
+  // 775/C3-4：多余字段按 schema additionalProperties=false 拒
+  const extra = approvalOf(request)
+  extra.unexpected = 'x'
+  assert.match(String(validateApproval(extra).join('；')), /未登记字段/)
+  const extraReq = { ...request, unexpected: 'x' }
+  assert.match(String(validateRequest(extraReq).join('；')), /未登记字段/)
 })
 
 test('gatesDigest 口径：sha256("verify:v2@<commit>:"+最后一条 PASS 行)', () => {

@@ -35,7 +35,7 @@ import { sentinelBriefBlock, sentinelDutyForTicket } from '../jobs/sentinel.ts'
 import { instructionsTarget, removeInstructions, writeInstructions } from '../instructions-store.ts'
 // 执行器选择链钩子（studio-dev-620；v2/07 §一）：钩子体驻 work/dispatch-selection.ts，
 // 本文件只留相位 3 一次接线（engine.ts 零改动——#556 拆件后派发体在本文件）。
-import { gateDispatchSelection } from '../work/dispatch-selection.ts'
+import { executionGuardHit, gateDispatchSelection } from '../work/dispatch-selection.ts'
 import { resumeDispatchFace } from '../intents/relay-resume-faces.ts'
 import type { ResumeDispatchPlan } from '../intents/relay-resume.ts'
 import { applyDispatchProjection } from '../prm/dispatch-projection.ts'
@@ -91,6 +91,22 @@ export async function executeDispatch(
     // 之前再判一次——决策位（core HOLD_NOT_IN_SERVICE）已拒，此处 fail-closed、零副作用。
     const employmentRefusal = rt.hrGate.refusalOf(person.id)
     if (employmentRefusal !== undefined) return fail(employmentRefusal)
+    // 775/C3 执行类单据监控：受监控岗位（如发布岗 REL-1）被指派含执行关键词单据 →
+    // ESCALATE 人工复核 + 拒派（防绕过 719 审批执行 deploy/tag/push）。面关（roles 未配）零行为变。
+    const executionGuard = executionGuardHit({
+      title: fresh.title,
+      ...(fresh.description !== undefined ? { description: fresh.description } : {}),
+      personId: person.id,
+      ...(person.role !== undefined ? { personRole: person.role } : {}),
+      ...(config.executionGuardRoles !== undefined ? { guardRoles: config.executionGuardRoles } : {}),
+      ...(config.executionGuardKeywords !== undefined ? { keywords: config.executionGuardKeywords } : {}),
+    })
+    if (executionGuard.hit) {
+      makeEvent('ESCALATE', fresh, index.attemptOf(ticket), tickEvents, {
+        note: `执行类单据指派受监控岗位（775/C3）：assignee=${person.id};role=${String(person.role)};keyword=${String(executionGuard.keyword)}——拒派人工复核`,
+      })
+      return fail(`执行类单据不得派给发布岗（775/C3）：assignee=${person.id}; keyword=${String(executionGuard.keyword)}——已 ESCALATE`)
+    }
     // 模型档选位（studio-dev-196）：单>岗>角色三级解析（model-tier.ts）；面关（models.yaml
     // 未装载）=tierFace undefined，选位与现行为逐字节一致。档面在 resume 面前：resume 不可
     // 续的 fallback=档位适配器（降级新派不降档——接力同档）。

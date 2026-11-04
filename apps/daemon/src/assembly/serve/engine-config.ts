@@ -80,6 +80,10 @@ export function buildServeEngineConfig(input: ServeEngineConfigInput): EngineCon
     breakerCooldownMs: config.breakerCooldownMs,
     mirrorRescanEveryTicks: config.mirrorRescanEveryTicks,
     ...(config.autoAssign !== undefined ? { autoAssign: config.autoAssign } : {}),
+    ...(config.autoAssignExcludePeople !== undefined ? { autoAssignExcludePeople: config.autoAssignExcludePeople } : {}),
+    ...(config.autoAssignExcludeRoles !== undefined ? { autoAssignExcludeRoles: config.autoAssignExcludeRoles } : {}),
+    ...(config.executionGuardRoles !== undefined ? { executionGuardRoles: config.executionGuardRoles } : {}),
+    ...(config.executionGuardKeywords !== undefined ? { executionGuardKeywords: config.executionGuardKeywords } : {}),
     autoApprove: config.autoApprove,
     // 读面分级（17-§7）：Blind 档冻结验收命令来源——与装配器 acceptance **同一事实源**
     //（单一事实源，不双源漂移；真单模式=acceptance 配置）；遇 Blind 派发而缺失 →

@@ -30,10 +30,17 @@ import { LIST_PAGE_SIZE } from './transport/entities.ts'
 /** 成员行（MembershipDetailSerializer 消费字段投影；full_name/email 隐私面可缺省） */
 export interface TaigaMembership {
   id: number
+  /** 登录名（**可能未知**：invite 态/序列化漂移时为空串；以 usernameKnown 区分） */
   username: string
+  /** username 是否可靠（false=该行无法用于按 username 判重；调用方不得拿空串匹配） */
+  usernameKnown: boolean
+  /** Taiga user id（serializer 的 `user` 为 int；可取到——用于反查 username） */
+  userId?: number
+  /** Taiga role id（serializer 的 `role` 为 int；role_slug 可能缺省——用于反查 slug） */
+  roleId?: number
   /** 角色显示名（owner/成员自定义角色——guards provisionFields 同族配置面） */
   roleName: string
-  /** 角色 slug（幂等比对键——显示名可改，slug 稳定） */
+  /** 角色 slug（幂等比对键——显示名可改，slug 稳定；invite 态可能缺省为空串） */
   roleSlug: string
   /** 是否激活（停用成员位仍占席——true 缺省，serializer 对未激活可缺省） */
   isActive: boolean
@@ -41,15 +48,36 @@ export interface TaigaMembership {
   email?: string
 }
 
+/**
+ * 成员行解析（studio-dev-775/C1：真机 serializer 漂移容忍）
+ *
+ * 真机实测（2026-11-05，GET /memberships?project=3）：
+ *   - **无 `username` 字段**（旧实现 reqString 直接抛「响应形状漂移」→ hr-sync 全批 ESCALATE）；
+ *   - `user` 为 **int id**（不是对象；invite 态为 null）；
+ *   - **无 `role_slug`**（只有 `role` int id + `role_name`）。
+ * 解析纪律：id 仍 fail-closed；username/user/role 采用「显式 → 嵌套 → 空」降级，
+ * 未知一律空/缺省并标 usernameKnown=false，由 listMemberships 反查补齐（不整批拒）。
+ */
 function parseMembership(v: unknown): TaigaMembership {
   const o = asObject(v, 'membership')
   const fullName = optStringNull(o, 'full_name')
   const email = optStringNull(o, 'email')
+  const rawUser = o.user
+  const nestedUser = typeof rawUser === 'object' && rawUser !== null ? asObject(rawUser, 'membership.user') : undefined
+  const explicitUsername = optStringNull(o, 'username')
+  const nestedUsername = nestedUser !== undefined ? optStringNull(nestedUser, 'username') : undefined
+  const username = explicitUsername ?? nestedUsername ?? ''
+  const userId = typeof rawUser === 'number' ? rawUser : nestedUser !== undefined ? optNumberNull(nestedUser, 'id') ?? undefined : undefined
+  const roleId = optNumberNull(o, 'role') ?? undefined
+  const roleSlug = optString(o, 'role_slug') ?? ''
   return {
     id: reqNumber(o, 'id', 'membership'),
-    username: reqString(o, 'username', 'membership'),
+    username,
+    usernameKnown: username !== '',
+    ...(userId !== undefined ? { userId } : {}),
+    ...(roleId !== undefined ? { roleId } : {}),
     roleName: optString(o, 'role_name') ?? '',
-    roleSlug: optString(o, 'role_slug') ?? '',
+    roleSlug,
     isActive: optBoolean(o, 'is_active') ?? true,
     ...(fullName !== undefined ? { fullName } : {}),
     ...(email !== undefined ? { email } : {}),
@@ -112,13 +140,69 @@ export async function listMemberships(ctx: TaigaContext): Promise<TaigaMembershi
     (v) => (Array.isArray(v) ? (v as unknown[]) : []),
     LIST_PAGE_SIZE,
   )
-  return raws.map(parseMembership)
+  const memberships = raws.map(parseMembership)
+  await enrichMembershipNames(ctx, projectId, memberships)
+  return memberships
+}
+
+/**
+ * 补齐真机 serializer 缺省的 username/role_slug（studio-dev-775/C1；失败不整批拒）：
+ *   - username：`GET /users?project=` 裸数组 {id,username} → membership.user(int) 反查；
+ *   - roleSlug：roles 缓存（id→slug）反查（role_name 已在，slug 用于 ensureRole 幂等）。
+ * 两个端点均**尽力而为**：不可达/形态异常时保持空值（usernameKnown=false），
+ * 让判重面安全跳过而非把整批 hr-sync 打成 ESCALATE。
+ */
+async function enrichMembershipNames(ctx: TaigaContext, projectId: number, memberships: TaigaMembership[]): Promise<void> {
+  const missingUserIds = new Set<number>()
+  for (const m of memberships) {
+    const userId = m.userId
+    if (!m.usernameKnown && userId !== undefined) missingUserIds.add(userId)
+    const roleId = m.roleId
+    if (m.roleSlug === '' && roleId !== undefined) {
+      const slug = await roleSlugOfId(ctx, roleId)
+      if (slug !== undefined) m.roleSlug = slug
+    }
+  }
+  if (missingUserIds.size === 0) return
+  try {
+    const res = await ctx.client.request({ method: 'GET', path: '/users', query: { project: String(projectId) } })
+    const users = Array.isArray(res.json) ? (res.json as unknown[]) : []
+    const byId = new Map<number, string>()
+    for (const item of users) {
+      const o = asObject(item, 'user')
+      const id = optNumberNull(o, 'id')
+      const username = optStringNull(o, 'username')
+      if (id !== undefined && username !== undefined) byId.set(id, username)
+    }
+    for (const m of memberships) {
+      const userId = m.userId
+      if (m.usernameKnown || userId === undefined) continue
+      const username = byId.get(userId)
+      if (username !== undefined) {
+        m.username = username
+        m.usernameKnown = true
+      }
+    }
+  } catch {
+    /* 尽力而为：/users 不可达不阻断成员面（判重面跳过未知行，见 findMembershipByUsername） */
+  }
+}
+
+/** role id → slug（roles 缓存反查；失败 undefined——不抛，避免成员面被角色面拖死） */
+async function roleSlugOfId(ctx: TaigaContext, roleId: number): Promise<string | undefined> {
+  try {
+    const roles = await rolesOf(ctx)
+    for (const ref of roles.values()) if (ref.id === roleId) return ref.slug
+  } catch {
+    /* 角色面不可达：保持 roleSlug=''（ensureRole 会再走一次解析，fail-closed 归调用方） */
+  }
+  return undefined
 }
 
 /** 按用户名找成员（ensure-shape 判重读面；未找到=undefined——调用方决定 invite） */
 export async function findMembershipByUsername(ctx: TaigaContext, username: string): Promise<TaigaMembership | undefined> {
   for (const m of await listMemberships(ctx)) {
-    if (m.username === username) return m
+    if (m.usernameKnown && m.username === username) return m
   }
   return undefined
 }

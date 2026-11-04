@@ -272,3 +272,54 @@ export function selectionRejectionNote(error: ClassifiedError): string {
     '——修正选择链登记（daemon.yaml dispatchSelections／岗位绑定 org-config people[].executor）后重派；不静默降级'
   )
 }
+
+/** 775/C3 缺省执行类关键词（可经 daemon.yaml executionGuardKeywords 覆盖） */
+export const DEFAULT_EXECUTION_GUARD_KEYWORDS: readonly string[] = [
+  'deploy',
+  'release',
+  'tag',
+  'push',
+  '发布',
+  '上线',
+  '部署',
+  '回滚',
+]
+
+export interface ExecutionGuardInput {
+  title: string
+  description?: string
+  /** 实际用工号（resolve 后的 person.id） */
+  personId: string
+  /** 岗位名（org-config people[].role；快照可选键） */
+  personRole?: string
+  /** 受监控岗位（daemon.yaml executionGuardRoles；空/缺省=面关） */
+  guardRoles?: readonly string[]
+  /** 关键词覆盖（缺省 DEFAULT_EXECUTION_GUARD_KEYWORDS） */
+  keywords?: readonly string[]
+}
+
+export interface ExecutionGuardHit {
+  hit: boolean
+  keyword?: string
+}
+
+/**
+ * 执行类单据监控（studio-dev-775/C3）：岗位 ∈ guardRoles 且单据标题/描述命中执行关键词
+ * → hit（调用面 ESCALATE + 拒派人工复核）。纯函数、无 IO；缺省 guardRoles 空=面关（零行为变）。
+ * ASCII 关键词按词边界匹配（避免 deployment 误命中 deploy）；中文按子串匹配。
+ */
+export function executionGuardHit(input: ExecutionGuardInput): ExecutionGuardHit {
+  const guardRoles = input.guardRoles ?? []
+  if (guardRoles.length === 0) return { hit: false }
+  if (input.personRole === undefined || !guardRoles.includes(input.personRole)) return { hit: false }
+  const text = `${input.title}\n${input.description ?? ''}`
+  const keywords = input.keywords !== undefined && input.keywords.length > 0 ? input.keywords : DEFAULT_EXECUTION_GUARD_KEYWORDS
+  for (const keyword of keywords) {
+    const needle = keyword.trim()
+    if (needle === '') continue
+    const ascii = /^[A-Za-z0-9._-]+$/.test(needle)
+    const matched = ascii ? new RegExp(`(?:^|[^A-Za-z0-9_])${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:$|[^A-Za-z0-9_])`, 'i').test(text) : text.includes(needle)
+    if (matched) return { hit: true, keyword: needle }
+  }
+  return { hit: false }
+}

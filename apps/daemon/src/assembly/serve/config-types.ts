@@ -44,6 +44,14 @@ export interface ServeConfig extends HrServeConfig, RestartServeConfig, Signatur
   aiwsRoot?: string
   /** 自动派工分配器开关（studio-dev-345；缺省关=行为零变） */
   autoAssign?: boolean
+  /** 派工排除工号（studio-dev-775/C2）：分号/逗号清单；缺省不排除 */
+  autoAssignExcludePeople?: readonly string[]
+  /** 派工排除岗位名（studio-dev-775/C2，精确匹配 people[].role）；缺省不排除 */
+  autoAssignExcludeRoles?: readonly string[]
+  /** 执行类单据监控岗位（775/C3）：这些岗位被指派含执行关键词单据时 ESCALATE；缺省关 */
+  executionGuardRoles?: readonly string[]
+  /** 执行类关键词覆盖（775/C3；缺省内置 deploy/release/tag/push 等） */
+  executionGuardKeywords?: readonly string[]
   /** 拍间隔 ms */
   tickMs: number
   /** 并发三闸 */

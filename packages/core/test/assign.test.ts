@@ -14,13 +14,14 @@ import { assignLimitOf, pickAssignee } from '../src/assign/assign.ts'
 
 const DEPT = 'departments/工程部'
 
-function person(id: string, o: { level?: number; dept?: string; status?: 'active' | 'paused' | 'retired' } = {}): PersonRef {
+function person(id: string, o: { level?: number; dept?: string; status?: 'active' | 'paused' | 'retired'; role?: string } = {}): PersonRef {
   return {
     id,
     name: id,
     login: id.toLowerCase(),
     level: o.level ?? 2,
     dept: o.dept ?? DEPT,
+    ...(o.role !== undefined ? { role: o.role } : {}),
     ...(o.status !== undefined ? { status: o.status } : {}),
   }
 }
@@ -112,5 +113,36 @@ describe('assignLimitOf · 帽口径（与人闸同源）', () => {
     expect(assignLimitOf('P-1', { defaultLimit: 0 })).toBe(1) // fail-closed
     expect(assignLimitOf('P-1', { overrides: { 'P-1': -2 } })).toBe(1)
     expect(assignLimitOf('P-1', { defaultLimit: 2.9 })).toBe(2)
+  })
+})
+
+describe('pickAssignee · 775/C2 排除面（发布岗不得自动派工）', () => {
+  it('按工号排除：REL-1 不在候选（其余照常轮转）', () => {
+    const people = [person('REL-1', { role: '发布岗' }), person('P-2')]
+    const r = pickAssignee({ dept: DEPT, people, inflightByPerson: {}, limits: LIM, exclude: { people: ['REL-1'] } })
+    expect(r).toEqual({ ok: true, personId: 'P-2', nextCursor: 1, tieCount: 1 })
+  })
+
+  it('按岗位排除：role 精确匹配（不做模糊/前缀匹配）', () => {
+    const people = [person('REL-1', { role: '发布岗' }), person('P-2', { role: '程序工程师' })]
+    const r = pickAssignee({ dept: DEPT, people, inflightByPerson: {}, limits: LIM, exclude: { roles: ['发布岗'] } })
+    expect(r).toEqual({ ok: true, personId: 'P-2', nextCursor: 1, tieCount: 1 })
+    // 近似岗位名不误伤
+    const r2 = pickAssignee({ dept: DEPT, people, inflightByPerson: {}, limits: LIM, exclude: { roles: ['发布'] } })
+    expect(r2.ok).toBe(true)
+  })
+
+  it('排除后空集=all-excluded（fail-closed 顺延，不回退缺省人）', () => {
+    const people = [person('REL-1', { role: '发布岗' })]
+    expect(pickAssignee({ dept: DEPT, people, inflightByPerson: {}, limits: LIM, exclude: { roles: ['发布岗'] } })).toEqual({
+      ok: false,
+      code: 'all-excluded',
+    })
+  })
+
+  it('缺省不传排除=行为零变（向后兼容）', () => {
+    const people = [person('REL-1', { role: '发布岗' }), person('P-2')]
+    const r = pickAssignee({ dept: DEPT, people, inflightByPerson: {}, limits: LIM })
+    expect(r.ok).toBe(true)
   })
 })
