@@ -33,7 +33,7 @@ import type { TaigaContext, EntityRaw } from './transport/context.ts'
 import { parseEntity, parseEntityList } from './transport/context.ts'
 import { TaigaPlatformError } from './transport/errors.ts'
 import { asObject } from './transport/shape.ts'
-import { LIST_PAGE_SIZE } from './transport/entities.ts'
+import { ENTITY_LIST_PAGE_SIZE } from './transport/entities.ts'
 
 /** 自定义维（经 FieldProvisionMap 映射后可见可写） */
 const CUSTOM_BUSINESS_DIMS = ['type', 'dept', 'level', 'lane'] as const
@@ -174,7 +174,7 @@ export async function listIssues(ctx: TaigaContext, q: IssueQuery): Promise<Issu
   const raws = await ctx.client.paginate(
     { method: 'GET', path: `/${ctx.desc.collection}`, query: { project: String(projectId) } },
     (v) => parseEntityList(v, 'entity-list'), // 列表形态无 description（实测）——照常解析，该维自然缺省
-    LIST_PAGE_SIZE,
+    ENTITY_LIST_PAGE_SIZE,
   )
   // 清单量≥缓存容量时按实体数扩容（防顺序扫描 LRU 抖动；studio-dev-790 v2）
   attrCacheOf(ctx).ensureCapacity(raws.length)

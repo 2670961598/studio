@@ -33,7 +33,7 @@ import type { TaigaContext, EntityRaw } from './transport/context.ts'
 import { parseEntityList } from './transport/context.ts'
 import { TaigaPlatformError } from './transport/errors.ts'
 import { fetchHistory, kindOfEntry, type HistoryEntry } from './comments.ts'
-import { LIST_PAGE_SIZE } from './transport/entities.ts'
+import { ENTITY_LIST_PAGE_SIZE } from './transport/entities.ts'
 import { asObject } from './transport/shape.ts'
 
 export const DEFAULT_PAGE_SIZE = 100
@@ -194,7 +194,7 @@ export async function activitySince(
   const all = await ctx.client.paginate(
     { method: 'GET', path: `/${ctx.desc.collection}`, query: { project: String(projectId) } },
     (v) => parseEntityList(v, 'entity-list'),
-    LIST_PAGE_SIZE,
+    ENTITY_LIST_PAGE_SIZE,
   )
 
   // 候选集（studio-dev-790 v2）：

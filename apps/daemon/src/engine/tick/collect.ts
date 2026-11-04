@@ -21,6 +21,7 @@ import { createEventIndexAccumulator, type EventIndex, type EventIndexAccumulato
 import { runDev49Sentinels } from '../sentinel/sentinels.ts'
 import type { EngineRuntime } from '../runtime/types.ts'
 import { CURSOR_KEY, type CollectOutcome, type TickCtx } from './ctx.ts'
+import { syncMirrorsIncremental } from '../runtime/events.ts'
 
 /**
  * daemon_kv 游标（studio-dev-785）：链序 seq（events_chain 唯一权威顺序，跨 ts 回填安全）＋
@@ -110,6 +111,12 @@ export async function collectPhase(rt: EngineRuntime, ctx: TickCtx): Promise<Col
     let pages = 0
     let activityCount = 0
     let cursorLoop = false // studio-dev-409：nextCursor 同值再现=游标回退环（观测面）
+    // studio-dev-790 v3：activity.since（活动页）与 issues.list（全量对账）互不依赖 → 并行。
+    // 错误面保持：各自失败只登记自己的 errors/obsFailures（与串行时同文案/同 source）。
+    const issuesListPromise = platform.issues.list({}).then(
+      (list) => ({ ok: true as const, list }),
+      (err: unknown) => ({ ok: false as const, err }),
+    )
     try {
       const seenCursors = new Set<string>()
       for (let i = 0; i < config.maxActivityPages; i += 1) {
@@ -155,15 +162,21 @@ export async function collectPhase(rt: EngineRuntime, ctx: TickCtx): Promise<Col
     }
 
     let mirrorListOk = true
-    const issues = await platform.issues.list({}).catch((err: unknown) => {
+    const listResult = await issuesListPromise
+    let issues: IssueRecord[]
+    if (listResult.ok) {
+      issues = listResult.list
+    } else {
       mirrorListOk = false
-      const message = `镜像对账失败（issues.list）：${err instanceof Error ? err.message : String(err)}`
+      const message = `镜像对账失败（issues.list）：${listResult.err instanceof Error ? listResult.err.message : String(listResult.err)}`
       errors.push(message)
       obsFailures.push({ source: 'mirror-list', message })
-      return [] as IssueRecord[]
-    })
+      issues = []
+    }
     const issueById = new Map<TicketId, IssueRecord>(issues.map((i) => [i.id, i]))
-    for (const issue of issues) syncMirror(issue)
+    // studio-dev-790 v3：镜像增量 upsert——期望行与现有行全字段比对，未变跳过（766 行/拍 → 变化行）。
+    // 可重建投影语义不变：平台全量对账仍在本拍完成；mirror GC 仍按活动集删除残行（下方 step）。
+    syncMirrorsIncremental(rt, issues)
     // 记录族生产写面·相位 1 采集尾（docs/17-§2）：活动驱动单 → REC-WORK-01（钩子体=records/hooks.ts）
     if (records !== undefined) {
       recordTickIntake({ records, issueById, affected, at: now(), actorOf: (issue) => resolvePerson(issue)?.id ?? config.defaultPersonId })
