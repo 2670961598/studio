@@ -129,7 +129,9 @@ export function checkCompany({ company, workRoot, guardianDir, strictPaths }) {
 
   if (typeof company.slug !== 'string' || !/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(company.slug)) add('registry/slug', `slug 非法：${String(company.slug)}`, 'slug 须 ^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$')
   if (!Number.isInteger(apiPort) || apiPort < 1 || apiPort > 65535) add('registry/api_port', `api_port 非法：${String(company.api_port)}`, '分配唯一环回端口（8788 studio-dev/8792 profit/8793+ 新公司）')
-  const expectLabel = company.slug === 'studio-dev' ? 'io.studionext.daemon' : `io.studionext.${String(company.slug)}`
+  // 兼容约定：studio-dev 保留旧 label；studio-profit 的 launchd label 为 io.studionext.profit（runbook §二）
+  const expectLabel =
+    company.slug === 'studio-dev' ? 'io.studionext.daemon' : company.slug === 'studio-profit' ? 'io.studionext.profit' : `io.studionext.${String(company.slug)}`
   if (company.guardian_label !== expectLabel) add('registry/label', `guardian_label=${String(company.guardian_label)}（期望 ${expectLabel}）`, `label 统一为 ${expectLabel}（studio-dev 兼容旧名）`)
 
   const requirePath = (p, rule) => {

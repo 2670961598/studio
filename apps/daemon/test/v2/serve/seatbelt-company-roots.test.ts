@@ -2,14 +2,22 @@
  * 787 P0-1：每公司 seatbelt 写根围栏（parseDaemonConfig 真路径）
  * 只允许本公司 <CROOT>/.AIWS|workspaces + 基础设施白名单；禁全局 <WORKROOT>/.AIWS/跨公司/任意绝对路径。
  */
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
-import { checkCompanySeatbeltWriteRoots, parseDaemonConfig, validateCompanySeatbeltWriteRoots } from '../../../src/assembly/serve/config.ts'
+import { afterEach, describe, expect, it } from 'vitest'
+import { checkCompanySeatbeltWriteRoots, detectCompanyLayout, parseDaemonConfig, validateCompanySeatbeltWriteRoots } from '../../../src/assembly/serve/config.ts'
 
 const WORKROOT = '/srv/787-seatbelt-work'
 const COMPANY_DIR = `${WORKROOT}/demo/company`
+const cleanups: string[] = []
+afterEach(() => { for (const dir of cleanups.splice(0)) rmSync(dir, { recursive: true, force: true }) })
+function repoTemp(prefix: string): string {
+  // 仓库内临时目录（不用 /tmp：/var/folders 属基础设施白名单，无法验证扁平布局的全局根拒绝）
+  const dir = mkdtempSync(path.join(process.cwd(), `.tmp-787v4-${prefix}-`))
+  cleanups.push(dir)
+  return dir
+}
 
 function yamlWithRoots(roots: string[], companyDir = COMPANY_DIR): string {
   return [
@@ -124,5 +132,38 @@ describe('787：每公司 seatbeltWriteRoots 校验', () => {
       expect(() => parseDaemonConfig(yamlWithRoots([`${WORKROOT}/demo/.aiws`]))).toThrow(/787|白名单/)
       expect(() => parseDaemonConfig(yamlWithRoots([`${WORKROOT}/DEMO/.AIWS`]))).toThrow(/787/)
     }
+  })
+
+  it('v4：扁平布局（profit）companyDir 本身=公司根 → <companyDir>/.AIWS 通过；父目录 .AIWS 全局根拒', () => {
+    const w = repoTemp('flat')
+    const profit = path.join(w, 'studio-profit')
+    mkdirSync(profit, { recursive: true })
+    writeFileSync(path.join(profit, 'daemon.yaml'), '# marker\n', 'utf8')
+    expect(detectCompanyLayout(profit).layout).toBe('flat')
+    expect(() => parseDaemonConfig(yamlWithRoots([path.join(profit, '.AIWS'), path.join(profit, 'company', 'workspaces')], profit))).not.toThrow()
+    // profit 旧全局根 = <WORKROOT>/.AIWS（dirname(companyDir)/.AIWS）→ cross-company 拒
+    expect(() => parseDaemonConfig(yamlWithRoots([path.join(w, '.AIWS')], profit))).toThrow(/787/)
+    // 兄弟公司根 → 拒
+    mkdirSync(path.join(w, 'studio-dev', '.AIWS'), { recursive: true })
+    expect(() => parseDaemonConfig(yamlWithRoots([path.join(w, 'studio-dev', '.AIWS')], profit))).toThrow(/787/)
+  })
+
+  it('v4：嵌套布局（studio-dev）companyDir 父目录=公司根 → <CROOT>/.AIWS 通过；全局/兄弟仍拒', () => {
+    const w = repoTemp('nested')
+    const croot = path.join(w, 'studio-dev')
+    const companyDir = path.join(croot, 'company')
+    mkdirSync(companyDir, { recursive: true })
+    writeFileSync(path.join(croot, 'daemon.yaml'), '# marker\n', 'utf8')
+    expect(detectCompanyLayout(companyDir).layout).toBe('nested')
+    expect(() => parseDaemonConfig(yamlWithRoots([path.join(croot, '.AIWS'), path.join(companyDir, 'workspaces')], companyDir))).not.toThrow()
+    expect(() => parseDaemonConfig(yamlWithRoots([path.join(w, '.AIWS')], companyDir))).toThrow(/787/)
+    expect(() => parseDaemonConfig(yamlWithRoots([path.join(w, 'studio-profit', '.AIWS')], companyDir))).toThrow(/787/)
+  })
+
+  it('v4：扁平布局 pure 面（forced layout）与 multicompy 同源函数一致', () => {
+    const base = { tier: 'workspace-write' as const, authorization: 'x' }
+    expect(checkCompanySeatbeltWriteRoots({ ...base, writeRoots: ['/srv/787-work/profit/.AIWS'] }, '/srv/787-work/profit', 'flat')).toEqual([])
+    expect(checkCompanySeatbeltWriteRoots({ ...base, writeRoots: ['/srv/787-work/.AIWS'] }, '/srv/787-work/profit', 'flat').map((v) => v.reason)).toEqual(['cross-company'])
+    expect(checkCompanySeatbeltWriteRoots({ ...base, writeRoots: ['/srv/787-work/other/.AIWS'] }, '/srv/787-work/profit', 'flat').map((v) => v.reason)).toEqual(['cross-company'])
   })
 })

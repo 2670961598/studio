@@ -138,9 +138,37 @@ export function canonicalizeSeatbeltWriteRoot(raw: string): string {
   }
   return path.resolve(base, ...suffix)
 }
-function seatbeltAllowedRoots(companyDir: string): string[] {
+/** 公司目录布局（787 v4）：嵌套=companyDir 的父目录是公司根；扁平=companyDir 本身就是公司根（profit） */
+export type CompanyLayout = 'nested' | 'flat'
+export interface CompanyRoots {
+  layout: CompanyLayout
+  /** 公司根（.AIWS 的父；嵌套=dirname(companyDir)，扁平=companyDir） */
+  companyRoot: string
+  /** 公司的父目录（cross-company 判定用） */
+  workRoot: string
+}
+/**
+ * 布局解析（唯一源；自动探测基于 daemon.yaml 位置）：
+ *   - 嵌套：`dirname(companyDir)/daemon.yaml` 存在 → companyRoot=dirname(companyDir)，workRoot=dirname(companyRoot)；
+ *   - 扁平：`companyDir/daemon.yaml` 存在且父目录无 daemon.yaml（profit）→ companyRoot=companyDir，workRoot=dirname(companyRoot)；
+ *   - 探测不到（单测 synthetic 路径/未落盘）→ 默认嵌套（保持既有语义；生产文件存在时自动正确）。
+ *   这样扁平布局的 `<companyDir>/.AIWS` 是公司局部，而 `<WORKROOT>/.AIWS`（dirname(companyDir)/.AIWS）落在 workRoot 下→cross-company 拒。
+ */
+export function detectCompanyLayout(companyDir: string, layoutOverride?: CompanyLayout): CompanyRoots {
   const companyDirCanonical = canonicalizeSeatbeltWriteRoot(companyDir)
-  const companyRoot = path.dirname(companyDirCanonical)
+  let layout: CompanyLayout
+  if (layoutOverride !== undefined) layout = layoutOverride
+  else {
+    const nestedMarker = path.join(path.dirname(companyDirCanonical), 'daemon.yaml')
+    const flatMarker = path.join(companyDirCanonical, 'daemon.yaml')
+    if (!existsSync(nestedMarker) && existsSync(flatMarker)) layout = 'flat'
+    else layout = 'nested'
+  }
+  const companyRoot = layout === 'flat' ? companyDirCanonical : path.dirname(companyDirCanonical)
+  return { layout, companyRoot, workRoot: path.dirname(companyRoot) }
+}
+function seatbeltAllowedRoots(companyDir: string, companyRoot: string): string[] {
+  const companyDirCanonical = canonicalizeSeatbeltWriteRoot(companyDir)
   return [
     path.join(companyRoot, '.AIWS'),
     path.join(companyDirCanonical, 'workspaces'),
@@ -154,12 +182,12 @@ function seatbeltAllowedRoots(companyDir: string): string[] {
 export function checkCompanySeatbeltWriteRoots(
   seatbelt: SeatbeltGrant | undefined,
   companyDir: string | undefined,
+  /** 测试/诊断面：强制布局；生产=auto 探测 */
+  layoutOverride?: CompanyLayout,
 ): SeatbeltWriteRootViolation[] {
   if (seatbelt === undefined || companyDir === undefined || companyDir === '') return []
-  const companyDirCanonical = canonicalizeSeatbeltWriteRoot(companyDir)
-  const companyRoot = path.dirname(companyDirCanonical)
-  const workRoot = path.dirname(companyRoot)
-  const allowed = seatbeltAllowedRoots(companyDir)
+  const { companyRoot, workRoot } = detectCompanyLayout(companyDir, layoutOverride)
+  const allowed = seatbeltAllowedRoots(companyDir, companyRoot)
   const violations: SeatbeltWriteRootViolation[] = []
   for (const raw of seatbelt.writeRoots ?? []) {
     const text = String(raw)
@@ -168,13 +196,15 @@ export function checkCompanySeatbeltWriteRoots(
       continue
     }
     const canonical = canonicalizeSeatbeltWriteRoot(text)
+    // cross-company 判定先于基础设施白名单：workRoot 内的"全局 .AIWS/兄弟公司"即使恰好落在
+    // /private/tmp 等基础设施路径（开发/测试布局）也必须拒——生产 workRoot=/Volumes/... 不受影响。
+    if (isUnderKey(canonical, workRoot) && !isUnderKey(canonical, companyRoot)) {
+      violations.push({ raw: text, canonical, reason: 'cross-company' })
+      continue
+    }
     if (allowed.some((base) => isUnderKey(canonical, base))) continue
     if (isUnderKey(canonical, companyRoot)) {
       violations.push({ raw: text, canonical, reason: 'not-whitelisted' })
-      continue
-    }
-    if (isUnderKey(canonical, workRoot)) {
-      violations.push({ raw: text, canonical, reason: 'cross-company' })
       continue
     }
     violations.push({ raw: text, canonical, reason: 'not-whitelisted' })
@@ -184,9 +214,9 @@ export function checkCompanySeatbeltWriteRoots(
 function seatbeltViolationMessage(v: SeatbeltWriteRootViolation): string {
   if (v.reason === 'not-absolute') return `daemon.yaml：seatbeltWriteRoots「${v.raw}」须为绝对路径且经 canonical 校验（787 fail-closed）`
   if (v.reason === 'cross-company') {
-    return `daemon.yaml：seatbeltWriteRoots「${v.raw}」（realpath=${v.canonical}）越出本公司根（787 P0：禁止写全局 <WORKROOT>/.AIWS/兄弟公司；改为 <CROOT>/.AIWS）`
+    return `daemon.yaml：seatbeltWriteRoots「${v.raw}」（realpath=${v.canonical}）越出本公司根（787 P0：禁止写全局 <WORKROOT>/.AIWS/兄弟公司；嵌套布局改为 <CROOT>/.AIWS，扁平布局改为 <companyDir>/.AIWS）`
   }
-  return `daemon.yaml：seatbeltWriteRoots「${v.raw}」（realpath=${v.canonical}）不在允许根白名单（787：只允许 <CROOT>/.AIWS 与 <companyDir>/workspaces 子树，及 ~/.dsh、/private/tmp、/private/var/folders）`
+  return `daemon.yaml：seatbeltWriteRoots「${v.raw}」（realpath=${v.canonical}）不在允许根白名单（787：只允许嵌套布局 <CROOT>/.AIWS 或扁平布局 <companyDir>/.AIWS 的子树、<companyDir>/workspaces，及 ~/.dsh、/private/tmp、/private/var/folders）`
 }
 /** 兼容旧调用面：失败抛第一条（含 raw/realpath）；校验**唯一实现**=checkCompanySeatbeltWriteRoots */
 export function validateCompanySeatbeltWriteRoots(seatbelt: SeatbeltGrant | undefined, companyDir: string | undefined): void {

@@ -69,13 +69,17 @@ node scripts/ops/multicompany-check.mjs \
 # 0=无违例；1=违例（逐条 rule/slug/problem/fix）；只读
 ```
 
-### 1) seatbelt 写根按公司隔离（P0-1）
+### 1) seatbelt 写根按公司隔离（P0-1；v4 支持嵌套/扁平布局）
 - `daemon.yaml` 的 `seatbeltWriteRoots` **只允许** `["<CROOT>/.AIWS", "<CROOT>/company/workspaces", "~/.dsh", "/private/tmp", "/private/var/folders"]`；
   **禁止** `<WORKROOT>/.AIWS` 全局树/其它公司根（daemon 启动解析期即 CONFIG_INVALID；脚本 `multicompany-check` 同步判）。
 - **787 v2（F1/F2）**：写根先 **canonical（最长存在前缀 realpath + 后缀）** 再判定——symlink 目标越界（如 link→/etc、父目录 symlink）、`..` 逃逸、
   大小写绕过均拒绝；白名单按**规范根 isUnder**（只认 `<CROOT>/.AIWS` 子树与 `<companyDir>/workspaces` 子树），
   不再按任意 segment 判定（`company/docs/.AIWS`、`x/workspaces/y` 一律拒）。错误含原始值+realpath；脚本与 daemon 共用同一校验函数。
-- 存量迁移（studio-profit 等）：把全局 `.AIWS` 改为本公司 `<CROOT>/.AIWS`；studio-dev 已是本公司根，无需改。
+- **布局自动判定（v4）**：`dirname(companyDir)/daemon.yaml` 存在=**嵌套布局**（studio-dev，写根 `<CROOT>/.AIWS`）；
+  否则 `companyDir/daemon.yaml` 存在=**扁平布局**（profit，`companyDir` 即公司根，写根 `<companyDir>/.AIWS`）。
+  扁平布局下 `<WORKROOT>/.AIWS`（全局共享）与兄弟公司根一律拒（cross-company）。
+- 存量迁移：profit 从全局 `<WORKROOT>/.AIWS` 改为 `<WORKROOT>/studio-profit/.AIWS`；
+  studio-dev 已是嵌套本公司根，无需改。迁移时先用旧值回退保服务，改配置后重启该 label，再跑 multicompany-check。
 
 ### 2) 凭据隔离（P0-2）
 - guardian JSON **不放凭据**：`daemon.envFile: "<CROOT>/credentials/daemon.env"`（0600；含 `TAIGA_PASSWORD`/

@@ -40,6 +40,8 @@ function goodCompany(workRoot, slug = 'demo', port = 8793) {
   writeFileSync(path.join(root, 'credentials', 'daemon.env'), 'TAIGA_PASSWORD=fixture-not-a-secret\n', { encoding: 'utf8', mode: 0o600 })
   chmodSync(path.join(root, 'credentials', 'daemon.env'), 0o600)
   writeFileSync(path.join(root, 'ops', 'start.sh'), '#!/bin/bash\nexit 0\n', { encoding: 'utf8', mode: 0o700 })
+  // v4：嵌套布局探测标记（dirname(companyDir)/daemon.yaml 存在→companyRoot=dirname(companyDir)）
+  writeFileSync(path.join(root, 'daemon.yaml'), '# nested marker\n', 'utf8')
   return { slug, root, companyDir }
 }
 
@@ -138,4 +140,28 @@ test('F1/F2：symlink 越界（link→/etc）与 segment 过宽（docs/.AIWS、x
     '/srv/787-work/demo/company',
   )
   assert.deepEqual(segment.map((v) => v.reason), ['not-whitelisted', 'not-whitelisted'])
+})
+
+test('v4：扁平布局（profit）— companyDir 本身=公司根：合法 <companyDir>/.AIWS 通过；全局 <WORKROOT>/.AIWS 拒', () => {
+  const workRoot = tempRoot(); const guardianDir = path.join(workRoot, 'guardian-conf')
+  const root = path.join(workRoot, 'studio-profit')
+  for (const d of [root, path.join(root, 'credentials'), path.join(root, 'ops'), path.join(root, '.AIWS')]) mkdirSync(d, { recursive: true })
+  const daemon = path.join(root, 'daemon.yaml')
+  const writeYaml = (roots) => writeFileSync(daemon, [
+    `db: "${path.join(root, 'var', 'ledger.sqlite')}"`, 'platform: localfile', 'company: studio-profit', `companyDir: "${root}"`,
+    `rootDir: "${path.join(root, 'var')}"`, 'apiPort: 8792', 'maxInflight: 4', 'jobs: false', 'seatbeltTier: workspace-write',
+    `seatbeltWriteRoots: '${JSON.stringify(roots)}'`, "seatbeltAuthorization: 'producer approved'",
+  ].join('\n') + '\n', 'utf8')
+  writeYaml([path.join(root, '.AIWS')])
+  writeFileSync(path.join(root, 'credentials', 'daemon.env'), 'TAIGA_PASSWORD=fixture\n', { mode: 0o600 }); chmodSync(path.join(root, 'credentials', 'daemon.env'), 0o600)
+  writeFileSync(path.join(root, 'ops', 'start.sh'), '#!/bin/bash\nexit 0\n', { mode: 0o700 })
+  writeGuardian(guardianDir, 'studio-profit', path.join(root, 'credentials', 'daemon.env'))
+  const registry = writeRegistry(workRoot, [{ slug: 'studio-profit', root, companyDir: root, apiPort: 8792, label: 'io.studionext.profit' }])
+  const ok = run(['--registry', registry, '--work-root', workRoot, '--guardian-dir', guardianDir, '--strict-paths', '--json'])
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr)
+  // profit 旧全局根：<WORKROOT>/.AIWS → cross-company 拒
+  writeYaml([path.join(workRoot, '.AIWS')])
+  const bad = run(['--registry', registry, '--work-root', workRoot, '--guardian-dir', guardianDir, '--strict-paths', '--json'])
+  assert.equal(bad.status, 1, bad.stdout + bad.stderr)
+  assert.ok(JSON.parse(bad.stdout).violations.some((v) => v.rule === 'seatbelt/cross-company'), bad.stdout)
 })
