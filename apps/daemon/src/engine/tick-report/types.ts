@@ -67,6 +67,16 @@ export interface TickDecisionEntry {
   actionType: Action['type']
   /** 决策时单据平台态（noop 观测面载荷：NOOP_UNKNOWN_STATE 等原因码须配单号+态可见） */
   state: string
+  /**
+   * 泳道 hold 观测载荷（studio-dev-713，仅 HOLD_LANE_BUSY 决策携带）：
+   * 决策时该单泳道的租约快照——holder/expiresAt 让「派而不发」现场可见（hold 无台账事件，
+   * 渲染行为唯一观测面；services 侧按签名去重防刷屏）。
+   */
+  lane?: string
+  /** 泳道当前持有人；null=无主（理论不出现于 HOLD_LANE_BUSY） */
+  laneHolder?: string | null
+  /** 租约到期 epoch-ms（与 laneHolder 同源快照） */
+  laneExpiresAt?: number
 }
 
 /** 动作执行结果（派发/呈批/collect/merge/recycle/stall 面） */

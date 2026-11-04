@@ -284,7 +284,24 @@ export async function stateDiffPhase(
         decisions.push({ ticket, intentKey, code: 'WAIT_APPROVAL', actionType: 'noop', state: issue.state })
         continue
       }
-      decisions.push({ ticket, intentKey, code: action.code, actionType: action.type, state: issue.state })
+      // 泳道 hold 观测载荷（studio-dev-713）：HOLD_LANE_BUSY 决策附 lane/holder/expiresAt，
+      // 供 render/tick.ts 落「唯一观测面」行（hold 无台账事件；签名去重防刷屏）。
+      const holdLane =
+        action.type === 'hold' && action.code === 'HOLD_LANE_BUSY' ? lanes.state(issue.lane ?? config.defaultLane) : undefined
+      decisions.push({
+        ticket,
+        intentKey,
+        code: action.code,
+        actionType: action.type,
+        state: issue.state,
+        ...(holdLane !== undefined
+          ? {
+              lane: holdLane.lane,
+              laneHolder: holdLane.holder,
+              ...(holdLane.expiresAt !== undefined ? { laneExpiresAt: holdLane.expiresAt } : {}),
+            }
+          : {}),
+      })
       decidedActions.push(action)
       // 拒出工≠资源顺延；台账落 ESCALATE 锚（v2/02 §3.4，每单每事实一次）
       if (action.type === 'hold' && action.code === 'HOLD_NOT_IN_SERVICE') ctx.mutations += rt.hrGate.noteRefusal(issue, ticket, index.attemptOf(ticket), tickEvents, decision.employment)

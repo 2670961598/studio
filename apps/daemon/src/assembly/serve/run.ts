@@ -23,7 +23,7 @@ import { consumeStopRequest, readStopRequest, STOP_LAST_SEEN_KV_KEY, writeStopRe
 import { writeExitMarkOnStop } from '../../control/restart/checkpoint.ts'
 import type { TickReport } from '../../engine/tick-report/types.ts'
 import { takeOverRunningWorkRecords } from '../../engine/harvest/inflight-takeover.ts'
-import { noopLinesOf, renderTick } from '../render/tick.ts'
+import { holdLaneBusyLinesOf, noopLinesOf, renderTick } from '../render/tick.ts'
 import { DEMO_SNAPSHOT } from '../demo/demo-snapshot.ts'
 import { loadCompanyAtBoot } from '../assets/boot.ts'
 import { wirePlatform } from '../platform/wire.ts'
@@ -290,6 +290,9 @@ export async function runServe(
     engine.ingest([intent])
   })
 
+  // 泳道 hold 观测去重表（studio-dev-713；跨拍持有：同单同租约快照只落一行，防刷屏）
+  const holdLaneSeen = new Map<string, string>()
+
   while (!stopped) {
     try {
       const report = await engine.tick()
@@ -300,6 +303,8 @@ export async function runServe(
       console.log(`[serve] ${renderTick(report)}`)
       // noop 观测面（见 renderNoopDecision 头注）：静默 noop=观察黑洞，逐条落行
       for (const line of noopLinesOf(report)) console.log(line)
+      // 泳道租约 hold 观测面（见 renderHoldLaneBusy 头注；签名去重）
+      for (const line of holdLaneBusyLinesOf(report, holdLaneSeen)) console.log(line)
       for (const err of report.errors) console.error(`[serve] tick#${report.seq} 错误：${err}`)
       // —— notify 事件中继（105-刀B，studio-dev-219；notifyBroadcast 注入时存在）：拍边界
       //    只读本拍新事件（TickReport.events）按冻结路由表广播 #alert/部门频道/总览。

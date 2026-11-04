@@ -44,7 +44,7 @@ export async function finalizeHarvest(
   errors: string[],
 ): Promise<'completed' | 'failed'> {
   // 逐字迁移的宿主别名（闭包名不变，语义=同一实例/同一绑定）
-  const { gateRunner, platform, ledger, config, records, harvestBatches, now, makeId, catalog, budgetDeps, inflight } = rt
+  const { gateRunner, platform, ledger, config, records, harvestBatches, now, makeId, catalog, budgetDeps, inflight, lanes } = rt
   const mergeHost = rt.mergeHost
   const flowOf = rt.flowOf
   const makeEvent = rt.makeEvent
@@ -203,6 +203,10 @@ export async function finalizeHarvest(
     // bridge 通道指令临时文件：保留至收割完成→此刻删（v1.5#1 清理策略；内容指纹已在
     // DISPATCH note/payload_hash 落账——证据不依赖文件存活）
     if (entry.instructionsPath !== undefined) removeInstructions(entry.instructionsPath)
+    // 泳道租约释放（studio-dev-713）：成功收割与失败/STALL/回收/批示回新单路径对称——
+    // 不释放则同泳道后续候选在 TTL 内恒被 HOLD_LANE_BUSY 挡下（利润公司 30min TTL 下实测
+    // 停摆 20.5min）。registry.release 内部 holder 校验：不误放他单道；重复释放幂等。
+    lanes.release(entry.lane, ticket)
     return 'completed'
   }
   const detail = harvestFailureDetail(requirements, { terminalError, gateNote: gate.note })

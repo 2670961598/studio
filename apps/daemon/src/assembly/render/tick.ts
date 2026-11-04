@@ -38,3 +38,41 @@ export function renderNoopDecision(seq: number, entry: TickDecisionEntry): strin
 export function noopLinesOf(report: TickReport): string[] {
   return report.phases.stateDiff.decisions.filter((d) => d.actionType === 'noop').map((d) => renderNoopDecision(report.seq, d))
 }
+
+/**
+ * HOLD_LANE_BUSY 观测行（docs/17-§2 泳道租约释放对称；studio-dev-713）。
+ *
+ * 背景：hold 决策不落台账事件——studio-profit 2026-11-04 因成功收割未释放泳道租约，
+ * 同泳道单被 HOLD_LANE_BUSY 静默挡 20.5min（actions=4 dispatched=0，日志无线索）。
+ * 故每拍为 lane-busy hold 落一行（ticket/lane/holder/到期），但**按签名去重**：
+ * 同单同 lane+holder+expiresAt 只落一次（租约变化/到期换主/释放后再次 busy 才会再落），
+ * 避免 30min 停摆期间每拍刷屏。
+ */
+export function renderHoldLaneBusy(seq: number, entry: TickDecisionEntry): string {
+  const expiresAt = entry.laneExpiresAt !== undefined ? new Date(entry.laneExpiresAt).toISOString() : '-'
+  return (
+    `[serve] tick#${seq} hold：${entry.ticket} code=HOLD_LANE_BUSY lane=${entry.lane ?? '-'} ` +
+    `holder=${entry.laneHolder ?? '-'} expiresAt=${expiresAt}（hold 无台账事件；此行=唯一观测面，签名去重）`
+  )
+}
+
+/**
+ * 一拍 lane-busy hold 观测行（带签名去重；`seen` 由调用方跨拍持有）。
+ * 去重键=ticket+lane+holder+expiresAt；从决策集消失（释放/派发/关单）→ 清 seen，
+ * 下次再 busy 可重新可见（避免「曾经 busy」永久遮蔽）。
+ */
+export function holdLaneBusyLinesOf(report: TickReport, seen: Map<string, string>): string[] {
+  const current = new Map<string, string>()
+  const lines: string[] = []
+  for (const entry of report.phases.stateDiff.decisions) {
+    if (entry.actionType !== 'hold' || entry.code !== 'HOLD_LANE_BUSY') continue
+    const signature = `${entry.lane ?? ''}|${entry.laneHolder ?? ''}|${entry.laneExpiresAt ?? ''}`
+    current.set(entry.ticket, signature)
+    if (seen.get(entry.ticket) !== signature) lines.push(renderHoldLaneBusy(report.seq, entry))
+  }
+  for (const ticket of [...seen.keys()]) {
+    if (!current.has(ticket)) seen.delete(ticket)
+  }
+  for (const [ticket, signature] of current) seen.set(ticket, signature)
+  return lines
+}
