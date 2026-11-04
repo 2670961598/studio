@@ -37,12 +37,19 @@ import type { EventRecord, IssueRecord, ModelTier } from '@studio-next/contract'
 import {
   ADJUSTMENT_MERGE_USD,
   COST_CLOSE_HOUR,
+  COST_RECON_IGNORE_USD,
+  COST_RECON_WARN_USD,
+  COST_RECON_WARN_RATIO,
+  COST_RECON_ESCALATE_USD,
+  COST_RECON_ESCALATE_RATIO,
   COST_CLOSE_KV_KEY,
   COST_CLOSE_MINUTE,
   buildCostCloseReport,
   costInsights,
   planCostCells,
   reconcileDate,
+  classifyCostRecon,
+  costReconLogLine,
   sweepClosedDate,
   type CostCellPlan,
   type CostInsight,
@@ -52,6 +59,7 @@ import type { Ledger, PriceSnapshotRecord } from '@studio-next/store'
 
 /** 常量再出口（消费面/测试就近引用——定义冻结在 core costclose.ts） */
 export { COST_CLOSE_KV_KEY, COST_CLOSE_HOUR, COST_CLOSE_MINUTE } from '@studio-next/core'
+export { COST_RECON_IGNORE_USD, COST_RECON_WARN_USD, COST_RECON_WARN_RATIO, COST_RECON_ESCALATE_USD, COST_RECON_ESCALATE_RATIO } from '@studio-next/core'
 
 /** 事件 note 溯源前缀（幂等键语源；docs/22-§三.2 sla-timer 同型） */
 const CLOSE_NOTE_PREFIX = 'src=cost-close;'
@@ -115,6 +123,8 @@ export interface CostCloseDeps {
   onError(message: string): void
   /** 变更台账回调（行+告警+事件合计——engine 本拍 mutations 台账；缺省=不回调） */
   bumpMutations?: (count: number) => void
+  /** 日志行（737 成本对账 log-only；缺省不打印） */
+  log?: (line: string) => void
 }
 
 export interface CostCloseTickReport {
@@ -154,6 +164,7 @@ export interface CostCloseEngineSeam {
   tickEvents: EventRecord[]
   errors: string[]
   bumpMutations?: (count: number) => void
+  log?: (line: string) => void
 }
 
 export function costCloseDeps(seam: CostCloseEngineSeam): CostCloseDeps {
@@ -172,6 +183,7 @@ export function costCloseDeps(seam: CostCloseEngineSeam): CostCloseDeps {
     },
     onError: (message) => seam.errors.push(message),
     ...(seam.bumpMutations !== undefined ? { bumpMutations: seam.bumpMutations } : {}),
+    ...(seam.log !== undefined ? { log: seam.log } : {}),
   }
 }
 
@@ -249,6 +261,16 @@ export function runCostCloseTick(deps: CostCloseDeps): CostCloseTickReport {
   return report
 }
 
+/** 单日对账读面（cost_daily=结算权威；GATE_PASS=明细；本地日界） */
+function reconcileAtDate(deps: CostCloseDeps, x: string): ReconSegment {
+  const costRows = deps.ledger.listCostDaily({ company: deps.company, cost_date: x })
+  const gatePass = deps.ledger
+    .queryEvents({ company: deps.company, since: localDayStart(x), until: localDayStart(dateAddDays(x, 1)) - 1 })
+    .filter((ev) => ev.event === 'GATE_PASS')
+    .map((ev) => ({ usd: ev.cost_usd, note: ev.note }))
+  return reconcileDate(x, costRows, gatePass)
+}
+
 /** 单日收口：折算→首冻（重入跳过已冻格）→kv 前进→降级告警→事件→报告文件 */
 function closeDate(deps: CostCloseDeps, x: string, at: number, snapshots: readonly PriceSnapshotRecord[]): { finalRows: number; alarms: number } {
   const usage = deps.ledger.listUsageDaily({ company: deps.company, usage_date: x })
@@ -264,11 +286,37 @@ function closeDate(deps: CostCloseDeps, x: string, at: number, snapshots: readon
     finalRows += 1
   }
   deps.ledger.kvSet(COST_CLOSE_KV_KEY, x) // 每收完一日 kv 前进一日（崩溃追平锚）
+  // —— 737 每日成本对账（cost_daily=结算权威；GATE_PASS.cost_usd=明细；log-only 不阻断出数） ——
+  let alarms = 0
+  const recon = reconcileAtDate(deps, x)
+  const reconLevel = classifyCostRecon(recon.deltaUsd, recon.closedUsd)
+  deps.log?.(costReconLogLine({ date: x, closedUsd: recon.closedUsd, harvestUsd: recon.harvestUsd, deltaUsd: recon.deltaUsd }, reconLevel))
+  try {
+    deps.ledger.kvSet(
+      'cost.recon.last',
+      JSON.stringify({
+        date: x,
+        at,
+        level: reconLevel,
+        closedUsd: recon.closedUsd,
+        harvestUsd: recon.harvestUsd,
+        deltaUsd: recon.deltaUsd,
+        thresholds: { ignoreUsd: COST_RECON_IGNORE_USD, warnUsd: COST_RECON_WARN_USD, warnRatio: COST_RECON_WARN_RATIO, escalateUsd: COST_RECON_ESCALATE_USD, escalateRatio: COST_RECON_ESCALATE_RATIO },
+        perModel: recon.perModel,
+        caliber: 'cost-recon/v1（cost_daily=结算权威；GATE_PASS.cost_usd=明细；log-only 不阻断）',
+      }),
+    )
+  } catch (err) {
+    deps.log?.(`[cost-recon] kv 写入失败（不影响出数）：${err instanceof Error ? err.message : String(err)}`)
+  }
+  if (reconLevel !== 'ignore') {
+    deps.emitAlarm(`COST_RECON_${reconLevel.toUpperCase()};date=${x};closed=$${recon.closedUsd.toFixed(4)};harvest=$${recon.harvestUsd.toFixed(4)};delta=$${recon.deltaUsd.toFixed(4)}（cost_daily=结算权威；log-only 不阻断；0.5/0.5%→告警，5/5%→升级）`)
+    alarms += 1
+  }
   // 降级不静默：stale 沿用 / models-yaml 桥 / 无价（DEV-19）
   const staleCount = plans.filter((p) => p.priceBasis === 'snapshot' && !p.exact && p.staleDays > 0).length
   const bridgeCount = plans.filter((p) => p.priceBasis === 'models-yaml').length
   const unpricedCount = plans.filter((p) => p.priceBasis === 'unpriced').length
-  let alarms = 0
   if (staleCount + bridgeCount + unpricedCount > 0) {
     deps.emitAlarm(`${CLOSE_NOTE_PREFIX}date=${x};degraded=stale:${String(staleCount)},bridge:${String(bridgeCount)},unpriced:${String(unpricedCount)}（不静默：沿用/桥/无价收口，详见报告注因段）`)
     alarms += 1
@@ -332,13 +380,8 @@ function writeCloseReport(
 ): void {
   const companyDir = deps.companyDir
   if (companyDir === undefined) return
-  // 对账段：Σcost_daily(X) vs ΣGATE_PASS(X)（本地日界）
-  const costRows = deps.ledger.listCostDaily({ company: deps.company, cost_date: x })
-  const gatePass = deps.ledger
-    .queryEvents({ company: deps.company, since: localDayStart(x), until: localDayStart(dateAddDays(x, 1)) - 1 })
-    .filter((ev) => ev.event === 'GATE_PASS')
-    .map((ev) => ({ usd: ev.cost_usd, note: ev.note }))
-  const recon: ReconSegment = reconcileDate(x, costRows, gatePass)
+  // 对账段：Σcost_daily(X) vs ΣGATE_PASS(X)（本地日界；737 与写入 hook 同源）
+  const recon: ReconSegment = reconcileAtDate(deps, x)
   // 巡检面（本日收口后常态=空；崩溃重放/迟到=非空）
   const frozen = deps.ledger.listCostDaily({ company: deps.company, cost_date: x })
   const sweep = sweepClosedDate(frozen, plans)

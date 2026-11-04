@@ -330,6 +330,43 @@ export function reconcileDate(
 }
 
 // ---------------------------------------------------------------------------
+// 737：每日成本对账口径（cost_daily=结算权威，GATE_PASS.cost_usd=明细）
+// 制作人 2026-11-04「可以的，按这个来」：≤$0.005 忽略（浮点噪声）；>$0.5 或 >0.5%
+// 告警；>$5 或 >5% 升级；先 log-only 不阻断出数（不重写历史）。
+// ---------------------------------------------------------------------------
+
+/** 对账阈值（USD / 比例；单点常量，改动=口径变更需批示） */
+export const COST_RECON_IGNORE_USD = 0.005
+export const COST_RECON_WARN_USD = 0.5
+export const COST_RECON_WARN_RATIO = 0.005
+export const COST_RECON_ESCALATE_USD = 5
+export const COST_RECON_ESCALATE_RATIO = 0.05
+
+export type CostReconLevel = 'ignore' | 'warn' | 'escalate'
+
+/**
+ * 单日差异分级（纯函数；不调账、不阻断——log-only）。
+ * |Δ|≤0.005=ignore；|Δ|>5 或 |Δ|/max(closed,1e-9)>5%=escalate；
+ * |Δ|>0.5 或 比值>0.5%=warn；其余 ignore。比值分母=结算权威 closedUsd。
+ */
+export function classifyCostRecon(deltaUsd: number, closedUsd: number): CostReconLevel {
+  const abs = Math.abs(deltaUsd)
+  if (abs <= COST_RECON_IGNORE_USD) return 'ignore'
+  const ratio = abs / Math.max(Math.abs(closedUsd), 1e-9)
+  if (abs > COST_RECON_ESCALATE_USD || ratio > COST_RECON_ESCALATE_RATIO) return 'escalate'
+  if (abs > COST_RECON_WARN_USD || ratio > COST_RECON_WARN_RATIO) return 'warn'
+  return 'ignore'
+}
+
+/** 对账日志行（grep 口径；不含账单明细/模型明细） */
+export function costReconLogLine(seg: { date: string; closedUsd: number; harvestUsd: number; deltaUsd: number }, level: CostReconLevel): string {
+  return (
+    `[cost-recon] date=${seg.date} level=${level} closed=$${seg.closedUsd.toFixed(4)} ` +
+    `harvest=$${seg.harvestUsd.toFixed(4)} delta=$${seg.deltaUsd.toFixed(4)}（cost_daily=结算权威；log-only 不阻断）`
+  )
+}
+
+// ---------------------------------------------------------------------------
 // P7：补账行合并展示（|usd|<$0.01——展示层合并，合计仍全量计入）
 // ---------------------------------------------------------------------------
 
