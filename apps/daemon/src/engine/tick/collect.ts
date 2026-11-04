@@ -130,6 +130,10 @@ export async function collectPhase(rt: EngineRuntime, ctx: TickCtx): Promise<Col
           }
         }
         if (page.nextCursor !== null) {
+          // studio-dev-790 v4：稳态自游标——adapter 在「无新活动」时回传边界自身 canonical
+          // （790 v2 语义，禁止回落裸 id）。`nextCursor === cursor && items=[]` 是稳态，
+          // 不是回退环：直接收敛（cursor 保持原值，不置 cursorLoop、不 push obsFailure）。
+          if (page.nextCursor === cursor && page.items.length === 0) break
           if (seenCursors.has(page.nextCursor)) {
             // 游标回退环（studio-dev-409 根因③面）：适配器把 nextCursor 拉回已见
             // 旧位置（边界假不可达→全量重放）——同值再现即环，停翻防打转；cursor
