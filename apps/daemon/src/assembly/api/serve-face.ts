@@ -25,8 +25,10 @@
  *   ⑤ **启动只读探活（studio-dev-629/#547 增量）**：`start()` 监听成功后立即以公开只读面
  *      API-01 `GET /v1/company` 自探活（200 ∧ ok=true ∧ 公司维同源才放行；超时/非 200/
  *      坏 JSON/公司维不符一律 `close()` 后抛，runServe 侧收口为 CONFIG_INVALID 拒启——
- *      fail-closed，不静默半面）。**不新增端点**（API- 族冻结，`/healthz` 属契约面子项
- *      待批）；探活属装配面启动闸，不是主循环新相位（docs/17-§2 七相位不增删）。
+ *      fail-closed，不静默半面）。**API- 端点族不变**（不新增契约端点/PORT-）；另由监听壳
+ *      承接 daemon liveness 探针 `GET /healthz`（studio-dev-697，docs/17-§2——非 API- 端点，
+ *      runServe 注入提供者；缺省不启用）；探活属装配面启动闸，不是主循环新相位
+ *      （docs/17-§2 七相位不增删）。
  *
  * 边界：本件不持 engine/ledger/平台句柄；ledger 只经注入的 `guardResponse`（出站闸失败
  * 落账）间接触达——与 log-egress 出口同纪律，API 代码本身零库零平台。
@@ -56,6 +58,7 @@ import { buildApiReaders, API_READ_FACE_GAPS, API_READ_FACE_GAP_REASONS, API_REA
 import { buildApiIntakeAuth } from './auth.ts'
 import { startApiServer, type ApiServerHandle } from './live.ts'
 import type { ApiObservationReadFace } from './inject.ts'
+import type { HealthzReport } from './healthz.ts'
 import { createIntentGate } from '../intent/gate.ts'
 
 /** 失败分类（Err 必答副作用可能/可否重试/对账入口/责任位置；v2/11 §0.4-6） */
@@ -195,8 +198,11 @@ export interface ServeApiArgs {
 export interface ServeApiWiring {
   /** 同进程装配面（app/ports/company；测试可 app.request 驱动） */
   readonly assembly: ApiAssembly
-  /** 真监听（幂等：重复调用返回同一句柄）；启动行在此打印实际端口/只读面/缺口 */
-  start(): Promise<ApiServerHandle>
+  /**
+   * 真监听（幂等：重复调用返回同一句柄）；启动行在此打印实际端口/只读面/缺口。
+   * `healthz`=liveness 探针提供者（studio-dev-697；缺省不提供 `/healthz` 路由）。
+   */
+  start(options?: { readonly healthz?: () => HealthzReport | Promise<HealthzReport> }): Promise<ApiServerHandle>
   /** 关监听（幂等；未 start＝no-op）——runServe 停机收口第一步 */
   close(): Promise<void>
 }
@@ -248,12 +254,13 @@ export function wireServeApi(args: ServeApiArgs): ServeApiWiring {
   let server: ApiServerHandle | undefined
   return {
     assembly,
-    async start(): Promise<ApiServerHandle> {
+    async start(options?: { readonly healthz?: () => HealthzReport | Promise<HealthzReport> }): Promise<ApiServerHandle> {
       if (server !== undefined) return server
       const handle = await startApiServer(assembly.app, {
         port: args.port,
         ...(args.host !== undefined ? { host: args.host } : {}),
         ...(args.guardResponse !== undefined ? { guardResponse: args.guardResponse } : {}),
+        ...(options?.healthz !== undefined ? { healthz: options.healthz } : {}),
       })
       const gaps = API_READ_FACE_GAPS.map((face) => `${face}(${API_READ_FACE_GAP_REASONS[face]})`).join('、')
       args.log(
@@ -290,9 +297,10 @@ export function wireServeApi(args: ServeApiArgs): ServeApiWiring {
 // 依据：docs/17-§2（主循环七相位——监听属装配面，探活是启动闸，不是新相位）；
 // docs/17-§6（收割四要件——本单是 devtask，四要件映射见 REPORT，不改判据）；
 // docs/v2/14 §四（API-01..16 端点族冻结；默认绑定环回；「只落单不派工」）。
-// 纪律：**不新增端点**（`/healthz` 属契约面子项，须报 Lead/制作人批）——以公开只读面
-// API-01 `GET /v1/company` 作探针：200 ∧ ok=true ∧ company.slug 同维才放行；非 200/
-// 坏 JSON/公司维不符/请求异常一律抛（调用方关监听并拒启，不静默降级）。
+// 纪律：**API- 端点族不变**（不新增契约端点/PORT-）——以公开只读面 API-01 `GET /v1/company`
+// 作启动探针：200 ∧ ok=true ∧ company.slug 同维才放行；非 200/坏 JSON/公司维不符/请求异常
+// 一律抛（调用方关监听并拒启，不静默降级）。daemon liveness `GET /healthz` 由监听壳承接
+// （studio-dev-697，docs/17-§2；runServe 注入提供者，缺省不启用）。
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** 探活响应窄面（只取 status/json；不依赖 DOM lib，Node/Bun 的 fetch Response 结构同形） */

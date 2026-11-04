@@ -1,0 +1,41 @@
+{
+  "_comment": "守护核配置模板（studio-dev-697）。安装时替换 <...> 占位；本文件不含任何主机真实路径/凭据，可直接入仓。",
+  "daemon": {
+    "command": [
+      "<NODE_BIN>",
+      "<WORKSPACE>/apps/daemon/src/index.ts",
+      "serve",
+      "--config",
+      "<COMPANY_DIR>/daemon.yaml"
+    ],
+    "cwd": "<WORKSPACE>",
+    "env": {
+      "NODE_ENV": "production"
+    }
+  },
+  "health": {
+    "url": "http://127.0.0.1:8788/healthz",
+    "intervalMs": 10000,
+    "timeoutMs": 5000,
+    "failuresBeforeRestart": 3,
+    "startupGraceMs": 60000
+  },
+  "restart": {
+    "initialBackoffMs": 2000,
+    "maxBackoffMs": 60000,
+    "multiplier": 2,
+    "stopGraceMs": 15000
+  },
+  "crashLoop": {
+    "windowMs": 600000,
+    "maxRestarts": 5,
+    "brakeMs": 900000
+  },
+  "paths": {
+    "logDir": "<LOGDIR>",
+    "daemonLog": "<LOGDIR>/daemon.log",
+    "guardianLog": "<LOGDIR>/guardian.jsonl",
+    "pidFile": "<LOGDIR>/daemon.pid",
+    "alertsFile": "<LOGDIR>/alerts.jsonl"
+  }
+}

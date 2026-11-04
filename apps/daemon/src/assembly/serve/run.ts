@@ -17,7 +17,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import type { InvokeSource } from '@studio-next/contract'
-import { openLedgerWriter, type Ledger } from '@studio-next/store'
+import { openLedgerWriter, verifyEventsChain, type Ledger } from '@studio-next/store'
 import { answerReloadNoCompanyDir } from '../../control/hot-reload.ts'
 import { consumeStopRequest, readStopRequest, STOP_LAST_SEEN_KV_KEY, writeStopResult } from '../../control/stop-channel.ts'
 import { writeExitMarkOnStop } from '../../control/restart/checkpoint.ts'
@@ -34,6 +34,7 @@ import { parseDaemonConfig, type ServeConfig } from './config.ts'
 import { buildServeRuntime } from './runtime.ts'
 import type { SecretDeclarationInput } from '../trust/wire.ts'
 import { RestartOrchestrator, readRestartStartupFace } from './restart/orchestrator.ts'
+import { buildHealthz } from '../api/healthz.ts'
 
 /** runServe 启动日志的闸门形态（buildServeRuntime 同判据：acceptance 配置给定=真单模式） */
 function realGateMode(config: ServeConfig): boolean {
@@ -199,10 +200,50 @@ export async function runServe(
   const execMode = config.agentYaml !== undefined ? `真 executor（agent.yaml=${config.agentYaml}）` : 'fake executor（demo）'
   const gateMode = realGateMode(config) ? '真验收闸门（冻结验收命令真执行）' : '占位闸门（exit0 模拟）'
   console.log(`[serve] 栈形态：${stackMode} + ${execMode} + ${gateMode}（边界见 src/assembly/serve.ts 头注）`)
+  // —— liveness 探针状态（studio-dev-697，docs/17-§2）：tick 前进＋events 哈希链摘要 ——
+  //    链摘要按 TTL 节流复算（16 万行全量校验不随每次探测跑；过期=不健康，防旧摘要冒充）。
+  let ticks = 0
+  let lastReport: TickReport | undefined
+  let lastTickAt: number | null = null
+  let chainSnapshot: { ok: boolean; events?: number; tipPrefix?: string; checkedAt: number; error?: string } | undefined
+  const chainCacheTtlMs = 120_000
+  const chainMaxAgeMs = 10 * 60_000
+  const readChainSnapshot = (): NonNullable<typeof chainSnapshot> => {
+    const now = Date.now()
+    if (chainSnapshot !== undefined && now - chainSnapshot.checkedAt < chainCacheTtlMs) return chainSnapshot
+    try {
+      const report = verifyEventsChain(ledger.db)
+      chainSnapshot = { ok: true, events: report.events, tipPrefix: report.tip.slice(0, 12), checkedAt: now }
+    } catch (err) {
+      chainSnapshot = {
+        ok: false,
+        checkedAt: now,
+        error: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200),
+      }
+    }
+    return chainSnapshot
+  }
   // —— 对外 API 起监听 + 只读探活（MIG-06 欠账收口；v2/14 §四）：同进程装配已在 buildServeRuntime 完成，
   //    此处只起 node:http 壳（apiPort 缺省 0=ephemeral）——监听/探活失败=CONFIG_INVALID 拒启（探活体在 serve-face）。
   try {
-    if (opts?.apiStart !== false) await api.start()
+    if (opts?.apiStart !== false) {
+      await api.start({
+        healthz: () =>
+          buildHealthz({
+            pid: process.pid,
+            startedAt: processStartedAt,
+            now: Date.now(),
+            tick: {
+              seq: lastReport?.seq ?? 0,
+              count: ticks,
+              lastAt: lastTickAt,
+              tickMs: config.tickMs,
+            },
+            chain: readChainSnapshot(),
+            chainMaxAgeMs,
+          }),
+      })
+    }
   } catch (err) {
     await stop()
     throw new Error(
@@ -215,13 +256,12 @@ export async function runServe(
     engine.ingest([intent])
   })
 
-  let ticks = 0
-  let lastReport: TickReport | undefined
   while (!stopped) {
     try {
       const report = await engine.tick()
       lastReport = report
       ticks += 1
+      lastTickAt = Date.now()
       if (report.phases.collect.cursorLoop) cursorLoopSeen = true
       console.log(`[serve] ${renderTick(report)}`)
       // noop 观测面（见 renderNoopDecision 头注）：静默 noop=观察黑洞，逐条落行

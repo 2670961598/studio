@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  io.studionext.daemon —— StudioNext 守护核（guardian）launchd 模板（studio-dev-697）
+  与旧代 com.studio.daemon（Python 项目）**明确区分**；本 plist 保活的是 scripts/guardian.mjs，
+  guardian 再监护 StudioNext daemon。安装步骤见同目录 README.md。
+  占位符（安装时替换）：__NODE__ __GUARDIAN__ __CONFIG__ __WORKSPACE__ __LOGDIR__
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.studionext.daemon</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE__</string>
+    <string>__GUARDIAN__</string>
+    <string>--config</string>
+    <string>__CONFIG__</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__WORKSPACE__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <!-- launchd 自身保活守护核：guardian 崩了由 KeepAlive 拉起（ThrottleInterval 防抖） -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>__LOGDIR__/guardian.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOGDIR__/guardian.err.log</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

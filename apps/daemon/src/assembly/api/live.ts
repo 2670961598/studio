@@ -33,6 +33,7 @@ import type { AddressInfo } from 'node:net'
 import { configInvalid } from '@studio-next/contract'
 import { MAX_REQUEST_BODY_BYTES } from '@studio-next/api'
 import type { ApiApp } from '@studio-next/api'
+import type { HealthzReport } from './healthz.ts'
 
 /** 监听选项（port=0 可 ephemeral；host 缺省环回） */
 export interface ApiServerOptions {
@@ -45,6 +46,11 @@ export interface ApiServerOptions {
    * 缺省＝不扫描（装配面须在启动日志显式登记该缺口——不静默放行）。
    */
   readonly guardResponse?: (payload: unknown) => unknown
+  /**
+   * liveness 探针提供者（studio-dev-697，docs/17-§2）：监听壳直接应答 `GET /healthz`，
+   * 不经 Hono app（非契约 API- 端点、不新增 PORT-）；缺省=不提供该路由（404 归 app）。
+   */
+  readonly healthz?: () => HealthzReport | Promise<HealthzReport>
 }
 
 /** 监听句柄（真端口＋优雅关闭：断全部连接含长连后关 server） */
@@ -213,9 +219,44 @@ export async function startApiServer(app: ApiApp, options: ApiServerOptions): Pr
   }
   const host = options.host ?? '127.0.0.1'
   const guardResponse = options.guardResponse
+  const healthz = options.healthz
   const server = createServer((req, res) => {
     const controller = new AbortController()
     res.on('close', () => controller.abort())
+    // liveness 探针（studio-dev-697）：监听壳直接应答，不经 Hono app（非 API- 端点）
+    if (healthz !== undefined && (req.method === 'GET' || req.method === 'HEAD')) {
+      const pathOnly = (req.url ?? '/').split('?')[0] ?? '/'
+      if (pathOnly === '/healthz' || pathOnly === '/healthz/') {
+        void Promise.resolve()
+          .then(() => healthz())
+          .then((report) => {
+            const payload = guardResponse !== undefined ? guardResponse(report.body) : report.body
+            const body = Buffer.from(JSON.stringify(payload), 'utf8')
+            res.writeHead(report.status, {
+              'content-type': 'application/json; charset=utf-8',
+              'content-length': String(body.byteLength),
+              'cache-control': 'no-store',
+              connection: 'close',
+            })
+            if (req.method === 'HEAD') res.end()
+            else res.end(body)
+          })
+          .catch(() => {
+            if (res.headersSent) {
+              res.destroy()
+              return
+            }
+            const body = Buffer.from(TRANSPORT_ERROR_BODY, 'utf8')
+            res.writeHead(500, {
+              'content-type': 'application/json',
+              'content-length': String(body.byteLength),
+              connection: 'close',
+            })
+            res.end(body)
+          })
+        return
+      }
+    }
     void toWebRequest(req, controller.signal)
       .then((request) => app.fetch(request))
       .then((response: Response) =>

@@ -60,6 +60,7 @@ export * from './employment/gate.ts' // 任职闸门判定面（studio-dev-550�
 
 // 断路器（docs/17-§6 末 / F1-10）
 export * from './breaker.ts'
+export * from './survival/guardian.ts' // 守护核纯逻辑（studio-dev-697；docs/90-§三）
 
 // 错误处置语义表（docs/17-§9）
 export * from './dispositions.ts'
