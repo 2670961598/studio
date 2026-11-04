@@ -180,18 +180,32 @@ export async function activitySince(
     return pageOf(ctx, full, pageSize)
   }
 
-  // 裸 id 边界：无 ts 不能剪枝也不能比大小——在升序全量里定位边界，切其后
+  // 裸 id 边界：无 ts 不能剪枝也不能比大小——在升序全量里定位边界，切其后。
+  // studio-dev-790：命中边界且其后为空时**必须升级为 canonical {ts,id} 游标**——否则上游
+  // 永远拿不到 ts，只能空转全量 history（tick 11s 根因）。nextCursor=边界自身 canonical
+  // （无损：边界之后无事件；下一拍起 modified_date 剪枝）。
   const full = merged // 裸 id 形候选集=all（上文分支保证）
   const idx = full.findIndex((m) => m.entry.id === boundary.id)
   if (idx < 0) {
     return pageOf(ctx, full, pageSize) // 不可达 → 全量重放
   }
-  return pageOf(ctx, full.slice(idx + 1), pageSize)
+  const boundaryEntry = full[idx]
+  const tail = full.slice(idx + 1)
+  if (tail.length === 0 && boundaryEntry !== undefined) {
+    return { items: [], nextCursor: encodeCursor(boundaryEntry.entry.createdAt, boundaryEntry.entry.id) }
+  }
+  return pageOf(ctx, tail, pageSize)
 }
 
 async function pageOf(ctx: TaigaContext, ascending: MergedEntry[], pageSize: number): Promise<ActivityPage> {
   if (ascending.length <= pageSize) {
-    return { items: await Promise.all(ascending.map((m) => toPlatformActivity(ctx, m))), nextCursor: null }
+    // studio-dev-790：末页也返回 canonical {ts,id} 游标（上游持久化后可剪枝；空页=null）。
+    // 不能返回 null：上游对 null 会回退「最后活动裸 id」——正是全量 history 永动机的根因。
+    const last = ascending[ascending.length - 1]
+    return {
+      items: await Promise.all(ascending.map((m) => toPlatformActivity(ctx, m))),
+      nextCursor: last === undefined ? null : encodeCursor(last.entry.createdAt, last.entry.id),
+    }
   }
   const head = ascending.slice(0, pageSize)
   const last = head[head.length - 1]

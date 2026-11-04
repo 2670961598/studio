@@ -29,7 +29,8 @@ describe('游标语义：连续三轮 since()', () => {
       ['probe-co-1', 'transitioned'],
       ['probe-co-2', 'commented'],
     ])
-    expect(r1.nextCursor).toBeNull()
+    // 790：末页也返回 canonical {ts,id} 游标（上游可剪枝；不再回落裸 id）
+    expect(r1.nextCursor).not.toBeNull()
     expect(r1.items[1]?.actor).toBe('admin')
 
     // 第二轮：乙再动一次 → 只增量（严格新于 e2）
@@ -38,10 +39,11 @@ describe('游标语义：连续三轮 since()', () => {
     expect(ids(r2.items)).toEqual([e3])
     expect(r2.items[0]).toMatchObject({ issue: 'probe-co-2', kind: 'field-set' })
 
-    // 第三轮：无新增 → 空 + null；再问仍空（游标不动）
+    // 第三轮：无新增 → 空；裸 e3 边界升级 canonical（790），再问以 canonical 得空+null
     const r3 = await p.activity.since(e3)
-    expect(r3).toEqual({ items: [], nextCursor: null })
-    expect(await p.activity.since(e3)).toEqual({ items: [], nextCursor: null })
+    expect(r3.items).toEqual([])
+    expect(r3.nextCursor).not.toBeNull()
+    expect(await p.activity.since(r3.nextCursor)).toEqual({ items: [], nextCursor: null })
   })
 
   it('canonical 游标（nextCursor 产出形态）与裸 id 等价续问', async () => {
@@ -57,10 +59,13 @@ describe('游标语义：连续三轮 since()', () => {
     expect(page1.nextCursor).not.toBeNull()
     const page2 = await p.activity.since(page1.nextCursor)
     expect(ids(page2.items).length).toBe(1)
-    expect(page2.nextCursor).toBeNull()
-    // 裸条目 id（轮询方拿末条 id 续问的惯例）也能当边界
+    expect(page2.nextCursor).not.toBeNull() // 790：末页 canonical
+    // 裸条目 id（轮询方拿末条 id 续问的惯例）也能当边界并升级 canonical
     const lastId = page2.items[0]?.id ?? ''
-    expect(await p.activity.since(lastId)).toEqual({ items: [], nextCursor: null })
+    const upgraded = await p.activity.since(lastId)
+    expect(upgraded.items).toEqual([])
+    expect(upgraded.nextCursor).not.toBeNull()
+    expect(await p.activity.since(upgraded.nextCursor)).toEqual({ items: [], nextCursor: null })
   })
 
   it('分页不重不漏（pageSize=2 五条活动翻三页）', async () => {
@@ -192,7 +197,8 @@ describe('studio-dev-409 回归①：剪枝不变量破坏不触发全量重放�
     // 修复后：全量复核命中边界 → 只回严格新于边界的活动；修复前：误判不可达 →
     // 全量重放回最旧页（nextCursor 回拉 → 生产环境游标回退环 A→B→C→A）
     expect(ids(page.items)).toEqual([newer])
-    expect(page.nextCursor).toBeNull()
+    expect(page.nextCursor).not.toBeNull() // 790：末页 canonical（不回拉裸 id）
+    expect(await p.activity.since(page.nextCursor)).toEqual({ items: [], nextCursor: null })
   })
 })
 
@@ -219,5 +225,54 @@ describe('studio-dev-409 回归②：长历史单窗口外边界可达（history
     // 窗口外旧条目（i=1..4）不重不漏；修复前（单次 GET 首页窗口 30）：边界假不可
     // 达 → 全量重放 → collected 恒为窗口内 30 条（i=5..34），旧 4 条永久丢失（红证）
     expect(collected).toEqual(seq.slice(1))
+  })
+})
+
+describe('studio-dev-790：裸 UUID 游标升级（禁止永久全量 history）', () => {
+  it('首拍全量→裸末条 id→升级 canonical；下一拍按 modified_date 剪枝（history 调用数下降）', async () => {
+    const fake = new FakeTaiga()
+    const ids: number[] = []
+    for (let i = 0; i < 5; i += 1) {
+      const e = fake.seedEntity({ subject: `单${String(i)}` })
+      ids.push(e.id)
+      fake.pushHistory(e.id, { diffKeys: ['status'] })
+    }
+    const p = makePlatform(fake)
+    const full = await p.activity.since(null)
+    expect(full.items).toHaveLength(5)
+    expect(full.nextCursor).not.toBeNull()
+    const bare = full.items[4]?.id ?? ''
+    const upgrade = await p.activity.since(bare)
+    expect(upgrade.items).toEqual([])
+    expect(upgrade.nextCursor).not.toBeNull()
+    // 下一拍 canonical：无新增 → 空 + null；候选只含 modified>=边界（不重拉全部 5 单历史）
+    const beforeCalls = fake.calls.length
+    expect(await p.activity.since(upgrade.nextCursor)).toEqual({ items: [], nextCursor: null })
+    const historyCalls = fake.calls.slice(beforeCalls).filter((c) => c.path.includes('/history/')).length
+    expect(historyCalls).toBeLessThanOrEqual(5) // 不复位全量（5 单全拉也可接受；关键=调用数不随存量增长）
+  })
+  it('canonical 游标后新增事件不丢（迟到事件按 (ts,id) 严格新于边界纳入）', async () => {
+    const fake = new FakeTaiga()
+    const a = fake.seedEntity({ subject: '甲' })
+    const e1 = fake.pushHistory(a.id, { diffKeys: ['status'] })
+    const p = makePlatform(fake)
+    const r1 = await p.activity.since(null)
+    expect(r1.nextCursor).not.toBeNull()
+    const e2 = fake.pushHistory(a.id, { comment: 'late-arrival' })
+    const r2 = await p.activity.since(r1.nextCursor)
+    expect(ids(r2.items)).toEqual([e2])
+    expect(r2.nextCursor).not.toBeNull()
+    void e1
+  })
+  it('空历史：null→null（不产游标）；裸不可达→全量重放不静默丢', async () => {
+    const fake = new FakeTaiga()
+    fake.seedEntity({ subject: '甲' })
+    expect(await makePlatform(fake).activity.since(null)).toEqual({ items: [], nextCursor: null })
+    const fake2 = new FakeTaiga()
+    const b = fake2.seedEntity({ subject: '乙' })
+    fake2.pushHistory(b.id, { diffKeys: ['status'] })
+    const p2 = makePlatform(fake2)
+    const page = await p2.activity.since('00000000-0000-4000-8000-000000000000') // 不存在裸 id
+    expect(page.items).toHaveLength(1) // 全量重放
   })
 })

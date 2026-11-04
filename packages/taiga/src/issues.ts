@@ -1,6 +1,9 @@
 /**
  * 单据面 —— Taiga userstory/issue CRUD ↔ FlowPlatform.issues（docs/25-§3.2）
  *
+ * studio-dev-790：自定义属性值 `fetchAttrValues` 加进程内 LRU（512 条，(issueId,modified_date)）——
+ * 未变单不重取；写属性/建单按 issue id 失效；实测消除 760×9.4ms/拍。
+ *
  * 请求路径全部真机实测（docs/32 / 9000 端口，2026-10-18）：
  *   list   GET  /api/v1/{collection}?project=<id>&page=&page_size=（分页头迭代见 http.ts）
  *   get    GET  /api/v1/{collection}/by_ref?ref=&project=
@@ -40,6 +43,78 @@ function hasCustomDims(ctx: TaigaContext): boolean {
   return CUSTOM_BUSINESS_DIMS.some((d) => ctx.fieldMap.toPlatform(d) !== undefined)
 }
 
+/**
+ * 自定义属性值进程内 LRU（studio-dev-790）：key=`issue内部id\u0000modified_date`——未变不重取。
+ * 实测 760 单×9.43ms≈7.2s/拍是 tick 慢的第二根因；容量上限 512 条（每条约 4 业务维+版本，
+ * 内存上限约 <256KB；超限逐出最旧——逐出只回退到「再取一次」，不影响正确性）。
+ * 失效：写属性/建单后按 issue id 清键（modified_date 会变，旧键自然失效；显式清防同秒写）。
+ */
+export class AttrValueCache {
+  private readonly map = new Map<string, Record<string, string>>()
+  private readonly max: number
+
+  constructor(max = 512) {
+    this.max = Math.max(1, Math.floor(max))
+  }
+
+  get size(): number {
+    return this.map.size
+  }
+
+  get(key: string): Record<string, string> | undefined {
+    const hit = this.map.get(key)
+    if (hit === undefined) return undefined
+    this.map.delete(key)
+    this.map.set(key, hit)
+    return hit
+  }
+
+  set(key: string, value: Record<string, string>): void {
+    this.map.set(key, value)
+    while (this.map.size > this.max) {
+      const oldest = this.map.keys().next().value
+      if (oldest === undefined) break
+      this.map.delete(oldest)
+    }
+  }
+
+  invalidate(internalId: number): void {
+    const prefix = `${String(internalId)}\u0000`
+    for (const key of [...this.map.keys()]) if (key.startsWith(prefix)) this.map.delete(key)
+  }
+}
+
+const ATTR_CACHE_MAX = 512
+const attrValueCache = new WeakMap<TaigaContext, AttrValueCache>()
+
+function attrCacheOf(ctx: TaigaContext): AttrValueCache {
+  let cache = attrValueCache.get(ctx)
+  if (cache === undefined) {
+    cache = new AttrValueCache(ATTR_CACHE_MAX)
+    attrValueCache.set(ctx, cache)
+  }
+  return cache
+}
+
+function attrCacheKey(internalId: number, modifiedDate: string): string {
+  return `${String(internalId)}\u0000${modifiedDate}`
+}
+
+async function cachedAttrValues(ctx: TaigaContext, raw: EntityRaw): Promise<Record<string, string>> {
+  const cache = attrCacheOf(ctx)
+  const key = attrCacheKey(raw.id, raw.modifiedDate)
+  const hit = cache.get(key)
+  if (hit !== undefined) return hit
+  const values = await ctx.fetchAttrValues(raw.id)
+  cache.set(key, values)
+  return values
+}
+
+/** 写面失效：同 issue 的全部 modified_date 键清掉（建单/改属性后调用） */
+function invalidateAttrValues(ctx: TaigaContext, internalId: number): void {
+  attrCacheOf(ctx).invalidate(internalId)
+}
+
 async function toIssueRecord(ctx: TaigaContext, raw: EntityRaw): Promise<IssueRecord> {
   const rec: IssueRecord = {
     id: ctx.ticketId(raw.ref),
@@ -54,7 +129,7 @@ async function toIssueRecord(ctx: TaigaContext, raw: EntityRaw): Promise<IssueRe
   }
   if (hasCustomDims(ctx)) {
     // 属性值只在专用值端点可见（实体序列化器不回显——真机实证）；无映射时零开销
-    const attrValues = await ctx.fetchAttrValues(raw.id)
+    const attrValues = await cachedAttrValues(ctx, raw)
     for (const business of CUSTOM_BUSINESS_DIMS) {
       const platform = ctx.fieldMap.toPlatform(business)
       if (platform === undefined) continue
@@ -173,6 +248,7 @@ export async function createIssue(ctx: TaigaContext, input: IssueCreate): Promis
   }
   if (Object.keys(attributes).length > 0) {
     await ctx.patchAttrValues(created.id, attributes)
+    invalidateAttrValues(ctx, created.id)
   }
   // 落位复核（兜底零写）：POST {status} 已原子落位（上注）；目标态在场而回显不符时
   // 才补一次 transition（幂等：已在目标态不重放写）——真机不触发，防御平台变体。
@@ -269,4 +345,5 @@ export async function setIssueField(ctx: TaigaContext, id: TicketId, field: stri
   const platform = ctx.fieldMap.requirePlatform(field)
   const attrId = await ctx.attributeIdByName(platform)
   await ctx.patchAttrValues(raw.id, { [String(attrId)]: ctx.fieldMap.encode(field, value) })
+  invalidateAttrValues(ctx, raw.id)
 }
