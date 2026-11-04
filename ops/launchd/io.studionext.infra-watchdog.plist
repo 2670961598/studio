@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  io.studionext.infra-watchdog —— 基础设施守护 launchd 模板（studio-dev-774）
+  背景：2026-11-04 23:00 USB I/O error → Docker VM 卡死 → Synapse/Taiga 全挂 → daemon 停 ~16min。
+  本守护是 host 侧独立看门狗：探测 docker/Matrix/Taiga/studio-dev healthz/profit 进程，
+  连续 N 次失败→告警＋按配置自动恢复（docker kill+reopen / docker start / kickstart guardian）。
+  与 io.studionext.daemon（guardian）相互独立：guardian 崩了不影响 watchdog，反之亦然。
+  安装步骤见同目录 README.md §7。
+  占位符（安装时替换）：__NODE__ __WATCHDOG__ __CONFIG__ __LOGDIR__
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.studionext.infra-watchdog</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE__</string>
+    <string>__WATCHDOG__</string>
+    <string>--config</string>
+    <string>__CONFIG__</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <!-- 自身保活：watchdog 崩了由 launchd 拉起（ThrottleInterval 防抖） -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>__LOGDIR__/infra-watchdog.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOGDIR__/infra-watchdog.err.log</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

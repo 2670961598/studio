@@ -1,0 +1,67 @@
+{
+  "schema": "studio-next/infra-watchdog-config/v1",
+  "probeIntervalMs": 15000,
+  "failureThreshold": 2,
+  "alertRepeatMs": 300000,
+  "logDir": "__LOGDIR__",
+  "alertsFile": "__LOGDIR__/infra-alerts.jsonl",
+  "stateFile": "__LOGDIR__/infra-watchdog-state.json",
+  "alertOnly": false,
+  "recovery": {
+    "enabled": true,
+    "cooldownMs": 600000,
+    "maxPerHour": 3
+  },
+  "containers": [
+    "matrix-synapse",
+    "taiga-docker-taiga-gateway-1"
+  ],
+  "recoveryCommands": {
+    "docker": {
+      "dockerKill": [
+        "pkill",
+        "-f",
+        "Docker.app"
+      ],
+      "dockerStart": [
+        "open",
+        "-a",
+        "Docker"
+      ]
+    },
+    "containerStart": [
+      "docker",
+      "start"
+    ],
+    "studioDevKickstart": [
+      "launchctl",
+      "kickstart",
+      "-k"
+    ]
+  },
+  "probes": {
+    "docker": {
+      "socket": "/var/run/docker.sock",
+      "timeoutMs": 3000
+    },
+    "matrix": {
+      "url": "http://127.0.0.1:8008/_matrix/client/versions",
+      "timeoutMs": 3000,
+      "container": "matrix-synapse"
+    },
+    "taiga": {
+      "url": "http://127.0.0.1:9000/api/v1/",
+      "timeoutMs": 3000,
+      "container": "taiga-docker-taiga-gateway-1"
+    },
+    "studioDev": {
+      "url": "http://127.0.0.1:8788/healthz",
+      "timeoutMs": 3000,
+      "guardianLabel": "io.studionext.daemon"
+    },
+    "studioProfit": {
+      "processPattern": "apps/boot/src/main.ts __WORKROOT__/companies/studio-profit/daemon.yaml",
+      "guardianLabel": null
+    }
+  }
+}

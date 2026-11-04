@@ -134,4 +134,46 @@ node <主仓>/scripts/ops/deploy.mjs deploy --repo <主仓> --deploy <部署树>
 - **日志**：`guardian.jsonl`（结构化，事件守卫用）、`daemon.log`（子进程 stdout/stderr）、
   `alerts.jsonl`（告警副本）、`guardian.err.log`（launchd 层异常）。
 - **不动手 kill guardian**：它由 launchd 保活；要停就 `launchctl bootout`（整链停）。
-- 故障处置按 `docs/90-§五 运维 runbook RB-01..RB-06`；部署形态见 `docs/90-§六`。
+- 故障处置按 `docs/90-§五 运维 runbook RB-01..RB-07`；部署形态见 `docs/90-§六`。
+
+## 7. 基础设施守护（studio-dev-774；host 侧独立 watchdog）
+
+> 背景：2026-11-04 23:00 USB 盘 I/O error → Docker VM 卡死 → Synapse/Taiga 全挂 → daemon Matrix
+> 登录 500 → guardian crash-loop-brake → daemon 停 ~16min。`io.studionext.daemon`（guardian）只管
+> daemon，不管 Docker/Matrix/Taiga——本守护是其**独立补充**（互不依赖；guardian 挂了 watchdog 照跑）。
+
+**组成**（本目录）：
+- `io.studionext.infra-watchdog.plist`：launchd 模板（KeepAlive；日志 `infra-watchdog.out/err.log`）。
+- `infra-watchdog.example.json`：配置模板（`__LOGDIR__`/`__WORKROOT__` 占位；安装时替换）。
+- 脚本：`scripts/ops/infra-watchdog.mjs`（=`--help`；纯 node 标准库，零业务依赖）。
+
+**安装（部署窗口执行；不重启无关进程）**：
+
+```sh
+LOGDIR="$HOME/Library/Logs/studio-next"
+PLIST="$HOME/Library/LaunchAgents/io.studionext.infra-watchdog.plist"
+mkdir -p "$LOGDIR"
+# ① 生成配置（占位替换）
+sed -e "s#__LOGDIR__#$LOGDIR#g" -e "s#__WORKROOT__#<workRoot>#g" \
+  <部署树>/ops/launchd/infra-watchdog.example.json > "$LOGDIR/infra-watchdog.json"
+# ② 安装 plist（替换 __NODE__/__WATCHDOG__/__CONFIG__/__LOGDIR__；watchdog 也从部署树运行）
+sed -e "s#__NODE__#$(command -v node)#" -e "s#__WATCHDOG__#<部署树>/scripts/ops/infra-watchdog.mjs#" \
+    -e "s#__CONFIG__#$LOGDIR/infra-watchdog.json#" -e "s#__LOGDIR__#$LOGDIR#" \
+  <部署树>/ops/launchd/io.studionext.infra-watchdog.plist > "$PLIST"
+launchctl bootstrap gui/$(id -u) "$PLIST"     # 若已加载：先 bootout 再 bootstrap
+launchctl kickstart -k gui/$(id -u)/io.studionext.infra-watchdog
+```
+
+**核对（只读）**：
+
+```sh
+launchctl print gui/$(id -u)/io.studionext.infra-watchdog | grep -E "state =|last exit"
+tail -5 "$HOME/Library/Logs/studio-next/infra-alerts.jsonl"   # info/warn/error 分级
+tail -3 "$HOME/Library/Logs/studio-next/infra-watchdog.out.log"
+# 演练（隔离，不执行恢复）：改配置 alertOnly=true 或带 --alert-only 重启 watchdog，观察告警面
+```
+
+**边界**：默认只在连续 `failureThreshold`（2）次失败后动作；恢复有 `cooldownMs`/`maxPerHour` 上限；
+`alertOnly: true`（或 `--alert-only`）只告警不动作；docker 恢复=强杀 Docker.app 后重开（正在写盘时
+先按 RB-07 保数据）；容器恢复=`docker start`；studio-dev 恢复=`launchctl kickstart -k` guardian。
+profit daemon 当前无 guardian（`guardianLabel: null` → 只告警），守护化后补 label 即可自动恢复。

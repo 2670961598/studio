@@ -160,12 +160,76 @@ export function parseMatrixRoles(
   return roles
 }
 
+/** loginWithRetry 所需的最小客户端面（MatrixClient 结构兼容；测试可注假体） */
+export interface MatrixLoginClient {
+  login(userId: string, password: string): Promise<{ userId: string; accessToken: string; deviceId?: string }>
+}
+
+/** matrix 登录重试选项（774：依赖链瞬态故障不得直接触发 crash-loop 刹车） */
+export interface LoginRetryOptions {
+  /** 最多尝试次数（含首次；缺省 3） */
+  attempts?: number
+  /** 重试间隔 ms（缺省 30000；测例注入 0） */
+  delayMs?: number
+  /** 睡眠注入（测试用） */
+  sleep?: (ms: number) => Promise<void>
+}
+
 /** 装配选项公共形（fetch 回放/日志出口/共用登录注入面） */
 interface AssembleOptions {
   fetch?: FetchLike
   log?: (line: string) => void
   /** 已登录面（boot 双开时同一 bot 账号共用一次登录；缺省自行登录） */
   login?: { client: MatrixClient; botMxid: string }
+  /** 登录有限退避重试（774；缺省 3×30s） */
+  loginRetry?: LoginRetryOptions
+}
+
+/**
+ * 判断 matrix 登录错误是否「依赖链瞬态」（774）：网络错误/超时/429/5xx 才重试；
+ * 4xx（凭据/权限/房间不存在）与 CONFIG_INVALID 属确定性错误，立即抛出（fail-closed 不变）。
+ */
+export function isTransientMatrixLoginError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err)
+  if (message.includes('CONFIG_INVALID')) return false
+  const apiStatus = /^matrix api (\d{3})\b/.exec(message)
+  if (apiStatus !== null) {
+    const status = Number(apiStatus[1])
+    if (status === 429 || status >= 500) return true
+    if (status >= 400) return false
+  }
+  return /fetch failed|network|timeout|timed out|aborted|ECONNREFUSED|ECONNRESET|ENOTFOUND|EHOSTUNREACH|socket hang up|EAI_AGAIN/i.test(message)
+}
+
+/**
+ * matrix bot 登录（有限退避重试；774）。依赖链（Synapse/Docker/网络）瞬态失败不立刻 exit，
+ * 按 attempts×delayMs 退避后仍失败才抛——避免「登录 500 → 进程 exit → guardian crash-loop
+ * brake 15min」；CONFIG_INVALID/4xx 立即抛（fail-fast 不变）。
+ */
+export async function loginWithRetry(
+  client: MatrixLoginClient,
+  userId: string,
+  password: string,
+  options: LoginRetryOptions & { log?: (line: string) => void } = {},
+): Promise<{ userId: string; accessToken: string; deviceId?: string }> {
+  const attempts = Math.max(1, Math.trunc(options.attempts ?? 3))
+  const delayMs = Math.max(0, Math.trunc(options.delayMs ?? 30_000))
+  const sleepImpl = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+  const log = options.log ?? ((): void => {})
+  let lastError: unknown
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await client.login(userId, password)
+    } catch (err) {
+      lastError = err
+      const transient = isTransientMatrixLoginError(err)
+      if (!transient || attempt >= attempts) throw err
+      const reason = err instanceof Error ? err.message : String(err)
+      log(`[boot] matrix 登录瞬态失败（${attempt}/${attempts}）：${reason}；${delayMs}ms 后重试`)
+      await sleepImpl(delayMs)
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError))
 }
 
 /**
@@ -176,7 +240,7 @@ interface AssembleOptions {
 export async function assembleMatrixLogin(
   config: ServeConfig,
   env: Record<string, string | undefined>,
-  options?: { fetch?: FetchLike; log?: (line: string) => void },
+  options?: { fetch?: FetchLike; log?: (line: string) => void; loginRetry?: LoginRetryOptions },
   switchName = 'matrix',
 ): Promise<{ client: MatrixClient; botMxid: string }> {
   const log = options?.log ?? ((): void => {})
@@ -196,7 +260,7 @@ export async function assembleMatrixLogin(
     baseUrl: config.matrixHomeserverUrl,
     ...(options?.fetch !== undefined ? { fetch: options.fetch } : {}),
   })
-  const login = await client.login(config.matrixUserId, password)
+  const login = await loginWithRetry(client, config.matrixUserId, password, { ...(options?.loginRetry ?? {}), log })
   log(`[boot] matrix bot 已登录（${login.userId}；token 只留进程内存，重启重登）`)
   return { client, botMxid: login.userId }
 }
