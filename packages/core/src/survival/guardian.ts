@@ -108,13 +108,69 @@ export async function probeHealth(
   }
 }
 
-/** 结构化告警行（level 由事件决定：healthy=info，其余 error） */
+/**
+ * 事件级别分级（studio-dev-734）。
+ *
+ * 改前缺陷：`level = event==='healthy' ? 'info' : 'error'` → **所有正常事件都是 error**
+ * （`guardian-start`/`daemon-start`/`preflight-ok` 等 142/142 行 error），告警级别失去区分度。
+ * 现按语义分三级：
+ *   - info  ：正常生命周期/部署面正常（guardian-start/stop、daemon-start、preflight-ok、healthy、health-recovered）
+ *   - warn  ：可自愈/需关注（health-fail 瞬态、preflight-failed fail-closed 拒启、daemon-stop、restart-scheduled、pid-file-error）
+ *   - error ：需人工介入（spawn-error、daemon-kill、crash-loop-brake、health-fail-restart 达重启阈值）
+ * 未知事件保守定为 warn（「正常事件不得 error」；新事件需显式登记级别）。
+ */
+export type GuardianLevel = 'info' | 'warn' | 'error'
+
+const GUARDIAN_INFO_EVENTS: ReadonlySet<string> = new Set([
+  'guardian-start',
+  'guardian-stop',
+  'daemon-start',
+  'preflight-ok',
+  'healthy',
+  'health-recovered',
+])
+const GUARDIAN_WARN_EVENTS: ReadonlySet<string> = new Set([
+  'health-fail',
+  'preflight-failed',
+  'daemon-stop',
+  'restart-scheduled',
+  'pid-file-error',
+])
+const GUARDIAN_ERROR_EVENTS: ReadonlySet<string> = new Set([
+  'spawn-error',
+  'daemon-kill',
+  'crash-loop-brake',
+  'health-fail-restart',
+])
+
+/** 事件 → 级别（纯函数；测试单点） */
+export function guardianEventLevel(event: string): GuardianLevel {
+  if (GUARDIAN_INFO_EVENTS.has(event)) return 'info'
+  if (GUARDIAN_ERROR_EVENTS.has(event)) return 'error'
+  if (GUARDIAN_WARN_EVENTS.has(event)) return 'warn'
+  return 'warn'
+}
+
+/**
+ * 探活失败原因分类（纯函数；734 观测面）：timeout/network/http/body 分开，
+ * 让「probe timeout」在日志里可判（不误报 error；去重后仍保留首次瞬态可见）。
+ */
+export function probeFailureKind(reason: string | undefined): 'timeout' | 'network' | 'http' | 'body' | 'unknown' {
+  const text = reason ?? ''
+  if (/timeout|aborted|ETIMEDOUT/i.test(text)) return 'timeout'
+  if (/fetch failed|ECONNREFUSED|ECONNRESET|ENOTFOUND|socket hang up|network/i.test(text)) return 'network'
+  if (/^http-|status|503|500/i.test(text)) return 'http'
+  if (/body|json/i.test(text)) return 'body'
+  return 'unknown'
+}
+
+/** 结构化告警/事件行（级别由事件语义决定，见 guardianEventLevel） */
 export function buildGuardianAlert(
   event: string,
   detail: Record<string, unknown>,
   now: Date = new Date(),
-): { ts: string; level: 'info' | 'error'; event: string } & Record<string, unknown> {
-  return { ts: now.toISOString(), level: event === 'healthy' ? 'info' : 'error', event, ...detail }
+): { ts: string; level: GuardianLevel; event: string } & Record<string, unknown> {
+  return { ts: now.toISOString(), level: guardianEventLevel(event), event, ...detail }
 }
 
 /** 解析 --config（纯函数；--config=path 与 --config path 同义；-h/--help） */

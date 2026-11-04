@@ -26,6 +26,7 @@ import {
   nextBackoff,
   parseGuardianArgs,
   probeHealth,
+  probeFailureKind,
   shouldBrake,
 } from '../packages/core/src/survival/guardian.ts'
 
@@ -246,6 +247,8 @@ export async function runGuardian(config, overrides = {}) {
       const startedAt = nowImpl()
       log('daemon-start', { pid: child.pid, attempt })
       let consecutiveFailures = 0
+      /** 最近一次失败原因（734：streak 恢复行携带；不改重启判定） */
+      let lastProbeReason = undefined
       let reason = 'unknown'
       while (!stopping) {
         if (child.exitCode !== null || child.signalCode !== null) {
@@ -266,11 +269,44 @@ export async function runGuardian(config, overrides = {}) {
             ? await probeImpl(config)
             : await probeHealth(config.health.url, { timeoutMs: config.health.timeoutMs }, fetchImpl)
         if (probe.healthy) {
+          // 瞬态恢复可见化（734）：整条失败 streak 恢复时补一行 info（否则瞬态失败只能靠缺席推断）
+          if (consecutiveFailures > 0) {
+            log('health-recovered', {
+              pid: child.pid,
+              failures: consecutiveFailures,
+              lastReason: lastProbeReason,
+            })
+          }
           consecutiveFailures = 0
+          lastProbeReason = undefined
         } else {
+          const failuresBeforeRestart = config.health.failuresBeforeRestart
+          const previousFailures = consecutiveFailures
           consecutiveFailures += 1
-          log('health-fail', { pid: child.pid, reason: probe.reason, consecutiveFailures })
-          if (consecutiveFailures >= config.health.failuresBeforeRestart) {
+          lastProbeReason = probe.reason
+          const kind = probeFailureKind(probe.reason)
+          // 734 去重：只记 streak 首次失败（warn）+ 达重启阈值时一条 error；中间失败不再刷屏。
+          // 级别语义：瞬态/probe timeout=warn（旧实现全部 error，142/142 行误报）；重启阈值=error。
+          if (consecutiveFailures === 1) {
+            log('health-fail', {
+              pid: child.pid,
+              reason: probe.reason,
+              consecutiveFailures,
+              kind,
+              transient: true,
+              note: '首次探活失败（瞬态候选；连续达阈值才重启）',
+            })
+          }
+          if (consecutiveFailures >= failuresBeforeRestart) {
+            log('health-fail-restart', {
+              pid: child.pid,
+              reason: probe.reason,
+              kind,
+              consecutiveFailures,
+              previousFailures,
+              threshold: failuresBeforeRestart,
+              note: '连续探活失败达重启阈值（重启语义不变，见 restart/backoff）',
+            })
             reason = `health-fail:${probe.reason}`
             break
           }
