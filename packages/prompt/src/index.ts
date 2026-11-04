@@ -55,3 +55,6 @@ export * from './trim.ts'
 
 // 任务书两模板（17-§5：首次版/续跑版）
 export * from './brief.ts'
+
+// L2.5 角色包纯逻辑（studio-dev-724；IO 装载器在 daemon assembly）
+export * from './roles.ts'

@@ -2,8 +2,8 @@
  * assemble —— AGENTS.md 组装器（docs/17-§5 / 04-§六，需求 C2-06/C2-08/C2-10/C2-11）
  *
  * 规格依据（实现单引用）：
- *   - 17-§5：六层装配 → AGENTS.md（生态标准名，抗 auto-compact——compact 后从磁盘重注入）；
- *     分层指纹 W-<fwk>/co.<rev>/org.<rev>/p.<工号>.<rev>/t.<单号>.<att>/ex.<adapter>@<ver> 记账。
+ *   - 17-§5：七层装配（studio-dev-724 加 L2.5） → AGENTS.md（生态标准名，抗 auto-compact——compact 后从磁盘重注入）；
+ *     分层指纹 W-<fwk>/co.<rev>/org.<rev>/role.<rev>/p.<工号>.<rev>/t.<单号>.<att>/ex.<adapter>@<ver> 记账。
  *   - 04-§六：文件标记「生成物勿手改」，每次派发重生成；落点通道归 daemon/适配器（本包只出文本）。
  *   - C2-06：层间定界标记包裹、层内无他层标记（本函数再验一道：层正文只许本层无标记）。
  *   - C2-10：不可信隔离的剥离计数在此汇总（{sanitized:n}），记事件归 daemon（本包零 IO）。
@@ -52,14 +52,14 @@ const utf8Encoder = new TextEncoder()
 
 /** 层正文不得再含任何层定界标记（构建器不写、输入已拒走私——组装前终验，C2-06） */
 function assertContentFreeOfLayerMarkers(layer: PromptLayer): void {
-  if (/<!--\s*LAYER:L\d:(?:BEGIN|END)/.test(layer.content)) {
+  if (/<!--\s*LAYER:L\d(?:\.\d)?:(?:BEGIN|END)/.test(layer.content)) {
     throw new Error(
       `prompt/assemble: ${layer.id} 层正文含层定界标记——层内无他层标记（C2-06），拒组装`,
     )
   }
 }
 
-/** 六层 → AGENTS.md 文本 + 分层指纹 + 隔离计数 + 字节清单（同输入同 bytes） */
+/** 七层 → AGENTS.md 文本 + 分层指纹 + 隔离计数 + 字节清单（同输入同 bytes） */
 export function assembleAgentsMd(layers: readonly PromptLayer[]): AssembleResult {
   assertLayerSequence(layers)
   const layerFingerprints = {} as Record<LayerId, string>

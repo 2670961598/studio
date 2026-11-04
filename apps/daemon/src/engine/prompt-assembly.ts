@@ -45,6 +45,7 @@ import {
   type AssembleResult,
   type BriefRenderResult,
 } from '@studio-next/prompt'
+import { defaultRolePackText } from '@studio-next/prompt'
 import { renderReadViewSection } from './read-tiers.ts'
 import type { TicketReadView } from './read-tiers.ts'
 
@@ -126,6 +127,16 @@ export interface AssemblerContext {
   /** 同类教训 top-k（v0 空） */
   lessons?: string[]
   /**
+   * L2.5 角色包（studio-dev-724；docs/17-§5 七层）：公司 prompts/roles 装载后的按人解析。
+   * 缺省/返回 undefined=未配置→默认类边界文本（诚实标注未配置，不冒充角色卡授权）。
+   */
+  rolePack?: (person: PersonRef) => {
+    readonly roleClass: string
+    readonly classText: string
+    readonly cardText: string
+    readonly cardVersion?: number
+  } | undefined
+  /**
    * 出口扫描通道（IMPL-06-12；docs/80-§11.2.1「内部供给」面）：`redactKnown` 是
    * KnownSecretSet.redactKnown 的结构子集——只把**已知秘密值**替换为 `<redacted:N>`，
    * **不做形状兜底**（提示词/任务书是内部供给面：`password=…` 一类示例/夹具文本必须
@@ -178,6 +189,13 @@ export function createDefaultAssembler(ctx: AssemblerContext): PromptAssembler {
             ...(input.readView.artifacts ?? []).map((p) => `产出物路径：\`${p}\``),
           ]
         : undefined
+    const packed =
+      ctx.rolePack?.(person) ??
+      ((): { roleClass: string; classText: string; cardText: string; cardVersion?: number } => {
+        const fallback = defaultRolePackText(person)
+        return { roleClass: fallback.roleClass, classText: fallback.classText, cardText: fallback.cardText }
+      })()
+    const rolePack = packed
     const layers = buildLayers([
       {
         kind: 'L0-framework',
@@ -189,6 +207,14 @@ export function createDefaultAssembler(ctx: AssemblerContext): PromptAssembler {
         kind: 'L2-org',
         deptConfig: deptConfigText(ctx.snapshot, person.dept ?? input.issue.dept),
         signature: signatureOf(ctx.snapshot, person),
+      },
+      {
+        kind: 'L2.5-role',
+        roleClass: rolePack.roleClass,
+        personId: person.id,
+        classText: rolePack.classText,
+        cardText: rolePack.cardText,
+        ...(rolePack.cardVersion !== undefined ? { cardVersion: rolePack.cardVersion } : {}),
       },
       {
         kind: 'L3-person',

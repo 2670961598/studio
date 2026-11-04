@@ -15,6 +15,7 @@
  * executor-face.ts——拆出件与本文均 <600 行（尺寸阈即拆件依据）。
  */
 import { loadCompanyDirectory, readDirectoryFiles } from '@studio-next/company'
+import { loadRolePacks } from '../roles/loader.ts'
 import type {
   CompanySnapshot,
   CostGuardConfig,
@@ -230,15 +231,28 @@ export function buildServeRuntime(
     evidenceExportGuard: outbound.gate.guardEvidenceExport,
   })
   // 装配器工厂（L1 热重载换装配器=换快照重建——静态部分不随公司目录变）
-  const makeAssembler = (): PromptAssembler =>
-    createDefaultAssembler({
+  const makeAssembler = (): PromptAssembler => {
+    // L2.5 角色包（studio-dev-724）：公司目录 prompts/roles 只读装载；热重载重建装配器时重读。
+    const rolePacks = config.companyDir !== undefined ? loadRolePacks(path.resolve(config.companyDir)) : undefined
+    return createDefaultAssembler({
       fwkVersion: 'v0.5-demo',
       frameworkPrompts: '你是 Studio Next demo worker：按任务书目标产出，落 REPORT 与 summary，验收口径即闸门。',
       snapshot: companyState.snapshot,
       acceptance,
       docRefs: ['docs/17-§2（主循环七相位）', 'docs/17-§6（收割四要件）'],
       redactKnown: outbound.gate.promptRedactor, // 三不入·提示词（IMPL-07-11；IMPL-06-12 注入点）
+      ...(rolePacks !== undefined
+        ? {
+            rolePack: (person: PersonRef) => {
+              const pack = rolePacks.rolePackFor(person.id)
+              return pack === undefined
+                ? undefined
+                : { roleClass: pack.roleClass, classText: pack.classText, cardText: pack.card.body, cardVersion: pack.card.version }
+            },
+          }
+        : {}),
     })
+  }
 
   // worker 级 wkey（17-§7）：按单签发→TaskBrief.credentials env 注入→关单吊销（src/engine/worker-key.ts）
   const workerKeys = wireWorkerKeys(config, identity, clock, log, rootDelegation)

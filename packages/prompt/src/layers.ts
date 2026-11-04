@@ -33,10 +33,10 @@ import { sanitizeUntrusted } from './sanitize.ts'
 // 层标识与定界标记（C2-06：不可混淆定界标记）
 // ---------------------------------------------------------------------------
 
-export type LayerId = 'L0' | 'L1' | 'L2' | 'L3' | 'L4' | 'L5'
+export type LayerId = 'L0' | 'L1' | 'L2' | 'L2.5' | 'L3' | 'L4' | 'L5'
 
-/** 六层冻结顺序（C2-06；稳定层前置易变层后置，C2-11 prompt cache 友好） */
-export const LAYER_ORDER: readonly LayerId[] = ['L0', 'L1', 'L2', 'L3', 'L4', 'L5'] as const
+/** 七层冻结顺序（studio-dev-724：L2.5 角色包插于组织与个人之间；C2-06；稳定层前置易变层后置） */
+export const LAYER_ORDER: readonly LayerId[] = ['L0', 'L1', 'L2', 'L2.5', 'L3', 'L4', 'L5'] as const
 
 export function layerMarkerBegin(id: LayerId): string {
   return `<!-- LAYER:${id}:BEGIN -->`
@@ -47,7 +47,7 @@ export function layerMarkerEnd(id: LayerId): string {
 }
 
 /** 任何层定界标记（输入内容走私定界标记=结构性破坏，构建时拒收） */
-const ANY_LAYER_MARKER = /<!--\s*LAYER:L\d:(?:BEGIN|END)/
+const ANY_LAYER_MARKER = /<!--\s*LAYER:L\d(?:\.\d)?:(?:BEGIN|END)/
 
 /** 任何 trim 区标记（同理：trim 区只能由构建器声明，不许内容自带） */
 const ANY_TRIM_MARKER = /<!--\s*studio:trim:/
@@ -96,6 +96,8 @@ export function layerFingerprint(id: LayerId, identity: string, content: string)
       return `co.${sha8(content)}`
     case 'L2':
       return `org.${sha8(content)}`
+    case 'L2.5':
+      return `role.${sha8(content)}`
     case 'L3':
       return `p.${identity}.${sha8(content)}`
     case 'L4':
@@ -105,7 +107,7 @@ export function layerFingerprint(id: LayerId, identity: string, content: string)
   }
 }
 
-/** 六段按冻结序拼接为完整分层指纹（assemble 用） */
+/** 七段按冻结序拼接为完整分层指纹（assemble 用） */
 export function combinedFingerprint(layers: readonly PromptLayer[]): string {
   return layers.map((l) => l.fingerprint).join('/')
 }
@@ -167,6 +169,21 @@ export interface PersonFactSection {
   untrusted?: boolean
 }
 
+/** L2.5 角色包（studio-dev-724）：类模板（6 类，公司可编辑）+ 岗位卡（28 张）投影 */
+export interface L2_5RoleSource {
+  kind: 'L2.5-role'
+  /** 角色类（minister/planner/executor/qa/intel/ops） */
+  roleClass: string
+  /** 岗位工号（指纹身份） */
+  personId: string
+  /** 类模板正文（公司目录 prompts/roles/<class>.md；受信，公司 git daemon 唯一写入） */
+  classText: string
+  /** 岗位卡正文（prompts/roles/cards/<工号>.md；人工可改，受信） */
+  cardText: string
+  /** 卡片版本（指纹中参与内容摘要；缺省 1） */
+  cardVersion?: number
+}
+
 /** L3 个人：PersonRef + 人事档案事实段文本 */
 export interface L3PersonSource {
   kind: 'L3-person'
@@ -201,11 +218,12 @@ export interface L5ToolSource {
   plugins?: string[]
 }
 
-/** 六层内容源联合（L0-L5 定序见 LAYER_ORDER） */
+/** 七层内容源联合（L0-L5＋L2.5 定序见 LAYER_ORDER） */
 export type LayerSource =
   | L0FrameworkSource
   | L1CompanySource
   | L2OrgSource
+  | L2_5RoleSource
   | L3PersonSource
   | L4TaskSource
   | L5ToolSource
@@ -373,6 +391,30 @@ function buildL2(src: L2OrgSource): PromptLayer {
   }
 }
 
+function buildL2_5(src: L2_5RoleSource): PromptLayer {
+  assertNoSmuggledMarkers(src.classText, 'L2.5.classText')
+  assertNoSmuggledMarkers(src.cardText, 'L2.5.cardText')
+  if (src.classText.trim() === '') throw new Error('prompt/layers: L2.5 类模板为空——角色包不可为空（拒收）')
+  if (src.cardText.trim() === '') throw new Error(`prompt/layers: L2.5 岗位卡为空（${src.personId}）——拒收`)
+  const content = [
+    `# L2.5 · 角色包（${src.roleClass}｜${src.personId}｜卡版本 ${String(src.cardVersion ?? 1)}）`,
+    '## 类模板（公司可编辑；类边界先于个人）',
+    src.classText,
+    '## 岗位卡（职责/边界/工具/验收/升级）',
+    src.cardText,
+  ].join('\n')
+  return {
+    id: 'L2.5',
+    content,
+    source: `prompts/roles/${src.roleClass}.md + prompts/roles/cards/${src.personId}.md`,
+    identity: `${src.personId}@${src.roleClass}`,
+    fingerprint: layerFingerprint('L2.5', `${src.personId}@${src.roleClass}`, content),
+    protected: true, // 角色边界/升级链（任务书口径）
+    sanitized: 0,
+    trimmables: [],
+  }
+}
+
 const PERSON_SECTION_TITLES: Readonly<Record<PersonSectionKind, string>> = {
   position: '定位',
   duties: '职责',
@@ -519,6 +561,8 @@ export function buildLayer(src: LayerSource): PromptLayer {
       return buildL1(src)
     case 'L2-org':
       return buildL2(src)
+    case 'L2.5-role':
+      return buildL2_5(src)
     case 'L3-person':
       return buildL3(src)
     case 'L4-task':
@@ -532,22 +576,22 @@ export function buildLayer(src: LayerSource): PromptLayer {
 export function assertLayerSequence(layers: readonly PromptLayer[]): void {
   if (layers.length !== LAYER_ORDER.length) {
     throw new Error(
-      `prompt/layers: 层数 ${layers.length}≠6——六层齐且序（C2-06）：${LAYER_ORDER.join('→')}`,
+      `prompt/layers: 层数 ${layers.length}≠7——七层齐且序（C2-06；L2.5 角色包）：${LAYER_ORDER.join('→')}`,
     )
   }
   layers.forEach((layer, i) => {
     if (layer.id !== LAYER_ORDER[i]) {
       throw new Error(
-        `prompt/layers: 第 ${i} 层是 ${layer.id}，期望 ${LAYER_ORDER[i]}——六层顺序断言（C2-06）`,
+        `prompt/layers: 第 ${i} 层是 ${layer.id}，期望 ${LAYER_ORDER[i]}——七层顺序断言（C2-06；L2.5 角色包）`,
       )
     }
   })
 }
 
-/** 六源按冻结序构建六层（源序必须已是 L0→L5；同输入同 bytes） */
+/** 七源按冻结序构建七层（源序必须已是 L0→L5；L2.5 在 L2 后；同输入同 bytes） */
 export function buildLayers(sources: readonly LayerSource[]): PromptLayer[] {
   if (sources.length !== LAYER_ORDER.length) {
-    throw new Error(`prompt/layers: 内容源 ${sources.length} 份≠6——六层齐且序（C2-06）`)
+    throw new Error(`prompt/layers: 内容源 ${sources.length} 份≠7——七层齐且序（C2-06；L2.5 角色包）`)
   }
   const layers = sources.map(buildLayer)
   assertLayerSequence(layers)
