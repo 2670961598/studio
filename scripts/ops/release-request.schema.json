@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "studio-next/release-control/v1",
+  "title": "Studio Next 发布控制面三形状（studio-dev-719）",
+  "description": "request/approval/release-record 三形状。自校验由 release-lib.mjs 手写执行（不引第三方库）；本文件为冻结形状文档与机器可读参照。",
+  "definitions": {
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "version", "targetCommit", "tree", "previousCommit", "gatesDigest", "createdAt", "requestedBy"],
+      "properties": {
+        "schema": { "const": "studio-next/release-request/v1" },
+        "version": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$" },
+        "targetCommit": { "type": "string", "minLength": 4 },
+        "tree": { "type": "string", "minLength": 4 },
+        "previousCommit": { "type": ["string", "null"] },
+        "gatesDigest": { "type": "string", "minLength": 8 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "requestedBy": { "type": "string", "minLength": 1 },
+        "notes": { "type": "string" }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "version", "targetCommit", "tree", "gatesDigest", "approver", "approvedAt", "expiresAt", "commentRef"],
+      "properties": {
+        "schema": { "const": "studio-next/release-approval/v1" },
+        "version": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$" },
+        "targetCommit": { "type": "string", "minLength": 4 },
+        "tree": { "type": "string", "minLength": 4 },
+        "gatesDigest": { "type": "string", "minLength": 8 },
+        "approver": { "type": "string", "minLength": 1 },
+        "approvedAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "commentRef": { "type": "string", "minLength": 1 }
+      }
+    },
+    "releaseRecord": {
+      "type": "object",
+      "required": ["schema", "version", "commit", "tree", "gatesDigest", "releasedAt"],
+      "properties": {
+        "schema": { "const": "studio-next/release-record/v1" },
+        "version": { "type": "string" },
+        "commit": { "type": "string" },
+        "tree": { "type": "string" },
+        "previousCommit": { "type": ["string", "null"] },
+        "gatesDigest": { "type": "string" },
+        "requestRef": { "type": ["string", "null"] },
+        "approvalRef": { "type": ["string", "null"] },
+        "approver": { "type": ["string", "null"] },
+        "releasedAt": { "type": "string" },
+        "deploy": { "type": ["object", "null"] },
+        "pushed": { "type": "boolean" },
+        "type": { "const": "rollback" },
+        "rolledBackTo": { "type": "string" }
+      }
+    }
+  }
+}
