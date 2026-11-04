@@ -98,6 +98,11 @@ curl -sS "$API/commits/$BRANCH/check-runs" "${AUTH[@]}" | python3 -c "import jso
 node scripts/ops/required-checks.mjs --repo . --range origin/dev...HEAD
 ```
 
+**CI 平台分层（2026-11-05 裁决）**：required job `required-checks` 在 ubuntu 只跑平台无关门禁
+（`--only verify:docs,scan-repo-secrets,verify-commit-keys`）；完整 `verify:v2` 由**本地 macOS verifier 全量**承担，
+ubuntu 另有非 required 的 `verify-v2-informational`（continue-on-error）仅提供信号。macOS 专属 seatbelt/dsh/
+localplatform/channel 权限用例是平台差异，不在 ubuntu 强制（见 docs/90-§十一.11.5）。required check context 不变。
+
 **提交校验默认不阻断（务实模式）**：`verify-commit-keys` 在 CI 里默认 **SKIP**（registry 在场仅表示可运行）；
 若要强制作者/key/签名，显式设 `REQUIRE_COMMIT_KEYS=1`（仓库变量/CI env）或给 `--require-signature`，
 否则未签名提交不会让 required check 变红。

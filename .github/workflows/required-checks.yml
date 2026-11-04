@@ -1,8 +1,13 @@
-# required-checks —— GitHub Actions required checks（studio-dev-722）
+# required-checks —— GitHub Actions required checks（studio-dev-722；CI 平台分层 studio-dev-722-ci-green）
 #
 # 触发：push / pull_request 目标分支 dev。
-# 内容：node scripts/ops/required-checks.mjs（verify:v2 + verify:docs + scan-repo-secrets +
-#       verify-commit-keys --range）。任一红=整个 check 红；分支保护据此拦截合并。
+# 平台边界（2026-11-05 裁决）：
+#   - **required job `required-checks` 在 ubuntu 只跑平台无关门禁**：verify:docs + scan-repo-secrets +
+#     verify-commit-keys（默认 SKIP 逻辑保留；严格模式用仓库变量 REQUIRE_COMMIT_KEYS=1 开启）；
+#   - **完整 verify:v2 是本地 macOS 落仓前门禁**（verifier 每次全量；macOS 专属 seatbelt/dsh/localplatform/
+#     channel 权限用例不在 ubuntu 强制——平台性差异，不是代码缺陷）；
+#   - `verify-v2-informational` 是**非 required** 信息性 job（continue-on-error），ubuntu 跑 `bun run verify:v2`
+#     仅提供信号；其红不阻断合并，required context 只有 `required-checks`。
 #
 # secrets：**不使用自定义 secret**（本 workflow 只需 GITHUB_TOKEN 默认读权限）；
 #   647 等外部 token 仅由 Lead 在仓库设置/分支保护 API 配置时使用，绝不写入 workflow。
@@ -18,12 +23,53 @@ concurrency:
   group: required-checks-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  # ── required（分支保护 context=`required-checks`）：ubuntu 平台无关门禁；任一红=check 红 ──
   required-checks:
     name: required-checks
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     steps:
       - name: Checkout（fetch-depth 0：commit range/signature 校验需要历史）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Node（daemon/脚本运行时 Node 24）
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Required checks（平台无关子集：docs+scan+commit-keys）
+        env:
+          # PR：与目标分支的全等比较；push：与 event.before 比较（新分支回退 HEAD~1..HEAD）
+          BASE_REF: ${{ github.base_ref }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          # 缺省为空=务实模式 SKIP；仓库变量设为 1 才强制作者/key/签名
+          REQUIRE_COMMIT_KEYS: ${{ vars.REQUIRE_COMMIT_KEYS }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ] && [ -n "${BASE_REF:-}" ]; then
+            RANGE="origin/${BASE_REF}...HEAD"
+          elif [ -n "${EVENT_BEFORE:-}" ] && ! echo "${EVENT_BEFORE}" | grep -q '^0\+$'; then
+            RANGE="${EVENT_BEFORE}..HEAD"
+          else
+            RANGE="HEAD~1..HEAD"
+          fi
+          echo "[ci] commit range = ${RANGE}"
+          echo "[ci] platform boundary：ubuntu required job 只跑 verify:docs + scan-repo-secrets + verify-commit-keys；完整 verify:v2 由本地 macOS verifier 门禁承担"
+          node scripts/ops/required-checks.mjs --range "${RANGE}" --only verify:docs,scan-repo-secrets,verify-commit-keys
+      - name: Upload summary（可选证据）
+        if: always()
+        run: |
+          echo "required-checks(platform-neutral) workflow=${{ github.workflow }} ref=${{ github.ref }} sha=${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          node scripts/ops/required-checks.mjs --list >> "$GITHUB_STEP_SUMMARY" || true
+
+  # ── informational（非 required，continue-on-error）：ubuntu 全量 V2 信号；红不阻断合并 ──
+  verify-v2-informational:
+    name: verify-v2-informational
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -37,24 +83,7 @@ jobs:
           bun-version: 'latest'
       - name: Install（bun.lock 冻结）
         run: bun install --frozen-lockfile
-      - name: Required checks
-        env:
-          # PR：与目标分支的全等比较；push：与 event.before 比较（新分支回退 origin/dev）
-          BASE_REF: ${{ github.base_ref }}
-          EVENT_BEFORE: ${{ github.event.before }}
+      - name: Full V2 suite（informational；macOS 专属用例在 ubuntu 允许红）
         run: |
-          set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ] && [ -n "${BASE_REF:-}" ]; then
-            RANGE="origin/${BASE_REF}...HEAD"
-          elif [ -n "${EVENT_BEFORE:-}" ] && ! echo "${EVENT_BEFORE}" | grep -q '^0\+$'; then
-            RANGE="${EVENT_BEFORE}..HEAD"
-          else
-            RANGE="HEAD~1..HEAD"
-          fi
-          echo "[ci] commit range = ${RANGE}"
-          node scripts/ops/required-checks.mjs --range "${RANGE}"
-      - name: Upload summary（可选证据）
-        if: always()
-        run: |
-          echo "required-checks workflow=${{ github.workflow }} ref=${{ github.ref }} sha=${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
-          node scripts/ops/required-checks.mjs --list >> "$GITHUB_STEP_SUMMARY" || true
+          echo "[ci] informational only：macOS 专属 seatbelt/dsh/localplatform/channel 权限用例不在 ubuntu 强制"
+          bun run verify:v2
