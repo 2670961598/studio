@@ -129,6 +129,8 @@ export function withRelayedSeq(state: RelayState, person: string, relayedSeq: nu
 export interface RelayStateStore {
   relayedSeq(person: string): number
   dispatchedSeq(person: string): number
+  /** 是否已有显式 dispatchedSeq（**存在性**判定：0 也算已初始化；缺省/null=未初始化→需 bootstrap） */
+  hasDispatchedSeq(person: string): boolean
   updateRelayed(person: string, seq: number): void
   updateDispatched(person: string, seq: number): void
 }
@@ -140,6 +142,10 @@ export function createRelayStateStore(file: string, log?: (line: string) => void
     },
     dispatchedSeq(person: string): number {
       return dispatchedSeqOf(loadRelayState(file, log), person)
+    },
+    hasDispatchedSeq(person: string): boolean {
+      const cursor = loadRelayState(file, log).persons[person]
+      return cursor !== undefined && typeof cursor.dispatchedSeq === 'number'
     },
     updateRelayed(person: string, seq: number): void {
       saveRelayState(file, withRelayedSeq(loadRelayState(file, log), person, seq))

@@ -54,7 +54,7 @@ interface Harness {
   dispatch: () => Promise<number>
 }
 
-function harness(options: { failCreateTimes?: number; dir?: string } = {}): Harness {
+function harness(options: { failCreateTimes?: number; dir?: string; seedCursor?: boolean } = {}): Harness {
   const dir = options.dir ?? tempDir()
   const store = new ConversationStore({
     dir,
@@ -66,6 +66,10 @@ function harness(options: { failCreateTimes?: number; dir?: string } = {}): Harn
   })
   store.bind(ROOM, 'PRIME-0', PRODUCER, 'default')
   const statePath = path.join(dir, 'var', 'conversations', '.relay-state.json')
+  // 既有 dispatch 用例默认预置 dispatchedSeq=0（模拟 watcher 已初始化）；dir 复用（重启）与
+  // 首跑 bootstrap 用例不预置——保持各自语义（studio-dev-706）。
+  const seedCursor = options.seedCursor ?? options.dir === undefined
+  if (seedCursor) createRelayStateStore(statePath).updateDispatched('PRIME-0', 0)
   const createCalls: Harness['createCalls'] = []
   const patrows: Harness['patrows'] = []
   const candidates: Harness['candidates'] = []
@@ -219,5 +223,50 @@ describe('面板源派单 watcher（C）', () => {
     expect(h.createCalls[0]?.title).toContain('从面板发来的消息')
     const view = await adapter.read('PRIME-0')
     expect(view.filter((entry) => entry.kind === 'message')).toHaveLength(1)
+  })
+})
+
+describe('首跑 bootstrap（studio-dev-706：历史不回填；停机期消息不误跳）', () => {
+  it('无状态＋已有历史：首跑不派历史，只推进到最大可见 seq；之后新消息派单', async () => {
+    const h = harness({ seedCursor: false })
+    appendPanel(h, '历史一')
+    appendPanel(h, '历史二')
+    expect(await h.dispatch()).toBe(0) // 首跑不回填
+    expect(h.createCalls).toHaveLength(0)
+    expect(createRelayStateStore(h.statePath).dispatchedSeq('PRIME-0')).toBe(2)
+    expect(createRelayStateStore(h.statePath).hasDispatchedSeq('PRIME-0')).toBe(true)
+    appendPanel(h, '新消息')
+    expect(await h.dispatch()).toBe(1)
+    expect(h.createCalls).toHaveLength(1)
+    expect(h.createCalls[0]?.title).toContain('新消息')
+  })
+
+  it('有 relayedSeq 无 dispatchedSeq（最近迁移）：以 relayedSeq 初始化，历史不补派', async () => {
+    const h = harness({ seedCursor: false })
+    appendPanel(h, '已中继一')
+    appendPanel(h, '已中继二')
+    createRelayStateStore(h.statePath).updateRelayed('PRIME-0', 2)
+    expect(createRelayStateStore(h.statePath).hasDispatchedSeq('PRIME-0')).toBe(false)
+    expect(await h.dispatch()).toBe(0)
+    expect(h.createCalls).toHaveLength(0)
+    expect(createRelayStateStore(h.statePath).dispatchedSeq('PRIME-0')).toBe(2)
+    appendPanel(h, '迁移后新消息')
+    expect(await h.dispatch()).toBe(1)
+    expect(h.createCalls[0]?.title).toContain('迁移后新消息')
+  })
+
+  it('daemon 停机期到达的消息：恢复后 cursor 不变，按序补派（不误跳）', async () => {
+    const h = harness()
+    appendPanel(h, '停机前')
+    expect(await h.dispatch()).toBe(1) // cursor=1
+    appendPanel(h, '停机期一')
+    appendPanel(h, '停机期二')
+    expect(await h.dispatch()).toBe(1) // 拍内每工号 1 条
+    expect(await h.dispatch()).toBe(1)
+    expect(h.createCalls.map((call) => call.title)).toEqual([
+      expect.stringContaining('停机前'),
+      expect.stringContaining('停机期一'),
+      expect.stringContaining('停机期二'),
+    ])
   })
 })

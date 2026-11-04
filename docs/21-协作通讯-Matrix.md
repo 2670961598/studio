@@ -129,6 +129,9 @@
   经 notify 面 `targets.room` 发回该工号绑定 DM 房（**daemon 读面随文件签名变化重载——面板进程
   写入立即可见**）；成功推进游标、失败积压重试不丢；同一 seq 只发一次；重启从游标恢复不重发；
   只处理 panel 源（Matrix 入站/员工回复绝不进此路，防回环）。
+  首跑/迁移 bootstrap：状态文件无该工号 `dispatchedSeq` 时，以其 `relayedSeq`（若有）或**当前最大可见
+  seq** 初始化——历史面板消息**不回填**；之后新消息（含 daemon 停机期到达、恢复后 seq 更大者）照常派单。
+
 - **面板→岗位派单（C，studio-dev-654b）**：拍边界 watcher 读 `source='panel'` 的 `msg`（合成 seq>
   该工号 `dispatchedSeq`）→ 调用 Phase 1 同一 **轮次物化**（建 `[对话]` 单→`syncMirror`→`recordTurn`→
   PATROL 审计锚→`candidates/onMutation`）唤醒绑定岗位；**不重复 appendMessage**（面板已落盘）、只处理

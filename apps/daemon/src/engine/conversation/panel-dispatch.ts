@@ -49,7 +49,21 @@ export async function dispatchPanelPending(deps: PanelDispatchDeps): Promise<num
   let dispatched = 0
 
   for (const person of store.personIds()) {
-    const cursor = stateStore.dispatchedSeq(person)
+    // 首跑/迁移期 bootstrap（studio-dev-706，docs/21-§七.4）：无 dispatchedSeq 时以
+    // relayedSeq（若有）或当前最大可见 seq 初始化——**历史面板消息不回填**；之后新消息照常派。
+    let cursor = stateStore.dispatchedSeq(person)
+    if (!stateStore.hasDispatchedSeq(person)) {
+      const allRows = panelVisibleRows(store.visibleRecords(person))
+      const maxVisibleSeq = allRows.length > 0 ? (allRows[allRows.length - 1]?.seq ?? 0) : 0
+      const relayed = stateStore.relayedSeq(person)
+      const initial = relayed > 0 ? Math.min(relayed, maxVisibleSeq) : maxVisibleSeq
+      stateStore.updateDispatched(person, initial)
+      cursor = initial
+      log(
+        `[conversation] 面板派单游标初始化：person=${person} dispatchedSeq=${String(initial)}` +
+          `（历史不回填；relayedSeq=${String(relayed)} maxVisibleSeq=${String(maxVisibleSeq)}）`,
+      )
+    }
     const pending = panelVisibleRows(store.visibleRecords(person)).filter(
       (row) => row.seq > cursor && row.row.kind === 'msg' && row.row.role === 'producer' && panelSourceOf(row.row) === 'panel',
     )
