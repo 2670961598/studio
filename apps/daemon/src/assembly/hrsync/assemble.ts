@@ -14,6 +14,7 @@
  * hrSync 关=零装配零注入，既有行为字节不变（缺省关——docs/52-§九）。
  */
 
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { resolve as resolvePath } from 'node:path'
 import type { CompanySnapshot, FlowPlatform } from '@studio-next/contract'
@@ -34,7 +35,7 @@ import { loadTaigaFieldMap, resolveTaigaAuth } from '../platform/wire.ts'
 // 类型环破口（IMPL-06-05）：ServeConfig 归位 assembly/serve/config.ts——配置面类型不再
 // 经 serve.ts 门面中转（hrsync 装配体只依赖配置契约与执行体，不反向依赖门面）
 import type { ServeConfig } from '../serve/config.ts'
-import { collectHrSecrets, parseHrRooms, parseHrTaigaRoleMap, resolveHrTaigaRole } from './config.ts'
+import { collectHrSecrets, parseHrRooms, parseHrTaigaAccountPool, parseHrTaigaRoleMap, resolveHrTaigaRole } from './config.ts'
 
 /** 装配入参（serve.ts buildServeRuntime 现场件；raw platform=未经网关代理的原件） */
 export interface AssembleHrSyncArgs {
@@ -88,7 +89,36 @@ export function assembleHrSync(args: AssembleHrSyncArgs): { drain(): Promise<HrS
   const { redact } = createRedactors(knownSecrets)
   const faces: { taiga?: TaigaHrFace; matrix?: MatrixHrFace; rooms?: HrRoomAliases; taigaRoleOf?: (level: number, roleName?: string) => string } = {}
   if (config.platform === 'taiga') {
-    const inviteLogPath = resolvePath(config.hrTaigaInviteLog ?? '')
+    const inviteLogPath = config.hrTaigaInviteLog !== undefined && config.hrTaigaInviteLog !== '' ? resolvePath(config.hrTaigaInviteLog) : ''
+    const dockerContainer = config.hrTaigaInviteLogDocker
+    const readFileLog = (): string => {
+      if (inviteLogPath === '') throw new Error('邀请令牌文件源未配置（hrTaigaInviteLog）')
+      return readFileSync(inviteLogPath, 'utf8')
+    }
+    // 793：docker logs 源优先（带 10s 超时/显式报错）；失败降级文件并记录（不静默）
+    const readInviteLog = (sinceMs: number): string => {
+      if (dockerContainer !== undefined) {
+        try {
+          return execFileSync('docker', ['logs', '--since', new Date(sinceMs).toISOString(), dockerContainer], {
+            encoding: 'utf8',
+            timeout: 10_000,
+            maxBuffer: 8 * 1024 * 1024,
+          })
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          if (inviteLogPath !== '') {
+            log(`[serve] hr-sync 警告：docker logs 读取失败（容器=${dockerContainer}：${msg}）→ 降级文件源 ${inviteLogPath}（793）`)
+            return readFileLog()
+          }
+          throw new Error(`docker logs 读取失败（容器=${dockerContainer}）：${msg}——793 邀请令牌源显式失败，不静默`)
+        }
+      }
+      return readFileLog()
+    }
+    const inviteLogLabel =
+      dockerContainer !== undefined
+        ? `docker:${dockerContainer}${inviteLogPath !== '' ? `（fallback:${inviteLogPath}）` : ''}`
+        : `file:${inviteLogPath}`
     faces.taiga = createTaigaHrFace({
       context: buildContext({
         baseUrl: config.taigaUrl ?? '',
@@ -99,10 +129,13 @@ export function assembleHrSync(args: AssembleHrSyncArgs): { drain(): Promise<HrS
       }),
       baseUrl: config.taigaUrl ?? '',
       inviteLog: {
-        read: (): Promise<string> => Promise.resolve(readFileSync(inviteLogPath, 'utf8')),
+        read: (sinceMs: number): Promise<string> => Promise.resolve(readInviteLog(sinceMs)),
         polls: config.hrTaigaInvitePolls,
         intervalMs: config.hrTaigaInvitePollMs,
       },
+      emailDomain: config.hrTaigaEmailDomain,
+      accountPool: parseHrTaigaAccountPool(config.hrTaigaAccountPool),
+      inviteLogLabel,
     })
     // 784：注入公司角色/职级 → Taiga 项目角色映射（docs/52-§6.2；未命中走 fallback=stakeholder）
     const roleMap = parseHrTaigaRoleMap(config.hrTaigaRoleMap)
@@ -112,7 +145,8 @@ export function assembleHrSync(args: AssembleHrSyncArgs): { drain(): Promise<HrS
       `[serve] hr-sync Taiga 角色映射：role ${String(roleMap.byRole.size)} 项 / level ${String(roleMap.byLevel.size)} 项；` +
         `fallback=${config.hrTaigaRoleFallback}（docs/52-§6.2；role: 优先于 level:）`,
     )
-    log(`[serve] hr-sync Taiga 面：项目 ${config.taigaProject ?? ''}；邀请令牌日志 ${inviteLogPath}（轮询 ${String(config.hrTaigaInvitePolls)}×${String(config.hrTaigaInvitePollMs)}ms——docs/52-§6.1）`)
+    log(`[serve] hr-sync Taiga 面：项目 ${config.taigaProject ?? ''}；邀请令牌源 ${inviteLogLabel}（轮询 ${String(config.hrTaigaInvitePolls)}×${String(config.hrTaigaInvitePollMs)}ms——docs/52-§6.1）`)
+    log(`[serve] hr-sync Taiga 账号面：emailDomain=${config.hrTaigaEmailDomain}；accountPool ${String(Object.keys(parseHrTaigaAccountPool(config.hrTaigaAccountPool)).length)} 项（A 自动建号/B 预建池——docs/52-§6.1.1）`)
   } else {
     log('[serve] hr-sync 警告：platform 非 taiga——Taiga 面未装配，入场/升降/退场的 taiga 任务将重试至 failed（如实明报，不静默）')
   }

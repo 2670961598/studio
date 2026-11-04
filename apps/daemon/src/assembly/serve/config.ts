@@ -396,6 +396,9 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'hrMatrix':
       case 'hrMatrixRooms':
       case 'hrTaigaInviteLog':
+      case 'hrTaigaInviteLogDocker':
+      case 'hrTaigaEmailDomain':
+      case 'hrTaigaAccountPool':
       case 'hrTaigaInvitePolls':
       case 'hrTaigaInvitePollMs':
       case 'hrTaigaRoleMap':

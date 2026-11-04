@@ -18,7 +18,10 @@ import {
   HR_SERVE_DEFAULTS,
   HR_SERVE_KEYS,
   TAIGA_PROJECT_ROLE_SLUGS,
+  assertDockerContainerName,
+  assertTaigaEmailDomain,
   assertTaigaProjectRole,
+  parseHrTaigaAccountPool,
   parseHrTaigaRoleMap,
   resolveHrTaigaRole,
   validateHrServeCross,
@@ -264,5 +267,53 @@ describe('784 v3/F1：parseDaemonConfig 真路径接线（hrTaigaRoleMap/Fallbac
     const cfg = parseDaemonConfig(BASE_YAML)
     expect(cfg.hrTaigaRoleFallback).toBe('stakeholder')
     expect(cfg.hrTaigaRoleMap).toBeUndefined()
+  })
+})
+
+describe('793：Taiga 账号面配置（emailDomain/accountPool/docker logs 源）', () => {
+  it('emailDomain：缺省 studio.local；trim/lower 归一；非法域名拒', () => {
+    expect(HR_SERVE_DEFAULTS.hrTaigaEmailDomain).toBe('studio.local')
+    expect(HR_SERVE_KEYS).toContain('hrTaigaEmailDomain')
+    expect(HR_SERVE_KEYS).toContain('hrTaigaAccountPool')
+    expect(HR_SERVE_KEYS).toContain('hrTaigaInviteLogDocker')
+    expect(assertTaigaEmailDomain(' Studio.Local ', 'x')).toBe('studio.local')
+    expect(assertTaigaEmailDomain('corp.example.com', 'x')).toBe('corp.example.com')
+    expect(() => assertTaigaEmailDomain('bad domain', 'x')).toThrow(/域名/)
+    expect(() => assertTaigaEmailDomain('http://x', 'x')).toThrow(/域名/)
+  })
+
+  it('accountPool：JSON/紧凑形解析；重复/坏值/坏 email 拒；空合法', () => {
+    expect(parseHrTaigaAccountPool(undefined)).toEqual({})
+    expect(parseHrTaigaAccountPool('{}')).toEqual({})
+    expect(parseHrTaigaAccountPool('{"REL-1":"rel-1@studio.local"}')).toEqual({ 'REL-1': 'rel-1@studio.local' })
+    expect(parseHrTaigaAccountPool('REL-1=rel-1@studio.local;ENG-1=eng1')).toEqual({ 'REL-1': 'rel-1@studio.local', 'ENG-1': 'eng1' })
+    expect(() => parseHrTaigaAccountPool('REL-1=a@x.local;REL-1=b@x.local')).toThrow(/重复/)
+    expect(() => parseHrTaigaAccountPool('REL-1=')).toThrow(/空|login=/)
+    expect(() => parseHrTaigaAccountPool('REL-1=bad@')).toThrow(/邮箱/)
+  })
+
+  it('docker 容器名：合法/非法（防命令注入）', () => {
+    expect(assertDockerContainerName('taiga-docker-taiga-back-1', 'x')).toBe('taiga-docker-taiga-back-1')
+    expect(() => assertDockerContainerName('bad name', 'x')).toThrow(/容器名/)
+    expect(() => assertDockerContainerName('a;rm -rf /', 'x')).toThrow(/容器名/)
+  })
+
+  it('parseDaemonConfig 真路径：三键接线/非法拒；docker-only 可过；无源拒', () => {
+    const base = [
+      'db: ./x.sqlite', 'company: demo', 'platform: taiga', 'taigaUrl: http://127.0.0.1:9000', 'taigaProject: demo', 'taigaAuth: password',
+      'hrSync: true', 'hrTaigaInviteLog: /tmp/invite.log',
+    ].join('\n')
+    const cfg = parseDaemonConfig(`${base}\nhrTaigaEmailDomain: Studio.Local\nhrTaigaAccountPool: '{"REL-1":"rel-1@studio.local"}'\nhrTaigaInviteLogDocker: taiga-docker-taiga-back-1`)
+    expect(cfg.hrTaigaEmailDomain).toBe('studio.local')
+    expect(cfg.hrTaigaAccountPool).toContain('REL-1')
+    expect(cfg.hrTaigaInviteLogDocker).toBe('taiga-docker-taiga-back-1')
+    expect(() => parseDaemonConfig(`${base}\nhrTaigaEmailDomain: bad domain`)).toThrow(/域名/)
+    expect(() => parseDaemonConfig(`${base}\nhrTaigaAccountPool: 'not-json'`)).toThrow(/JSON|条目/)
+    expect(() => parseDaemonConfig(`${base}\nhrTaigaInviteLogDocker: 'bad name'`)).toThrow(/容器名/)
+    // 仅 docker 源（无 hrTaigaInviteLog）也可过；两者都无 → CONFIG_INVALID
+    const dockerOnly = ['db: ./x.sqlite', 'company: demo', 'platform: taiga', 'taigaUrl: http://127.0.0.1:9000', 'taigaProject: demo', 'taigaAuth: password', 'hrSync: true', 'hrTaigaInviteLogDocker: taiga-docker-taiga-back-1'].join('\n')
+    expect(parseDaemonConfig(dockerOnly).hrTaigaInviteLogDocker).toBe('taiga-docker-taiga-back-1')
+    const noSource = ['db: ./x.sqlite', 'company: demo', 'platform: taiga', 'taigaUrl: http://127.0.0.1:9000', 'taigaProject: demo', 'taigaAuth: password', 'hrSync: true'].join('\n')
+    expect(() => parseDaemonConfig(noSource)).toThrow(/hrTaigaInviteLog/)
   })
 })

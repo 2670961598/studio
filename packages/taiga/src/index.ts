@@ -75,6 +75,7 @@ export const PACKAGE_NAME = '@studio-next/taiga'
 export const PACKAGE_STATUS = 'onboard-cut'
 export {
   findInviteToken,
+  findMembershipByEmail,
   findMembershipByUsername,
   inviteMember,
   listMemberships,

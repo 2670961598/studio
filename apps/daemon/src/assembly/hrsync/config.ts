@@ -45,8 +45,24 @@ export interface HrServeConfig {
    * departments[].path 原文比对（「调」部门房重挂面）。
    */
   hrMatrixRooms?: string
-  /** Taiga 邀请令牌日志文件（hrSync+platform: taiga 时必配；docs/52-§6.1 tokenSource——docker logs/邮件日志落盘文件） */
+  /** Taiga 邀请令牌日志文件（兜底源；docs/52-§6.1 tokenSource——docker logs/邮件日志落盘文件） */
   hrTaigaInviteLog?: string
+  /**
+   * 邀请令牌 docker logs 源容器名（793；与 hrTaigaInviteLog 至少配一个）：Taiga console email backend
+   * 把邀请邮件打到容器 stdout——daemon 用 `docker logs --since <窗口> <container>` 抓 /invitation/<token>。
+   * 非法容器名=CONFIG_INVALID；两者都配=优先 docker，失败降级文件并记录（docs/52-§6.1）。
+   */
+  hrTaigaInviteLogDocker?: string
+  /**
+   * 邀请邮箱域（793 A 自动建号；缺省 `studio.local`）：Taiga 对"未知用户"只接受**合法邮箱形 username**
+   * 发邀请；自动流程用 `<login>@<domain>` 作邀请锚（console 后端不真发信）。必须小写域名形。
+   */
+  hrTaigaEmailDomain: string
+  /**
+   * 预建账号池（793 B；缺省空映射）：`{"REL-1":"rel-1@studio.local"}` JSON（或 `login=value;...` 紧凑形）。
+   * 命中=用池内 Taiga email/username 直接绑 membership（不建号）；值可为 email（推荐）或已存在 username。
+   */
+  hrTaigaAccountPool?: string
   /**
    * 公司角色/职级 → Taiga 项目角色 slug 映射（docs/52-§6.2；必配面可选）：
    * `role:<岗位名>=<slug>;level:<n>=<slug>`（分号隔项；slug 形如 stakeholder/back/product-owner）。
@@ -82,6 +98,7 @@ export const HR_SERVE_DEFAULTS: HrServeConfig = {
   hrMatrix: false,
   hrTaigaInvitePolls: 10,
   hrTaigaInvitePollMs: 500,
+  hrTaigaEmailDomain: 'studio.local',
   hrTaigaRoleFallback: 'stakeholder',
   hrPeopleWatch: false,
 }
@@ -95,6 +112,9 @@ export const HR_SERVE_KEYS = [
   'hrMatrix',
   'hrMatrixRooms',
   'hrTaigaInviteLog',
+  'hrTaigaInviteLogDocker',
+  'hrTaigaEmailDomain',
+  'hrTaigaAccountPool',
   'hrTaigaInvitePolls',
   'hrTaigaInvitePollMs',
   'hrTaigaRoleMap',
@@ -143,6 +163,22 @@ export function coerceHrServeKey(
     case 'hrTaigaInviteLog':
       cfg.hrTaigaInviteLog = h.str(value, key)
       return true
+    case 'hrTaigaInviteLogDocker': {
+      const v = h.str(value, key)
+      cfg.hrTaigaInviteLogDocker = assertDockerContainerName(v, 'daemon.yaml hrTaigaInviteLogDocker')
+      return true
+    }
+    case 'hrTaigaEmailDomain': {
+      const v = h.str(value, key)
+      cfg.hrTaigaEmailDomain = assertTaigaEmailDomain(v, 'daemon.yaml hrTaigaEmailDomain')
+      return true
+    }
+    case 'hrTaigaAccountPool': {
+      const v = h.str(value, key)
+      parseHrTaigaAccountPool(v)
+      cfg.hrTaigaAccountPool = v
+      return true
+    }
     case 'hrTaigaRoleMap': {
       const v = h.str(value, key)
       parseHrTaigaRoleMap(v) // 解析即验（非法条目/未知前缀/重复键 → CONFIG_INVALID 拒启动）
@@ -179,6 +215,9 @@ export function validateHrServeCross(cfg: {
   hrSync: boolean
   platform: string
   hrTaigaInviteLog?: string
+  hrTaigaInviteLogDocker?: string
+  hrTaigaEmailDomain?: string
+  hrTaigaAccountPool?: string
   hrTaigaRoleMap?: string
   hrTaigaRoleFallback?: string
   hrMatrix: boolean
@@ -186,8 +225,17 @@ export function validateHrServeCross(cfg: {
   hrPeopleWatch: boolean
 }): void {
   if (cfg.hrSync) {
-    if (cfg.platform === 'taiga' && (cfg.hrTaigaInviteLog === undefined || cfg.hrTaigaInviteLog === '')) {
-      throw new Error('daemon.yaml：hrSync: true + platform: taiga 需配 hrTaigaInviteLog（邀请令牌只落 console/邮件日志——docs/52-§6.1 tokenSource；未配则 Taiga 建号链无法闭环）')
+    if (
+      cfg.platform === 'taiga' &&
+      (cfg.hrTaigaInviteLog === undefined || cfg.hrTaigaInviteLog === '') &&
+      (cfg.hrTaigaInviteLogDocker === undefined || cfg.hrTaigaInviteLogDocker === '')
+    ) {
+      throw new Error('daemon.yaml：hrSync: true + platform: taiga 需配 hrTaigaInviteLog（文件兜底）或 hrTaigaInviteLogDocker（793 docker logs 源；至少一个）——否则邀请令牌无法闭环（docs/52-§6.1）')
+    }
+    if (cfg.platform === 'taiga') {
+      assertTaigaEmailDomain(cfg.hrTaigaEmailDomain ?? 'studio.local', 'daemon.yaml hrTaigaEmailDomain')
+      parseHrTaigaAccountPool(cfg.hrTaigaAccountPool)
+      if (cfg.hrTaigaInviteLogDocker !== undefined) assertDockerContainerName(cfg.hrTaigaInviteLogDocker, 'daemon.yaml hrTaigaInviteLogDocker')
     }
     // 784：Taiga 角色映射面解析即验（fallback 缺省 stakeholder；map 可空=全部 fallback）
     if (cfg.platform === 'taiga') {
@@ -235,6 +283,69 @@ export function assertTaigaProjectRole(raw: string, context: string): string {
     )
   }
   return slug
+}
+
+/** 邀请邮箱域校验/归一（793；小写域名形，允许子域；归一=trim+lower） */
+export function assertTaigaEmailDomain(raw: string, context: string): string {
+  const domain = String(raw).trim().toLowerCase()
+  const DOMAIN_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
+  if (!DOMAIN_RE.test(domain)) {
+    throw new Error(`CONFIG_INVALID：${context} 须为小写域名形（如 studio.local；无空格/协议/斜杠；实得 ${JSON.stringify(raw)}——docs/52-§6.1.1）`)
+  }
+  return domain
+}
+
+/** docker 容器名校验（793 docker logs 源；仅 [A-Za-z0-9_.-]，防命令注入） */
+export function assertDockerContainerName(raw: string, context: string): string {
+  const name = String(raw).trim()
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(name)) {
+    throw new Error(`CONFIG_INVALID：${context} 容器名非法（仅 [A-Za-z0-9_.-]，1-128 字符；实得 ${JSON.stringify(raw)}）`)
+  }
+  return name
+}
+
+/**
+ * 预建账号池解析（793 B）：JSON 对象 `{"REL-1":"rel-1@studio.local"}` 或紧凑 `REL-1=rel-1@studio.local;ENG-1=eng-1`。
+ * - login 键=工号（非空、不含空格/分号/=/"）；
+ * - 值=已存在 Taiga user 的 email（含 @，推荐——直接绑 membership 不过 contact 校验）或 username（不含 @）；
+ * - 重复键/空值/非法字符=CONFIG_INVALID（解析即验，不静默忽略）。
+ */
+export function parseHrTaigaAccountPool(spec?: string): Record<string, string> {
+  if (spec === undefined || spec.trim() === '') return {}
+  const out: Record<string, string> = {}
+  const text = spec.trim()
+  let entries: [string, string][]
+  if (text.startsWith('{')) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(text)
+    } catch (err) {
+      throw new Error(`CONFIG_INVALID：hrTaigaAccountPool JSON 解析失败（${err instanceof Error ? err.message : String(err)}）`)
+    }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('CONFIG_INVALID：hrTaigaAccountPool 须为 JSON 对象（login→email/username）')
+    }
+    entries = Object.entries(parsed as Record<string, unknown>).map(([k, v]) => [k, String(v)] as [string, string])
+  } else {
+    entries = text.split(';').filter((p) => p.trim() !== '').map((part) => {
+      const eq = part.indexOf('=')
+      if (eq <= 0) throw new Error(`CONFIG_INVALID：hrTaigaAccountPool 条目须 login=email/username（实得 ${JSON.stringify(part)}）`)
+      return [part.slice(0, eq).trim(), part.slice(eq + 1).trim()] as [string, string]
+    })
+  }
+  for (const [login, value] of entries) {
+    if (login === '' || /[\s;=,{}"]/.test(login)) throw new Error(`CONFIG_INVALID：hrTaigaAccountPool login 非法（${JSON.stringify(login)}）`)
+    if (out[login] !== undefined) throw new Error(`CONFIG_INVALID：hrTaigaAccountPool login 重复（${login}）`)
+    const v = value.trim()
+    if (v === '') throw new Error(`CONFIG_INVALID：hrTaigaAccountPool 值不能为空（${login}）`)
+    if (v.includes('@')) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) throw new Error(`CONFIG_INVALID：hrTaigaAccountPool 邮箱值非法（${login}→${JSON.stringify(v)}）`)
+    } else if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(v)) {
+      throw new Error(`CONFIG_INVALID：hrTaigaAccountPool username 值非法（${login}→${JSON.stringify(v)}）`)
+    }
+    out[login] = v
+  }
+  return out
 }
 
 /** 公司角色/职级 → Taiga 项目角色映射（docs/52-§6.2；分号隔项，role: 优先于 level:） */

@@ -212,15 +212,32 @@ export async function findMembershipByUsername(ctx: TaigaContext, username: stri
  * 邀请发出后**令牌不在本响应内**（落 console/邮件日志——§6.1/§13 风险1）：
  * 令牌抓取走 findInviteToken + 装配侧日志读面（daemon faces 轮询），不在本包。
  */
-export async function inviteMember(ctx: TaigaContext, input: { username: string; roleSlug: string }): Promise<TaigaMembership> {
+/**
+ * 邀请/绑定成员（793：Taiga 对未知用户只接受**合法邮箱形** username——docs/52-§6.1）：
+ * - 已知 user：`username` 传其 email（含 @）最稳（绕过 contacts 校验；user 命中即直绑成员）；
+ * - 未知 user：`email` 传此人工号别名邮箱，Taiga 落邀请行（user=null,email=别地址），后续 register 绑号。
+ */
+export async function inviteMember(
+  ctx: TaigaContext,
+  input: { username: string; roleSlug: string; email?: string },
+): Promise<TaigaMembership> {
   const projectId = await ctx.project()
   const roleId = await roleIdOf(ctx, input.roleSlug)
+  // username 字段语义=Taiga 查找键：email 形=按邮箱找人/邀请；纯 username=按用户名找人（非联系人会被拒，793 探针）
+  const username = input.email !== undefined && input.email !== '' ? input.email : input.username
   const res = await ctx.client.request({
     method: 'POST',
     path: '/memberships',
-    body: { project: projectId, username: input.username, role: roleId },
+    body: { project: projectId, username, role: roleId },
   })
   return parseMembership(asObject(res.json, 'membership-create'))
+}
+
+/** 按 email 查成员（793 A 幂等：同一别名邮箱的邀请行/已绑行；不依赖 username 反查） */
+export async function findMembershipByEmail(ctx: TaigaContext, email: string): Promise<TaigaMembership | undefined> {
+  const memberships = await listMemberships(ctx)
+  const target = email.trim().toLowerCase()
+  return memberships.find((m) => (m.email ?? '').toLowerCase() === target)
 }
 
 /** 在职成员角色调整（PATCH /memberships/{id} {role}；升/降面） */
@@ -244,6 +261,7 @@ export async function registerWithInviteToken(input: {
   baseUrl: string
   token: string
   username: string
+  email?: string
   password: string
   fullName?: string
   fetch?: FetchLike
@@ -255,9 +273,10 @@ export async function registerWithInviteToken(input: {
     token: input.token,
     accepted_terms: true,
     username: input.username,
+    ...(input.email !== undefined && input.email !== '' ? { email: input.email } : {}),
     password: input.password,
   }
-  if (input.fullName !== undefined) body['full_name'] = input.fullName
+  body['full_name'] = input.fullName !== undefined && input.fullName !== '' ? input.fullName : input.username
   const res = await fetchLike(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -288,7 +307,8 @@ export async function registerWithInviteToken(input: {
  * （多邀请并发时日志最新行=最近一次邀请——轮询窗口语义，装配侧保证窗口）。
  */
 export function findInviteToken(text: string): string | null {
-  const PATH_RE = /\/register\/([A-Za-z0-9_-]{20,})/g
+  // 真机 2026-11-05：邀请邮件 URL 是 /invitation/<token>（36 位 UUID 形）；旧文档 /register/<token> 兼容保留
+  const PATH_RE = /\/(?:invitation|register)\/([A-Za-z0-9_-]{20,})/g
   const KV_RE = /\btoken["']?\s*[:=]\s*["']?([A-Za-z0-9_-]{20,})/g
   let last: string | null = null
   for (const m of text.matchAll(PATH_RE)) last = m[1] ?? null

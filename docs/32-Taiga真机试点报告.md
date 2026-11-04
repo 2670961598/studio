@@ -24,7 +24,7 @@
 | ① auth 换 token | ✅ JWT | |
 | ② project-templates | ✅ 201 (81ms) | |
 | ③ projects 建公司 | ✅ 201 (202ms) | probe-co |
-| ④ 用户建号 | ⚠️ **路径修正** | `POST /users` **405 不存在**（证伪 §6 ④ 原假设）。正解：admin 建 membership（邀请 token **不在任何 API 响应里**，落 console 邮件日志 `docker logs`）→ `POST /auth/register {type:private, token, accepted_terms:true}` → **201 建号+绑成员一次完成**（worker-p2 实证，成员表=[admin, worker-p2]）。关注册态下匿名 public/private 均被拒 ✓ |
+| ④ 用户建号 | ⚠️ **路径修正** | `POST /users` **405 不存在**（证伪 §6 ④ 原假设）。正解：admin 建 membership（邀请 token **不在任何 API 响应里**，落 console 邮件日志 `docker logs`）→ `POST /auth/register {type:private, token, accepted_terms:true}` → **201 建号+绑成员一次完成**（worker-p2 旧记录，**待复核**：793 真机探针 2026-11-05 确认 `username` 必须是**合法邮箱形**才能绕过联系人校验；纯登录名 400 valid contact；invite token 在 console 邮件日志 `/invitation/<token>`；register 必填 email。见 docs/52-§6.1）。关注册态下匿名 public/private 均被拒 ✓ |
 | ⑤ roles | ✅ 全量可读 | 6 角色带 permissions 数组（成员类 33 枚/stakeholder 19 枚），快照在 `/tmp/taiga-probe/roles-probe-co.json`——§7-4 的枚举素材齐 |
 | ⑥ custom-attributes | ✅ 201×3 | userstory/task/issue 三实体「工号」字段均建 |
 | ⑦ webhooks + test | ✅（改配置后） | 见 §三 |
