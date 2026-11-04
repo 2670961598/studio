@@ -143,10 +143,10 @@ describe('入站：默认绑定与派单', () => {
     expect(created?.description).toContain('【本轮制作人消息】\n你好，宰相')
     expect(created?.description).toContain('历史上下文')
     expect(created?.description).toContain('会话不是单据')
-    // studio-dev-678：任务书须含「聊天不是交付/≤300 字/超 300 判不合格」简短回复纪律
-    expect(created?.description).toContain('本轮是聊天，不是交付/汇报')
-    expect(created?.description).toContain('1–3 句、总长 ≤300 字')
-    expect(created?.description).toContain('超过 300 字的回复视为不合格')
+    // studio-dev-684：任务书须含「去模板化/正常聊天/不设字数硬限制」回复纪律
+    expect(created?.description).toContain('本轮是正常聊天，不是工程交付/汇报')
+    expect(created?.description).toContain('不设字数/句数上限')
+    expect(created?.description).toContain('不要工程汇报体')
     expect(h.candidates).toHaveLength(1)
     expect(h.candidates[0]?.intent.dedupKey).toBe('$e1')
     expect(h.store.turnOf('LOCAL-1')).toMatchObject({ person: 'PRIME-0', room: ROOM, done: false })
