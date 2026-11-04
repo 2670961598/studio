@@ -65,6 +65,7 @@ import { seedJobs } from '../jobs-seed/jobs-seed.ts'
 import { daemonIdentity, type ServeConfig } from './config.ts'
 import { authorityEvidenceGateOptions } from '../serveconfig/authority.ts'
 import { wireAiwsFace } from './aiws-face.ts'
+import { wireWorkspaceFace } from './workspace-face.ts'
 import { buildServeEngineConfig } from './engine-config.ts'
 import { loadRootDelegationFace } from './root-delegation/root-face.ts'
 import { wireWorkerKeys } from './root-delegation/worker-key-face.ts'
@@ -203,6 +204,9 @@ export function buildServeRuntime(
   // .AIWS 员工工作区树（DEV-28，docs/43-§五+§十9）：体=aiws-face.ts（20-§十五.三 拆件；
   // 热重载 apply 段复用同一 aiwsRoot/aiwsClock 活引用，不双源）
   const { aiwsRoot, aiwsClock } = wireAiwsFace(config, snapshot, clock, log)
+  // 常驻角色工作目录树（studio-dev-723 / 计划 725；docs/90-§八）：与 .AIWS 分工——
+  // .AIWS=单次执行证据沙盒，workspaces=常驻角色家；热重载 apply 段复用同一活引用。
+  const { workspaceRoot, workspaceClock } = wireWorkspaceFace(config, snapshot, clock, log)
 
   // —— executor 面装配（注册表/桥接 overlay/价目表与档位/judge 两址）——体=runtime-executor（20-§十五.三 先拆再增：本段零 engine 实例依赖，构造结果供下方 engine 注入与启动日志）
   const { registry, catalog, modelRoles, modelTierTickets, judgeHook, acceptance, realGate, restartProbe, capabilitySupply, dispatchSelection } = wireExecutorFace(config, {
@@ -455,6 +459,8 @@ export function buildServeRuntime(
       makeAssembler,
       aiwsRoot,
       aiwsClock,
+      workspaceRoot,
+      workspaceClock,
       roomFace: () => roomFace,
       ...(peopleChangePublish !== undefined ? { publish: peopleChangePublish } : {}),
     })

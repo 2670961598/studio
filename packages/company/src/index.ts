@@ -59,6 +59,10 @@ export * from './trust.ts'
 // +随人事增量同步（归档不删）+家内部不下探；排除表单源在 init.ts SCAN_EXCLUDED_NAMES）
 export * from './aiws.ts'
 
+// 常驻角色工作目录树（studio-dev-723 / 计划 725：docs/90-§八；与 company/ 平级、不进 git；
+// 幂等增量/归档不删/根归属不并树/汇报链嵌套）
+export * from './workspace-tree.ts'
+
 // git-url 导入流（DEV-27 正式化：docs/43-§一「git 网址即公司」+ §十1-4 定稿增补——
 // 克隆→剥 .git 重建本地仓→schema 写盘前检→provision→锚 trust=false→.AIWS 建树→
 // 依赖清单安装挂点；直导通道同核；升级四点语义）

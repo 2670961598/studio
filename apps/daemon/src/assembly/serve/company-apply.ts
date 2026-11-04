@@ -12,7 +12,7 @@
  * 拆件纪律（20-§十五.三「先拆再增」）：本件自 assembly/serve/runtime.ts 原样析出
  * （行为字节不变），runtime.ts 因此腾出行数预算接线运行期写面（600 行阈）。
  */
-import { ensureAiwsTree } from '@studio-next/company'
+import { ensureAiwsTree, ensureWorkspaceTree } from '@studio-next/company'
 import { DEFAULT_FLOW_TABLE } from '@studio-next/core'
 import type { PeopleChange } from '@studio-next/core'
 import type { CompanySnapshot, PersonRef } from '@studio-next/contract'
@@ -44,6 +44,9 @@ export interface CompanyApplyDeps {
   /** .AIWS 员工工作区树根（DEV-28） */
   readonly aiwsRoot: string
   readonly aiwsClock: () => Date
+  /** 常驻角色工作目录树根（studio-dev-723；docs/90-§八；与 company/ 平级、不进 git） */
+  readonly workspaceRoot: string
+  readonly workspaceClock: () => Date
   /** 频道供给面（130-P3；matrixChannels 关＝返回 undefined） */
   readonly roomFace: () => MatrixRoomFace | undefined
   /** 人事变更双写面（129-C people-change 源 publish；面关＝不注入） */
@@ -66,6 +69,17 @@ export function createCompanyApplySegment(deps: CompanyApplyDeps): (next: Compan
       log(
         `[serve] .AIWS 增量同步（reload）：新建 ${synced.created}、归档 ${synced.archived.length}${synced.archived.length > 0 ? `（${synced.archived.join('、')}——内容保留不删）` : ''}`,
       )
+    }
+    // 常驻角色工作目录树增量同步（studio-dev-723；docs/90-§八）：新角色得家、离司归档不删；
+    // 先于持有者替换（抛错=apply 整体失败，旧态保持）。
+    const wsSynced = ensureWorkspaceTree(
+      deps.workspaceRoot,
+      next.departments.map((dept) => ({ path: dept.path, leader: dept.leader })),
+      next.people.map((person) => ({ id: person.id, dept: person.dept, ...(person.role !== undefined ? { role: person.role } : {}), ...(person.name !== undefined ? { name: person.name } : {}) })),
+      { slug: next.slug, now: deps.workspaceClock },
+    )
+    if (wsSynced.created > 0 || wsSynced.archived.length > 0) {
+      log(`[serve] 工作目录树增量同步（reload）：新建 ${wsSynced.created}、归档 ${wsSynced.archived.length}${wsSynced.archived.length > 0 ? `（${wsSynced.archived.join('、')}——内容保留不删）` : ''}`)
     }
     // —— 人事同步入队（DEV-48，docs/52-§5.2 步2-3/§9.1）：diff 分类→三面任务入队
     //    （哨兵票；diff 基=台账镜像现值零平台 IO；hrSync 关=零动作）——体=hrApplySegment；

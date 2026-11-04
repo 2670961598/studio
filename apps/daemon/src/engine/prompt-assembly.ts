@@ -265,6 +265,11 @@ export function createDefaultAssembler(ctx: AssemblerContext): PromptAssembler {
  * 纯函数（serve 日志与测试断言同源；engine 内 executeDispatch 消费）。自 engine.ts
  * 抽件——20-§十五「先拆再增」，workspace 落点属装配关注。
  */
+/**
+ * 注（studio-dev-723 / 计划 725）：本函数只给**单次执行 cwd**（.AIWS 证据沙盒）。常驻角色家
+ * （`<companyRoot>/workspaces/<dept>/<汇报链>/<工号>/{agent.md,memory.md,docs,work}`）的
+ * 读取/注入入口归 726/727（L2.5 角色包/L0-L4），本单只建树，不在此处拼接常驻家路径。
+ */
 export function aiwsWorkspaceOf(
   aiwsRoot: string,
   person: { dept: string; id: string },
