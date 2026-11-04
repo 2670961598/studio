@@ -7,7 +7,7 @@ companyDir: "<COMPANY_ROOT>/company"
 rootDir: "<COMPANY_ROOT>/var"
 apiPort: <API_PORT>                 # 唯一环回端口：studio-dev 8788、profit 8792、新公司 8793+
 tickMs: 1000
-maxInflight: 4                      # 首开小值；按容量门调
+maxInflight: 4                      # 首开小值；新公司上限 ≤4（787；调大须容量门留痕）
 maxInflightPerPerson: 2
 jobs: true
 models: "<HOME>/.config/studio-next/models.yaml"
@@ -22,6 +22,8 @@ seatbeltTier: workspace-write
 seatbeltWriteRoots: '["<COMPANY_ROOT>/.AIWS", "<COMPANY_ROOT>/company/workspaces", "<HOME>/.dsh", "/private/tmp", "/private/var/folders"]'
 seatbeltOutboundTcp: '[{"host":"*","port":443}]'
 seatbeltAuthorization: '制作人/公司设立授权：worker 写域=本公司 .AIWS/workspaces；网域=模型 API 443（按需收口）'
+# 787 容量/存储初值（模板默认；见 ops/multicompany/README §容量）：
+#   maxInflight ≤4；.AIWS 配额 5–10GiB；滚动保留 7–14 天（按 df/du 巡检滚动清理）。
 # Optional:
 # budgetTicketCapUsd: <USD>
 # budgetPersonCapUsd: <USD>

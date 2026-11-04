@@ -56,7 +56,9 @@ const USAGE = `用法：node scripts/ops/deploy.mjs <check|deploy|status|help> [
   --deploy <部署树>          部署树路径（必填；git clone/worktree，必须在主仓之外）
   --ref <commit|ref>         目标 commit（必填；部署树将 checkout --detach 到该 commit）
   --state <state.json>       状态文件（缺省 <部署树>.deploy-state.json）
-  --label <launchd label>    launchd 守护核标签（缺省 io.studionext.daemon）
+  --label <launchd label>    launchd 守护核标签（缺省 io.studionext.daemon；单 label 兼容面）
+  --labels-file <json>       多 label 批量部署（787）：JSON 数组 [{label,healthUrl}] 或 {"<label>":"<healthUrl>"}；
+                             逐 label kickstart+healthz（pid≠部署前）+任一失败回滚树/state（与 719 release CLI 兼容）
   --health-url <url>         healthz URL（缺省 http://127.0.0.1:8788/healthz）
   --node <node 二进制>       记录用（缺省 node；部署树入口仍是 node apps/boot/src/main.ts）
   --bun <bun 二进制>         依赖安装用（缺省 bun）
@@ -370,12 +372,59 @@ function cmdStatus(opts) {
   return EXIT.ok
 }
 
+/** 787：读取多 label 目标（JSON 数组或 {label: healthUrl} 映射；fail-closed 校验） */
+function loadLabelTargets(opts) {
+  const file = typeof opts['labels-file'] === 'string' && opts['labels-file'] !== '' ? path.resolve(opts['labels-file']) : ''
+  if (file === '') return null
+  if (!existsSync(file)) throw new DeployError(EXIT.usage, `--labels-file 不存在：${file}`)
+  let raw
+  try {
+    raw = JSON.parse(readFileSync(file, 'utf8'))
+  } catch (err) {
+    throw new DeployError(EXIT.usage, `--labels-file 解析失败：${err instanceof Error ? err.message : String(err)}`)
+  }
+  const list = Array.isArray(raw)
+    ? raw
+    : typeof raw === 'object' && raw !== null && Array.isArray(raw.labels)
+      ? raw.labels
+      : typeof raw === 'object' && raw !== null
+        ? Object.entries(raw).map(([label, healthUrl]) => ({ label, healthUrl }))
+        : null
+  if (list === null || list.length === 0) throw new DeployError(EXIT.usage, '--labels-file 须为非空数组或 {label: healthUrl} 映射')
+  const seen = new Set()
+  const targets = []
+  for (const item of list) {
+    if (typeof item !== 'object' || item === null) throw new DeployError(EXIT.usage, '--labels-file 条目须为 {label,healthUrl}')
+    const label = typeof item.label === 'string' ? item.label.trim() : ''
+    const healthUrl = typeof item.healthUrl === 'string' ? item.healthUrl.trim() : ''
+    if (label === '' || !/^[A-Za-z0-9._-]+$/.test(label)) throw new DeployError(EXIT.usage, `--labels-file label 非法：${JSON.stringify(item.label)}`)
+    if (!/^https?:\/\//.test(healthUrl)) throw new DeployError(EXIT.usage, `--labels-file healthUrl 须为 http(s)：${JSON.stringify(item.healthUrl)}`)
+    if (seen.has(label)) throw new DeployError(EXIT.usage, `--labels-file label 重复：${label}`)
+    seen.add(label)
+    targets.push({ label, healthUrl })
+  }
+  return targets
+}
+
+/** 787：多 label 部署前的旧 daemon pid 基线（每个 healthUrl 独立；不可达=null） */
+async function probeLabelPreviousPids(targets) {
+  const out = {}
+  for (const target of targets) {
+    const probe = await probeDeployHealth(target.healthUrl, null, { timeoutMs: 5_000 })
+    out[target.label] = probe.pid ?? null
+  }
+  return out
+}
+
 async function cmdDeploy(opts) {
   const repo = absPath(requireOpt(opts, 'repo'), '主仓')
   const deploy = absPath(requireOpt(opts, 'deploy'), '部署树')
   const ref = requireOpt(opts, 'ref')
   const label = typeof opts.label === 'string' && opts.label !== '' ? opts.label : 'io.studionext.daemon'
   const healthUrl = typeof opts['health-url'] === 'string' && opts['health-url'] !== '' ? opts['health-url'] : 'http://127.0.0.1:8788/healthz'
+  const labelTargets = loadLabelTargets(opts) // null=单 label 兼容路径
+  const multilabel = labelTargets !== null
+  const targets = multilabel ? labelTargets : [{ label, healthUrl }]
   const healthTimeoutMs = opts['health-timeout-ms'] === undefined ? 180_000 : Number(opts['health-timeout-ms'])
   if (!Number.isFinite(healthTimeoutMs) || healthTimeoutMs <= 0) {
     throw new DeployError(EXIT.usage, '--health-timeout-ms 必须是正整数')
@@ -431,8 +480,15 @@ async function cmdDeploy(opts) {
   }
 
   // ⑤ 记旧 daemon pid（pid≠previous 判定基准；不可达=部署前 daemon 未运行）
-  const preProbe = opts['skip-restart'] === true ? null : await probeDeployHealth(healthUrl, null, { timeoutMs: 5_000 })
-  const previousHealthPid = preProbe !== null ? preProbe.pid : null
+  let previousHealthPid = null
+  let previousHealthPids = null
+  if (opts['skip-restart'] !== true) {
+    if (multilabel) previousHealthPids = await probeLabelPreviousPids(targets)
+    else {
+      const preProbe = await probeDeployHealth(healthUrl, null, { timeoutMs: 5_000 })
+      previousHealthPid = preProbe !== null ? preProbe.pid : null
+    }
+  }
   const common = {
     targetCommit: verified.commit,
     tree: verified.tree,
@@ -444,7 +500,8 @@ async function cmdDeploy(opts) {
     lockSha256: deps.lockSha256,
     depsInstalled: deps.nodeModules === true,
     depsInstall: deps,
-    launchdLabel: label,
+    launchdLabel: multilabel ? null : label,
+    launchdLabels: targets.map((target) => target.label),
   }
 
   // ⑥ **state 先写**：部署窗口内 guardian preflight 必须通过（state 已指向新 commit/tree，
@@ -454,18 +511,51 @@ async function cmdDeploy(opts) {
     deployedAt: nowIso(),
     ...common,
     restart: { pending: true },
-    health: { ok: false, pending: true, previousPid: previousHealthPid },
+    health: multilabel
+      ? { ok: false, pending: true, labels: Object.fromEntries(targets.map((target) => [target.label, { previousPid: previousHealthPids?.[target.label] ?? null }])) }
+      : { ok: false, pending: true, previousPid: previousHealthPid },
   })
   writeState(statePath, deployingState)
   appendDeployLog(logPath, { event: 'state-deploying', ...deployingState })
 
   // ⑦ 重启守护核（launchd kickstart -k → guardian 重启；此时 preflight 读到的 state 已是新值）
-  const restart = restartGuardian(label, opts)
+  //    787 多 label：逐 label kickstart + 逐 health（pid≠各 label 部署前 pid），任一失败=回滚树/state。
+  let restart
+  if (multilabel) {
+    const restarts = []
+    try {
+      for (const target of targets) {
+        restarts.push({ label: target.label, ...restartGuardian(target.label, opts) })
+      }
+    } catch (err) {
+      const rollback = rollbackDeployTree({ repo, deploy, previousState, previousHead, inTree: checkoutCommit, verify: verifyDeployTree, clean: assertClean, entryCheck: requireEntryPoints })
+      if (rollback.ok && previousState !== null) writeState(statePath, previousState)
+      throw new DeployError(
+        EXIT.deploy,
+        `批量重启失败（897 多 label）：${err instanceof Error ? err.message : String(err)}\n` +
+          (rollback.ok ? `已回滚部署树到 ${rollback.commit}${previousState !== null ? '并恢复 state' : ''}。` : `⚠ 回滚失败：${rollback.error ?? '未知'}。`),
+      )
+    }
+    restart = { restarted: opts['skip-restart'] !== true, skipped: opts['skip-restart'] === true, labels: restarts.map((item) => item.label) }
+  } else {
+    restart = restartGuardian(label, opts)
+  }
 
   // ⑧ 等新 daemon：healthz 200 ∧ ok=true ∧ pid ≠ 部署前 pid（旧 daemon 未停完/不可达/
   //    writer-lease 首启失败重试窗都只算过渡态——持续等，不首轮即判）
   let health = { replaced: false, skipped: true, reason: '--skip-restart' }
-  if (restart.restarted === true) {
+  if (multilabel) {
+    if (restart.restarted === true) {
+      const labels = {}
+      for (const target of targets) {
+        const h = await waitForReplacedDaemon({ url: target.healthUrl, previousPid: previousHealthPids?.[target.label] ?? null, timeoutMs: healthTimeoutMs })
+        labels[target.label] = { ok: h.replaced, pid: h.pid ?? null, previousPid: h.previousPid, waitedMs: h.waitedMs, probes: h.observations.length }
+        health = { replaced: false, labels, ...(h.replaced ? {} : { failedLabel: target.label, reason: h.reason }) }
+        if (!h.replaced) break
+      }
+      if (Object.values(labels).every((item) => item.ok === true)) health.replaced = true
+    }
+  } else if (restart.restarted === true) {
     health = await waitForReplacedDaemon({ url: healthUrl, previousPid: previousHealthPid, timeoutMs: healthTimeoutMs })
   }
   if (restart.restarted === true && health.replaced !== true) {
@@ -494,10 +584,10 @@ async function cmdDeploy(opts) {
         )
       }
     }
-    appendDeployLog(logPath, { event: 'health-failed-rollback', summary: summarizeHealthWait(health), rollback })
+    appendDeployLog(logPath, { event: 'health-failed-rollback', summary: multilabel ? JSON.stringify(health.labels ?? {}) : summarizeHealthWait(health), rollback })
     throw new DeployError(
       EXIT.health,
-      `部署已切换但 ${String(healthTimeoutMs)}ms 内未等到「healthz 200∧ok=true∧pid≠部署前 pid」的新 daemon：\n  ${summarizeHealthWait(health)}\n` +
+      `部署已切换但 ${String(healthTimeoutMs)}ms 内未等到「healthz 200∧ok=true∧pid≠部署前 pid」的新 daemon：\n  ${multilabel ? `labels=${JSON.stringify(health.labels ?? {})}` : summarizeHealthWait(health)}\n` +
         (rollback.ok
           ? `已回滚部署树到 ${rollback.commit}${previousState !== null ? '并恢复 state' : '（首次部署：写 failed state；树/state 一致）'}——guardian preflight 将放行旧代码启动。\n`
           : `⚠ 回滚失败（${rollback.error ?? '未知'}）：需人工把部署树/state 恢复一致后再重启守护核。\n`) +
@@ -512,9 +602,11 @@ async function cmdDeploy(opts) {
     ...common,
     restart,
     health:
-      restart.restarted === true
-        ? { ok: true, pid: health.pid, previousPid: health.previousPid, waitedMs: health.waitedMs, probes: health.observations.length, deployedCommit: verified.commit }
-        : { ok: false, skipped: true },
+      restart.restarted !== true
+        ? { ok: false, skipped: true }
+        : multilabel
+          ? { ok: true, labels: health.labels, deployedCommit: verified.commit }
+          : { ok: true, pid: health.pid, previousPid: health.previousPid, waitedMs: health.waitedMs, probes: health.observations.length, deployedCommit: verified.commit },
   })
   writeState(statePath, state)
   appendDeployLog(logPath, { event: 'deploy-done', ...state })
@@ -537,7 +629,7 @@ async function cmdDeploy(opts) {
     `  tree=${verified.tree}`,
     `  deps=${deps.installed === true ? 'installed' : 'unchanged/skipped'}`,
     `  restart=${restart.restarted === true ? restart.target : 'skipped'}`,
-    `  health=${state.health.ok === true ? `ok pid=${String(state.health.pid)} previous=${state.health.previousPid === null ? 'none' : String(state.health.previousPid)} (${String(state.health.waitedMs)}ms, probes=${String(state.health.probes)})` : 'skipped'}`,
+    `  health=${state.health.ok === true ? (multilabel ? `ok labels=${Object.keys(state.health.labels ?? {}).join(',')}` : `ok pid=${String(state.health.pid)} previous=${state.health.previousPid === null ? 'none' : String(state.health.previousPid)} (${String(state.health.waitedMs)}ms, probes=${String(state.health.probes)})`) : 'skipped'}`,
     `  state=${statePath}`,
   ])
   return EXIT.ok

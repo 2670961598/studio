@@ -1,5 +1,5 @@
 {
-  "_comment": "Per-company guardian template (ref=786). Copy to ~/.config/studio-next/guardian-<slug>.json; no secrets in this file. Replace all <...> placeholders.",
+  "_comment": "Per-company guardian template (ref=786/787). Copy to ~/.config/studio-next/guardian-<slug>.json; **no secrets in this file** — secrets only in <COMPANY_ROOT>/credentials/daemon.env (0600) via daemon.envFile. Replace all <...> placeholders.",
   "daemon": {
     "command": [
       "/bin/bash",
@@ -16,6 +16,7 @@
       "--node", "<NODE_BIN>"
     ],
     "preflightRetryMs": 30000,
+    "envFile": "<COMPANY_ROOT>/credentials/daemon.env",
     "env": {
       "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
       "HOME": "<HOME>",

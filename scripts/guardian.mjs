@@ -17,7 +17,7 @@
  * 退出码：0=正常停；1=配置非法；2=异常。
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
 import {
@@ -35,6 +35,45 @@ const USAGE =
   '  guardian 守护核（launchd 托管）：监护 daemon /healthz，失败退避重启＋crash-loop 刹车＋告警。\n' +
   '  配置样例/安装步骤见 ops/launchd/README.md。\n'
 
+/**
+ * 解析凭据 env 文件（studio-dev-787 凭据隔离）：
+ *   `KEY=VALUE` 每行；忽略空行/`#` 注释；允许 `export KEY=VALUE`；key 形如 [A-Za-z_][A-Za-z0-9_]*；
+ *   VALUE 原样保留（去首尾空白；不展开变量/不做引号解释——由 daemon.env 自己控制格式）。
+ * 非法行=抛（fail-fast，不静默跳过：凭据文件错行比缺凭据更难查）。
+ */
+export function parseEnvFile(text, source = 'envFile') {
+  const out = {}
+  let lineNo = 0
+  for (const raw of String(text).split(/\r?\n/)) {
+    lineNo += 1
+    const line = raw.trim()
+    if (line === '' || line.startsWith('#')) continue
+    const body = line.startsWith('export ') ? line.slice('export '.length).trim() : line
+    const eq = body.indexOf('=')
+    if (eq <= 0) throw new Error(`${source} 第 ${String(lineNo)} 行格式非法（须 KEY=VALUE）：${line.slice(0, 40)}`)
+    const key = body.slice(0, eq).trim()
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error(`${source} 第 ${String(lineNo)} 行 key 非法：${JSON.stringify(key)}`)
+    out[key] = body.slice(eq + 1).trim()
+  }
+  return out
+}
+
+/**
+ * 读每公司凭据文件（0600；daemon.env）。**fail-closed**：文件缺失/非普通文件/权限含 group/other
+ * 可读位（mode & 0o077）→ 抛；不打印任何值（错误只带路径/权限位）。
+ */
+export function readEnvFile(envFile) {
+  if (typeof envFile !== 'string' || envFile === '') throw new Error('daemon.envFile 必须是非空路径')
+  if (!existsSync(envFile)) throw new Error(`daemon.envFile 不存在：${envFile}`)
+  const st = statSync(envFile)
+  if (!st.isFile()) throw new Error(`daemon.envFile 不是普通文件：${envFile}`)
+  const perm = st.mode & 0o777
+  if ((perm & 0o077) !== 0) {
+    throw new Error(`daemon.envFile 权限过宽（${perm.toString(8)}；须 0600，拒绝含 group/other 读位）：${envFile}`)
+  }
+  return parseEnvFile(readFileSync(envFile, 'utf8'), envFile)
+}
+
 /** 校验/补全配置（非法即抛——fail-fast，不猜；路径必须已存在） */
 export function validateConfig(raw) {
   if (typeof raw !== 'object' || raw === null) throw new Error('guardian 配置必须是 JSON 对象')
@@ -51,6 +90,15 @@ export function validateConfig(raw) {
   if (preflight !== undefined && (!Array.isArray(preflight) || preflight.length === 0 || !preflight.every((x) => typeof x === 'string' && x !== ''))) {
     throw new Error('daemon.preflight 必须是非空字符串数组（argv；部署隔离 preflight，见 docs/90-§六）')
   }
+  const inlineEnv = daemon.env !== undefined && daemon.env !== null ? { ...daemon.env } : {}
+  let envFile = undefined
+  let fileEnv = {}
+  if (daemon.envFile !== undefined) {
+    envFile = daemon.envFile
+    fileEnv = readEnvFile(envFile) // 0600/格式 fail-closed（787 凭据隔离）
+  }
+  // 兼容迁移：inline env 仍允许（studio-dev 平滑迁移），但敏感键应在 daemon.envFile；envFile 优先覆盖同名键
+  const env = { ...inlineEnv, ...fileEnv }
   const preflightRetryMs = daemon.preflightRetryMs ?? 30_000
   if (typeof preflightRetryMs !== 'number' || !Number.isFinite(preflightRetryMs) || preflightRetryMs <= 0) {
     throw new Error('daemon.preflightRetryMs 必须是正整数毫秒')
@@ -62,7 +110,8 @@ export function validateConfig(raw) {
     daemon: {
       command: command.slice(),
       cwd: daemon.cwd,
-      env: daemon.env !== undefined && daemon.env !== null ? { ...daemon.env } : {},
+      env,
+      ...(envFile !== undefined ? { envFile } : {}),
       ...(preflight !== undefined ? { preflight: preflight.slice(), preflightRetryMs: Math.trunc(preflightRetryMs) } : {}),
     },
     health: { ...GUARDIAN_DEFAULTS.health, ...(cfg.health ?? {}), url: healthUrl },
@@ -179,7 +228,7 @@ export async function runGuardian(config, overrides = {}) {
   }
   process.once('SIGTERM', onSignal)
   process.once('SIGINT', onSignal)
-  log('guardian-start', { pid: process.pid, healthUrl: config.health.url, daemonArgv: config.daemon.command.length })
+  log('guardian-start', { pid: process.pid, healthUrl: config.health.url, daemonArgv: config.daemon.command.length, envFile: config.daemon.envFile ?? null })
 
   try {
     while (!stopping) {

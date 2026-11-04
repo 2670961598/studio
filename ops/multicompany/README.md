@@ -59,3 +59,51 @@ curl -s http://127.0.0.1:<apiPort>/healthz
 - 部署：共享部署树切到已验证 commit 后，`deploy.mjs deploy --ref <sha>`（默认重启 studio-dev label），再逐 `launchctl kickstart -k gui/$(id -u)/io.studionext.<slug>`；逐公司 healthz。
 - 回滚：`launchctl bootout gui/$(id -u)/io.studionext.<slug>`；恢复旧启动方式；`deploy.mjs deploy --ref <previousCommit>` 后逐 label kickstart；不重写历史。
 - 安全：guardian.json **不内联**密码/密钥；由 `ops/start.sh` 加载 0600 `credentials/daemon.env`；模板不含真实路径/凭据；`registry.yaml` 放 `<workRoot>`，不入 git。
+
+## 787 多公司 P0 加固（2026-11-05）
+
+**一键配置校验**（新公司 staging/active 前、每次改公司配置后跑）：
+```sh
+node scripts/ops/multicompany-check.mjs \
+  --registry <WORKROOT>/registry.yaml --work-root <WORKROOT> --strict-paths --json
+# 0=无违例；1=违例（逐条 rule/slug/problem/fix）；只读
+```
+
+### 1) seatbelt 写根按公司隔离（P0-1）
+- `daemon.yaml` 的 `seatbeltWriteRoots` **只允许** `["<CROOT>/.AIWS", "<CROOT>/company/workspaces", "~/.dsh", "/private/tmp", "/private/var/folders"]`；
+  **禁止** `<WORKROOT>/.AIWS` 全局树/其它公司根（daemon 启动解析期即 CONFIG_INVALID；脚本 `multicompany-check` 同步判）。
+- **787 v2（F1/F2）**：写根先 **canonical（最长存在前缀 realpath + 后缀）** 再判定——symlink 目标越界（如 link→/etc、父目录 symlink）、`..` 逃逸、
+  大小写绕过均拒绝；白名单按**规范根 isUnder**（只认 `<CROOT>/.AIWS` 子树与 `<companyDir>/workspaces` 子树），
+  不再按任意 segment 判定（`company/docs/.AIWS`、`x/workspaces/y` 一律拒）。错误含原始值+realpath；脚本与 daemon 共用同一校验函数。
+- 存量迁移（studio-profit 等）：把全局 `.AIWS` 改为本公司 `<CROOT>/.AIWS`；studio-dev 已是本公司根，无需改。
+
+### 2) 凭据隔离（P0-2）
+- guardian JSON **不放凭据**：`daemon.envFile: "<CROOT>/credentials/daemon.env"`（0600；含 `TAIGA_PASSWORD`/
+  `MATRIX_BOT_PASSWORD`/`MATRIX_HR_SHARED_SECRET`/`STUDIO_GATEWAY_SECRET` 等）；
+- guardian 启动校验：envFile 缺失/非普通文件/权限含 group/other 读位 → **fail-closed**；envFile 同名键覆盖 inline；
+- 平滑迁移：先建 `credentials/daemon.env`（0600）→ guardian JSON 加 `daemon.envFile` → 重启该 label；
+  旧 inline env 仍兼容（迁移窗口内不阻塞），但新模板禁止内联敏感键。
+
+### 3) 多 label 批量部署（P0-3）
+```sh
+# labels.json: [{"label":"io.studionext.daemon","healthUrl":"http://127.0.0.1:8788/healthz"},
+#               {"label":"io.studionext.profit","healthUrl":"http://127.0.0.1:8792/healthz"}]
+node scripts/ops/deploy.mjs deploy --repo <REPO> --deploy <DEPLOY> --ref <COMMIT> \
+  --labels-file labels.json --health-timeout-ms 180000
+```
+- 行为：一次树切换 → **逐 label** `launchctl kickstart -k` → 逐 healthz（pid≠该 label 部署前 pid）→ 任一失败回滚树/state；
+- 不带 `--labels-file` 时与 719 release CLI 完全兼容（单 label 路径不变）。
+
+### 4) overview 单实例 + 鉴权边界（P0-4）
+- overview CLI 自带 **单实例锁**（`<logDir>/overview.<port>.lock`；死 pid 自动清）；第二实例启动即拒；
+- 缺省 `--host 127.0.0.1` **仅环回**；对外监听必须 `OVERVIEW_ALLOW_LAN=1`（制作人批准），
+  且**对外需网关/只读 token 方案**（当前 v0 不做内置鉴权；不得直接暴露 8789）。
+- 只保留一个 8789 实例；各公司 panel 可选/按端口表另分配，禁止多 overview 进程。
+
+### 5) 容量/存储初值（P0-5）
+- 新公司 `maxInflight ≤4`（模板默认 4；调大须容量门+留痕）；
+- `.AIWS` 配额 **5–10GiB**、滚动保留 **7–14 天**；开公司 Step 0 记 df/du 基线，日常按 registry 巡检。
+
+### 6) 已知缺陷修复（787 附带）
+- `ops/launchd/README.md` 安装 sed 曾把 `__WORKROOT__` 替换成字面量 `<workRoot>` → `processPattern` 永不匹配、
+  利润 watchdog 静默失明；已改为真实 `$WORKROOT` 并加占位符残留检查（拒绝安装）。

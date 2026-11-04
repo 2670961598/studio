@@ -1,5 +1,6 @@
 // ✦ DEV-45 结构刀（studio-dev-78）：本文件自 apps/daemon/src/bin.ts L1129-L1250 逐字节拆出（纯移动零功能变更；核验=对 git 历史旧路径对应行区间字节一致，仅增本行头注、import 头与 export 关键字）。
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeSync } from 'node:fs'
+import { homedir } from 'node:os'
 import path from 'node:path'
 import { loadCompanyDirectory, readDirectoryFiles } from '@studio-next/company'
 import type { CompanySnapshot } from '@studio-next/contract'
@@ -83,9 +84,77 @@ function extractMission(orgConfigSrc: string | undefined): string | undefined {
  * 重载失败保旧图（lastError 亮在页面上）。档案正文按文件名=工号建映射（校验器保证
  * 文件名与 front-matter id 一致）。默认只绑本机。
  */
+/** 8789 overview 单实例锁（787 P0-4）：<log>/overview.<port>.lock，O_EXCL 写 pid；死 pid 锁自动清理一次 */
+export function overviewLockPath(port: number, lockDir: string = process.env.OVERVIEW_LOCK_DIR ?? path.join(homedir(), 'Library', 'Logs', 'studio-next')): string {
+  return path.join(lockDir, `overview.${String(port)}.lock`)
+}
+
+export function acquireOverviewLock(port: number, lockDir: string = process.env.OVERVIEW_LOCK_DIR ?? path.join(homedir(), 'Library', 'Logs', 'studio-next')): { file: string; fd: number } {
+  const file = overviewLockPath(port, lockDir)
+  mkdirSync(path.dirname(file), { recursive: true })
+  const tryAcquire = () => {
+    const fd = openSync(file, 'wx', 0o600)
+    writeSync(fd, `${String(process.pid)}\n`)
+    return { file, fd }
+  }
+  try {
+    return tryAcquire()
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+    let holder = NaN
+    try {
+      holder = Number.parseInt(readFileSync(file, 'utf8').trim(), 10)
+    } catch {
+      holder = NaN
+    }
+    if (Number.isInteger(holder) && holder > 0) {
+      let alive = true
+      try {
+        process.kill(holder, 0)
+      } catch (probeErr) {
+        alive = (probeErr as NodeJS.ErrnoException)?.code === 'EPERM' // EPERM=存在但无权限（视为活）
+      }
+      if (alive) {
+        throw new Error(`已有 overview 实例在运行（pid=${String(holder)}，port=${String(port)}，锁=${file}）——787 单实例约束：先停旧实例`)
+      }
+    }
+    // 死 pid 或坏锁：清理一次后重试（仍失败=并发抢锁，交调用方报错）
+    try {
+      unlinkSync(file)
+    } catch {
+      /* 竞态：他人已清 */
+    }
+    return tryAcquire()
+  }
+}
+
+export function releaseOverviewLock(handle: { file: string; fd: number } | undefined | null): void {
+  if (handle === null || handle === undefined) return
+  try {
+    closeSync(handle.fd)
+  } catch {
+    /* 已关闭 */
+  }
+  try {
+    unlinkSync(handle.file)
+  } catch {
+    /* 已删除 */
+  }
+}
+
+/** 监听 host 归一/校验（787 P0-4）：默认仅环回；对外监听须显式 OVERVIEW_ALLOW_LAN=1（制作人批 + 网关/token 方案） */
+export function normalizeOverviewHost(rawHost: string | undefined, env: Record<string, string | undefined> = process.env): string {
+  const host = rawHost === undefined || rawHost === '' ? '127.0.0.1' : String(rawHost)
+  const loopback = host === '127.0.0.1' || host === 'localhost' || host === '::1'
+  if (!loopback && env.OVERVIEW_ALLOW_LAN !== '1') {
+    throw new Error(`overview：对外监听 ${host} 需制作人批准（设 OVERVIEW_ALLOW_LAN=1，并落实网关/只读 token 方案——ops/multicompany/README §鉴权）`)
+  }
+  return host
+}
+
 export async function cmdOverview(argv: string[]): Promise<number> {
   if (wantsHelp(argv)) return helpOk(SECTION.overview) // S1b 预检：先于解析与一切副作用
-  const parsed = parseArgv(argv, new Set(['company', 'db', 'port']), new Set(['company']))
+  const parsed = parseArgv(argv, new Set(['company', 'db', 'port', 'host']), new Set(['company']))
   if ('error' in parsed) {
     return usageFail('overview', parsed.error, CONCISE.overview)
   }
@@ -103,6 +172,14 @@ export async function cmdOverview(argv: string[]): Promise<number> {
       console.error(`overview：--port 取值非法：${parsed.flags.port}（须为 1-65535 整数）`)
       return 1
     }
+  }
+
+  let hostname = '127.0.0.1'
+  try {
+    hostname = normalizeOverviewHost(parsed.flags.host)
+  } catch (err) {
+    console.error(`overview：${errText(err)}`)
+    return 1
   }
 
   const companies: OverviewCompanySource[] = []
@@ -160,10 +237,22 @@ export async function cmdOverview(argv: string[]): Promise<number> {
     companies.push(hot.source)
   }
 
+  let lock
+  try {
+    lock = acquireOverviewLock(port) // 787 P0-4：单实例（8789）
+  } catch (err) {
+    console.error(`overview：${errText(err)}`)
+    for (const hot of hotHandles) hot.close()
+    return 1
+  }
   let handle
   try {
-    handle = await serveOverview(port, companies, parsed.flags.db !== undefined ? { ledgerPath: path.resolve(parsed.flags.db) } : undefined)
+    handle = await serveOverview(port, companies, {
+      ...(parsed.flags.db !== undefined ? { ledgerPath: path.resolve(parsed.flags.db) } : {}),
+      hostname,
+    })
   } catch (err) {
+    releaseOverviewLock(lock)
     // 重复 slug / 库不存在 / 端口占用等：CONFIG_INVALID 形状，如实分类上报
     console.error(`overview 启动失败：${errText(err)}`)
     return 1
@@ -179,6 +268,7 @@ export async function cmdOverview(argv: string[]): Promise<number> {
     process.once('SIGTERM', stop)
   })
   await handle.close()
+  releaseOverviewLock(lock)
   for (const hot of hotHandles) hot.close()
   console.log('[overview] 已优雅关闭（含目录监听器）')
   return 0

@@ -29,7 +29,10 @@
  * demo 随机源（可注入）。只收配置校验件（serveconfig/coerce、hrsync/config、channels/channels）
  * 与引擎缺省常量。runtime.ts / run.ts / executor-face.ts 从这里取同一份配置契约。
  */
+import { existsSync, realpathSync } from 'node:fs'
+import { homedir } from 'node:os'
 import path from 'node:path'
+import type { SeatbeltGrant } from '@studio-next/adapters'
 import { parseWhitelistSpec } from '../../engine/directive/index.ts'
 import { parseJudgeSites } from '../../engine/judge/sites129.ts'
 import { parseModelTierTickets } from '../../engine/tier/model-tier.ts'
@@ -91,6 +94,105 @@ function parseTextList(value: unknown, key: string): readonly string[] {
     .filter((item) => item !== '')
   if (items.length === 0) throw new Error(`daemon.yaml：${key} 不能为空清单`)
   return [...new Set(items)]
+}
+
+/**
+ * 787 F1/F2：seatbelt 写根 canonical 化与白名单校验（**唯一源**）。
+ *
+ * - canonical：绝对路径先 resolve；对「最长已存在前缀」做 realpathSync，再拼回不存在后缀
+ *   （父目录 symlink 也能识破）；macOS 大小写不敏感按 lower 比较，防 case 绕过；
+ * - 允许根（canonical 后 isUnder）：
+ *     1) `<CROOT>/.AIWS` 子树；2) `<companyDir>/workspaces` 子树；
+ *     3) 基础设施：`~/.dsh`、`/private/tmp`、`/tmp`、`/private/var/folders`、`/var/folders`；
+ * - 其余：公司根内→`not-whitelisted`（如 company/docs/.AIWS、x/workspaces/y）；
+ *   公司根外但 workroot 内→`cross-company`（全局 .AIWS/兄弟公司）；再外→`not-whitelisted`。
+ * 失败原因带 raw+canonical（错误/报告可用），供 daemon 启动与 multicompany-check 同源消费。
+ */
+export type SeatbeltWriteRootViolation = { raw: string; canonical: string; reason: 'not-absolute' | 'cross-company' | 'not-whitelisted' }
+
+/** 归一化比较 key：macOS 默认大小写不敏感（防 case 绕过） */
+function pathKey(p: string): string {
+  return process.platform === 'darwin' ? p.toLowerCase() : p
+}
+function isUnderKey(target: string, base: string): boolean {
+  const t = pathKey(target)
+  const b = pathKey(base)
+  return t === b || t.startsWith(`${b}${path.sep}`)
+}
+/** 绝对路径 canonical：最长存在前缀 realpath + 剩余 suffix（不存在也可安全判定） */
+export function canonicalizeSeatbeltWriteRoot(raw: string): string {
+  const abs = path.resolve(String(raw))
+  let probe = abs
+  const suffix: string[] = []
+  while (!existsSync(probe)) {
+    const parent = path.dirname(probe)
+    if (parent === probe) break
+    suffix.unshift(path.basename(probe))
+    probe = parent
+  }
+  let base = probe
+  try {
+    base = realpathSync(probe)
+  } catch {
+    base = probe
+  }
+  return path.resolve(base, ...suffix)
+}
+function seatbeltAllowedRoots(companyDir: string): string[] {
+  const companyDirCanonical = canonicalizeSeatbeltWriteRoot(companyDir)
+  const companyRoot = path.dirname(companyDirCanonical)
+  return [
+    path.join(companyRoot, '.AIWS'),
+    path.join(companyDirCanonical, 'workspaces'),
+    canonicalizeSeatbeltWriteRoot(path.join(homedir(), '.dsh')),
+    canonicalizeSeatbeltWriteRoot('/private/tmp'),
+    canonicalizeSeatbeltWriteRoot('/tmp'),
+    canonicalizeSeatbeltWriteRoot('/private/var/folders'),
+    canonicalizeSeatbeltWriteRoot('/var/folders'),
+  ]
+}
+export function checkCompanySeatbeltWriteRoots(
+  seatbelt: SeatbeltGrant | undefined,
+  companyDir: string | undefined,
+): SeatbeltWriteRootViolation[] {
+  if (seatbelt === undefined || companyDir === undefined || companyDir === '') return []
+  const companyDirCanonical = canonicalizeSeatbeltWriteRoot(companyDir)
+  const companyRoot = path.dirname(companyDirCanonical)
+  const workRoot = path.dirname(companyRoot)
+  const allowed = seatbeltAllowedRoots(companyDir)
+  const violations: SeatbeltWriteRootViolation[] = []
+  for (const raw of seatbelt.writeRoots ?? []) {
+    const text = String(raw)
+    if (!path.isAbsolute(text)) {
+      violations.push({ raw: text, canonical: text, reason: 'not-absolute' })
+      continue
+    }
+    const canonical = canonicalizeSeatbeltWriteRoot(text)
+    if (allowed.some((base) => isUnderKey(canonical, base))) continue
+    if (isUnderKey(canonical, companyRoot)) {
+      violations.push({ raw: text, canonical, reason: 'not-whitelisted' })
+      continue
+    }
+    if (isUnderKey(canonical, workRoot)) {
+      violations.push({ raw: text, canonical, reason: 'cross-company' })
+      continue
+    }
+    violations.push({ raw: text, canonical, reason: 'not-whitelisted' })
+  }
+  return violations
+}
+function seatbeltViolationMessage(v: SeatbeltWriteRootViolation): string {
+  if (v.reason === 'not-absolute') return `daemon.yaml：seatbeltWriteRoots「${v.raw}」须为绝对路径且经 canonical 校验（787 fail-closed）`
+  if (v.reason === 'cross-company') {
+    return `daemon.yaml：seatbeltWriteRoots「${v.raw}」（realpath=${v.canonical}）越出本公司根（787 P0：禁止写全局 <WORKROOT>/.AIWS/兄弟公司；改为 <CROOT>/.AIWS）`
+  }
+  return `daemon.yaml：seatbeltWriteRoots「${v.raw}」（realpath=${v.canonical}）不在允许根白名单（787：只允许 <CROOT>/.AIWS 与 <companyDir>/workspaces 子树，及 ~/.dsh、/private/tmp、/private/var/folders）`
+}
+/** 兼容旧调用面：失败抛第一条（含 raw/realpath）；校验**唯一实现**=checkCompanySeatbeltWriteRoots */
+export function validateCompanySeatbeltWriteRoots(seatbelt: SeatbeltGrant | undefined, companyDir: string | undefined): void {
+  const violations = checkCompanySeatbeltWriteRoots(seatbelt, companyDir)
+  const first = violations[0]
+  if (first !== undefined) throw new Error(seatbeltViolationMessage(first))
 }
 
 export function parseDaemonConfig(text: string): ServeConfig {
@@ -334,6 +436,8 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
   //    read-only 携带放宽键/workspace-write 缺键或根非法＝CONFIG_INVALID 拒启（不静默放宽）
   const seatbelt = coerceSeatbeltGrant(seatbeltRaw)
   if (seatbelt !== undefined) cfg.seatbelt = seatbelt
+  // 787 P0-1：每公司 seatbelt 写根围栏（防跨公司写；需 companyDir 才能判归属）
+  validateCompanySeatbeltWriteRoots(cfg.seatbelt, cfg.companyDir)
   // —— taiga 必配键交叉校验（fail-fast：parse 面一次收口；直接构造 ServeConfig 的测试面
   //    由 wirePlatform/createTaigaPlatform validateOptions 二道兜底）——
   if (cfg.platform === 'taiga') {

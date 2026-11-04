@@ -151,11 +151,14 @@ node <主仓>/scripts/ops/deploy.mjs deploy --repo <主仓> --deploy <部署树>
 
 ```sh
 LOGDIR="$HOME/Library/Logs/studio-next"
+WORKROOT="<WORKROOT>/companies"          # 787：必须是真实工作根（示例占位；安装时替换）；禁用字面量 "<workRoot>"（会被写进 processPattern，永不匹配）
 PLIST="$HOME/Library/LaunchAgents/io.studionext.infra-watchdog.plist"
 mkdir -p "$LOGDIR"
 # ① 生成配置（占位替换）
-sed -e "s#__LOGDIR__#$LOGDIR#g" -e "s#__WORKROOT__#<workRoot>#g" \
+sed -e "s#__LOGDIR__#$LOGDIR#g" -e "s#__WORKROOT__#$WORKROOT#g" \
   <部署树>/ops/launchd/infra-watchdog.example.json > "$LOGDIR/infra-watchdog.json"
+# 787 缺陷修复：替换后必须无占位符残留（旧文档写 <workRoot> 字面量 → processPattern 永不匹配、利润 watchdog 静默失明）
+! grep -Eq '__[A-Z]+__|<workRoot>|<WORKROOT>' "$LOGDIR/infra-watchdog.json" || { echo "配置仍有占位符，拒绝安装" >&2; exit 1; }
 # ② 安装 plist（替换 __NODE__/__WATCHDOG__/__CONFIG__/__LOGDIR__；watchdog 也从部署树运行）
 sed -e "s#__NODE__#$(command -v node)#" -e "s#__WATCHDOG__#<部署树>/scripts/ops/infra-watchdog.mjs#" \
     -e "s#__CONFIG__#$LOGDIR/infra-watchdog.json#" -e "s#__LOGDIR__#$LOGDIR#" \

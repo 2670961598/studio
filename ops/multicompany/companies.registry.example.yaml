@@ -1,5 +1,7 @@
 # Framework operator registry (ref=786) — place at <workRoot>/registry.yaml, NOT in git.
 # Used by overview start args, watchdog/ops runbook and capacity accounting.
+# 787：校验命令 node scripts/ops/multicompany-check.mjs --registry <this> --work-root <WORKROOT>
+#      端口/label 唯一；新公司 maxInflight ≤4；.AIWS 配额 5–10G、保留 7–14 天（按巡检）。
 companies:
   - slug: studio-dev
     level: 3
