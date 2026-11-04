@@ -17,7 +17,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import type { InvokeSource } from '@studio-next/contract'
-import { openLedgerWriter, verifyEventsChain, type Ledger } from '@studio-next/store'
+import { openLedgerWriter, verifyEventsChain, verifyEventsChainDelta, type EventsChainCheckpoint, type Ledger } from '@studio-next/store'
 import { answerReloadNoCompanyDir } from '../../control/hot-reload.ts'
 import { consumeStopRequest, readStopRequest, STOP_LAST_SEEN_KV_KEY, writeStopResult } from '../../control/stop-channel.ts'
 import { writeExitMarkOnStop } from '../../control/restart/checkpoint.ts'
@@ -225,15 +225,56 @@ export async function runServe(
   let ticks = 0
   let lastReport: TickReport | undefined
   let lastTickAt: number | null = null
-  let chainSnapshot: { ok: boolean; events?: number; tipPrefix?: string; checkedAt: number; error?: string } | undefined
+  // —— liveness 探针状态（studio-dev-697／785 增量）：tick 前进＋events 哈希链摘要 ——
+  //    785：链摘要=checkpoint+delta——启动/检查点失效时全量 verify 一次，之后每次只验新增链行
+  //    （毫秒级）+ tip 新鲜度；旧前缀由 daemon_kv 检查点 tip 锚定（不宣称每次全量密码学验证，
+  //    docs/17-§2 诚实边界；全量 verify 保留给启动/回退/运维命令）。
+  const CHAIN_CHECKPOINT_KV_KEY = 'events.chain.checkpoint'
+  type ChainSnapshot = { ok: boolean; events?: number; tipPrefix?: string; checkedAt: number; error?: string; mode?: 'full' | 'delta'; sinceSeq?: number }
+  let chainSnapshot: ChainSnapshot | undefined
   const chainCacheTtlMs = 120_000
   const chainMaxAgeMs = 10 * 60_000
-  const readChainSnapshot = (): NonNullable<typeof chainSnapshot> => {
+  const readChainCheckpoint = (): EventsChainCheckpoint | undefined => {
+    const raw = ledger.kvGet(CHAIN_CHECKPOINT_KV_KEY)
+    if (raw === null || raw === '') return undefined
+    try {
+      const parsed = JSON.parse(raw) as { seq?: unknown; tip?: unknown; events?: unknown }
+      if (typeof parsed.seq !== 'number' || typeof parsed.tip !== 'string' || typeof parsed.events !== 'number') return undefined
+      return { seq: parsed.seq, tip: parsed.tip, events: parsed.events }
+    } catch {
+      return undefined
+    }
+  }
+  const writeChainCheckpoint = (checkpoint: EventsChainCheckpoint): void => {
+    try {
+      ledger.kvSet(CHAIN_CHECKPOINT_KV_KEY, JSON.stringify(checkpoint))
+    } catch (err) {
+      console.error(`[serve] 链检查点写入失败（不阻断探针）：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  const readChainSnapshot = (): ChainSnapshot => {
     const now = Date.now()
     if (chainSnapshot !== undefined && now - chainSnapshot.checkedAt < chainCacheTtlMs) return chainSnapshot
     try {
-      const report = verifyEventsChain(ledger.db)
-      chainSnapshot = { ok: true, events: report.events, tipPrefix: report.tip.slice(0, 12), checkedAt: now }
+      const checkpoint = readChainCheckpoint()
+      let report
+      let mode: 'full' | 'delta' = 'delta'
+      let sinceSeq = 0
+      if (checkpoint !== undefined) {
+        try {
+          report = verifyEventsChainDelta(ledger.db, checkpoint)
+          sinceSeq = checkpoint.seq
+        } catch {
+          // 检查点失效（漂移/丢行/计数不符）→回退全量重算并重写检查点（fail-safe，不猜）
+          report = verifyEventsChain(ledger.db)
+          mode = 'full'
+        }
+      } else {
+        report = verifyEventsChain(ledger.db)
+        mode = 'full'
+      }
+      writeChainCheckpoint({ seq: report.events, tip: report.tip, events: report.events })
+      chainSnapshot = { ok: true, events: report.events, tipPrefix: report.tip.slice(0, 12), checkedAt: now, mode, sinceSeq }
     } catch (err) {
       chainSnapshot = {
         ok: false,
@@ -243,6 +284,22 @@ export async function runServe(
     }
     return chainSnapshot
   }
+  // —— 事件循环延迟观测（studio-dev-785）：50ms 采样窗内最大漂移（60s 滑窗）；
+  //    作为 healthz 加法字段 loop.lagMs 暴露（不新增事件名/不改契约）。
+  let loopLagMaxMs = 0
+  let loopLagWindowStart = Date.now()
+  let lastLoopSampleAt = Date.now()
+  const loopTimer = setInterval(() => {
+    const at = Date.now()
+    const drift = at - lastLoopSampleAt - 50
+    lastLoopSampleAt = at
+    if (at - loopLagWindowStart > 60_000) {
+      loopLagWindowStart = at
+      loopLagMaxMs = 0
+    }
+    if (drift > loopLagMaxMs) loopLagMaxMs = drift
+  }, 50)
+  loopTimer.unref?.()
   // —— 报表产出挂单 commit 面（studio-dev-705，docs/17-§2/docs/43-§十一）——
   //    收账/补收把进度落进 <companyDir>/reports/，拍边界收敛为挂单 commit（只处理 reports/ 前缀；
   //    org-config 等其它脏路径不纳入；失败回滚索引、下拍再试；状态切换才打日志防刷屏）。
@@ -289,6 +346,7 @@ export async function runServe(
             },
             chain: readChainSnapshot(),
             chainMaxAgeMs,
+            loop: { lagMs: loopLagMaxMs, windowMs: Math.max(1, Date.now() - loopLagWindowStart) },
           }),
       })
     }

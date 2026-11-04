@@ -389,5 +389,7 @@ export {
   eventsChainMigration,
   GENESIS_HASH,
   verifyEventsChain,
+  verifyEventsChainDelta,
+  type EventsChainCheckpoint,
   type EventsChainReport,
 } from './events-chain.ts'

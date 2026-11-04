@@ -166,6 +166,75 @@ export function verifyEventsChain(db: DatabaseSync): EventsChainReport {
   return { events: eventTotal, tip: prev }
 }
 
+/** 链检查点（daemon_kv 持久；healthz delta 校验的旧前缀锚） */
+export interface EventsChainCheckpoint {
+  readonly seq: number
+  readonly tip: string
+  readonly events: number
+}
+
+/**
+ * 增量链校验（studio-dev-785）：旧前缀由 checkpoint（seq/tip/events）锚定，仅重算 seq>checkpoint.seq
+ * 的新链行；仍做 events/events_chain 计数相等 + 检查点行存在/哈希一致 + 新行逐行链校验。
+ * **诚实边界**：不宣称每次全量密码学验证（旧前缀假设自上次全量验证后未变；全量 verifyEventsChain 保留
+ * 给启动/手动审计）。检查点失效抛 CONFIG_INVALID（调用方回退全量）。
+ */
+export function verifyEventsChainDelta(db: DatabaseSync, checkpoint: EventsChainCheckpoint): EventsChainReport {
+  const eventTotal = countRows(db, 'events')
+  const chainTotal = countRows(db, 'events_chain')
+  if (eventTotal !== chainTotal) {
+    configInvalid(
+      'store/events-chain:uncovered-events',
+      `链覆盖缺口：events=${eventTotal} 行 / events_chain=${chainTotal} 行——未链化行不可读（fail-closed）`,
+    )
+  }
+  if (checkpoint.seq < 0 || checkpoint.seq > chainTotal) {
+    configInvalid('store/events-chain:checkpoint-invalid', `链检查点 seq=${checkpoint.seq} 越界（链行=${chainTotal}）——回退全量校验`)
+  }
+  // 链 seq 连续（自增无空洞）且 OFFSET 1：旧前缀事件数必须等于 seq（检查点自洽）
+  if (checkpoint.events !== checkpoint.seq) {
+    configInvalid('store/events-chain:checkpoint-invalid', `链检查点 events=${checkpoint.events} 与 seq=${checkpoint.seq} 不自洽——回退全量校验`)
+  }
+  if (checkpoint.seq > 0) {
+    const anchorRow = db.prepare('SELECT hash FROM events_chain WHERE seq = ?').get(checkpoint.seq) as { hash?: unknown } | undefined
+    if (anchorRow === undefined || String(anchorRow.hash) !== checkpoint.tip) {
+      configInvalid('store/events-chain:checkpoint-invalid', `链检查点 tip 与 seq=${checkpoint.seq} 不匹配——回退全量校验`)
+    }
+  }
+  const rows = db
+    .prepare(
+      [
+        "SELECT c.seq AS seq, c.event_id AS event_id, c.prev_hash AS chain_prev, c.hash AS chain_hash,",
+        '  e.id AS id, e.ts AS ts, e.company AS company, e.issue AS issue, e.event AS event,',
+        '  e.actor AS actor, e.attempt AS attempt, e.level AS level, e.dept AS dept,',
+        '  e.correlation_id AS correlation_id, e.causation_id AS causation_id, e.tokens AS tokens,',
+        '  e.cost_usd AS cost_usd, e.duration_ms AS duration_ms, e.size AS size,',
+        '  e.payload_hash AS payload_hash, e.note AS note',
+        'FROM events_chain c LEFT JOIN events e ON e.id = c.event_id',
+        'WHERE c.seq > ? ORDER BY c.seq',
+      ].join(' '),
+    )
+    .all(checkpoint.seq) as SqlRow[]
+  let prev = checkpoint.seq === 0 ? GENESIS_HASH : checkpoint.tip
+  for (const row of rows) {
+    const seq = Number(row['seq'])
+    const eventId = String(row['event_id'])
+    if (row['id'] === null || row['id'] === undefined) {
+      configInvalid('store/events-chain:orphan-chain-row', `链行 seq=${seq} 指向不存在的事件 ${eventId}——链条目悬空，拒绝读取（fail-closed）`)
+    }
+    const chainPrev = String(row['chain_prev'])
+    if (chainPrev !== prev) {
+      configInvalid('store/events-chain:broken-link', `链断裂：seq=${seq} event=${eventId} 的 prev_hash 不接链尾（期望 ${prev}，实际 ${chainPrev}）——拒绝读取（fail-closed）`)
+    }
+    const expected = computeEventHash(prev, rowToEvent(row))
+    if (String(row['chain_hash']) !== expected) {
+      configInvalid('store/events-chain:hash-mismatch', `链内容不符：seq=${seq} event=${eventId} 的事件内容与链摘要不一致（疑似篡改）——拒绝读取（fail-closed）`)
+    }
+    prev = expected
+  }
+  return { events: eventTotal, tip: prev }
+}
+
 /**
  * 首次锚定：空链＋存量事件（v15 升级库）→ 按 (ts, id) 升序补链（单事务，任一行失败整体回滚）。
  * 语义边界：补的是「打开时刻库内现状」，锚定前的篡改不可判（见文件头注诚实边界）。

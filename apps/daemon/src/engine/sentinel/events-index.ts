@@ -156,7 +156,17 @@ function noteField(note: string | undefined, key: string): string | undefined {
 }
 
 /** 事件流 → 派生索引（engine 原 indexEvents 上移；行为零变更） */
-export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
+/**
+ * 增量累积器（studio-dev-785）：把「每拍全量重建」拆成 applyEvents(增量) + index()(读面)。
+ * buildEventIndex 仍保留（全量/测试/启动重建）；daemon collect 用本累积器跨拍持有状态。
+ * 不变式：applyEvents 只能按事件流序追加；重复 apply 同一事件会重复计数（调用方游标去重）。
+ */
+export interface EventIndexAccumulator {
+  applyEvents(events: readonly EventRecord[]): void
+  index(): EventIndex
+}
+
+export function createEventIndexAccumulator(): EventIndexAccumulator {
   const dispatchCount = new Map<TicketId, number>()
   const lastDispatch = new Map<TicketId, { ts: number; key: string | null }>()
   const lastOutcome = new Map<TicketId, number>()
@@ -173,7 +183,7 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
   const jobAnchors = new Map<TicketId, string>()
   const manualMarked = new Set<TicketId>()
   const manualChainNoted = new Set<TicketId>()
-  for (const e of events) {
+  const applyOneEvent = (e: EventRecord): void => {
     // 手工合并标记（studio-dev-232）：任意事件 note 携 merge=manual 锚即置位（append-only）
     if ((e.note ?? '').includes(MERGE_MANUAL_ANCHOR)) manualMarked.add(e.issue)
     if (e.event === 'DISPATCH') {
@@ -276,6 +286,11 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
       }
     }
   }
+  return {
+    applyEvents(events: readonly EventRecord[]): void {
+      for (const e of events) applyOneEvent(e)
+    },
+    index(): EventIndex {
   const seen: string[] = []
   for (const [ticket, last] of lastDispatch) {
     if (last.key !== null && (lastOutcome.get(ticket) ?? 0) <= last.ts) seen.push(last.key)
@@ -302,4 +317,12 @@ export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
     mergeManualOf: (ticket: TicketId): boolean => manualMarked.has(ticket),
     manualChainNotedOf: (ticket: TicketId): boolean => manualChainNoted.has(ticket),
   }
+    },
+  }
+}
+
+export function buildEventIndex(events: readonly EventRecord[]): EventIndex {
+  const accumulator = createEventIndexAccumulator()
+  accumulator.applyEvents(events)
+  return accumulator.index()
 }

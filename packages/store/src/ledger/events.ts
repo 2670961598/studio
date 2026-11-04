@@ -49,6 +49,13 @@ export interface EventsFace {
   /** events 查询面（缺省升序；order='desc' 倒序——desc+limit=「最近 N 条」，见 EventQuery） */
   queryEvents(query?: EventQuery): EventRecord[]
   /**
+   * 链序增量读面（studio-dev-785）：按 events_chain.seq 取链序在给定 seq 之后的事件（跨 ts 回填安全——
+   * append-only 不保证 ts 单调，链 seq 是唯一权威顺序）。返回 seq+event 对，供事件索引增量累积器用。
+   */
+  queryEventsAfterChainSeq(seq: number): Array<{ readonly seq: number; readonly event: EventRecord }>
+  /** 链尾 seq（=事件数；链无空洞自增）；用于增量游标/回退判定 */
+  eventsChainTipSeq(): number
+  /**
    * 事件哈希链全量重算校验（I-17／SEC-FC-04；审计/读命令面）：链断、内容不符、未覆盖事件
    * → CONFIG_INVALID（fail-closed，detail 带 seq/event id）。打开时已自动校验一次；长跑进程
    * 可按拍/按需复算（本面必读全表，非每读路径的默认前置）。
@@ -191,6 +198,19 @@ export function createEventsFace(db: DatabaseSync): EventsFace {
     return rows.map(rowToEvent)
   }
 
+  const queryEventsAfterChainSeq = (seq: number): Array<{ seq: number; event: EventRecord }> => {
+    const rows = db
+      .prepare(
+        'SELECT c.seq AS chain_seq, e.* FROM events_chain c JOIN events e ON e.id = c.event_id WHERE c.seq > ? ORDER BY c.seq',
+      )
+      .all(seq) as SqlRow[]
+    return rows.map((row) => ({ seq: Number(row['chain_seq']), event: rowToEvent(row) }))
+  }
+  const eventsChainTipSeq = (): number => {
+    const row = db.prepare('SELECT MAX(seq) AS seq FROM events_chain').get() as { seq?: unknown } | undefined
+    return Number(row?.seq ?? 0)
+  }
+
   const dumpEvents = (path: string): DumpResult => {
     const rows = db.prepare('SELECT * FROM events ORDER BY ts ASC, id ASC').all() as SqlRow[]
     // 同步写（daemon 单写入者，无并发写面）；行序 = ts,id 升序，行字节由 canonical 序列化保证确定
@@ -200,6 +220,8 @@ export function createEventsFace(db: DatabaseSync): EventsFace {
   return {
     appendEvent,
     queryEvents,
+    queryEventsAfterChainSeq,
+    eventsChainTipSeq,
     verifyEventsChain: () => verifyEventsChain(db),
     dumpEvents,
   }

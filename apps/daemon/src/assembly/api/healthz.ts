@@ -24,6 +24,10 @@ export interface HealthzChainSnapshot {
   readonly checkedAt: number
   /** 失败原因（ok=false 时） */
   readonly error?: string
+  /** 校验模式（studio-dev-785 加法观测：full=启动/回退全量；delta=checkpoint+新增链行增量） */
+  readonly mode?: 'full' | 'delta'
+  /** delta 模式的检查点 seq（旧前缀锚；full=0） */
+  readonly sinceSeq?: number
 }
 
 /** 输入（全部由调用方注入，便于测试确定性） */
@@ -48,6 +52,8 @@ export interface HealthzInput {
   readonly maxTickAgeMs?: number
   /** 链摘要最大可接受陈旧度（缺省 10min；过期=不健康，防「拿旧摘要冒充」） */
   readonly chainMaxAgeMs?: number
+  /** 事件循环延迟观测（studio-dev-785 加法字段；缺省不出现于 body） */
+  readonly loop?: { readonly lagMs: number; readonly windowMs: number }
 }
 
 /** 一面对照结果（body 明细） */
@@ -68,6 +74,15 @@ export interface HealthzChainDetail {
   readonly ageMs: number
   readonly fresh: boolean
   readonly error: string | null
+  /** 校验模式（785 加法；旧探针忽略未知字段） */
+  readonly mode: 'full' | 'delta'
+  readonly sinceSeq: number
+}
+
+export interface HealthzLoopDetail {
+  /** 事件循环延迟（采样窗内最大漂移，ms；0=未观测/健康） */
+  readonly lagMs: number
+  readonly windowMs: number
 }
 
 /** 探针响应（status 与 body 同时给出；HTTP 层据此原样回写） */
@@ -79,6 +94,8 @@ export interface HealthzReport {
     readonly uptimeMs: number
     readonly tick: HealthzTickDetail
     readonly chain: HealthzChainDetail
+    /** 事件循环延迟（785 加法字段；无观测时不出现） */
+    readonly loop?: HealthzLoopDetail
     readonly reasons: readonly string[]
   }
 }
@@ -133,7 +150,10 @@ export function buildHealthz(input: HealthzInput): HealthzReport {
         ageMs: chainAgeMs,
         fresh: chainFresh,
         error: input.chain.error ?? null,
+        mode: input.chain.mode ?? 'full',
+        sinceSeq: input.chain.sinceSeq ?? 0,
       },
+      ...(input.loop !== undefined ? { loop: { lagMs: Math.max(0, input.loop.lagMs), windowMs: Math.max(0, input.loop.windowMs) } } : {}),
       reasons,
     },
   }

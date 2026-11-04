@@ -17,10 +17,79 @@ import { engineDirectiveDeps, runDirectiveLayer } from '../directive/index.ts'
 import { runMirrorGcTick, type MirrorGcTickReport } from '../mirror-gc/step.ts'
 import type { ObsCollectFailure } from '../observe/index.ts'
 import { recordTickIntake } from '../records/hooks.ts'
-import { buildEventIndex } from '../sentinel/events-index.ts'
+import { createEventIndexAccumulator, type EventIndex, type EventIndexAccumulator } from '../sentinel/events-index.ts'
 import { runDev49Sentinels } from '../sentinel/sentinels.ts'
 import type { EngineRuntime } from '../runtime/types.ts'
 import { CURSOR_KEY, type CollectOutcome, type TickCtx } from './ctx.ts'
+
+/**
+ * daemon_kv 游标（studio-dev-785）：链序 seq（events_chain 唯一权威顺序，跨 ts 回填安全）＋
+ * 最近事件 ts（回填检测：新增事件 ts < cursor.ts → 全量重建）＋lastId（tip 观测/排障）。
+ * 进程内增量用；**重启/缓存缺失无条件全量重建**（不信任持久游标补齐——F1 修复）。
+ */
+const EVENT_INDEX_CURSOR_KEY = 'sentinel.eventIndex.cursor'
+interface EventIndexCursor {
+  readonly seq: number
+  readonly ts: number
+  readonly lastId: string
+}
+const eventIndexCache = new WeakMap<object, { acc: EventIndexAccumulator; cursor: EventIndexCursor }>()
+
+function writeEventIndexCursor(ledger: EngineRuntime['ledger'], cursor: EventIndexCursor): void {
+  ledger.kvSet(EVENT_INDEX_CURSOR_KEY, JSON.stringify(cursor))
+}
+
+/** 全量重建（启动/回退路径）：queryEvents(company) 按 ts,id 序喂累积器（与 buildEventIndex 全量同源） */
+function rebuildEventIndex(
+  ledger: EngineRuntime['ledger'],
+  company: string,
+): { acc: EventIndexAccumulator; cursor: EventIndexCursor } {
+  const events = ledger.queryEvents({ company })
+  const acc = createEventIndexAccumulator()
+  acc.applyEvents(events)
+  const last = events[events.length - 1]
+  const cursor: EventIndexCursor = {
+    seq: ledger.eventsChainTipSeq(),
+    ts: last?.ts ?? 0,
+    lastId: last?.id ?? '',
+  }
+  writeEventIndexCursor(ledger, cursor)
+  return { acc, cursor }
+}
+
+/**
+ * 事件索引读面（studio-dev-785）：进程内累积器 + 链序游标。
+ * - 缓存缺失（进程重启/新 ledger 对象）→ **无条件全量重建**（F1：持久游标不用于回灌历史）；
+ * - 稳态：`queryEventsAfterChainSeq(cursor.seq)` 只取链序新增事件（链 seq 是唯一权威顺序，F2：
+ *   追加 ts 回填事件也可见）；若新增事件 ts < cursor.ts（检测到乱序/回填）→ 本拍全量重建；
+ * - 链序异常/查询失败 → 全量重建；全量仍失败如实上抛（不吞）。
+ */
+export function eventIndexOf(ledger: EngineRuntime['ledger'], company: string): EventIndex {
+  const cached = eventIndexCache.get(ledger)
+  if (cached !== undefined) {
+    try {
+      const rows = ledger.queryEventsAfterChainSeq(cached.cursor.seq)
+      if (rows.length === 0) return cached.acc.index()
+      if (rows.some((row) => row.event.ts < cached.cursor.ts)) {
+        // 回填/乱序 ts：链序增量会与全量（ts,id 序）状态不一致——全量重建（fail-safe）
+        throw new Error('事件 ts 回填/乱序（新增事件 ts < cursor.ts）——本拍全量重建')
+      }
+      cached.acc.applyEvents(rows.map((row) => row.event))
+      const lastRow = rows[rows.length - 1]
+      if (lastRow === undefined) return cached.acc.index()
+      const nextCursor: EventIndexCursor = { seq: lastRow.seq, ts: lastRow.event.ts, lastId: lastRow.event.id }
+      writeEventIndexCursor(ledger, nextCursor)
+      const entry = { acc: cached.acc, cursor: nextCursor }
+      eventIndexCache.set(ledger, entry)
+      return entry.acc.index()
+    } catch {
+      eventIndexCache.delete(ledger) // 增量不可信→本拍全量重建
+    }
+  }
+  const rebuilt = rebuildEventIndex(ledger, company)
+  eventIndexCache.set(ledger, rebuilt)
+  return rebuilt.acc.index()
+}
 
 export async function collectPhase(rt: EngineRuntime, ctx: TickCtx): Promise<CollectOutcome> {
   // 逐字迁移的宿主别名（闭包名不变，语义=同一实例/同一绑定）
@@ -148,7 +217,7 @@ export async function collectPhase(rt: EngineRuntime, ctx: TickCtx): Promise<Col
     // —— 相位 1 尾：DEV-49 A4 双哨（未知态哨+状态集巡逻核，docs/52-§十；体=sentinels.ts，
     // 键派生=events-index.ts）——流外态单/出厂态回流不再只走 NOOP 静默观测链：ESCALATE
     // 落账（词表既有名）；哨计 mutations（RESUME 同口径）——有哨账的拍不落心跳。
-    const index = buildEventIndex(ledger.queryEvents())
+    const index = eventIndexOf(ledger, config.company)
     const { alarmed: unknownStateAlarmed, foreignKnown, drift: statusSetDrift, declaredMissing: declaredStatusMissing, declaredExtra: platformStatusExtra } = await runDev49Sentinels({
       issues,
       flowOf,
