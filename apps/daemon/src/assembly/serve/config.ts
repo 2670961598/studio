@@ -266,6 +266,8 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'hrTaigaInviteLog':
       case 'hrTaigaInvitePolls':
       case 'hrTaigaInvitePollMs':
+      case 'hrTaigaRoleMap':
+      case 'hrTaigaRoleFallback':
       case 'hrPeopleWatch':
         coerceHrServeKey(cfg, key, value, { str, num, bool })
         break

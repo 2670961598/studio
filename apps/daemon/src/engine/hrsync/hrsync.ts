@@ -104,8 +104,11 @@ export interface HrSyncDeps {
     taiga?: TaigaHrFace
     matrix?: MatrixHrFace
     rooms?: HrRoomAliases
-    /** 等级→Taiga 角色 slug（装配映射注入；缺省单层 'member'） */
-    taigaRoleOf?: (level: number) => string
+    /**
+     * Taiga 项目角色解析（装配注入；docs/52-§6.2）：岗位名优先、职级兜底、fallback 由装配给
+     * （缺省 stakeholder——项目必有且权限最小）。缺省未注入时取 stakeholder（绝不再用不存在的 'member'，784）。
+     */
+    taigaRoleOf?: (level: number, roleName?: string) => string
   }
   /** 出站脱敏闭包（redactOutbound 绑定已知秘密名单；装配注入） */
   redact: (text: string) => string
@@ -118,7 +121,7 @@ function changeOf(task: HrSyncTaskRecord): PeopleChange {
 }
 
 /** 目标态关键字段（apply 段入队时快照进 payload——执行器不回查目录） */
-function targetOf(task: HrSyncTaskRecord): { login?: string; name?: string; level?: number; dept?: string; status?: string } {
+function targetOf(task: HrSyncTaskRecord): { login?: string; name?: string; level?: number; dept?: string; role?: string; status?: string } {
   const p = task.payload
   if (p === undefined) return {}
   return {
@@ -126,6 +129,7 @@ function targetOf(task: HrSyncTaskRecord): { login?: string; name?: string; leve
     ...(p.name !== undefined ? { name: p.name } : {}),
     ...(p.level !== undefined ? { level: p.level } : {}),
     ...(p.dept !== undefined ? { dept: p.dept } : {}),
+    ...(p.role !== undefined ? { role: p.role } : {}),
     ...(p.status !== undefined ? { status: p.status } : {}),
   }
 }
@@ -150,7 +154,8 @@ async function executeHrTask(
   const aliases = rooms !== undefined ? [rooms.company, ...(deptAlias !== undefined ? [deptAlias] : [])] : []
   if (task.platform === 'taiga') {
     if (deps.faces.taiga === undefined) throw new Error('Taiga 面未装配（hrSync: true 需 platform 绑定 taiga）')
-    const role = deps.faces.taigaRoleOf?.(t.level ?? 1) ?? 'member'
+    // 784：不再缺省 'member'（项目无此角色）——装配未注入时退到项目必有且权限最小的 stakeholder
+    const role = deps.faces.taigaRoleOf?.(t.level ?? 1, t.role) ?? 'stakeholder'
     const username = t.login ?? task.person_id
     if (task.kind === '入') {
       const r = await deps.faces.taiga.ensureMember({ username, roleSlug: role, ...(t.name !== undefined ? { displayName: t.name } : {}) })
@@ -372,6 +377,7 @@ export function enqueueHrBatch(
         ...(target?.name !== undefined ? { name: target.name } : {}),
         ...(target?.level !== undefined ? { level: target.level } : {}),
         ...(target?.dept !== undefined ? { dept: target.dept } : {}),
+        ...(target?.role !== undefined ? { role: target.role } : {}), // 784：角色名随任务携带（role: 映射第一优先级）
         ...(target?.status !== undefined ? { status: target.status } : {}),
       }
       const id = `${args.batchId}-${platform}-${change.personId}-${change.field}-${String(enqueued + 1).padStart(3, '0')}`

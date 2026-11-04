@@ -34,7 +34,7 @@ import { loadTaigaFieldMap, resolveTaigaAuth } from '../platform/wire.ts'
 // 类型环破口（IMPL-06-05）：ServeConfig 归位 assembly/serve/config.ts——配置面类型不再
 // 经 serve.ts 门面中转（hrsync 装配体只依赖配置契约与执行体，不反向依赖门面）
 import type { ServeConfig } from '../serve/config.ts'
-import { collectHrSecrets, parseHrRooms } from './config.ts'
+import { collectHrSecrets, parseHrRooms, parseHrTaigaRoleMap, resolveHrTaigaRole } from './config.ts'
 
 /** 装配入参（serve.ts buildServeRuntime 现场件；raw platform=未经网关代理的原件） */
 export interface AssembleHrSyncArgs {
@@ -86,7 +86,7 @@ export function assembleHrSync(args: AssembleHrSyncArgs): { drain(): Promise<HrS
   if (!config.hrSync) return undefined
   const knownSecrets = collectHrSecrets(process.env, args.hrKnownSecrets)
   const { redact } = createRedactors(knownSecrets)
-  const faces: { taiga?: TaigaHrFace; matrix?: MatrixHrFace; rooms?: HrRoomAliases } = {}
+  const faces: { taiga?: TaigaHrFace; matrix?: MatrixHrFace; rooms?: HrRoomAliases; taigaRoleOf?: (level: number, roleName?: string) => string } = {}
   if (config.platform === 'taiga') {
     const inviteLogPath = resolvePath(config.hrTaigaInviteLog ?? '')
     faces.taiga = createTaigaHrFace({
@@ -104,6 +104,14 @@ export function assembleHrSync(args: AssembleHrSyncArgs): { drain(): Promise<HrS
         intervalMs: config.hrTaigaInvitePollMs,
       },
     })
+    // 784：注入公司角色/职级 → Taiga 项目角色映射（docs/52-§6.2；未命中走 fallback=stakeholder）
+    const roleMap = parseHrTaigaRoleMap(config.hrTaigaRoleMap)
+    faces.taigaRoleOf = (level: number, roleName?: string): string =>
+      resolveHrTaigaRole(roleMap, config.hrTaigaRoleFallback, level, roleName)
+    log(
+      `[serve] hr-sync Taiga 角色映射：role ${String(roleMap.byRole.size)} 项 / level ${String(roleMap.byLevel.size)} 项；` +
+        `fallback=${config.hrTaigaRoleFallback}（docs/52-§6.2；role: 优先于 level:）`,
+    )
     log(`[serve] hr-sync Taiga 面：项目 ${config.taigaProject ?? ''}；邀请令牌日志 ${inviteLogPath}（轮询 ${String(config.hrTaigaInvitePolls)}×${String(config.hrTaigaInvitePollMs)}ms——docs/52-§6.1）`)
   } else {
     log('[serve] hr-sync 警告：platform 非 taiga——Taiga 面未装配，入场/升降/退场的 taiga 任务将重试至 failed（如实明报，不静默）')

@@ -47,6 +47,18 @@ export interface HrServeConfig {
   hrMatrixRooms?: string
   /** Taiga 邀请令牌日志文件（hrSync+platform: taiga 时必配；docs/52-§6.1 tokenSource——docker logs/邮件日志落盘文件） */
   hrTaigaInviteLog?: string
+  /**
+   * 公司角色/职级 → Taiga 项目角色 slug 映射（docs/52-§6.2；必配面可选）：
+   * `role:<岗位名>=<slug>;level:<n>=<slug>`（分号隔项；slug 形如 stakeholder/back/product-owner）。
+   * **role: 条目优先于 level:**；未命中走 hrTaigaRoleFallback。空/非法条目=CONFIG_INVALID 拒启动。
+   */
+  hrTaigaRoleMap?: string
+  /**
+   * 映射未命中时的 Taiga 项目角色 slug（docs/52-§6.2；缺省 `stakeholder`）。
+   * 依据：项目模板必含 Stakeholder（权限最小、只读）；旧缺省 `member` 不是 Taiga 项目角色，
+   * 会把 hr-sync 打成 unknown-role/CONFIG_INVALID（784 事故）。
+   */
+  hrTaigaRoleFallback: string
   /** 令牌日志轮询次数（缺省 10）/间隔毫秒（缺省 500）——窗口内抓不到=任务回队重试 */
   hrTaigaInvitePolls: number
   hrTaigaInvitePollMs: number
@@ -70,6 +82,7 @@ export const HR_SERVE_DEFAULTS: HrServeConfig = {
   hrMatrix: false,
   hrTaigaInvitePolls: 10,
   hrTaigaInvitePollMs: 500,
+  hrTaigaRoleFallback: 'stakeholder',
   hrPeopleWatch: false,
 }
 
@@ -84,6 +97,8 @@ export const HR_SERVE_KEYS = [
   'hrTaigaInviteLog',
   'hrTaigaInvitePolls',
   'hrTaigaInvitePollMs',
+  'hrTaigaRoleMap',
+  'hrTaigaRoleFallback',
   'hrPeopleWatch',
 ] as const
 
@@ -128,6 +143,17 @@ export function coerceHrServeKey(
     case 'hrTaigaInviteLog':
       cfg.hrTaigaInviteLog = h.str(value, key)
       return true
+    case 'hrTaigaRoleMap': {
+      const v = h.str(value, key)
+      parseHrTaigaRoleMap(v) // 解析即验（非法条目/未知前缀/重复键 → CONFIG_INVALID 拒启动）
+      cfg.hrTaigaRoleMap = v
+      return true
+    }
+    case 'hrTaigaRoleFallback': {
+      const v = h.str(value, key)
+      cfg.hrTaigaRoleFallback = assertTaigaProjectRole(v, 'daemon.yaml hrTaigaRoleFallback') // F1：allowlist 同源校验
+      return true
+    }
     case 'hrTaigaInvitePolls': {
       const v = h.num(value, key)
       if (!Number.isInteger(v) || v < 1) throw new Error(`daemon.yaml：hrTaigaInvitePolls 须为正整数（实得 ${String(v)}）`)
@@ -153,6 +179,8 @@ export function validateHrServeCross(cfg: {
   hrSync: boolean
   platform: string
   hrTaigaInviteLog?: string
+  hrTaigaRoleMap?: string
+  hrTaigaRoleFallback?: string
   hrMatrix: boolean
   hrMatrixRooms?: string
   hrPeopleWatch: boolean
@@ -160,6 +188,11 @@ export function validateHrServeCross(cfg: {
   if (cfg.hrSync) {
     if (cfg.platform === 'taiga' && (cfg.hrTaigaInviteLog === undefined || cfg.hrTaigaInviteLog === '')) {
       throw new Error('daemon.yaml：hrSync: true + platform: taiga 需配 hrTaigaInviteLog（邀请令牌只落 console/邮件日志——docs/52-§6.1 tokenSource；未配则 Taiga 建号链无法闭环）')
+    }
+    // 784：Taiga 角色映射面解析即验（fallback 缺省 stakeholder；map 可空=全部 fallback）
+    if (cfg.platform === 'taiga') {
+      assertTaigaProjectRole(cfg.hrTaigaRoleFallback ?? '', 'daemon.yaml hrTaigaRoleFallback')
+      parseHrTaigaRoleMap(cfg.hrTaigaRoleMap)
     }
     if (cfg.hrMatrix) {
       if (cfg.hrMatrixRooms === undefined || !cfg.hrMatrixRooms.includes('company=')) {
@@ -172,6 +205,98 @@ export function validateHrServeCross(cfg: {
   if (cfg.hrPeopleWatch && !cfg.hrSync) {
     throw new Error('daemon.yaml：hrPeopleWatch: true 需 hrSync: true（people-change 源挂 hr-sync peopleDiff 分类器出口双写——无 hrSync 即无 diff 出口；129-§6.1① 注册模式）')
   }
+}
+
+/** Taiga 角色 slug 形状（小写字母/数字/连字符） */
+const TAIGA_ROLE_SLUG_RE = /^[a-z0-9][a-z0-9-]*$/
+
+/**
+ * Taiga 项目角色 allowlist（docs/52-§6.2.1；2026-11-05 真机实测项目 3 角色集）。
+ * 配置目标（map 值/fallback）**必须是** allowlist 内角色；`member` 及未知角色=CONFIG_INVALID。
+ * 扩展点：项目新增自定义角色时，先扩展本常量+docs/52-§6.2.1（走补丁/提案），再允许配置引用——
+ * 不在运行期按远端 roles 动态放行（fail-closed；防止配置指向不存在的角色再次 ESCALATE）。
+ */
+export const TAIGA_PROJECT_ROLE_SLUGS = ['ux', 'design', 'front', 'back', 'product-owner', 'stakeholder'] as const
+const TAIGA_PROJECT_ROLE_SET: ReadonlySet<string> = new Set(TAIGA_PROJECT_ROLE_SLUGS)
+
+/**
+ * 目标角色合法性统一校验（map 目标与 fallback 同源；大小写/首尾空白归一后再判）。
+ * @throws CONFIG_INVALID（形状非法/不在 allowlist）
+ */
+export function assertTaigaProjectRole(raw: string, context: string): string {
+  const slug = String(raw).trim().toLowerCase()
+  if (!TAIGA_ROLE_SLUG_RE.test(slug)) {
+    throw new Error(`CONFIG_INVALID：${context} 目标角色 slug 非法（${JSON.stringify(raw)}；小写字母/数字/连字符——docs/52-§6.2.1）`)
+  }
+  if (!TAIGA_PROJECT_ROLE_SET.has(slug)) {
+    throw new Error(
+      `CONFIG_INVALID：${context} 目标角色「${slug}」不在 Taiga 项目角色 allowlist（${TAIGA_PROJECT_ROLE_SLUGS.join('/')}）——docs/52-§6.2.1；` +
+        `如项目新增角色，先扩展 allowlist（代码常量+文档），不得运行时猜角色`,
+    )
+  }
+  return slug
+}
+
+/** 公司角色/职级 → Taiga 项目角色映射（docs/52-§6.2；分号隔项，role: 优先于 level:） */
+export interface HrTaigaRoleMap {
+  byRole: ReadonlyMap<string, string>
+  byLevel: ReadonlyMap<number, string>
+}
+
+/**
+ * 解析 hrTaigaRoleMap（fail-closed，docs/52-§6.2）：
+ *   `role:<岗位名>=<slug>;level:<n>=<slug>`（分号隔项，空项忽略；未知前缀/坏 slug/重复键=抛 CONFIG_INVALID）。
+ * 空串/undefined → 空映射（全部走 fallback）——不视为错误（首启/小团队可先只配 fallback）。
+ */
+export function parseHrTaigaRoleMap(spec?: string): HrTaigaRoleMap {
+  const byRole = new Map<string, string>()
+  const byLevel = new Map<number, string>()
+  const raw = (spec ?? '').trim()
+  if (raw === '') return { byRole, byLevel }
+  for (const part of raw.split(';').map((item) => item.trim()).filter((item) => item !== '')) {
+    const eq = part.indexOf('=')
+    if (eq <= 0) throw new Error(`CONFIG_INVALID：hrTaigaRoleMap 条目缺 \`<key>=<slug>\`（实得 ${JSON.stringify(part)}——docs/52-§6.2）`)
+    const key = part.slice(0, eq).trim()
+    const rawSlug = part.slice(eq + 1).trim()
+    const slug = assertTaigaProjectRole(rawSlug, 'hrTaigaRoleMap') // 形状+allowlist 同源校验（normalize）
+    if (key.startsWith('role:')) {
+      const role = key.slice('role:'.length).trim()
+      if (role === '') throw new Error('CONFIG_INVALID：hrTaigaRoleMap 的 role: 键缺岗位名（docs/52-§6.2）')
+      if (byRole.has(role)) throw new Error(`CONFIG_INVALID：hrTaigaRoleMap 重复 role:${role}（docs/52-§6.2）`)
+      byRole.set(role, slug)
+    } else if (key.startsWith('level:')) {
+      const levelText = key.slice('level:'.length).trim()
+      const level = Number(levelText)
+      if (!Number.isInteger(level) || level < 1 || level > 9) throw new Error(`CONFIG_INVALID：hrTaigaRoleMap 的 level: 键须为 1-9 整数（实得 ${JSON.stringify(key)}——docs/52-§6.2）`)
+      if (byLevel.has(level)) throw new Error(`CONFIG_INVALID：hrTaigaRoleMap 重复 level:${String(level)}（docs/52-§6.2）`)
+      byLevel.set(level, slug)
+    } else {
+      throw new Error(`CONFIG_INVALID：hrTaigaRoleMap 键须以 role: 或 level: 开头（实得 ${JSON.stringify(key)}——docs/52-§6.2）`)
+    }
+  }
+  return { byRole, byLevel }
+}
+
+/**
+ * 解析目标角色 slug（纯函数，docs/52-§6.2 优先级）：
+ *   ① role:<岗位> 命中 → ② level:<n> 命中 → ③ fallback（缺省 stakeholder）。
+ * fallback 必须为项目真实角色 slug（daemon 启动期只做形状校验；真值由 Taiga /roles 运行时解析）。
+ */
+export function resolveHrTaigaRole(
+  map: HrTaigaRoleMap,
+  fallback: string,
+  level: number | undefined,
+  roleName?: string,
+): string {
+  if (roleName !== undefined && roleName !== '') {
+    const hit = map.byRole.get(roleName)
+    if (hit !== undefined) return hit
+  }
+  if (level !== undefined) {
+    const hit = map.byLevel.get(level)
+    if (hit !== undefined) return hit
+  }
+  return fallback
 }
 
 /**
