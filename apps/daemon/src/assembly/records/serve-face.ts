@@ -24,6 +24,10 @@ import {
   type ObjectRecordWire,
 } from '../../engine/records/object-wire.ts'
 import { assembleRecords } from './assemble.ts'
+import { ROOT_GRANT_ABSENCE_KV } from '../serve/root-grant-absence-projection.ts'
+
+/** 记录面 → 台账句柄登记（bootRecordRoster 无 ledger 入参；装配期捕获后写 boot 拒写 kv， *  studio-dev-707 段2；runtime.ts 不受影响）。*/
+const recordWriterRegistry = new WeakMap<RecordWire, { readonly ledger: Ledger; readonly company: string }>()
 
 /** ServeRuntime 的记录面（引擎注入端口） */
 export interface ServeRecordsFace {
@@ -75,6 +79,17 @@ export function bootRecordRoster(args: {
     }
     for (const [reason, n] of byReason) args.log?.(`[serve] 记录面拒写 ${n} 条——${reason}`)
   }
+  // —— boot 拒写计数落 kv（studio-dev-707 段2）：供启动状态机/面板读；缺 merge 不在此处做 ——
+  const refusedCounts: Record<string, number> = {}
+  for (const result of refused) refusedCounts[result.recordType] = (refusedCounts[result.recordType] ?? 0) + 1
+  const registry = recordWriterRegistry.get(args.records)
+  if (registry !== undefined) {
+    try {
+      registry.ledger.kvSet(ROOT_GRANT_ABSENCE_KV.lastRoster, JSON.stringify({ at: args.at, counts: refusedCounts }))
+    } catch (err) {
+      args.log?.(`[serve] 根授予无锚投影写入失败（写 ${ROOT_GRANT_ABSENCE_KV.lastRoster}）：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
   return bootResults
 }
 
@@ -93,6 +108,13 @@ export function wireServeRecords(args: WireServeRecordsArgs): ServeRecordsFace {
       '相位 1 采集尾→REC-WORK-01、相位 3/4/6 迁移缝→REC-WORK-06（前置/权源不齐即拒）、' +
       '相位 4 收割尾→REC-LIFE-04→REC-EVD-01（前件不齐即拒）、相位 7 落账尾→records↔events 对账读者→ PORT-HIST append',
   )
+  recordWriterRegistry.set(assembly.records, { ledger: args.ledger, company: args.company })
+  try {
+    // rootGrant 注入标记（studio-dev-707 F1；供启动状态机读取注入语义——runServe 无生产注入时恒 false）
+    args.ledger.kvSet(ROOT_GRANT_ABSENCE_KV.injected, args.rootGrant !== undefined ? 'true' : 'false')
+  } catch (err) {
+    log?.(`[serve] 根授予无锚投影写入失败（写 ${ROOT_GRANT_ABSENCE_KV.injected}）：${err instanceof Error ? err.message : String(err)}`)
+  }
   const objectRecords = wireServeObjectRecords({
     ledger: args.ledger,
     hist: assembly.hist,

@@ -16,6 +16,10 @@
 import { PROJECTION_STATES } from '@studio-next/contract'
 import type { EventRecord, ProjectionFaultKind, ProjectionState } from '@studio-next/contract'
 import type { JobRecord, Ledger, SessionRecord, WorkRecord } from '@studio-next/store'
+import { buildAuthorityBlock, readAuthorityRaw, type SnapshotAuthority } from './authority.ts'
+
+export { buildAuthorityBlock } from './authority.ts'
+export type { SnapshotAuthority, SnapshotAuthorityState } from './authority.ts'
 
 // —— 快照形状（/api/snapshot 的响应体；页面一次拉全） ——
 
@@ -47,6 +51,8 @@ export interface DashboardSnapshot {
   events: SnapshotEvents
   /** 六态出口对账（MIG-08）：本快照自述 derived＋新鲜度未判定，不得读成「全绿健康」 */
   observation: ReturnType<typeof buildObservationExit>
+  /** 根授予无锚投影（studio-dev-707 段2；只读 kv；缺失/坏 JSON=unknown，不显示绿） */
+  authority: SnapshotAuthority
 }
 /** 快照可调参数：测试注时间用 now，页面卡片密度用 recentRuns */
 export interface SnapshotOptions {
@@ -78,6 +84,7 @@ export function buildDashboardSnapshot(ledger: Ledger, options?: SnapshotOptions
     runs: { total: runs.length, inFlight: runs.filter((r) => r.ended_at === undefined).length, recent: recentRunSlice(runs, recentRuns) },
     workers: aggregateActiveWorkers(runs, sessions),
     events: { total: events.length, byEvent: eventDistribution(events) },
+    authority: buildAuthorityBlock(readAuthorityRaw(ledger)),
     // 六态自述：panel 是投影的投影（最高态 derived）；无 freshness 策略来源＝新鲜度未判定，
     // dataValidWindow 显式 null（不伪造窗长——L3P-01），故不产 stale 出口、也不得显示为绿。
     observation: buildObservationExit({
