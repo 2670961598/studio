@@ -42,6 +42,13 @@ node <主仓>/scripts/ops/deploy.mjs status --deploy <workRoot>/StudioNext-deplo
 依赖：`deploy.mjs` 在 `node_modules` 缺失或 `bun.lock` 变化时自动 `bun install --frozen-lockfile`（部署树内安装；
 不同步主工作区 `node_modules`，避免 workspace 包软链回主工作区破坏隔离）。离线/演练可 `--skip-install`，但真实部署不建议。
 
+> **首装顺序不可倒（鸡生蛋，实测于 2026-11-04）**：guardian 的 `daemon.preflight` 读部署状态文件，
+> 而状态文件只有 `deploy.mjs deploy` 成功后才会写。因此**必须先跑第 1 节（deploy 落 state），再装守护核/加 preflight**；
+> 反过来（guardian 先带 preflight 起、state 尚不存在）会被 fail-closed 挡住——`guardian.jsonl` 记
+> `preflight-failed`（`部署状态文件缺失`）、不 spawn daemon，属**预期行为**，不是故障。
+> 已有旧守护在跑时的迁移：可先按旧配置让 guardian 起 daemon → 跑 `deploy.mjs deploy --ref <已验证 commit>`
+> 落 state（`--skip-restart` 可先不切换）→ 再把 `daemon.preflight` 加进 guardian 配置并 `launchctl kickstart -k`。
+
 ## 2. 安装守护核（部署窗口执行；不重启无关进程）
 
 1. **准备配置**（本机生成，不入仓）：
