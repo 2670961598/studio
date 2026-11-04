@@ -156,7 +156,8 @@ node apps/daemon/src/cli/main.ts serve --help  # serve 配置项
   否则 `deploy` 会按「部署树不干净」拒绝。此后禁止手工 checkout/pull，一律走 `deploy.mjs`）。
   依赖在部署树内 `bun install --frozen-lockfile`（不同步主工作区 `node_modules`，避免 workspace 软链指回主工作区）。
 - **部署**：`node scripts/ops/deploy.mjs deploy --repo <主仓路径> --deploy <部署树路径> --ref <已验证 commit sha>`
-  （checkout→tree digest 校验→依赖→`launchctl kickstart` 重启守护核→`/healthz` 验证→落 `deploy-state`）。
+  （漂移预检→checkout→tree digest 校验→依赖→**先写 `status=deploying` 的 deploy-state**→`launchctl kickstart`
+  重启守护核→`/healthz` 200∧ok∧pid 变化→state 写回 `active`；health 失败自动回滚部署树+state）。
 - **兜底**：guardian 起 daemon 前跑 `deploy.mjs check`（`daemon.preflight`）；部署树不干净/HEAD 漂移/digest 不符/依赖缺失 →
   **拒绝启动**（fail-closed，`preflight-failed` 告警重试）。
 - **回滚**：同一命令 `--ref <上一 commit sha>`（不重写历史）。
