@@ -26,7 +26,7 @@ const VIEW = {
   v: 1,
   state: 'unanchored-declared',
   declaration: { by: '制作人', reason: 'init 通道', until: '2026-12-31', untilSoon: false },
-  rootGrant: { expectedRecordId: 'rec-auth-01:acme:root:external-owner', present: false, count: 0 },
+  rootGrant: { expectedRecordId: null, present: false, count: 0 },
   refusals: { lastBoot: { at: 1, counts: { 'REC-LIFE-01': 28 } }, total: { 'REC-LIFE-01': 28 } },
   levelClaim: { configured: null, structural: 'CL2-unmet' },
   notice: '含 G8 双角色拒写残余（ENG-0，另单）；声明不是授予',
@@ -38,7 +38,7 @@ describe('buildAuthorityBlock（只读解析，坏数据不显示绿）', () => 
     expect(block.unavailable).toBe(false)
     expect(block.state).toBe('unanchored-declared')
     expect(block.declaration).toMatchObject({ by: '制作人', until: '2026-12-31', untilSoon: false })
-    expect(block.rootGrant).toMatchObject({ present: false, count: 0 })
+    expect(block.rootGrant).toMatchObject({ present: false, count: 0, expectedRecordId: null })
     expect(block.refusals.lastBoot.counts['REC-LIFE-01']).toBe(28)
     expect(block.levelClaim.structural).toBe('CL2-unmet')
   })

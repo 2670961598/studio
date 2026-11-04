@@ -67,7 +67,7 @@ describe('投影 kv 四键 + 面板视图', () => {
       const view = readKvJson(ledger, ROOT_GRANT_ABSENCE_KV.authorityView) as AuthorityView
       expect(view.state).toBe('unanchored-declared')
       expect(view.declaration).toMatchObject({ by: '制作人', until: '2026-11-10', untilSoon: true })
-      expect(view.rootGrant).toMatchObject({ present: false, count: 0 })
+      expect(view.rootGrant).toMatchObject({ present: false, count: 0, expectedRecordId: null })
       expect(view.levelClaim).toEqual({ configured: null, structural: 'CL2-unmet' })
       expect(view.notice).toContain('声明不是授予')
       expect(view.notice).toContain('G8 双角色')
@@ -122,6 +122,23 @@ describe('投影 kv 四键 + 面板视图', () => {
       project('2026-12-30')
       events = ledger.queryEvents({ company: 'acme' }).filter((event) => event.event === 'ESCALATE')
       expect(events).toHaveLength(2)
+    } finally {
+      ledger.close()
+    }
+  })
+
+  it('C1：anchored 正常态不追加 ESCALATE（无锚事件只属 DECLARED/UNDECLARED）', () => {
+    const { ledger, logs } = ledgerFixture()
+    try {
+      projectRootGrantAbsence({
+        ledger, company: 'acme', state: 'anchored', authGrantCount: 1, rootGrantPresent: false,
+        now: NOW, log: (line) => logs.push(line),
+      })
+      const events = ledger.queryEvents({ company: 'acme' }).filter((event) => event.event === 'ESCALATE')
+      expect(events).toHaveLength(0)
+      const view = readKvJson(ledger, ROOT_GRANT_ABSENCE_KV.authorityView) as AuthorityView
+      expect(view.state).toBe('anchored')
+      expect(view.rootGrant.expectedRecordId).toBeNull()
     } finally {
       ledger.close()
     }

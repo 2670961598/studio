@@ -17,7 +17,7 @@ export interface SnapshotAuthority {
   readonly declaration:
     | { readonly by: string; readonly reason: string; readonly until: string; readonly untilSoon: boolean }
     | null
-  readonly rootGrant: { readonly expectedRecordId: string; readonly present: boolean; readonly count: number }
+  readonly rootGrant: { readonly expectedRecordId: string | null; readonly present: boolean; readonly count: number }
   readonly refusals: {
     readonly lastBoot: { readonly at: number | null; readonly counts: Readonly<Record<string, number>> }
     readonly total: Readonly<Record<string, number>>
@@ -34,7 +34,7 @@ function unknownAuthority(reason: string): SnapshotAuthority {
     state: 'unknown',
     unavailable: true,
     declaration: null,
-    rootGrant: { expectedRecordId: '', present: false, count: 0 },
+    rootGrant: { expectedRecordId: null, present: false, count: 0 },
     refusals: { lastBoot: { at: null, counts: {} }, total: {} },
     levelClaim: { configured: null, structural: 'CL2-unmet' },
     notice: '面板未取得 authority 投影（daemon 未启动/投影未写/坏 JSON）——不显示为绿',
@@ -97,7 +97,7 @@ export function buildAuthorityBlock(raw: string | null): SnapshotAuthority {
       count?: unknown
     }
     return {
-      expectedRecordId: typeof raw.expectedRecordId === 'string' ? raw.expectedRecordId : '',
+      expectedRecordId: typeof raw.expectedRecordId === 'string' ? raw.expectedRecordId : null,
       present: raw.present === true,
       count: typeof raw.count === 'number' && Number.isInteger(raw.count) && raw.count >= 0 ? raw.count : 0,
     }

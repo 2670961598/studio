@@ -53,7 +53,7 @@ export interface AuthorityView {
   readonly declaration:
     | { readonly by: string; readonly reason: string; readonly until: string; readonly untilSoon: boolean }
     | null
-  readonly rootGrant: { readonly expectedRecordId: string; readonly present: boolean; readonly count: number }
+  readonly rootGrant: { readonly expectedRecordId: string | null; readonly present: boolean; readonly count: number }
   readonly refusals: { readonly lastBoot: RecordRefusalCounts; readonly total: Readonly<Record<string, number>> }
   readonly levelClaim: { readonly configured: number | null; readonly structural: string }
   readonly notice: string
@@ -146,7 +146,7 @@ export function buildAuthorityView(input: {
   readonly now: number
   readonly refusalsLastBoot: RecordRefusalCounts
   readonly refusalsTotal: Readonly<Record<string, number>>
-  readonly expectedRecordId: string
+  readonly expectedRecordId: string | null
 }): AuthorityView {
   const untilSoon =
     input.declaration !== undefined &&
@@ -200,7 +200,8 @@ export function projectRootGrantAbsence(input: ProjectRootGrantAbsenceInput): vo
   const lastBoot = readLastRosterCounts(ledger, log)
   const previousTotals = readKvJson(ledger, ROOT_GRANT_ABSENCE_KV.refusalsTotal, log)
   const totalCounts = mergeRefusalTotals(previousTotals, lastBoot.counts)
-  const expectedRecordId = `rec-auth-01:${input.company}:root:external-owner`
+  // expectedRecordId 不在本地猜（外部事实签立前没有真实 id）：null + 文档口径
+  const expectedRecordId: string | null = null
 
   // ① kv 四键（面板/验收读面；写失败 best-effort）
   writeKvJson(
@@ -247,13 +248,14 @@ export function projectRootGrantAbsence(input: ProjectRootGrantAbsenceInput): vo
     log(`[serve] 根授予无锚未声明欠账：拒写计数=${summary}（不补 0；面板 state=unanchored-undeclared）`)
   }
 
-  // ③ ESCALATE 去重（state|until；同日最多 1 条；不新增事件名/枚举）
+  // ③ ESCALATE 去重（仅无锚态：DECLARED|UNDECLARED；anchored=正常态不发无锚告警）
+  if (input.state === 'anchored') return
   const dedupeKey = `${input.state}|${input.declaration?.until ?? ''}`
   const previousKey = readKvJson(ledger, ROOT_GRANT_ABSENCE_KV.escalatedState, log)
   const sameKey = typeof previousKey === 'string' && previousKey === dedupeKey
   if (!sameKey) {
     const note =
-      `ROOT_GRANT_ABSENCE;${input.state === 'anchored' ? 'ANCHORED' : input.state === 'unanchored-declared' ? 'DECLARED' : 'UNDECLARED'};` +
+      `ROOT_GRANT_ABSENCE;${input.state === 'unanchored-declared' ? 'DECLARED' : 'UNDECLARED'};` +
       `declaredBy=${input.declaration?.declaredBy ?? '-'};until=${input.declaration?.until ?? '-'};` +
       `REC-AUTH-01×${String(input.authGrantCount)};${summary};state=${input.state};` +
       '含 G8 双角色拒写残余（ENG-0，另单）;声明不是授予'
