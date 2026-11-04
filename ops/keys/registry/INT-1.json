@@ -1,0 +1,12 @@
+{
+  "schema": "studio-next/worker-key/v1",
+  "id": "INT-1",
+  "name": "情报",
+  "email": "int-1@studio-next.local",
+  "algorithm": "ed25519",
+  "comment": "INT-1@studio-next",
+  "fingerprint": "SHA256:XjRE5LsOoNEp8wLUMbPQEOn+dRitZ6NaEQlA0rl8q2o",
+  "createdAt": "2026-11-04T19:19:31.822Z",
+  "pubFile": "INT-1.pub",
+  "keyFile": "INT-1.key"
+}

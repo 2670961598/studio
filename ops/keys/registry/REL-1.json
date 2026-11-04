@@ -1,0 +1,12 @@
+{
+  "schema": "studio-next/worker-key/v1",
+  "id": "REL-1",
+  "name": "发布",
+  "email": "rel-1@studio-next.local",
+  "algorithm": "ed25519",
+  "comment": "REL-1@studio-next",
+  "fingerprint": "SHA256:2RAQoG+hB/xnLh6jFTlkl7GIDbPUfK9nUJfe313Ewo8",
+  "createdAt": "2026-11-04T19:19:32.057Z",
+  "pubFile": "REL-1.pub",
+  "keyFile": "REL-1.key"
+}

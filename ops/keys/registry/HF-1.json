@@ -1,0 +1,12 @@
+{
+  "schema": "studio-next/worker-key/v1",
+  "id": "HF-1",
+  "name": "人事财务",
+  "email": "hf-1@studio-next.local",
+  "algorithm": "ed25519",
+  "comment": "HF-1@studio-next",
+  "fingerprint": "SHA256:qOc7239LA2yMW0pc6XPC52uPeoeBrWtPsOtz+5asVFg",
+  "createdAt": "2026-11-04T19:19:31.478Z",
+  "pubFile": "HF-1.pub",
+  "keyFile": "HF-1.key"
+}

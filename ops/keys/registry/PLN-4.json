@@ -1,0 +1,12 @@
+{
+  "schema": "studio-next/worker-key/v1",
+  "id": "PLN-4",
+  "name": "CLI策划",
+  "email": "pln-4@studio-next.local",
+  "algorithm": "ed25519",
+  "comment": "PLN-4@studio-next",
+  "fingerprint": "SHA256:dAHFFljFSrWfnQnQZKjMmdWrzS8Uf/lqQrb2/uEZ0c4",
+  "createdAt": "2026-11-04T19:19:31.901Z",
+  "pubFile": "PLN-4.pub",
+  "keyFile": "PLN-4.key"
+}

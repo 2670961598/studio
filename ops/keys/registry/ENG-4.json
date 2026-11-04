@@ -1,0 +1,12 @@
+{
+  "schema": "studio-next/worker-key/v1",
+  "id": "ENG-4",
+  "name": "程序四",
+  "email": "eng-4@studio-next.local",
+  "algorithm": "ed25519",
+  "comment": "ENG-4@studio-next",
+  "fingerprint": "SHA256:J+D9V065CHtMeVtxTC3HQVM0LzTDa4Ji/2n1+pq0vgE",
+  "createdAt": "2026-11-04T19:19:31.314Z",
+  "pubFile": "ENG-4.pub",
+  "keyFile": "ENG-4.key"
+}

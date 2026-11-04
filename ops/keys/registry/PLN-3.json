@@ -1,0 +1,12 @@
+{
+  "schema": "studio-next/worker-key/v1",
+  "id": "PLN-3",
+  "name": "技术策划",
+  "email": "pln-3@studio-next.local",
+  "algorithm": "ed25519",
+  "comment": "PLN-3@studio-next",
+  "fingerprint": "SHA256:J+4qiAauTyPOsN68U/0SX33yfSXAQXC1SDGdX/ypL6M",
+  "createdAt": "2026-11-04T19:19:31.862Z",
+  "pubFile": "PLN-3.pub",
+  "keyFile": "PLN-3.key"
+}

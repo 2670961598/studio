@@ -1,0 +1,12 @@
+{
+  "schema": "studio-next/worker-key/v1",
+  "id": "QA-1",
+  "name": "质检一",
+  "email": "qa-1@studio-next.local",
+  "algorithm": "ed25519",
+  "comment": "QA-1@studio-next",
+  "fingerprint": "SHA256:t75x42R4mlXC70Lt5oDNu4ozkE9+EhQmyKJdbQRX2os",
+  "createdAt": "2026-11-04T19:19:31.375Z",
+  "pubFile": "QA-1.pub",
+  "keyFile": "QA-1.key"
+}

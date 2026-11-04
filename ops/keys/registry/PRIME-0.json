@@ -1,0 +1,12 @@
+{
+  "schema": "studio-next/worker-key/v1",
+  "id": "PRIME-0",
+  "name": "首相",
+  "email": "prime-0@studio-next.local",
+  "algorithm": "ed25519",
+  "comment": "PRIME-0@studio-next",
+  "fingerprint": "SHA256:TxML6viWhylhZ4laVH5T433lBpO9z+z4u07JUp6LfmU",
+  "createdAt": "2026-11-04T19:19:31.039Z",
+  "pubFile": "PRIME-0.pub",
+  "keyFile": "PRIME-0.key"
+}

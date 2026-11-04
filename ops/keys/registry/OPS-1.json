@@ -1,0 +1,12 @@
+{
+  "schema": "studio-next/worker-key/v1",
+  "id": "OPS-1",
+  "name": "运维",
+  "email": "ops-1@studio-next.local",
+  "algorithm": "ed25519",
+  "comment": "OPS-1@studio-next",
+  "fingerprint": "SHA256:vu10SsQeFI9BP2ML8pJs58uvexqOZ94F8BaBbePiRqw",
+  "createdAt": "2026-11-04T19:19:31.786Z",
+  "pubFile": "OPS-1.pub",
+  "keyFile": "OPS-1.key"
+}
