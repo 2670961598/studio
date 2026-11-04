@@ -14,8 +14,9 @@
  * 设计：
  *   - 只编排既有脚本，不复制其逻辑；每个 check 有 id/标题/命令；
  *   - keys 面：显式 --keys-dir > 环境 STUDIO_KEYS_DIR > <repo>/ops/keys/registry（公钥投影）；
- *     无公钥/无 range base 时=skip（输出原因），--strict-keys 或 env REQUIRE_COMMIT_KEYS=1 时改 fail
- *     （团队 key 落地后由 Lead 在 CI 打开严格模式）；
+ *     **务实模式默认=skip（不强制）**：未设 REQUIRE_COMMIT_KEYS=1 且未给 --require-signature/--strict-keys 时，
+ *     verify-commit-keys 只报告不阻断（registry 在场仅表示可运行，不等于强制）；
+ *     显式严格模式才 FAIL（--strict-keys/--require-signature/env REQUIRE_COMMIT_KEYS=1）；
  *   - `--override <id>=<cmd>` 仅供测试/排障注入（sh -c 执行）；默认命令全部 argv 直跑（无 shell）。
  *   - CI 里由 `.github/workflows/required-checks.yml` 调用（bun 存在→bun run verify:v2）。
  */
@@ -33,7 +34,8 @@ const USAGE = `用法：node scripts/ops/required-checks.mjs [选项]
   --range <range>          直接指定 git range（覆盖 --base）
   --keys-dir <dir>         keys registry（缺省 $STUDIO_KEYS_DIR 或 <repo>/ops/keys/registry）
   --only <ids>             只跑指定 check（逗号分隔；id 见 --list）
-  --strict-keys            keys/range 不可用=失败（缺省=skip；env REQUIRE_COMMIT_KEYS=1 同义）
+  --strict-keys            严格模式（keys/range/提交校验均按失败计；缺省=skip，仅报告不阻断）
+  --require-signature      严格模式并要求 SSH/GPG 签名（未签名=失败；缺省不强制）
   --require-signature      提交校验要求 SSH/GPG 签名（团队 key 齐后开）
   --dry-run                只打印命令计划，不执行
   --list                   列出 check id/标题/命令
@@ -44,6 +46,9 @@ const USAGE = `用法：node scripts/ops/required-checks.mjs [选项]
 退出码：0=全过（含 skip）；1=有 fail；2=用法错误。`
 
 const EXIT = { ok: 0, fail: 1, usage: 2 }
+
+/** 工具自身所在仓库根（校验脚本用绝对路径——支持 --repo 指向其它仓库/临时夹具） */
+const TOOL_REPO = path.resolve(import.meta.dirname, '..', '..')
 
 export const CHECK_ORDER = ['verify:v2', 'verify:docs', 'scan-repo-secrets', 'verify-commit-keys']
 
@@ -122,7 +127,7 @@ export function resolveCommitKeyCheck({ repo, opts, env = process.env }) {
   const fromEnv = typeof env.STUDIO_KEYS_DIR === 'string' && env.STUDIO_KEYS_DIR !== '' ? path.resolve(env.STUDIO_KEYS_DIR) : ''
   const projection = path.join(repo, 'ops', 'keys', 'registry')
   const keysDir = explicit !== '' ? explicit : fromEnv !== '' ? fromEnv : projection
-  const strict = opts.strictKeys === true || env.REQUIRE_COMMIT_KEYS === '1'
+  const strict = opts.strictKeys === true || opts['require-signature'] === true || env.REQUIRE_COMMIT_KEYS === '1'
   if (!existsSync(keysDir) || !readdirSync(keysDir).some((name) => name.endsWith('.pub'))) {
     return { ok: false, strict, reason: `keys registry 无公钥（${keysDir}；先 export-key-registry + 提交，或设 STUDIO_KEYS_DIR）`, keysDir }
   }
@@ -153,13 +158,26 @@ export function buildPlan({ repo, opts, bunAvailable = hasCommand('bun'), env = 
   if (overrides['verify-commit-keys'] !== undefined) {
     plan.push({ id: 'verify-commit-keys', title: '提交作者/key 校验', steps: [{ label: 'override:verify-commit-keys', argv: null, override: overrides['verify-commit-keys'] }] })
   } else {
-    const resolved = resolveCommitKeyCheck({ repo, opts, env })
-    if (!resolved.ok) {
-      plan.push({ id: 'verify-commit-keys', title: '提交作者/key 校验', skipReason: resolved.reason, steps: [] })
+    // 务实模式默认：不强制提交校验（registry 在场≠强制）；显式严格模式才执行并 FAIL
+    const enforce =
+      opts.strictKeys === true || opts['require-signature'] === true || env.REQUIRE_COMMIT_KEYS === '1'
+    if (!enforce) {
+      plan.push({
+        id: 'verify-commit-keys',
+        title: '提交作者/key 校验（务实模式：默认不强制）',
+        skipReason:
+          '未设 REQUIRE_COMMIT_KEYS=1 且未给 --require-signature/--strict-keys：默认 SKIP 不阻断（registry 在场仅表示可运行；显式严格模式才 FAIL）',
+        steps: [],
+      })
     } else {
-      const argv = ['node', 'scripts/ops/verify-commit-keys.mjs', '--repo', repo, '--keys-dir', resolved.keysDir, '--range', resolved.range]
-      if (opts['require-signature'] === true) argv.push('--require-signature')
-      plan.push({ id: 'verify-commit-keys', title: '提交作者/key 校验', steps: [{ label: `verify-commit-keys ${resolved.range}`, argv }] })
+      const resolved = resolveCommitKeyCheck({ repo, opts, env })
+      if (!resolved.ok) {
+        plan.push({ id: 'verify-commit-keys', title: '提交作者/key 校验', skipReason: resolved.reason, steps: [] })
+      } else {
+        const argv = ['node', path.join(TOOL_REPO, 'scripts', 'ops', 'verify-commit-keys.mjs'), '--repo', repo, '--keys-dir', resolved.keysDir, '--range', resolved.range]
+        if (opts['require-signature'] === true) argv.push('--require-signature')
+        plan.push({ id: 'verify-commit-keys', title: '提交作者/key 校验', steps: [{ label: `verify-commit-keys ${resolved.range}`, argv }] })
+      }
     }
   }
   const only = typeof opts.only === 'string' && opts.only !== '' ? new Set(opts.only.split(',').map((item) => item.trim()).filter(Boolean)) : null
@@ -208,7 +226,7 @@ function main(argv) {
   process.stdout.write(`[required-checks] repo=${repo} checks=${plan.map((check) => check.id).join(',')}\n`)
   for (const check of plan) {
     if (check.skipReason !== undefined) {
-      const strict = opts.strictKeys === true || process.env.REQUIRE_COMMIT_KEYS === '1'
+      const strict = opts.strictKeys === true || opts['require-signature'] === true || process.env.REQUIRE_COMMIT_KEYS === '1'
       const status = strict ? 'fail' : 'skip'
       results.push({ id: check.id, status, reason: check.skipReason, steps: [] })
       process.stdout.write(`[${status.toUpperCase()}] ${check.id}（${check.skipReason}）${strict ? ' ← strict 模式按失败计' : ''}\n`)

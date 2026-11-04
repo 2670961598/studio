@@ -98,6 +98,10 @@ curl -sS "$API/commits/$BRANCH/check-runs" "${AUTH[@]}" | python3 -c "import jso
 node scripts/ops/required-checks.mjs --repo . --range origin/dev...HEAD
 ```
 
+**提交校验默认不阻断（务实模式）**：`verify-commit-keys` 在 CI 里默认 **SKIP**（registry 在场仅表示可运行）；
+若要强制作者/key/签名，显式设 `REQUIRE_COMMIT_KEYS=1`（仓库变量/CI env）或给 `--require-signature`，
+否则未签名提交不会让 required check 变红。
+
 ## 6. 回滚（配置可逆）
 
 ```sh

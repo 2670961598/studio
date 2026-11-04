@@ -42,9 +42,22 @@ afterAll(async () => {
   await rm(root, { recursive: true, force: true })
 })
 
-/** 真 CLI 子进程（stdio 全收；60s 上限——超时即红，不以超时刷绿） */
+/** 真 CLI 子进程（stdio 全收；60s 上限——超时即红，不以超时刷绿）。 */
 function runCli(args: readonly string[]): { status: number | null; stdout: string; stderr: string } {
-  const res = spawnSync(process.execPath, [CLI_BIN, ...args], { encoding: 'utf8', timeout: 60_000 })
+  // 夹具纪律（CI Linux 确定性）：`company create` 内会做 git 首次提交；GitHub Actions/裸 Linux
+  // 无全局 git 身份 → 会先失败于 Author identity unknown（与写者租约无关，掩盖 STALL 断言）。
+  // 显式注入提交身份使测试聚焦 PB-5 写者围栏；不是放宽断言（STALL/pid/owner 仍严格断言）。
+  const res = spawnSync(process.execPath, [CLI_BIN, ...args], {
+    encoding: 'utf8',
+    timeout: 60_000,
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME ?? 'studio-next-test',
+      GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL ?? 'studio-next-test@studio-next.local',
+      GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME ?? 'studio-next-test',
+      GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL ?? 'studio-next-test@studio-next.local',
+    },
+  })
   return { status: res.status, stdout: res.stdout ?? '', stderr: res.stderr ?? '' }
 }
 

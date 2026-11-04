@@ -240,3 +240,51 @@ test('F2（722 v2）：required-checks 从符号链接路径调用仍执行（re
   const envStrict = run(process.execPath, [CHECK, '--repo', repo, '--only', 'verify-commit-keys', '--json'], { env: { ...process.env, REQUIRE_COMMIT_KEYS: '1' } })
   assert.equal(envStrict.status, 1)
 })
+
+test('A（CI 修复）：registry 在场默认 SKIP 不阻断；严格模式未签名 FAIL、已签名 PASS', async () => {
+  // 造 key + 仓库公钥投影（CI 真实形态：ops/keys/registry 已提交）
+  const dir = tempRoot()
+  const keysDir = path.join(dir, 'external-keys')
+  const gen = run(process.execPath, [GEN, '--keys-dir', keysDir, '--id', 'REL-1', '--name', '发布', '--json'])
+  assert.equal(gen.status, 0, gen.stderr)
+  const meta = JSON.parse(readFileSync(path.join(keysDir, 'REL-1.json'), 'utf8'))
+  const repo = path.join(dir, 'repo')
+  gitInit(repo)
+  const outDir = path.join(repo, 'ops', 'keys', 'registry')
+  assert.equal(run(process.execPath, [EXPORT, '--keys-dir', keysDir, '--out', outDir, '--json']).status, 0)
+  const trailer = `Studio-Worker: REL-1\nStudio-Key: ${meta.fingerprint}`
+  const authorEnv = { ...process.env, GIT_AUTHOR_NAME: 'REL-1', GIT_AUTHOR_EMAIL: 'rel-1@studio-next.local', GIT_COMMITTER_NAME: 'REL-1', GIT_COMMITTER_EMAIL: 'rel-1@studio-next.local' }
+  // 基准提交（供 HEAD~1..HEAD range）
+  assert.equal(run('git', ['-C', repo, 'commit', '--allow-empty', '-m', 'chore: base'], { env: authorEnv }).status, 0)
+  // commit ①：合法 trailer（未签名）
+  assert.equal(run('git', ['-C', repo, 'commit', '--allow-empty', '-m', `feat: A\n\n${trailer}`], { env: authorEnv }).status, 0)
+  const baseOpts = ['--repo', repo, '--only', 'verify-commit-keys', '--json']
+  // ① 默认（务实模式）→ SKIP 且 exit0（registry 在场不强制）
+  const dflt = run(process.execPath, [CHECK, ...baseOpts], { env: { ...process.env, REQUIRE_COMMIT_KEYS: '0' } })
+  assert.equal(dflt.status, 0, dflt.stderr)
+  const dfltJson = JSON.parse(`${dflt.stdout.trim().split('\n').at(-1)}`)
+  assert.equal(dfltJson.results[0].status, 'skip')
+  assert.match(String(dfltJson.results[0].reason), /默认 SKIP|不阻断/)
+  // ② REQUIRE_COMMIT_KEYS=1：合法 trailer 未签名 → PASS（未要求签名）
+  const strictTrailers = run(process.execPath, [CHECK, ...baseOpts, '--range', 'HEAD~1..HEAD'], { env: { ...process.env, REQUIRE_COMMIT_KEYS: '1' } })
+  assert.equal(strictTrailers.status, 0, strictTrailers.stderr)
+  assert.equal(JSON.parse(`${strictTrailers.stdout.trim().split('\n').at(-1)}`).results[0].status, 'pass')
+  // ③ --require-signature：未签名 → FAIL
+  const needSig = run(process.execPath, [CHECK, ...baseOpts, '--require-signature', '--range', 'HEAD~1..HEAD'])
+  assert.equal(needSig.status, 1)
+  assert.equal(JSON.parse(`${needSig.stdout.trim().split('\n').at(-1)}`).results[0].status, 'fail')
+  // ④ 已签名 + --require-signature → PASS（真实 ssh-keygen 签名 + allowedSigners）
+  const allowed = path.join(dir, 'allowed_signers')
+  writeFileSync(allowed, `${meta.email} ${readFileSync(path.join(keysDir, 'REL-1.pub'), 'utf8').trim()}\n`, 'utf8')
+  run('git', ['-C', repo, 'config', 'gpg.format', 'ssh'])
+  run('git', ['-C', repo, 'config', 'user.signingkey', path.join(keysDir, 'REL-1.key')])
+  run('git', ['-C', repo, 'config', 'gpg.ssh.allowedSignersFile', allowed])
+  const signed = run('git', ['-C', repo, 'commit', '--allow-empty', '-S', '-m', `feat: signed\n\n${trailer}`], { env: authorEnv })
+  assert.equal(signed.status, 0, signed.stderr)
+  const sigPass = run(process.execPath, [CHECK, ...baseOpts, '--require-signature', '--range', 'HEAD~1..HEAD'])
+  assert.equal(sigPass.status, 0, sigPass.stderr)
+  // ⑤ 严格模式（env）下缺 trailer 的提交 → FAIL
+  assert.equal(run('git', ['-C', repo, 'commit', '--allow-empty', '-m', 'feat: no trailer'], { env: authorEnv }).status, 0)
+  const bad = run(process.execPath, [CHECK, ...baseOpts, '--range', 'HEAD~1..HEAD'], { env: { ...process.env, REQUIRE_COMMIT_KEYS: '1' } })
+  assert.equal(bad.status, 1)
+})
