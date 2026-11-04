@@ -1,0 +1,60 @@
+# required-checks —— GitHub Actions required checks（studio-dev-722）
+#
+# 触发：push / pull_request 目标分支 dev。
+# 内容：node scripts/ops/required-checks.mjs（verify:v2 + verify:docs + scan-repo-secrets +
+#       verify-commit-keys --range）。任一红=整个 check 红；分支保护据此拦截合并。
+#
+# secrets：**不使用自定义 secret**（本 workflow 只需 GITHUB_TOKEN 默认读权限）；
+#   647 等外部 token 仅由 Lead 在仓库设置/分支保护 API 配置时使用，绝不写入 workflow。
+name: required-checks
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+permissions:
+  contents: read
+concurrency:
+  group: required-checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  required-checks:
+    name: required-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout（fetch-depth 0：commit range/signature 校验需要历史）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Node（daemon/脚本运行时 Node 24）
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Setup Bun（bun workspaces 安装依赖）
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 'latest'
+      - name: Install（bun.lock 冻结）
+        run: bun install --frozen-lockfile
+      - name: Required checks
+        env:
+          # PR：与目标分支的全等比较；push：与 event.before 比较（新分支回退 origin/dev）
+          BASE_REF: ${{ github.base_ref }}
+          EVENT_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ] && [ -n "${BASE_REF:-}" ]; then
+            RANGE="origin/${BASE_REF}...HEAD"
+          elif [ -n "${EVENT_BEFORE:-}" ] && ! echo "${EVENT_BEFORE}" | grep -q '^0\+$'; then
+            RANGE="${EVENT_BEFORE}..HEAD"
+          else
+            RANGE="HEAD~1..HEAD"
+          fi
+          echo "[ci] commit range = ${RANGE}"
+          node scripts/ops/required-checks.mjs --range "${RANGE}"
+      - name: Upload summary（可选证据）
+        if: always()
+        run: |
+          echo "required-checks workflow=${{ github.workflow }} ref=${{ github.ref }} sha=${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          node scripts/ops/required-checks.mjs --list >> "$GITHUB_STEP_SUMMARY" || true

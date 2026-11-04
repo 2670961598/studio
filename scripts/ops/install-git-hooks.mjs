@@ -15,17 +15,18 @@ import { realpathSync } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
 
-const USAGE = `用法：node scripts/ops/install-git-hooks.mjs --repo <repo> --keys-dir <companyDir>/docs/keys [--node <node>] [--json]
+const USAGE = `用法：node scripts/ops/install-git-hooks.mjs --repo <repo> --keys-dir <companyDir>/docs/keys [--node <node>] [--with-pre-push] [--json]
        node scripts/ops/install-git-hooks.mjs --repo <repo> --remove`
 
-const MARKER = '# studio-next-721 commit-msg hook（verify-commit-keys；docs/90-§八）'
+const MARKER = '# studio-next-721 commit-msg hook（verify-commit-keys；docs/90-§九）'
+const PRE_PUSH_MARKER = '# studio-next-722 pre-push hook（required-checks；docs/90-§十一）'
 
 function parseArgs(argv) {
   const opts = {}
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i]
     if (token === '--help' || token === '-h') return { help: true, opts }
-    if (token === '--remove' || token === '--json') {
+    if (token === '--remove' || token === '--json' || token === '--with-pre-push') {
       opts[token.slice(2)] = true
       continue
     }
@@ -60,11 +61,14 @@ function main(argv) {
     return 1
   }
   if (opts.remove === true) {
-    if (existsSync(hookFile) && readFileSync(hookFile, 'utf8').includes(MARKER)) {
-      rmSync(hookFile)
-      process.stdout.write(`[install-git-hooks] 已移除 ${hookFile}\n`)
-    } else {
-      process.stdout.write('[install-git-hooks] 未发现本工具安装的 commit-msg 钩子（未改动）\n')
+    const prePushFile = path.join(hooksDir, 'pre-push')
+    for (const [file, marker] of [[hookFile, MARKER], [prePushFile, PRE_PUSH_MARKER]]) {
+      if (existsSync(file) && readFileSync(file, 'utf8').includes(marker)) {
+        rmSync(file)
+        process.stdout.write(`[install-git-hooks] 已移除 ${file}\n`)
+      } else {
+        process.stdout.write(`[install-git-hooks] 未发现本工具安装的 ${path.basename(file)} 钩子（未改动）\n`)
+      }
     }
     return 0
   }
@@ -94,8 +98,30 @@ exec "${nodeBin}" "${verifier}" --repo "${repo}" --keys-dir "${keysDir}" --commi
 `
   writeFileSync(hookFile, script, 'utf8')
   chmodSync(hookFile, 0o755)
-  if (opts.json === true) process.stdout.write(`${JSON.stringify({ ok: true, repo, hookFile, keysDir, node: nodeBin }, null, 2)}\n`)
-  else process.stdout.write(`[install-git-hooks] 已安装 ${hookFile}\n  keys=${keysDir}\n  校验器=${verifier}\n`)
+  let prePushFile = null
+  if (opts['with-pre-push'] === true) {
+    prePushFile = path.join(hooksDir, 'pre-push')
+    if (existsSync(prePushFile) && !readFileSync(prePushFile, 'utf8').includes(PRE_PUSH_MARKER)) {
+      const backup = `${prePushFile}.bak-${Date.now()}`
+      copyFileSync(prePushFile, backup)
+      process.stdout.write(`[install-git-hooks] 既有 pre-push 已备份：${backup}\n`)
+    }
+    const requiredChecks = path.join(repo, 'scripts', 'ops', 'required-checks.mjs')
+    const script = `#!/bin/sh
+${PRE_PUSH_MARKER}
+# 说明：推送前跑本地 required checks（verify:v2/verify:docs/scan/commit-keys）；耗时=全量 V2。
+# 临时跳过：SKIP_REQUIRED_CHECKS=1 git push ...
+if [ "\${SKIP_REQUIRED_CHECKS:-0}" = "1" ]; then exit 0; fi
+exec "${nodeBin}" "${requiredChecks}" --repo "${repo}" --base origin/dev
+`
+    writeFileSync(prePushFile, script, 'utf8')
+    chmodSync(prePushFile, 0o755)
+  }
+  if (opts.json === true) process.stdout.write(`${JSON.stringify({ ok: true, repo, hookFile, keysDir, node: nodeBin, prePushFile }, null, 2)}\n`)
+  else {
+    process.stdout.write(`[install-git-hooks] 已安装 ${hookFile}\n  keys=${keysDir}\n  校验器=${verifier}\n`)
+    if (prePushFile !== null) process.stdout.write(`[install-git-hooks] 已安装 pre-push：${prePushFile}（required-checks；SKIP_REQUIRED_CHECKS=1 可跳）\n`)
+  }
   return 0
 }
 
