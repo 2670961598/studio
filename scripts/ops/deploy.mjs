@@ -33,12 +33,15 @@
  */
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
-export const STATE_SCHEMA = 'studio-next/deploy-state/v1'
+import { bunLockSha, installDeps } from './deploy-deps.mjs'
+import { probeDeployHealth, summarizeHealthWait, waitForReplacedDaemon } from './deploy-health.mjs'
+import { baseState, readState, rollbackDeployTree, STATE_SCHEMA, statePathOf, writeState } from './deploy-state.mjs'
+
 export const EXIT = Object.freeze({ ok: 0, usage: 1, preflight: 2, deploy: 3, health: 4 })
 
 const USAGE = `用法：node scripts/ops/deploy.mjs <check|deploy|status|help> [选项]
@@ -68,7 +71,11 @@ const USAGE = `用法：node scripts/ops/deploy.mjs <check|deploy|status|help> [
   # （--no-checkout 后索引为空、git status 呈全部 staged deletions 属预期态；不先 checkout 会被 assertClean 拒绝）
   git clone --no-checkout <主仓路径> <部署树路径>
   git -C <部署树路径> checkout --detach <已验证 commit sha>
-  # 部署（校验 → 依赖 → 重启守护核 → healthz 验证 → 落 state）
+  # 部署（校验 → 依赖 → **先写 state(deploying)** → 重启守护核 → 等「新 pid」healthz → 落 state(active)）
+  # 成功判据：healthz 200 ∧ ok=true ∧ pid ≠ 部署前 pid（旧 daemon 未停完=不算成功；writer-lease
+  # 首启失败由 guardian 退避重试，本步持续等待到超时）
+  # 失败处置：health 超时 → 部署树回滚到上一 commit 并恢复 state（树/state 一致，preflight 可放行
+  # 旧代码启动）；绝不留「树=新/state=旧」漂移（717 真机事故）。
   node scripts/ops/deploy.mjs deploy --repo <主仓路径> \\
     --deploy <部署树路径> --ref <已验证 commit sha>
   # 回滚
@@ -239,34 +246,6 @@ function verifyDeployTree(repo, deploy, commit) {
   return head
 }
 
-function bunLockSha(deploy) {
-  const lock = path.join(deploy, 'bun.lock')
-  return existsSync(lock) ? sha256File(lock) : null
-}
-
-function installDeps(opts, deploy, previousState) {
-  const lockSha = bunLockSha(deploy)
-  const nodeModules = existsSync(path.join(deploy, 'node_modules'))
-  const lockChanged = previousState !== null && previousState.lockSha256 !== null && previousState.lockSha256 !== lockSha
-  const needsInstall = !nodeModules || lockChanged
-  if (opts['skip-install'] === true) {
-    return {
-      installed: false,
-      skipped: true,
-      reason: needsInstall ? 'node_modules 缺失或 bun.lock 变化，但指定了 --skip-install（演练/离线）' : '依赖未变化',
-      lockSha256: lockSha,
-      nodeModules,
-    }
-  }
-  if (!needsInstall) return { installed: false, reason: '依赖未变化', lockSha256: lockSha, nodeModules }
-  const bun = typeof opts.bun === 'string' && opts.bun !== '' ? opts.bun : 'bun'
-  const result = runCmd([bun, 'install', '--frozen-lockfile'], { cwd: deploy, timeoutMs: 1_200_000 })
-  if (result.status !== 0) {
-    throw new DeployError(EXIT.deploy, `依赖安装失败（bun install --frozen-lockfile）：\n${result.output}`)
-  }
-  return { installed: true, reason: 'node_modules 缺失或 bun.lock 变化', lockSha256: lockSha, nodeModules: true }
-}
-
 function guiDomain() {
   const uid = typeof process.getuid === 'function' ? process.getuid() : 0
   return `gui/${uid}`
@@ -280,44 +259,6 @@ function restartGuardian(label, opts) {
     throw new DeployError(EXIT.deploy, `launchctl kickstart 失败（${target}）：\n${result.output}`)
   }
   return { restarted: true, target }
-}
-
-async function waitHealth(url, timeoutMs) {
-  const startedAt = Date.now()
-  let last = null
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(5_000) })
-      const body = await response.json().catch(() => null)
-      last = { http: response.status, body }
-      if (response.status === 200 && body !== null && body.ok === true) {
-        return { healthy: true, http: response.status, body, waitedMs: Date.now() - startedAt }
-      }
-    } catch (err) {
-      last = { error: err instanceof Error ? err.message : String(err) }
-    }
-    await sleep(1_000)
-  }
-  return { healthy: false, last, waitedMs: Date.now() - startedAt }
-}
-
-function statePathOf(opts, deploy) {
-  if (typeof opts.state === 'string' && opts.state !== '') return path.resolve(opts.state)
-  return `${deploy}.deploy-state.json`
-}
-
-function readState(statePath) {
-  if (!existsSync(statePath)) return null
-  try {
-    return JSON.parse(readFileSync(statePath, 'utf8'))
-  } catch (err) {
-    throw new DeployError(EXIT.preflight, `部署状态文件解析失败（${statePath}）：${err instanceof Error ? err.message : String(err)}`)
-  }
-}
-
-function writeState(statePath, state) {
-  mkdirSync(path.dirname(statePath), { recursive: true })
-  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8')
 }
 
 function appendDeployLog(logPath, entry) {
@@ -447,51 +388,55 @@ async function cmdDeploy(opts) {
   assertDeployOutsideRepo(repo, deploy)
   ensureDeployRepo(deploy)
   const previousState = readState(statePath)
-  const previousHead = isGitWorkTree(deploy) ? headInfo(deploy) : null
+  const previousHead = headInfo(deploy)
+  // 部署树与 state 必须一致（717 事故：失败部署会留下「tree=新 commit / state=旧 commit」漂移，
+  // guardian preflight 随即 fail-closed 死循环 → daemon 停摆；本检查在动手前列出恢复指令）
+  if (previousState !== null && previousState.targetCommit !== previousHead.commit) {
+    throw new DeployError(
+      EXIT.preflight,
+      `部署树与 state 漂移：tree HEAD=${previousHead.commit}，state.targetCommit=${String(previousState.targetCommit)}——拒绝在漂移态重启（preflight 会 fail-closed）。\n` +
+        `恢复：git -C ${deploy} checkout --detach ${String(previousState.targetCommit)} 使树回到 state 记录，或手工修正 state 后再跑 deploy`,
+    )
+  }
   const targetCommit = resolveCommit(repo, ref)
-  appendDeployLog(logPath, { event: 'deploy-start', repo, deploy, ref, targetCommit, startedAt })
+  appendDeployLog(logPath, { event: 'deploy-start', repo, deploy, ref, targetCommit, startedAt, previousCommit: previousHead.commit })
 
   // ① 部署树必须干净（fail-closed：不覆盖未提交改动）
   assertClean(deploy, '部署树')
 
-  // ② 目标 commit 可见 + checkout
+  // ② 目标 commit 可见 + checkout；③ 树 digest 校验
   const commitSource = ensureCommitAvailable(repo, deploy, targetCommit)
   checkoutCommit(deploy, targetCommit)
-
-  // ③ 树 digest 校验（部署树 == 主仓目标 commit 的 tree）
   const verified = verifyDeployTree(repo, deploy, targetCommit)
   assertClean(deploy, '部署树（checkout 后）')
   requireEntryPoints(deploy)
   appendDeployLog(logPath, { event: 'tree-verified', commit: verified.commit, tree: verified.tree })
 
-  // ④ 依赖（node_modules 缺失或 lock 变化才安装；bun --frozen-lockfile）
-  const deps = installDeps(opts, deploy, previousState)
-
-  // ⑤ 重启守护核（launchd kickstart -k → guardian 重新拉起 daemon）
-  const restart = restartGuardian(label, opts)
-
-  // ⑥ healthz 验证（守护核重启后 daemon 从部署树起）
-  let health = { healthy: false, skipped: true, reason: '--skip-restart' }
-  if (restart.restarted === true) {
-    health = await waitHealth(healthUrl, healthTimeoutMs)
-    if (health.healthy !== true) {
-      appendDeployLog(logPath, { event: 'health-failed', health })
-      throw new DeployError(
-        EXIT.health,
-        `部署已切换但 /healthz 未在 ${String(healthTimeoutMs)}ms 内恢复：${JSON.stringify(health.last ?? null)}\n` +
-          `回滚：node scripts/ops/deploy.mjs deploy --repo ${repo} --deploy ${deploy} --ref ${
-            previousState !== null && typeof previousState.targetCommit === 'string' ? previousState.targetCommit : '<上一 commit>'
-          }`,
-      )
-    }
+  // ④ 依赖（失败即回滚部署树到上一 commit；state 未动——保持「树=state」一致）
+  let deps
+  try {
+    deps = installDeps({
+      opts,
+      deploy,
+      previousState,
+      runCmd,
+      sha256File,
+      fail: (code, message) => {
+        throw new DeployError(code, message)
+      },
+    })
+  } catch (err) {
+    rollbackDeployTree({ repo, deploy, previousState, previousHead, inTree: checkoutCommit, verify: verifyDeployTree, clean: assertClean, entryCheck: requireEntryPoints })
+    throw err
   }
 
-  const state = {
-    schema: STATE_SCHEMA,
-    deployedAt: nowIso(),
+  // ⑤ 记旧 daemon pid（pid≠previous 判定基准；不可达=部署前 daemon 未运行）
+  const preProbe = opts['skip-restart'] === true ? null : await probeDeployHealth(healthUrl, null, { timeoutMs: 5_000 })
+  const previousHealthPid = preProbe !== null ? preProbe.pid : null
+  const common = {
     targetCommit: verified.commit,
     tree: verified.tree,
-    previousCommit: previousHead === null ? null : previousHead.commit,
+    previousCommit: previousHead.commit,
     deployDir: deploy,
     repo,
     ref,
@@ -500,9 +445,77 @@ async function cmdDeploy(opts) {
     depsInstalled: deps.nodeModules === true,
     depsInstall: deps,
     launchdLabel: label,
-    restart,
-    health: health.healthy === true ? { ok: true, http: health.http, waitedMs: health.waitedMs, pid: health.body?.pid ?? null } : { ok: false, skipped: true },
   }
+
+  // ⑥ **state 先写**：部署窗口内 guardian preflight 必须通过（state 已指向新 commit/tree，
+  //    health=pending）；绝不留下「树=新 / state=旧」的窗口（717 真机事故根因）。
+  const deployingState = baseState({
+    status: 'deploying',
+    deployedAt: nowIso(),
+    ...common,
+    restart: { pending: true },
+    health: { ok: false, pending: true, previousPid: previousHealthPid },
+  })
+  writeState(statePath, deployingState)
+  appendDeployLog(logPath, { event: 'state-deploying', ...deployingState })
+
+  // ⑦ 重启守护核（launchd kickstart -k → guardian 重启；此时 preflight 读到的 state 已是新值）
+  const restart = restartGuardian(label, opts)
+
+  // ⑧ 等新 daemon：healthz 200 ∧ ok=true ∧ pid ≠ 部署前 pid（旧 daemon 未停完/不可达/
+  //    writer-lease 首启失败重试窗都只算过渡态——持续等，不首轮即判）
+  let health = { replaced: false, skipped: true, reason: '--skip-restart' }
+  if (restart.restarted === true) {
+    health = await waitForReplacedDaemon({ url: healthUrl, previousPid: previousHealthPid, timeoutMs: healthTimeoutMs })
+  }
+  if (restart.restarted === true && health.replaced !== true) {
+    // 失败处置：回滚部署树到上一 commit 并恢复 state（保持树=state 一致，preflight 可放行旧代码），
+    // 绝不留 stale state 让 guardian 无限 fail-closed。
+    const rollback = rollbackDeployTree({ repo, deploy, previousState, previousHead, inTree: checkoutCommit, verify: verifyDeployTree, clean: assertClean, entryCheck: requireEntryPoints })
+    if (rollback.ok) {
+      if (previousState !== null) {
+        writeState(statePath, previousState)
+      } else {
+        writeState(
+          statePath,
+          baseState({
+            status: 'failed',
+            deployedAt: nowIso(),
+            targetCommit: previousHead.commit,
+            tree: previousHead.tree,
+            previousCommit: null,
+            deployDir: deploy,
+            repo,
+            ref,
+            launchdLabel: label,
+            health: { ok: false, pending: false },
+            note: '首次部署失败，已回滚部署树到原 commit（树/state 一致）',
+          }),
+        )
+      }
+    }
+    appendDeployLog(logPath, { event: 'health-failed-rollback', summary: summarizeHealthWait(health), rollback })
+    throw new DeployError(
+      EXIT.health,
+      `部署已切换但 ${String(healthTimeoutMs)}ms 内未等到「healthz 200∧ok=true∧pid≠部署前 pid」的新 daemon：\n  ${summarizeHealthWait(health)}\n` +
+        (rollback.ok
+          ? `已回滚部署树到 ${rollback.commit}${previousState !== null ? '并恢复 state' : '（首次部署：写 failed state；树/state 一致）'}——guardian preflight 将放行旧代码启动。\n`
+          : `⚠ 回滚失败（${rollback.error ?? '未知'}）：需人工把部署树/state 恢复一致后再重启守护核。\n`) +
+        `注意：daemon 可能已停。确认 guardian 已拉起（launchctl kickstart -k gui/<uid>/${label}）；仍失败查 ~/Library/Logs/studio-next/guardian.jsonl。\n` +
+        `手工恢复：git -C ${deploy} checkout --detach <上一 commit> 并使 state.targetCommit 同值。`,
+    )
+  }
+
+  const state = baseState({
+    status: 'active',
+    deployedAt: nowIso(),
+    ...common,
+    restart,
+    health:
+      restart.restarted === true
+        ? { ok: true, pid: health.pid, previousPid: health.previousPid, waitedMs: health.waitedMs, probes: health.observations.length, deployedCommit: verified.commit }
+        : { ok: false, skipped: true },
+  })
   writeState(statePath, state)
   appendDeployLog(logPath, { event: 'deploy-done', ...state })
   const payload = {
@@ -524,7 +537,7 @@ async function cmdDeploy(opts) {
     `  tree=${verified.tree}`,
     `  deps=${deps.installed === true ? 'installed' : 'unchanged/skipped'}`,
     `  restart=${restart.restarted === true ? restart.target : 'skipped'}`,
-    `  health=${health.healthy === true ? `ok pid=${String(health.body?.pid ?? '?')} (${String(health.waitedMs)}ms)` : 'skipped'}`,
+    `  health=${state.health.ok === true ? `ok pid=${String(state.health.pid)} previous=${state.health.previousPid === null ? 'none' : String(state.health.previousPid)} (${String(state.health.waitedMs)}ms, probes=${String(state.health.probes)})` : 'skipped'}`,
     `  state=${statePath}`,
   ])
   return EXIT.ok
@@ -549,7 +562,7 @@ export async function main(argv) {
     if (command === 'status') return cmdStatus(opts)
     throw new DeployError(EXIT.usage, `未知子命令：${command}`)
   } catch (err) {
-    const code = err instanceof DeployError ? err.code : EXIT.deploy
+    const code = err instanceof DeployError ? err.code : typeof err?.code === 'number' ? err.code : EXIT.deploy
     const message = err instanceof Error ? err.message : String(err)
     if (opts.json === true) {
       process.stdout.write(`${JSON.stringify({ ok: false, command, code, error: message }, null, 2)}\n`)
@@ -559,7 +572,16 @@ export async function main(argv) {
   }
 }
 
-const invokedDirectly = process.argv[1] !== undefined && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))
+function realpathOrResolved(target) {
+  try {
+    return realpathSync(target)
+  } catch {
+    return path.resolve(target)
+  }
+}
+
+const invokedDirectly =
+  process.argv[1] !== undefined && realpathOrResolved(path.resolve(process.argv[1])) === realpathOrResolved(fileURLToPath(import.meta.url))
 if (invokedDirectly) {
   const code = await main(process.argv.slice(2))
   process.exit(code)
