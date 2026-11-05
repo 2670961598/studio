@@ -149,6 +149,8 @@ export interface EngineDeps extends HarvestRecordingDeps {
 /** 引擎句柄：serve 循环每拍调 tick()；停机走 dispose()（在途 drain=优雅杀） */
 export interface Engine extends HarvestRecordingObservation {
   tick(): Promise<TickReport>
+  /** boot 孤儿扫描（studio-dev-838）：平台=已派发∧inflight=空∧lane 无 holder → 回退新单（幂等/限速/审计） */
+  recoverOrphans(): Promise<import('../recovery/orphan-recovery.ts').OrphanRecoveryResult>
   /**
    * 意图注入口（22-§一 源协议在引擎侧的落点）：唤起源（v0.4=scheduler 的 schedule 源；
    * v0.5+ mention 源经组合根注入，105-刀A）把意图推入队列，下一拍 state-diff 前消费——

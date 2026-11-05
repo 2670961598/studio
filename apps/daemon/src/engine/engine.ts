@@ -167,6 +167,7 @@ import { runTick } from './tick/run.ts'
 import { applyCompanyUpdate, disposeEngine } from './runtime/lifecycle.ts'
 import { createRuntime } from './runtime/create-runtime.ts'
 import type { CompanyRuntimeUpdate, Engine, EngineDeps } from './runtime/contract.ts'
+import { recoverDispatchedOrphans, type OrphanRecoveryResult } from './recovery/orphan-recovery.ts'
 import type { DispatchPreflight, EngineCrashSeams, EngineRuntime } from './runtime/types.ts'
 import { resolveWorkerDispatchSeatbelt, seatbeltNote } from './work/dispatch-seatbelt.ts'
 
@@ -227,6 +228,7 @@ export function createEngine(deps: EngineDeps): Engine {
 
   const engine: Engine = {
     tick: () => runTick(rt),
+    recoverOrphans: (): Promise<OrphanRecoveryResult> => recoverDispatchedOrphans(rt),
     ingest(intents): void {
       rt.intentQueue.push(...intents)
     },

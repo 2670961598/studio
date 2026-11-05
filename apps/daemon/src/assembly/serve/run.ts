@@ -362,6 +362,29 @@ export async function runServe(
     engine.ingest([intent])
   })
 
+  // —— boot 孤儿扫描（studio-dev-838；启动例行，非第八相位）：平台=已派发 ∧ 本地 inflight=空 ∧
+  //    lane 无 holder 的孤票 → 回退新单（下一拍按活动/镜像重决策自动重派）。异步不挡首拍；
+  //    幂等/限速/审计在 recovery/orphan-recovery.ts；失败逐单进日志，不静默。 ——
+  void engine
+    .recoverOrphans()
+    .then((orphan) => {
+      if (orphan.recovered > 0) {
+        console.log(
+          `[serve] 孤儿扫描（boot）：平台单=${String(orphan.scanned)} 回退=${String(orphan.recovered)}（${orphan.items.map((i) => `${i.ticket}#att${String(i.attempt)}@${i.lane}`).join('、') || '-'}）` +
+            ` 跳过=inflight:${String(orphan.skippedInflight)}/lane-busy:${String(orphan.skippedLaneBusy)}/非已派发:${String(orphan.skippedNotDispatched)} 失败=${String(orphan.failed)}`,
+        )
+      }
+      // studio-dev-838 F2：失败/异常明细必须可见（不静默）——list 不可达/failed>0 均打印
+      if (orphan.failed > 0 || orphan.errors.length > 0) {
+        console.error(
+          `[serve] 孤儿扫描（boot）失败：平台单=${String(orphan.scanned)} 失败=${String(orphan.failed)}；明细=${orphan.errors.length > 0 ? orphan.errors.join('；') : '（无明细）'}`,
+        )
+      }
+    })
+    .catch((err: unknown) => {
+      console.error(`[serve] 孤儿扫描（boot）异常：${err instanceof Error ? err.message : String(err)}`)
+    })
+
   // 泳道 hold 观测去重表（studio-dev-713；跨拍持有：同单同租约快照只落一行，防刷屏）
   const holdLaneSeen = new Map<string, string>()
 

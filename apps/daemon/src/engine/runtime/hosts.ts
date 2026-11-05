@@ -11,6 +11,7 @@ import type { HarvestAttemptHost } from '../harvest/batch.ts'
 import { effectiveStallAfterMs, probeInflightActivity } from '../watchdog/liveness.ts'
 import type { StallResponseHost } from '../watchdog/stall-response.ts'
 import { failHarvest, finalizeHarvest } from '../harvest/finalize.ts'
+import { recoverStaleTicket } from '../recovery/orphan-recovery.ts'
 import type { EngineRuntime } from './types.ts'
 
 /** 租约 epoch 陈旧检测（studio-dev-809）：完成面携带 epoch ≠ registry 当前 epoch → 拒收 */
@@ -33,21 +34,61 @@ function staleLeaseOf(rt: EngineRuntime, entry: { ticket: string; lane: string; 
 }
 
 /** 陈旧完成面拒收：审计 ESCALATE + 丢弃 inflight；不写台账/不释放依赖/不推进状态 */
-function rejectStaleCompletion(
+/** 同一旧 entry 判别（studio-dev-838 F1）：workRecordId+attempt+epoch（lane/merge）同源=同单同 attempt 旧完成 */
+function isSameInflightEntry(
+  a: { ticket: string; attempt: number; workRecordId: string; laneEpoch?: number; mergeRun?: { leaseEpoch?: number } },
+  b: { ticket: string; attempt: number; workRecordId: string; laneEpoch?: number; mergeRun?: { leaseEpoch?: number } },
+): boolean {
+  return (
+    a.workRecordId === b.workRecordId &&
+    a.attempt === b.attempt &&
+    (a.laneEpoch ?? undefined) === (b.laneEpoch ?? undefined) &&
+    (a.mergeRun?.leaseEpoch ?? undefined) === (b.mergeRun?.leaseEpoch ?? undefined)
+  )
+}
+
+async function rejectStaleCompletion(
   rt: EngineRuntime,
-  entry: { ticket: string; attempt: number; lane: string; workRecordId: string },
+  entry: { ticket: string; attempt: number; lane: string; workRecordId: string; laneEpoch?: number; mergeRun?: { leaseEpoch?: number } },
   stale: { kind: 'lane' | 'merge'; key: string; epoch: number; current: number },
   tickEvents: EventRecord[],
   errors: string[],
-): 'failed' {
+): Promise<'failed'> {
   errors.push(
     `租约 epoch 陈旧：${stale.kind}=${stale.key} ticket=${entry.ticket} epoch=${String(stale.epoch)} current=${String(stale.current)}——迟到完成拒收（不写台账/不释放依赖/不推进状态）`,
   )
   const carrier = { id: entry.ticket } as IssueRecord
+  // studio-dev-838 F1：先判「新 epoch inflight 在场」再删——新 epoch 已接管时保留其在途、
+  // 绝不因旧完成到达而删除新 inflight，也不回退平台状态（冲突面只审计）。
+  const currentInflight = rt.inflight.get(entry.ticket)
+  const sameEntry = currentInflight !== undefined && isSameInflightEntry(entry, currentInflight)
+  const newEpochTakenOver = currentInflight !== undefined && !sameEntry
   rt.makeEvent('ESCALATE', carrier, entry.attempt, tickEvents, {
-    note: `lease-epoch-stale;${stale.kind}=${stale.key};epoch=${String(stale.epoch)};current=${String(stale.current)};ticket=${entry.ticket}——迟到完成/写入/释放依赖一律拒收（studio-dev-809 epoch fence；无台账事实写入）`,
+    note: newEpochTakenOver
+      ? `lease-epoch-stale-ignored-new-epoch;${stale.kind}=${stale.key};epoch=${String(stale.epoch)};current=${String(stale.current)};ticket=${entry.ticket}——旧 epoch 迟到完成被拒；新 epoch inflight 在场（保留、不回退平台状态）`
+      : `lease-epoch-stale;${stale.kind}=${stale.key};epoch=${String(stale.epoch)};current=${String(stale.current)};ticket=${entry.ticket}——迟到完成/写入/释放依赖一律拒收（studio-dev-809 epoch fence；无台账事实写入）`,
   })
+  if (newEpochTakenOver) {
+    errors.push(
+      `租约 epoch 陈旧（新 epoch 已接管）：${entry.ticket} 旧完成被拒，保留新 inflight（workRecordId=${currentInflight.workRecordId} attempt=${String(currentInflight.attempt)}）——不回退平台状态`,
+    )
+    return 'failed'
+  }
   rt.inflight.delete(entry.ticket)
+  // studio-dev-838：孤票兜底——lane stale 且平台仍=已派发、无新 inflight/新 holder → 回退新单
+  // （下一拍活动/镜像重决策自动重派；merge stale 不在此回退——合并失败面另有手工链语义）
+  if (stale.kind === 'lane') {
+    try {
+      const recovered = await recoverStaleTicket(rt, entry.ticket, entry.attempt, entry.lane, tickEvents, errors)
+      errors.push(
+        recovered
+          ? `孤票兜底：${entry.ticket} 已回退新单（lane=${entry.lane} epoch 陈旧）——下一拍自动重派`
+          : `孤票兜底跳过：${entry.ticket}（新 epoch 已接管/状态已非已派发/lane 有新 holder——幂等不双写）`,
+      )
+    } catch (err) {
+      errors.push(`孤票兜底异常 ${entry.ticket}：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
   return 'failed'
 }
 
@@ -60,12 +101,12 @@ export function harvestHostOf(rt: EngineRuntime, tickEvents: EventRecord[], erro
     resolveAdapter: (executor) => rt.registry.resolve(executor),
     finalize: (adapter, entry) => {
       const stale = staleLeaseOf(rt, entry)
-      if (stale !== undefined) return Promise.resolve(rejectStaleCompletion(rt, entry, stale, tickEvents, errors))
+      if (stale !== undefined) return rejectStaleCompletion(rt, entry, stale, tickEvents, errors)
       return finalizeHarvest(rt, adapter, entry, tickEvents, errors)
     },
     fault: (entry, detail, requirements) => {
       const stale = staleLeaseOf(rt, entry)
-      if (stale !== undefined) return Promise.resolve(rejectStaleCompletion(rt, entry, stale, tickEvents, errors))
+      if (stale !== undefined) return rejectStaleCompletion(rt, entry, stale, tickEvents, errors)
       return failHarvest(rt, entry, tickEvents, detail, requirements)
     },
   }
