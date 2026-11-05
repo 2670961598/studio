@@ -26,9 +26,12 @@ function fakeFetch(routes: Record<string, RouteHandler>): { fetch: FetchLike; ca
     for (const [prefix, handler] of Object.entries(routes)) {
       if (url.pathname === prefix || url.pathname.startsWith(prefix)) {
         calls.push(`${init?.method ?? 'GET'} ${url.pathname}${url.search}`)
-        return new Response(JSON.stringify(handler(url, init, calls)), {
+        const body = handler(url, init, calls)
+        // 804 v2：分页 count 头必须与返回数组一致（旧 fake 固定 '0' 属坏头；新实现坏头 fail-closed）
+        const count = Array.isArray(body) ? body.length : 0
+        return new Response(JSON.stringify(body), {
           status: 200,
-          headers: { 'Content-Type': 'application/json', 'x-pagination-count': '0' },
+          headers: { 'Content-Type': 'application/json', 'x-pagination-count': String(count) },
         })
       }
     }

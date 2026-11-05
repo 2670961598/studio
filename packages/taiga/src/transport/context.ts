@@ -18,6 +18,7 @@
  */
 import type { TaigaClient } from './http.ts'
 import type { EntityDescriptor } from './entities.ts'
+import { MEMBER_LIST_PAGE_SIZE } from './entities.ts'
 import { TaigaPlatformError } from './errors.ts'
 
 /**
@@ -163,18 +164,24 @@ export class TaigaContext {
   private async ensureMembers(): Promise<void> {
     // v2（2026-11-01）：memberships user_name=显示名≠登录名→改从 users API 拿真 username
     const projectId = await this.project()
-    const [mres, ures] = await Promise.all([
-      this.client.request({ method: 'GET', path: '/memberships', query: { project: String(projectId) } }),
-      this.client.request({ method: 'GET', path: '/users' }),
+    // 804：memberships/users **均需全量分页**（Taiga 缺省 page_size=30；31+ 成员时第 2 页
+    // 用户会在未分页交集后消失→OPS-1 unknown-user）。两接口都翻全量后再求交集。
+    const [mraws, uraws] = await Promise.all([
+      this.client.paginate(
+        { method: 'GET', path: '/memberships', query: { project: String(projectId) } },
+        (v) => (Array.isArray(v) ? (v as unknown[]) : []),
+        MEMBER_LIST_PAGE_SIZE,
+      ),
+      this.client.paginate({ method: 'GET', path: '/users' }, (v) => (Array.isArray(v) ? (v as unknown[]) : []), MEMBER_LIST_PAGE_SIZE),
     ])
     const memberIds = new Set<number>()
-    for (const v of asArray(mres.json, 'memberships')) {
+    for (const v of mraws) {
       const o = asObject(v, 'membership')
       const uid = optNumberNull(o, 'user')
       if (uid !== undefined && uid !== null) memberIds.add(uid)
     }
     const parsed: MemberInfo[] = []
-    for (const v of asArray(ures.json, 'users')) {
+    for (const v of uraws) {
       const o = asObject(v, 'user')
       const uid = optNumberNull(o, 'id')
       const uname = optString(o, 'username')

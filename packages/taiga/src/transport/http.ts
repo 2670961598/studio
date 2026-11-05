@@ -48,6 +48,8 @@ export interface RawResponse {
 
 /** 防御性翻页上限（x-pagination-count 异常时防死循环） */
 export const MAX_PAGES = 1000
+/** 单次全量翻页上限（804：超限显式报错，不静默截断漏成员） */
+export const MAX_PAGINATE_PAGES = 50
 
 function mapStatusToError(status: number, detail: string, path: string): TaigaPlatformError {
   const at = `（${path}）`
@@ -208,16 +210,36 @@ export class TaigaClient {
    */
   async paginate<T>(req: TaigaRequest, parse: (raw: unknown) => T[], pageSize: number): Promise<T[]> {
     const out: T[] = []
-    for (let page = 1; page <= MAX_PAGES; page++) {
+    for (let page = 1; page <= MAX_PAGINATE_PAGES; page++) {
       const query = { ...(req.query ?? {}), page: String(page), page_size: String(pageSize) }
       const res = await this.request({ ...req, query })
       const batch = parse(res.json)
       out.push(...batch)
       const countHeader = res.header('x-pagination-count')
-      const count = countHeader === null ? null : Number(countHeader)
-      if (Number.isFinite(count) && out.length >= (count as number)) break
-      if (batch.length < pageSize) break // 短页即止（头缺失时的收敛路径）
+      if (countHeader !== null) {
+        // 804 v2：count 头存在但值非法（abc/NaN/-1/空串/0）→ **显式失败**，不静默 fallback
+        // 短页即止（否则只回首页 30 行，仍会漏第 2 页成员——verifier P2 条件）。
+        const rawCount = countHeader.trim()
+        const count = rawCount === '' ? Number.NaN : Number(rawCount)
+        if (!Number.isInteger(count) || count < 1) {
+          throw new TaigaPlatformError(
+            'EXTERNAL_REJECT',
+            'pagination-count-invalid',
+            `x-pagination-count 非法（raw=${JSON.stringify(countHeader)}；端点=${req.path}；页码=${String(page)}）——804 分页 fail-closed，不按短页静默截断`,
+          )
+        }
+        // count 头为准：服务端可能把 page_size 压到更小（30/100），短页≠末页——
+        // 在未取满 count 前必须继续翻，不能按「短于请求 page_size」提前收敛。
+        if (out.length >= count) return out
+        if (batch.length === 0) return out // 异常空页兜底（不空转）
+        continue
+      }
+      if (batch.length < pageSize) return out // 头真缺失时的收敛路径：短页即止
     }
-    return out
+    throw new TaigaPlatformError(
+      'EXTERNAL_REJECT',
+      'pagination-overflow',
+      `分页超过 ${String(MAX_PAGINATE_PAGES)} 页仍未取尽（${req.path}；x-pagination-count 缺失/异常——804 上限保护，显式失败不静默截断）`,
+    )
   }
 }

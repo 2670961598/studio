@@ -23,6 +23,9 @@ export type TaigaEntity = 'userstory' | 'issue' | 'task'
  * 经 entities.ts 单一来源引入，issues.ts 不再被传输面反向依赖）
  */
 export const LIST_PAGE_SIZE = 100
+
+/** 成员/用户全量反查分页大小（804：Taiga 默认 page_size=30 会漏第 2 页；memberships/users 统一 500） */
+export const MEMBER_LIST_PAGE_SIZE = 500
 /**
  * 实体全集列表页大小（studio-dev-790 v3）：activity/issues 每次对账都要拉全量实体；
  * 真机 Taiga 接受 page_size=1000（766 单 1 页 ~1.4MB/0.16s；100/页=8 次 ×~50ms）。

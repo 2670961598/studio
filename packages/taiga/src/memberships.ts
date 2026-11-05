@@ -25,7 +25,7 @@ import { TaigaPlatformError } from './transport/errors.ts'
 import type { TaigaContext } from './transport/context.ts'
 import type { FetchLike } from './transport/http.ts'
 import { asArray, asObject, optBoolean, optNumberNull, optString, optStringNull, reqNumber, reqString } from './transport/shape.ts'
-import { LIST_PAGE_SIZE } from './transport/entities.ts'
+import { MEMBER_LIST_PAGE_SIZE } from './transport/entities.ts'
 
 /** 成员行（MembershipDetailSerializer 消费字段投影；full_name/email 隐私面可缺省） */
 export interface TaigaMembership {
@@ -138,7 +138,7 @@ export async function listMemberships(ctx: TaigaContext): Promise<TaigaMembershi
   const raws = await ctx.client.paginate(
     { method: 'GET', path: '/memberships', query: { project: String(projectId) } },
     (v) => (Array.isArray(v) ? (v as unknown[]) : []),
-    LIST_PAGE_SIZE,
+    MEMBER_LIST_PAGE_SIZE,
   )
   const memberships = raws.map(parseMembership)
   await enrichMembershipNames(ctx, projectId, memberships)
@@ -165,8 +165,12 @@ async function enrichMembershipNames(ctx: TaigaContext, projectId: number, membe
   }
   if (missingUserIds.size === 0) return
   try {
-    const res = await ctx.client.request({ method: 'GET', path: '/users', query: { project: String(projectId) } })
-    const users = Array.isArray(res.json) ? (res.json as unknown[]) : []
+    // 804：/users 同样必须全量分页（缺省 30/页；成员 >30 时第 2 页用户反查不到→usernameKnown 丢失）
+    const users = await ctx.client.paginate(
+      { method: 'GET', path: '/users', query: { project: String(projectId) } },
+      (v) => (Array.isArray(v) ? (v as unknown[]) : []),
+      MEMBER_LIST_PAGE_SIZE,
+    )
     const byId = new Map<number, string>()
     for (const item of users) {
       const o = asObject(item, 'user')
