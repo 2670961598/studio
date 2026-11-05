@@ -54,12 +54,12 @@ export async function runPhases(
     let dispatched = 0
     let drainSkipped = 0
     const budget: TickPhaseDispatchBudget = { budgetReserved: 0, budgetRefused: 0 }
-    for (const { action, intentKey, resumePlan, autoAssign } of dispatchQ) {
+    for (const { action, intentKey, resumePlan, autoAssign, laneEpoch } of dispatchQ) {
       if (dispatchGate === 'draining') {
         drainSkipped += 1
         continue
       }
-      const result = await executeDispatch(rt, action, intentKey, index, tickEvents, budget, resumePlan, autoAssign, dispatchPersons)
+      const result = await executeDispatch(rt, action, intentKey, index, tickEvents, budget, resumePlan, autoAssign, dispatchPersons, laneEpoch)
       actionResults.push(result)
       if (result.ok) {
         dispatched += 1

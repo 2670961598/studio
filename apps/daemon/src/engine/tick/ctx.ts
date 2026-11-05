@@ -68,6 +68,8 @@ export interface DispatchQueueEntry {
   intentKey: string
   resumePlan?: ResumeDispatchPlan
   autoAssign?: AutoAssignCarry
+  /** 相位 2 决策即占用泳道的 epoch（studio-dev-812：派发失败释放带 epoch，禁止无 epoch 释放） */
+  laneEpoch?: number
 }
 
 /** 相位 2 出参（各相位动作队列 + 迁移宿主 + 报告面） */

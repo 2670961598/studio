@@ -53,6 +53,8 @@ import { dropQueueCarry, queueDispatchAnchor } from '../todoqueue/queue.ts'
 import { startSessionArchive } from '../sessions/archive.ts' // 会话归档接线（studio-dev-551）
 import { mintWorkerKey, workerKeyCredentials, workerKeyGuidance, WORKER_WKEY_ENV_KEY } from '../worker-key.ts'
 import type { EngineRuntime } from '../runtime/types.ts'
+import type { IssueRecord } from '@studio-next/contract'
+import { releaseWithEpoch } from '../lanes/release.ts'
 import { CONVERSATION_ACCEPTANCE } from '../conversation/protocol.ts'
 
 export async function executeDispatch(
@@ -65,6 +67,7 @@ export async function executeDispatch(
   resumePlan?: ResumeDispatchPlan,
   autoAssign?: AutoAssignCarry,
   dispatchPersons?: ReadonlyMap<TicketId, string>,
+  laneEpoch?: number,
 ): Promise<TickActionResult> {
   // 逐字迁移的宿主别名（闭包名不变，语义=同一实例/同一绑定）
   const { platform, ledger, registry, config, lanes, inflight, budgetDeps, now, makeId, records, workerKeys, rooms, queueCarry } = rt
@@ -78,7 +81,18 @@ export async function executeDispatch(
 
     const ticket = action.ticket
     // state-diff 排队时已占泳道（决策即占用）——任何失败路径都必须归还，不留死锁
-    const fail = makeDispatchFail({ face: rt.deps.capabilitySupply, ticket, actionType: action.type, attemptOf: () => index.attemptOf(ticket), at: () => new Date(now()).toISOString(), releaseLane: () => lanes.release(action.lane, ticket), dropInflight: () => inflight.delete(ticket),
+    const fail = makeDispatchFail({ face: rt.deps.capabilitySupply, ticket, actionType: action.type, attemptOf: () => index.attemptOf(ticket), at: () => new Date(now()).toISOString(), releaseLane: () => {
+      // studio-dev-812：释放带 epoch（phase2 acquire 返回值）；无传入(旧调用面)时仅当
+      // holder===ticket 用 state.epoch；否则跳过（禁止无 epoch 释放）。
+      const state = lanes.state(action.lane)
+      const epoch = laneEpoch ?? (state.holder === ticket ? state.epoch : undefined)
+      const result = releaseWithEpoch(lanes, { lane: action.lane, ticket, epoch })
+      if (!result.ok && result.reason === 'stale-epoch') {
+        makeEvent('ESCALATE', { id: ticket } as IssueRecord, index.attemptOf(ticket), tickEvents, {
+          note: `lease-epoch-stale;lane=${action.lane};ticket=${ticket};epoch=${String(result.epoch)};current=${String(result.currentEpoch)}——派发失败释放被拒（812；不误放新 epoch）`,
+        })
+      }
+    }, dropInflight: () => inflight.delete(ticket),
       emitEscalate: (note) => makeEvent('ESCALATE', fresh, index.attemptOf(ticket), tickEvents, { note }) })
     if (inflight.has(ticket)) return fail('该单已有在途工位（幂等跳过，不双写）')
     const fresh = await platform.issues.get(ticket)
@@ -301,7 +315,7 @@ export async function executeDispatch(
       launched = await adapter.launch(launchBrief)
       rt.crash.dispatchLaunched() // 崩溃注入②（F3-11）：launch 已返回、work_records 在途落账前——受控测试缝，默认零行为
       startSessionArchive(ledger, { ticket, personId: person.id, sessionId: launched.sessionId, at }) // 相位 3 会话归档 start 行（写失败抛→DISPATCH_FAIL，无归档不派）
-      const laneEpoch = lanes.acquire(action.lane, ticket, at) // studio-dev-809：租约 epoch 随 inflight 携带，完成面校验
+      const liveLaneEpoch = lanes.acquire(action.lane, ticket, at) // studio-dev-809/812：二次 acquire 保留；inflight 用最新租约 epoch
       const transitioned = await platform.issues.transition(ticket, action.toState)
       const workRecordId = makeId(at)
       ledger.insertWorkRecord({
@@ -324,7 +338,7 @@ export async function executeDispatch(
         briefPath,
         attempt,
         lane: action.lane,
-        laneEpoch,
+        laneEpoch: liveLaneEpoch,
         personId: person.id,
         dispatchedAtSeq: seq,
         ...(instructionsPath !== undefined ? { instructionsPath } : {}),

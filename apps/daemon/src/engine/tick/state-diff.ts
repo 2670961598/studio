@@ -41,6 +41,7 @@ import { effectiveStallAfterMs, livenessOfActivity, probeInflightActivity, recor
 import type { TickReport } from '../tick-report/types.ts'
 import type { EngineRuntime } from '../runtime/types.ts'
 import type { CollectOutcome, StateDiffOutcome, TickCtx } from './ctx.ts'
+import { releaseTicketLane } from '../lanes/release.ts'
 
 export async function stateDiffPhase(
   rt: EngineRuntime,
@@ -66,7 +67,7 @@ export async function stateDiffPhase(
   const affected = collected.affected
   const tickEvents = ctx.tickEvents
     // —— 相位 2 state-diff：受影响单逐个 decide（每单至多一动作；provisionalActions 供三闸） ——
-    const dispatchQ: Array<{ action: Extract<Action, { type: 'dispatch' }>; intentKey: string; resumePlan?: ResumeDispatchPlan; autoAssign?: AutoAssignCarry }> = [] // resumePlan=129-E 续跑携带；autoAssign=轨2 R1① 选人携带（决策位→执行位同源）
+    const dispatchQ: Array<{ action: Extract<Action, { type: 'dispatch' }>; intentKey: string; resumePlan?: ResumeDispatchPlan; autoAssign?: AutoAssignCarry; laneEpoch?: number }> = [] // resumePlan=129-E 续跑携带；autoAssign=轨2 R1① 选人携带（决策位→执行位同源）
     const approvalQ: Array<Extract<Action, { type: 'submit_approval' }>> = []
     const collectQ: Array<Extract<Action, { type: 'collect' }>> = []
     const mergeQ: Array<Extract<Action, { type: 'merge' }>> = []
@@ -310,15 +311,14 @@ export async function stateDiffPhase(
           // resume 面（129-E）：本拍 resume 意图消费登记的续跑计划随派发携带（拍作用域
           //——decide 未出 dispatch 即失效，重发意图即重试）
           const resumePlan = relayResume.planOf(ticket)
-          dispatchQ.push({ action, intentKey, ...(resumePlan !== undefined ? { resumePlan } : {}), ...(lastAutoAssign !== undefined ? { autoAssign: lastAutoAssign } : {}) })
+          // 决策即占用泳道（先 acquire 再入队：失败面须携 epoch 释放，812）
+          const laneEpoch = lanes.acquire(action.lane, ticket, startedAt)
+          dispatchQ.push({ action, intentKey, laneEpoch, ...(resumePlan !== undefined ? { resumePlan } : {}), ...(lastAutoAssign !== undefined ? { autoAssign: lastAutoAssign } : {}) })
           provisionalActions += 1
           // 人位占用记账（同拍后续候选的人闸快照须看到——泳道占用同款决策即生效；
           // 执行失败时 executeDispatch fail() 不清 dispatchPersons——dispatchQ 派发循环
           // 即结束、下拍重算，无泄漏面）
           if (personId !== undefined) dispatchPersons.set(ticket, personId)
-          // 决策即占用泳道（两段式先决后执：后续候选的 decide 须看到本拍已派的占用；
-          // 执行失败时 executeDispatch 的 catch 负责释放）
-          lanes.acquire(action.lane, ticket, startedAt)
           break
         }
         case 'submit_approval':
@@ -378,7 +378,12 @@ export async function stateDiffPhase(
       ...workPhaseHost,
       defaultLane: config.defaultLane,
       releaseLane: (ticket, lane) => {
-        lanes.release(lane, ticket)
+        // studio-dev-812：inflight epoch 优先；新 attempt 在途=跳过+errors（防误放新租约）；
+        // 无 inflight 仅 holder===ticket 用 state.epoch（显式携带，不再无 epoch 释放）。
+        const result = releaseTicketLane(lanes, inflight, ticket, lane, errors, { skipIfInflight: true })
+        if (result !== undefined && !result.ok && result.reason === 'stale-epoch') {
+          errors.push(`泳道释放拒收（回收面）${ticket}@${lane}：epoch 陈旧（epoch=${String(result.epoch)} current=${String(result.currentEpoch)}）`)
+        }
       },
       revokeCredential: (ticket) => revokeWorkerKey(workerKeys, ticket),
       ...(roomClose !== undefined ? { closeRoom: roomClose } : {}),

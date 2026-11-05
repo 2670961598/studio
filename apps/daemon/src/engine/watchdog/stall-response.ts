@@ -40,6 +40,7 @@ import { applyWorkTransition, type WorkTransitionHost } from '../work/transition
 import { removeInstructions } from '../instructions-store.ts'
 import { closeSessionArchive } from '../sessions/archive.ts'
 import type { InflightActivity } from './liveness.ts'
+import { releaseTicketLane } from '../lanes/release.ts'
 
 /** 响置宿主（引擎闭包注入；本件不持有可变全局态） */
 export interface StallResponseHost {
@@ -118,6 +119,18 @@ export async function executeStallResponse(
   const freshAnchor = flow !== undefined ? flowAnchors(flow).fresh : undefined
   if (entry !== undefined) {
     const at = host.now()
+    // studio-dev-812：stale epoch 预检（809 fence 残余面）——kill/endWorkRecord/迁移前先判
+    // 租约是否仍是本在途 attempt 的当前 epoch；stale=不 kill、不落账、不迁移、保留 inflight
+    // （新 epoch 在途），只落 ESCALATE 审计 + errors（参照 838 hosts stale 语义）。
+    if (entry.laneEpoch !== undefined && !host.lanes.isCurrent(entry.lane, entry.laneEpoch)) {
+      host.makeEvent('ESCALATE', fresh, workAttempt, tickEvents, {
+        note: `lease-epoch-stale;lane=${entry.lane};ticket=${ticket};epoch=${String(entry.laneEpoch)};current=${String(host.lanes.epochOf(entry.lane))}——STALL 响置拒收（812：不 kill/不落台账/不迁移/保留新 epoch inflight）`,
+      })
+      host.reportProblem(
+        `STALL 响置拒收 ${ticket}：lane=${entry.lane} epoch 陈旧（epoch=${String(entry.laneEpoch)} current=${String(host.lanes.epochOf(entry.lane))}）——不 kill/不落账/不迁移`,
+      )
+      return { ticket, actionType: action.type, ok: false, detail: 'epoch 陈旧拒收（lease-epoch-stale）' }
+    }
     const executorThreshold = host.effectiveStallAfterMs(entry.executor)
     // ① A 面 kill 前活性复核（studio-dev-505）：worker 侧证据新鲜＝续租，不杀、不落 GATE_FAIL
     const recheck = host.probeActivity(entry, at)
@@ -150,7 +163,12 @@ export async function executeStallResponse(
     // 看护面会话同体收口（studio-dev-551）：被杀/消亡会话不留 ended_at=NULL；守护计时进 note 锚
     const sessionClose = closeSessionArchive(host.ledger, { ticket, at: host.now(), sessionId: entry.handle.sessionId, entry, onProblem: host.reportProblem })
     inflight.delete(ticket)
-    host.lanes.stop(entry.lane, ticket, entry.laneEpoch) // studio-dev-809：stop 闩幂等+epoch 栅栏
+    const stopResult = host.lanes.stop(entry.lane, ticket, entry.laneEpoch) // studio-dev-809/812：stop 闩幂等+epoch 栅栏
+    if (!stopResult.ok && stopResult.reason === 'stale-epoch') {
+      host.reportProblem(
+        `STALL 收口 stop 拒收 ${ticket}@${entry.lane}：epoch 陈旧（epoch=${String(stopResult.epoch)} current=${String(stopResult.currentEpoch)}）——租约未释放，交由 838 恢复/下拍处理`,
+      )
+    }
     // 回首批位（迁移与触发记录单一出口＝work/transition.ts）；等级未登记流=无迁移面
     const rollbackNote = freshAnchor ?? '跳过（等级未登记流）'
     const stallNote =
@@ -196,7 +214,14 @@ export async function executeStallResponse(
       }
     }
   }
-  host.lanes.stop(fresh.lane ?? config.defaultLane, ticket) // studio-dev-809：stop 闩幂等（消亡面无 inflight epoch，兼容旧 holder 校验）
+  // studio-dev-812：消亡面（无 inflight）统一规则——仅 holder===ticket 用 state.epoch，
+  // 否则跳过（他单持有/无租约=幂等零行为）；结果 stale 时审计（不误放）。
+  const bStop = releaseTicketLane(host.lanes, inflight, ticket, fresh.lane ?? config.defaultLane)
+  if (bStop !== undefined && !bStop.ok && bStop.reason === 'stale-epoch') {
+    host.reportProblem(
+      `STALL 消亡面 stop 拒收 ${ticket}@${String(fresh.lane ?? config.defaultLane)}：epoch 陈旧（epoch=${String(bStop.epoch)} current=${String(bStop.currentEpoch)}）`,
+    )
+  }
   await host.strikeBreaker(ticket, fresh, workAttempt, 'stall:worker-dead', detail, tickEvents)
   return { ticket, actionType: action.type, ok: true, detail: `咬合（消亡面）第${nth}/${threshold}次：GATE_FAIL WORKER_DEAD 收口` }
 }

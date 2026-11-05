@@ -22,6 +22,7 @@ import { runDev49Sentinels } from '../sentinel/sentinels.ts'
 import type { EngineRuntime } from '../runtime/types.ts'
 import { CURSOR_KEY, type CollectOutcome, type TickCtx } from './ctx.ts'
 import { syncMirrorsIncremental } from '../runtime/events.ts'
+import { releaseTicketLane } from '../lanes/release.ts'
 
 /**
  * daemon_kv 游标（studio-dev-785）：链序 seq（events_chain 唯一权威顺序，跨 ts 回填安全）＋
@@ -278,7 +279,15 @@ export async function collectPhase(rt: EngineRuntime, ctx: TickCtx): Promise<Col
               directiveKeys: index.directiveKeys, attemptOf: (t) => index.attemptOf(t), flowOf,
               dispatcherOf: (t) => ledger.getTicketMirror(t)?.dispatcher,
               materializeResumeIntent: (t, cause, note) => { rt.intentQueue.push({ kind: 'resume', company: config.company, source: 'directive', ticket: t, payload: { cause, note } }) },
-              releaseLane: (t) => { rt.lanes.release(issueById.get(t)?.lane ?? config.defaultLane, t) },
+              releaseLane: (t) => {
+                // studio-dev-812：inflight epoch 优先；新 attempt 在途=跳过+errors（防误放新租约）；
+                // 无 inflight 仅 holder===ticket 用 state.epoch（显式携带，不再无 epoch 释放）。
+                const lane = issueById.get(t)?.lane ?? config.defaultLane
+                const result = releaseTicketLane(rt.lanes, rt.inflight, t, lane, errors, { skipIfInflight: true })
+                if (result !== undefined && !result.ok && result.reason === 'stale-epoch') {
+                  errors.push(`泳道释放拒收（批示打回面）${t}@${lane}：epoch 陈旧（epoch=${String(result.epoch)} current=${String(result.currentEpoch)}）`)
+                }
+              },
               syncMirror,
               emit: (event, issue, attempt, note) => makeEvent(event, issue, attempt, tickEvents, { note }),
               onError: (msg) => { errors.push(msg) },

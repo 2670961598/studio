@@ -12,6 +12,7 @@
  */
 import { afterAll, describe, expect, it } from 'vitest'
 import { createLaneRegistry } from '../../../src/engine/lanes/registry.ts'
+import { releaseTicketLane, releaseWithEpoch } from '../../../src/engine/lanes/release.ts'
 import { holdLaneBusyLinesOf } from '../../../src/assembly/render/tick.ts'
 import { createTicket, createWorkStack, disposeWorkStacks, eventsNamed, issueOf, runTicks, tick, type WorkTestStack } from '../records/fixtures/work-stack.ts'
 
@@ -151,4 +152,27 @@ describe('HOLD_LANE_BUSY 观测面（713 P0）', () => {
     expect(holdLaneBusyLinesOf(drained, seen)).toHaveLength(0)
     expect(holdLaneBusyLinesOf(report, seen)).toHaveLength(1)
   }, 60_000)
+})
+
+
+describe('812 派发失败释放带 epoch（epoch 只 +1，同泳道可立即再派）', () => {
+  it('acquire(epoch0)→失败 release(epoch0)→epoch=1；再 acquire=epoch1；旧 epoch 释放 stale 不误放', () => {
+    const lanes = createLaneRegistry(30 * 60_000)
+    const acquired = lanes.acquire('core', 'T-fail', 1_000)
+    expect(acquired).toBe(0)
+    // 决策位 acquire 返回 epoch → executeDispatch 失败面 releaseWithEpoch（812）
+    const released = releaseWithEpoch(lanes, { lane: 'core', ticket: 'T-fail', epoch: acquired })
+    expect(released).toMatchObject({ ok: true, reason: 'released', currentEpoch: 1 })
+    expect(lanes.epochOf('core')).toBe(1) // 只 +1（不重复推进）
+    // 同泳道下一单可立即占道（epoch 前进不阻塞）
+    const next = lanes.acquire('core', 'T-next', 2_000)
+    expect(next).toBe(1)
+    // 旧 epoch（0）的迟到释放拒收：新 holder 不被误放
+    expect(releaseWithEpoch(lanes, { lane: 'core', ticket: 'T-fail', epoch: acquired })).toMatchObject({ ok: false, reason: 'stale-epoch' })
+    expect(lanes.state('core').holder).toBe('T-next')
+    expect(lanes.epochOf('core')).toBe(1) // 拒收不推进
+    // 无 inflight 且 holder 匹配时，统一规则用 state.epoch 正常释放
+    expect(releaseTicketLane(lanes, new Map() as never, 'T-next', 'core')).toMatchObject({ ok: true, reason: 'released' })
+    expect(lanes.state('core').holder).toBeNull()
+  })
 })
