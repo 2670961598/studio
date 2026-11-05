@@ -8,7 +8,7 @@ import type { EventRecord, IssueRecord } from '@studio-next/contract'
 import type { StateFlow } from '@studio-next/core'
 import { createLaneRegistry } from '../../../src/engine/lanes/registry.ts'
 import { harvestHostOf } from '../../../src/engine/runtime/hosts.ts'
-import { recoverDispatchedOrphans, recoverStaleTicket } from '../../../src/engine/recovery/orphan-recovery.ts'
+import { orphanSweepDue, recoverDispatchedOrphans, recoverStaleTicket } from '../../../src/engine/recovery/orphan-recovery.ts'
 import type { EngineRuntime } from '../../../src/engine/runtime/types.ts'
 import { createTicket, createWorkStack, disposeWorkStacks, eventsNamed, issueOf, tick } from '../records/fixtures/work-stack.ts'
 
@@ -104,13 +104,17 @@ describe('838 stale 拒收后的单票兜底（recoverStaleTicket）', () => {
     expect(transitions).toHaveLength(1)
   }, 30_000)
 
-  it('新 epoch 已接管（inflight 或 lane 新 holder）→ 跳过不写', async () => {
+  it('新 epoch 已接管（inflight 在场）→ 跳过不写', async () => {
     const withInflight = mockRt({ issue: { id: 't-1', state: '已派发', lane: 'core' } as IssueRecord, inflight: new Map([['t-1', {}]]) })
     expect(await recoverStaleTicket(withInflight.rt, 't-1', 1, 'core', [], withInflight.errors)).toBe(false)
     expect(withInflight.transitions).toHaveLength(0)
+  }, 30_000)
+
+  it('838 缺口 A：lane 有他主 + inflight 空 + 平台=已派发 → 仍回退新单，审计标 lane-held-by-other', async () => {
     const withHolder = mockRt({ issue: { id: 't-1', state: '已派发', lane: 'core' } as IssueRecord, laneHolder: 'new-ticket' })
-    expect(await recoverStaleTicket(withHolder.rt, 't-1', 1, 'core', [], withHolder.errors)).toBe(false)
-    expect(withHolder.transitions).toHaveLength(0)
+    expect(await recoverStaleTicket(withHolder.rt, 't-1', 1, 'core', [], withHolder.errors)).toBe(true)
+    expect(withHolder.transitions).toEqual([{ ticket: 't-1', to: '新单' }])
+    expect(withHolder.events.some((e) => e.note.includes('lease-epoch-stale-recovery;lane-held-by-other'))).toBe(true)
   }, 30_000)
 })
 
@@ -204,5 +208,90 @@ describe('838 F2：boot 扫描失败不静默', () => {
     expect(result.errors.length).toBeGreaterThan(0)
     expect(result.errors[0]).toContain('issues.list')
     expect(result.errors[0]).toContain('probe-platform-down')
+  })
+})
+
+/** 838 缺口 A/B：多孤票 mock（boot/周期扫描共用） */
+function multiRt(issues: IssueRecord[], opts: { laneHolder?: string } = {}) {
+  const state = new Map(issues.map((i) => [i.id, { ...i }]))
+  const transitions: Array<{ ticket: string; to: string }> = []
+  const audit: Array<{ name: string; note: string }> = []
+  const platform = {
+    issues: {
+      list: async () => [...state.values()],
+      get: async (ticket: string) => state.get(ticket) as IssueRecord,
+      transition: async (ticket: string, to: string) => {
+        transitions.push({ ticket, to })
+        const current = state.get(ticket) as IssueRecord
+        state.set(ticket, { ...current, state: to })
+        return state.get(ticket) as IssueRecord
+      },
+    },
+  }
+  const lanes = createLaneRegistry(60_000)
+  if (opts.laneHolder !== undefined) lanes.acquire('core', opts.laneHolder, 1)
+  const rt = {
+    platform,
+    lanes,
+    inflight: new Map(),
+    flowOf: (): StateFlow => ({}) as StateFlow,
+    transitionHostOf: () => ({
+      platform,
+      syncMirror: () => {},
+      emit: (name: string, _issue: IssueRecord, _attempt: number, extra?: { note?: string }) => {
+        audit.push({ name, note: extra?.note ?? '' })
+        return {} as EventRecord
+      },
+    }),
+    ledger: { listWorkRecords: () => [{ attempt: 1 }] },
+    config: { defaultLane: 'core' },
+  } as unknown as EngineRuntime
+  const errors: string[] = []
+  return { rt, transitions, audit, errors }
+}
+
+describe('838 缺口 A/B：周期扫描/放宽门/限速/幂等', () => {
+  it('boot 扫描：lane 他主 + inflight 空 → 放宽回退新单；note 标 lane-held-by-other', async () => {
+    const { rt, transitions, audit, errors } = multiRt([{ id: 't-1', state: '已派发', lane: 'core' } as IssueRecord], { laneHolder: 'other-ticket' })
+    const result = await recoverDispatchedOrphans(rt, { errors })
+    expect(result.recovered).toBe(1)
+    expect(result.skippedLaneBusy).toBe(0)
+    expect(transitions).toEqual([{ ticket: 't-1', to: '新单' }])
+    expect(audit.some((e) => e.note.includes('boot-orphan-recovery;lane-held-by-other'))).toBe(true)
+  }, 30_000)
+
+  it('boot 扫描：inflight 非空 → 不回退（即使 lane 他主）', async () => {
+    const { rt, transitions } = multiRt([{ id: 't-1', state: '已派发', lane: 'core' } as IssueRecord], { laneHolder: 'other-ticket' })
+    ;(rt.inflight as Map<string, unknown>).set('t-1', {})
+    const result = await recoverDispatchedOrphans(rt, {})
+    expect(result.recovered).toBe(0)
+    expect(result.skippedInflight).toBe(1)
+    expect(transitions).toHaveLength(0)
+  }, 30_000)
+
+  it('maxRecover 限速：3 孤票限 2 → 只回退 2；下一轮再回退剩余（幂等不重复）', async () => {
+    const { rt, transitions, errors } = multiRt([
+      { id: 't-1', state: '已派发', lane: 'core' } as IssueRecord,
+      { id: 't-2', state: '已派发', lane: 'core' } as IssueRecord,
+      { id: 't-3', state: '已派发', lane: 'core' } as IssueRecord,
+    ])
+    const first = await recoverDispatchedOrphans(rt, { maxRecover: 2, errors })
+    expect(first.recovered).toBe(2)
+    expect(transitions).toHaveLength(2)
+    const second = await recoverDispatchedOrphans(rt, { maxRecover: 2, errors })
+    expect(second.recovered).toBe(1)
+    const third = await recoverDispatchedOrphans(rt, { maxRecover: 2, errors })
+    expect(third.recovered).toBe(0) // 已全部回退=幂等
+    expect(transitions).toHaveLength(3)
+  }, 30_000)
+
+  it('周期触发纯函数：每 60 拍到期；0/59/61 不到期；可注入 every', () => {
+    expect(orphanSweepDue(0)).toBe(false)
+    expect(orphanSweepDue(59)).toBe(false)
+    expect(orphanSweepDue(60)).toBe(true)
+    expect(orphanSweepDue(120)).toBe(true)
+    expect(orphanSweepDue(61)).toBe(false)
+    expect(orphanSweepDue(6, 3)).toBe(true)
+    expect(orphanSweepDue(7, 3)).toBe(false)
   })
 })

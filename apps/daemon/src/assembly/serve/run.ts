@@ -21,6 +21,7 @@ import { openLedgerWriter, verifyEventsChain, verifyEventsChainDelta, type Event
 import { answerReloadNoCompanyDir } from '../../control/hot-reload.ts'
 import { consumeStopRequest, readStopRequest, STOP_LAST_SEEN_KV_KEY, writeStopResult } from '../../control/stop-channel.ts'
 import { writeExitMarkOnStop } from '../../control/restart/checkpoint.ts'
+import { orphanSweepDue, type OrphanRecoveryResult } from '../../engine/recovery/orphan-recovery.ts'
 import type { TickReport } from '../../engine/tick-report/types.ts'
 import { takeOverRunningWorkRecords } from '../../engine/harvest/inflight-takeover.ts'
 import { holdLaneBusyLinesOf, noopLinesOf, renderTick } from '../render/tick.ts'
@@ -367,24 +368,30 @@ export async function runServe(
     engine.ingest([intent])
   })
 
-  // —— boot 孤儿扫描（studio-dev-838；启动例行，非第八相位）：平台=已派发 ∧ 本地 inflight=空 ∧
-  //    lane 无 holder 的孤票 → 回退新单（下一拍按活动/镜像重决策自动重派）。异步不挡首拍；
-  //    幂等/限速/审计在 recovery/orphan-recovery.ts；失败逐单进日志，不静默。 ——
+  // 孤儿扫描观测（boot 838 + 运行期周期扫描共用）：回退明细与失败明细都可见，不静默。
+  const reportOrphanSweep = (label: string, orphan: OrphanRecoveryResult): void => {
+    if (orphan.recovered > 0) {
+      console.log(
+        `[serve] 孤儿扫描（${label}）：平台单=${String(orphan.scanned)} 回退=${String(orphan.recovered)}（${orphan.items.map((i) => `${i.ticket}#att${String(i.attempt)}@${i.lane}`).join('、') || '-'}）` +
+          ` 跳过=inflight:${String(orphan.skippedInflight)}/lane-busy:${String(orphan.skippedLaneBusy)}/非已派发:${String(orphan.skippedNotDispatched)} 失败=${String(orphan.failed)}`,
+      )
+    }
+    // studio-dev-838 F2：失败/异常明细必须可见（不静默）——list 不可达/failed>0 均打印
+    if (orphan.failed > 0 || orphan.errors.length > 0) {
+      console.error(
+        `[serve] 孤儿扫描（${label}）失败：平台单=${String(orphan.scanned)} 失败=${String(orphan.failed)}；明细=${orphan.errors.length > 0 ? orphan.errors.join('；') : '（无明细）'}`,
+      )
+    }
+  }
+  let orphanSweepRunning = false // 运行期周期扫描单飞（同一时刻至多一次全平台扫描）
+
+  // —— boot 孤儿扫描（studio-dev-838；启动例行，非第八相位）：平台=已派发 ∧ 本地 inflight=空 的
+  //    孤票 → 回退新单（下一拍按活动/镜像重决策自动重派）。异步不挡首拍；幂等/限速/审计在
+  //    recovery/orphan-recovery.ts；失败逐单进日志，不静默。 ——
   void engine
     .recoverOrphans()
     .then((orphan) => {
-      if (orphan.recovered > 0) {
-        console.log(
-          `[serve] 孤儿扫描（boot）：平台单=${String(orphan.scanned)} 回退=${String(orphan.recovered)}（${orphan.items.map((i) => `${i.ticket}#att${String(i.attempt)}@${i.lane}`).join('、') || '-'}）` +
-            ` 跳过=inflight:${String(orphan.skippedInflight)}/lane-busy:${String(orphan.skippedLaneBusy)}/非已派发:${String(orphan.skippedNotDispatched)} 失败=${String(orphan.failed)}`,
-        )
-      }
-      // studio-dev-838 F2：失败/异常明细必须可见（不静默）——list 不可达/failed>0 均打印
-      if (orphan.failed > 0 || orphan.errors.length > 0) {
-        console.error(
-          `[serve] 孤儿扫描（boot）失败：平台单=${String(orphan.scanned)} 失败=${String(orphan.failed)}；明细=${orphan.errors.length > 0 ? orphan.errors.join('；') : '（无明细）'}`,
-        )
-      }
+      reportOrphanSweep('boot', orphan)
     })
     .catch((err: unknown) => {
       console.error(`[serve] 孤儿扫描（boot）异常：${err instanceof Error ? err.message : String(err)}`)
@@ -406,6 +413,24 @@ export async function runServe(
       // 泳道租约 hold 观测面（见 renderHoldLaneBusy 头注；签名去重）
       for (const line of holdLaneBusyLinesOf(report, holdLaneSeen)) console.log(line)
       for (const err of report.errors) console.error(`[serve] tick#${report.seq} 错误：${err}`)
+      // —— 运行期孤儿周期扫描（studio-dev-838 缺口 B / 858）：每 60 拍一次（boot 扫描保留）；
+      //    复用 engine.recoverOrphans()（maxRecover=10/幂等/审计），单飞防重叠；fire-and-forget
+      //    不挡主循环，失败走 reportOrphanSweep 的 error 面（不静默）。 ——
+      if (orphanSweepDue(ticks) && !orphanSweepRunning) {
+        orphanSweepRunning = true
+        const sweepTick = ticks
+        void engine
+          .recoverOrphans()
+          .then((orphan) => {
+            reportOrphanSweep(`周期 tick#${String(sweepTick)}`, orphan)
+          })
+          .catch((err: unknown) => {
+            console.error(`[serve] 孤儿扫描（周期 tick#${String(sweepTick)}）异常：${err instanceof Error ? err.message : String(err)}`)
+          })
+          .finally(() => {
+            orphanSweepRunning = false
+          })
+      }
       // —— notify 事件中继（105-刀B，studio-dev-219；notifyBroadcast 注入时存在）：拍边界
       //    只读本拍新事件（TickReport.events）按冻结路由表广播 #alert/部门频道/总览。
       //    fire-and-forget：IM 投递永不阻塞/打断主循环（沟通面非执行前置，刀B-6——矩阵

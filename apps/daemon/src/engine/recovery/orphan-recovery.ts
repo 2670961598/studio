@@ -39,6 +39,14 @@ export interface OrphanRecoveryResult {
   items: Array<{ ticket: TicketId; attempt: number; lane: string }>
 }
 
+/** 运行期孤儿周期扫描间隔（838 缺口 B：每 60 拍一次；boot 扫描保留） */
+export const ORPHAN_SWEEP_EVERY_TICKS = 60
+
+/** 周期扫描判定（纯函数，测试可注入 every；0/非整数/负数一律不触发） */
+export function orphanSweepDue(tickCount: number, every: number = ORPHAN_SWEEP_EVERY_TICKS): boolean {
+  return Number.isInteger(tickCount) && tickCount > 0 && Number.isInteger(every) && every > 0 && tickCount % every === 0
+}
+
 function laneOf(issue: IssueRecord, rt: EngineRuntime): string {
   return issue.lane ?? rt.config.defaultLane
 }
@@ -96,14 +104,23 @@ export async function recoverStaleTicket(
   tickEvents: EventRecord[],
   errors: string[],
 ): Promise<boolean> {
-  if (rt.inflight.has(ticket)) return false // 新 epoch 已接管
-  if (rt.lanes.state(lane).holder !== null) return false // 新 holder 在场（等自然释放/新决策）
+  if (rt.inflight.has(ticket)) return false // 新 epoch 已接管（保留 inflight 门）
+  const holder = rt.lanes.state(lane).holder
   let fresh: IssueRecord
   try {
     fresh = await rt.platform.issues.get(ticket)
   } catch (err) {
     errors.push(`孤儿恢复读取平台失败 ${ticket}：${err instanceof Error ? err.message : String(err)}`)
     return false
+  }
+  // 838 缺口 A（858 实机）：旧完成 stale 拒收后 lane 常已被他主占用；只要平台仍=已派发且
+  // 本票 inflight 为空，就应回退新单（重派会因 lane busy 自然排队）——不再被 lane-holder
+  // 门挡住。审计 note 标 lane-held-by-other（沿用既有 note 字段，不加新事件词）。
+  if (holder !== null) {
+    const flow = rt.flowOf(fresh)
+    const anchors = flow !== undefined ? flowAnchors(flow) : undefined
+    if (anchors === undefined || fresh.state !== anchors.dispatched) return false
+    return rollbackDispatchedIssue(rt, fresh, tickEvents, 'lease-epoch-stale-recovery;lane-held-by-other', errors)
   }
   return rollbackDispatchedIssue(rt, fresh, tickEvents, 'lease-epoch-stale-recovery', errors)
 }
@@ -150,11 +167,16 @@ export async function recoverDispatchedOrphans(
       continue
     }
     const lane = laneOf(issue, rt)
-    if (rt.lanes.state(lane).holder !== null) {
-      result.skippedLaneBusy += 1
-      continue
-    }
-    const ok = await rollbackDispatchedIssue(rt, issue, tickEvents, 'boot-orphan-recovery', errors)
+    const holderBusy = rt.lanes.state(lane).holder !== null
+    // 838 缺口 A 同款放宽：平台=已派发且本票 inflight 为空时，lane 有他主也回退新单
+    // （重派自然排队）；审计 note 标 lane-held-by-other（既有 note 字段，无新事件词）。
+    const ok = await rollbackDispatchedIssue(
+      rt,
+      issue,
+      tickEvents,
+      holderBusy ? 'boot-orphan-recovery;lane-held-by-other' : 'boot-orphan-recovery',
+      errors,
+    )
     if (ok) {
       result.recovered += 1
       result.items.push({ ticket: issue.id, attempt: attemptFor(rt, issue.id) - 1, lane })
