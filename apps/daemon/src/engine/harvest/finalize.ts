@@ -206,7 +206,7 @@ export async function finalizeHarvest(
     // 泳道租约释放（studio-dev-713）：成功收割与失败/STALL/回收/批示回新单路径对称——
     // 不释放则同泳道后续候选在 TTL 内恒被 HOLD_LANE_BUSY 挡下（利润公司 30min TTL 下实测
     // 停摆 20.5min）。registry.release 内部 holder 校验：不误放他单道；重复释放幂等。
-    lanes.release(entry.lane, ticket)
+    lanes.release(entry.lane, ticket, entry.laneEpoch) // studio-dev-809：epoch 栅栏
     return 'completed'
   }
   const detail = harvestFailureDetail(requirements, { terminalError, gateNote: gate.note })
@@ -244,7 +244,7 @@ export async function failHarvest(
   // 相位 4 收割失败：会话归档同体收口（失败面同样不留 ended_at=NULL；行缺失明报进 GATE_FAIL note）
   const sessionClose = closeSessionArchive(ledger, { ticket, at: now(), sessionId: entry.handle.sessionId, entry })
   inflight.delete(ticket)
-  lanes.release(entry.lane, ticket)
+  lanes.release(entry.lane, ticket, entry.laneEpoch) // studio-dev-809：epoch 栅栏
   // 回首批位（DEFAULT_ROLLBACK_EDGES：已派发→新单；断路器停重派语义，breaker.ts 头注）——
   // 迁移与触发记录单一出口＝work/transition.ts（等级未登记流=无迁移面：只落 GATE_FAIL 留痕）
   const rollbackAnchor = flow !== undefined ? flowAnchors(flow).fresh : undefined

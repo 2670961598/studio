@@ -91,8 +91,20 @@ export function createRuntime(deps: EngineDeps, seams: EngineSeams): EngineRunti
 
   // —— 进程内状态（持久化边界见 engine.ts 文件头注「v0 占位」） ——
   const breaker = emptyBreakerState()
-  const lanes = createLaneRegistry(config.laneTtlMs)
-  const mergeLeases = createMergeLeaseRegistry(config.mergeLeaseTtlMs) // 202-P4 合并租约簿（per-engine——merge-run.ts 经 mergeHost 注入）
+  // studio-dev-809：租约 epoch 持久化到 daemon_kv（进程重启续号；旧 epoch 完成面拒收）
+  const epochStore = {
+    read: (key: string): number | undefined => {
+      const raw = ledger.kvGet(`lease.epoch.${key}`)
+      if (raw === null || raw === '') return undefined
+      const value = Number(raw)
+      return Number.isSafeInteger(value) && value >= 0 ? value : undefined
+    },
+    write: (key: string, epoch: number): void => {
+      ledger.kvSet(`lease.epoch.${key}`, String(epoch))
+    },
+  }
+  const lanes = createLaneRegistry(config.laneTtlMs, epochStore)
+  const mergeLeases = createMergeLeaseRegistry(config.mergeLeaseTtlMs, epochStore) // 202-P4 合并租约簿（per-engine——merge-run.ts 经 mergeHost 注入）
   const inflight = new Map<TicketId, Inflight>()
   const harvestBook = createHarvestBatchLedger() // 收割批次簿（IMPL-06-03；观测/测试只读——写口仅收割相位）
   // 收割证据端口（REC-EVD-01/02 → PORT-HIST）：注入落库口＝录制簿（封批整批原子写）；

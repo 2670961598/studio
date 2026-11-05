@@ -15,6 +15,7 @@
  */
 import type { TicketId } from '@studio-next/contract'
 import type { Inflight } from '../tick/types.ts'
+import type { EpochStore, LeaseReleaseResult } from '../lanes/registry.ts'
 
 /** 租约键（P2 定型：公司+目标分支——runMergeAction 与队列栏投影同源） */
 export function mergeLeaseKey(company: string, targetBranch: string): string {
@@ -24,6 +25,8 @@ export function mergeLeaseKey(company: string, targetBranch: string): string {
 export interface MergeLeaseEntry {
   holder: TicketId
   expiresAt: number
+  /** acquire 时 epoch（完成/释放面携带；旧 epoch 拒收——studio-dev-809） */
+  epoch: number
 }
 
 /** 租约观测快照（expired=true＝有记录但已过期=死主待回收；无记录=holder:null 且 expired=false） */
@@ -32,6 +35,8 @@ export interface MergeLeaseState {
   holder: TicketId | null
   expiresAt?: number
   expired: boolean
+  /** 当前 epoch（无主也可见） */
+  epoch: number
 }
 
 export interface MergeLeaseRegistry {
@@ -39,40 +44,77 @@ export interface MergeLeaseRegistry {
   state(key: string, at: number): MergeLeaseState
   /** 占用（幂等重进=true；他单活约在位=false=顺延；死主过期=可夺——回收面） */
   acquire(key: string, ticket: TicketId, at: number): boolean
-  /** 续租（活约且持有人匹配才续——过期不复活） */
-  renew(key: string, ticket: TicketId, at: number): boolean
-  /** 释放（持有人校验——失败面/收口面各调一次，双释放安全） */
-  release(key: string, ticket: TicketId): void
+  /** 续租（活约且持有人+epoch 匹配才续——过期/旧 epoch 不复活） */
+  renew(key: string, ticket: TicketId, at: number, epoch?: number): boolean
+  /** 当前 epoch（完成面携带） */
+  epochOf(key: string): number
+  /** 是否仍是当前 epoch（stale=拒收） */
+  isCurrent(key: string, epoch: number): boolean
+  /** 释放（holder+epoch 校验；旧 epoch 拒收，重复释放幂等——studio-dev-809） */
+  release(key: string, ticket: TicketId, epoch?: number): LeaseReleaseResult
+  /** stop 闩（幂等、同栅栏语义） */
+  stop(key: string, ticket: TicketId, epoch?: number): LeaseReleaseResult
 }
 
-export function createMergeLeaseRegistry(ttlMs: number): MergeLeaseRegistry {
+export function createMergeLeaseRegistry(ttlMs: number, store?: EpochStore): MergeLeaseRegistry {
   const leases = new Map<string, MergeLeaseEntry>()
+  const epochs = new Map<string, number>()
+  const load = (key: string): number => {
+    const cached = epochs.get(key)
+    if (cached !== undefined) return cached
+    const persisted = store?.read(`merge:${key}`)
+    const value = persisted !== undefined && Number.isSafeInteger(persisted) && persisted >= 0 ? persisted : 0
+    epochs.set(key, value)
+    return value
+  }
+  const bump = (key: string): number => {
+    const next = load(key) + 1
+    epochs.set(key, next)
+    store?.write(`merge:${key}`, next)
+    return next
+  }
   const live = (key: string, at: number): MergeLeaseEntry | undefined => {
     const l = leases.get(key)
     return l !== undefined && l.expiresAt > at ? l : undefined // TTL 到期=死主视同无主
+  }
+  const releaseInternal = (key: string, ticket: TicketId, epoch: number | undefined): LeaseReleaseResult => {
+    const current = load(key)
+    const lease = leases.get(key)
+    if (lease === undefined) return { ok: false, reason: 'idempotent', epoch: epoch ?? -1, currentEpoch: current }
+    if (epoch !== undefined && epoch !== current) return { ok: false, reason: 'stale-epoch', epoch, currentEpoch: current }
+    if (lease.holder !== ticket) return { ok: false, reason: 'idempotent', epoch: epoch ?? -1, currentEpoch: current }
+    leases.delete(key)
+    return { ok: true, reason: 'released', epoch: epoch ?? lease.epoch, currentEpoch: bump(key) }
   }
   return {
     state: (key, at) => {
       const raw = leases.get(key)
       const l = live(key, at)
-      return { key, holder: l?.holder ?? null, ...(l !== undefined ? { expiresAt: l.expiresAt } : {}), expired: raw !== undefined && l === undefined }
+      return {
+        key,
+        holder: l?.holder ?? null,
+        ...(l !== undefined ? { expiresAt: l.expiresAt } : {}),
+        expired: raw !== undefined && l === undefined,
+        epoch: load(key),
+      }
     },
     acquire: (key, ticket, at) => {
       const l = live(key, at)
       if (l !== undefined && l.holder !== ticket) return false
-      leases.set(key, { holder: ticket, expiresAt: at + ttlMs })
+      leases.set(key, { holder: ticket, expiresAt: at + ttlMs, epoch: load(key) })
       return true
     },
-    renew: (key, ticket, at) => {
+    epochOf: (key) => load(key),
+    isCurrent: (key, epoch) => epoch === load(key),
+    renew: (key, ticket, at, epoch?) => {
       const l = live(key, at)
       if (l === undefined || l.holder !== ticket) return false
+      if (epoch !== undefined && epoch !== load(key)) return false // 旧 epoch 不续命
       l.expiresAt = at + ttlMs
       return true
     },
-    release: (key, ticket) => {
-      const l = leases.get(key)
-      if (l !== undefined && l.holder === ticket) leases.delete(key)
-    },
+    release: (key, ticket, epoch) => releaseInternal(key, ticket, epoch),
+    stop: (key, ticket, epoch) => releaseInternal(key, ticket, epoch),
   }
 }
 
@@ -87,7 +129,7 @@ export interface MergeLeaseHostFace {
 /** 相位 5 头每拍续命：在途合并跑（Inflight.mergeRun 在场）逐单续租——长跑不被 TTL 误夺 */
 export function renewMergeLeases(host: MergeLeaseHostFace, at: number): void {
   for (const entry of host.inflight.values()) {
-    if (entry.mergeRun !== undefined) host.mergeLease.renew(entry.mergeRun.leaseKey, entry.ticket, at)
+    if (entry.mergeRun !== undefined) host.mergeLease.renew(entry.mergeRun.leaseKey, entry.ticket, at, entry.mergeRun.leaseEpoch)
   }
 }
 

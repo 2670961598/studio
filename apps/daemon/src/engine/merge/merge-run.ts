@@ -258,14 +258,15 @@ export async function runMergeAction(
     if (!host.mergeLease.acquire(leaseKey, ticket, host.now())) {
       return { result: { ticket, actionType: action.type, ok: true, detail: 'merge-lease-busy（在途合并跑占位——顺延不弃单，下拍重试）' }, deferred: true, counted: false, mutated: false, leaseBusy: true }
     }
+    const leaseEpoch = host.mergeLease.epochOf(leaseKey) // studio-dev-809：完成/release 携带
     const resolved = await resolveMergeRunPlan(host, deps, ticket)
     if ('degrade' in resolved) {
-      host.mergeLease.release(leaseKey, ticket)
+      host.mergeLease.release(leaseKey, ticket, leaseEpoch)
       return degradeToManualChain(host, fresh, index, tickEvents, resolved.degrade)
     }
-    const launched = await dispatchMergeRun(host, deps, resolved.plan, fresh, index, tickEvents, budget, leaseKey)
+    const launched = await dispatchMergeRun(host, deps, resolved.plan, fresh, index, tickEvents, budget, leaseKey, leaseEpoch)
     if (!launched.ok) {
-      host.mergeLease.release(leaseKey, ticket)
+      host.mergeLease.release(leaseKey, ticket, leaseEpoch)
       return { result: launched.result, deferred: false, counted: false, mutated: false }
     }
     // 派发成功：DISPATCH 已落账（mutated）；合并完成计数在收割收口面（counted=false）
@@ -295,6 +296,7 @@ async function dispatchMergeRun(
   tickEvents: EventRecord[],
   budget: TickPhaseDispatchBudget,
   leaseKey: string,
+  leaseEpoch: number,
 ): Promise<{ ok: boolean; result: TickActionResult }> {
   const ticket = fresh.id
   const person = host.resolvePerson(fresh)
@@ -396,7 +398,7 @@ async function dispatchMergeRun(
       personId: person.id,
       dispatchedAtSeq: host.seq(),
       ...(instructionsPath !== undefined ? { instructionsPath } : {}),
-      mergeRun: { deps, leaseKey, targetBranch: deps.targetBranch, reviewTip: plan.reviewTip, receiptPath, causationId: plan.causationId, executorSessionId: plan.executorSessionId },
+      mergeRun: { deps, leaseKey, targetBranch: deps.targetBranch, reviewTip: plan.reviewTip, receiptPath, causationId: plan.causationId, executorSessionId: plan.executorSessionId, leaseEpoch },
     })
     host.makeEvent('DISPATCH', fresh, attempt, tickEvents, {
       size: Buffer.byteLength(assembled.agentsMd.text, 'utf8'),
@@ -471,7 +473,7 @@ export async function closeOutMergeHarvest(
   if (!fourOk) {
     host.ledger.endWorkRecord(entry.workRecordId, { ended_at: endedAt, status: 'failed', ...(execSid !== undefined ? { executor_session_id: execSid } : {}) })
     host.inflight.delete(ticket)
-    host.mergeLease.release(ctx.leaseKey, ticket)
+    host.mergeLease.release(ctx.leaseKey, ticket, ctx.leaseEpoch)
     // —— 冲突兜底（202-P3，§5.5）：四要件跑完可判不齐＝MERGE_CONFLICT 既有类 ——
     // GATE_FAIL（merge-run 锚清站立+merge=manual 锚终局让位【P2 已落】）+category 锚
     // 分类可观测；ESCALATE 通知宰相（低噪不广播）。不做 chain=manual 式 dedupe：冲突
@@ -518,7 +520,7 @@ export async function closeOutMergeHarvest(
     note: `→${toState}（v0.5 真单刀：sha=${gate.mergeSha ?? '?'};gate=exit0【${noteSafe(gate.note)}】;resume=${ctx.executorSessionId}@${entry.executor}（唤起原会话自合并，causation=${ctx.causationId}）;push=${push.ok ? `ok（${push.note}）` : `fail（${push.note}——迁移照走，P4 重试面）`}${usageNote}）`,
   })
   host.inflight.delete(ticket)
-  host.mergeLease.release(ctx.leaseKey, ticket)
+  host.mergeLease.release(ctx.leaseKey, ticket, ctx.leaseEpoch)
   if (entry.instructionsPath !== undefined) removeInstructions(entry.instructionsPath)
   return 'completed'
 }
@@ -540,7 +542,7 @@ export async function failMergeHarvest(
   const execSid = entry.handle.executorSessionId ?? ctx?.executorSessionId
   host.ledger.endWorkRecord(entry.workRecordId, { ended_at: endedAt, status: 'failed', ...(execSid !== undefined ? { executor_session_id: execSid } : {}) })
   host.inflight.delete(ticket)
-  if (ctx !== undefined) host.mergeLease.release(ctx.leaseKey, ticket)
+  if (ctx !== undefined) host.mergeLease.release(ctx.leaseKey, ticket, ctx.leaseEpoch)
   let budgetNote = ''
   try {
     const settled = settleDispatch(host.budgetDeps, { ticket, personId: entry.personId, actual: { usd: 0 }, now: endedAt })

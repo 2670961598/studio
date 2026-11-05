@@ -150,7 +150,7 @@ export async function executeStallResponse(
     // 看护面会话同体收口（studio-dev-551）：被杀/消亡会话不留 ended_at=NULL；守护计时进 note 锚
     const sessionClose = closeSessionArchive(host.ledger, { ticket, at: host.now(), sessionId: entry.handle.sessionId, entry, onProblem: host.reportProblem })
     inflight.delete(ticket)
-    host.lanes.release(entry.lane, ticket)
+    host.lanes.stop(entry.lane, ticket, entry.laneEpoch) // studio-dev-809：stop 闩幂等+epoch 栅栏
     // 回首批位（迁移与触发记录单一出口＝work/transition.ts）；等级未登记流=无迁移面
     const rollbackNote = freshAnchor ?? '跳过（等级未登记流）'
     const stallNote =
@@ -196,7 +196,7 @@ export async function executeStallResponse(
       }
     }
   }
-  host.lanes.release(fresh.lane ?? config.defaultLane, ticket)
+  host.lanes.stop(fresh.lane ?? config.defaultLane, ticket) // studio-dev-809：stop 闩幂等（消亡面无 inflight epoch，兼容旧 holder 校验）
   await host.strikeBreaker(ticket, fresh, workAttempt, 'stall:worker-dead', detail, tickEvents)
   return { ticket, actionType: action.type, ok: true, detail: `咬合（消亡面）第${nth}/${threshold}次：GATE_FAIL WORKER_DEAD 收口` }
 }

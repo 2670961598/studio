@@ -319,6 +319,8 @@ export interface MergeRunContext {
   causationId: string
   /** dsh 侧会话 id（契约 v1.5——resumeWithSession 唤起证据，MERGE note 留痕） */
   executorSessionId: string
+  /** 合并租约 epoch（studio-dev-809：完成/release 须原样带回，旧 epoch 拒收） */
+  leaseEpoch?: number
 }
 
 // ————————————————————————— 在途状态 —————————————————————————
@@ -333,6 +335,8 @@ export interface Inflight {
   briefPath: string
   attempt: number
   lane: string
+  /** 泳道租约 epoch（studio-dev-809：完成/release 须原样带回，旧 epoch 拒收） */
+  laneEpoch?: number
   /** 派工对象工号（收割 settle 的人档行 scope；reserve 链的 person 桥同源） */
   personId: string
   /** 派发拍序：本拍派发的下一拍才可收割（同拍单至多一动作的收割侧落点） */

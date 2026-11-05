@@ -71,10 +71,10 @@ describe('R1 租约簿三面（acquire/release/state）', () => {
 
   it('state 三脸：无记录/活约/过期（holder:null+expired:true=死主待回收）', () => {
     const r = createMergeLeaseRegistry(TTL)
-    expect(r.state('demo:dev', 1_000)).toEqual({ key: 'demo:dev', holder: null, expired: false })
+    expect(r.state('demo:dev', 1_000)).toEqual({ key: 'demo:dev', holder: null, expired: false, epoch: 0 })
     r.acquire('demo:dev', 'T-1', 1_000)
-    expect(r.state('demo:dev', 1_500)).toEqual({ key: 'demo:dev', holder: 'T-1', expiresAt: 1_000 + TTL, expired: false })
-    expect(r.state('demo:dev', 1_000 + TTL + 1)).toEqual({ key: 'demo:dev', holder: null, expired: true })
+    expect(r.state('demo:dev', 1_500)).toEqual({ key: 'demo:dev', holder: 'T-1', expiresAt: 1_000 + TTL, expired: false, epoch: 0 })
+    expect(r.state('demo:dev', 1_000 + TTL + 1)).toEqual({ key: 'demo:dev', holder: null, expired: true, epoch: 0 })
   })
 })
 
@@ -144,14 +144,14 @@ describe('R3 host 级两拍（renewMergeLeases/mergeQueueFace）', () => {
     expect(mergeQueueFace(live, ['T-B'], 2_000)).toEqual({
       waiting: ['T-B'],
       running: ['T-A'],
-      lease: { key: 'demo:dev', holder: 'T-A', expiresAt: 1_000 + TTL, expired: false },
+      lease: { key: 'demo:dev', holder: 'T-A', expiresAt: 1_000 + TTL, expired: false, epoch: 0 },
     })
     const dead = faceHost({ at: 1_000 + TTL + 1, running: [{ ticket: 'T-A' }], mergeRun: { targetBranch: 'dev' } })
     dead.mergeLease.acquire('demo:dev', 'T-A', 1_000)
     expect(mergeQueueFace(dead, [], 1_000 + TTL + 1)).toEqual({
       waiting: [],
       running: ['T-A'], // daemon 停摆超 TTL：在跑单与死租约并存——如实投影（不粉饰）
-      lease: { key: 'demo:dev', holder: null, expired: true },
+      lease: { key: 'demo:dev', holder: null, expired: true, epoch: 0 },
     })
   })
 

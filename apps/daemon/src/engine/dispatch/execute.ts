@@ -301,7 +301,7 @@ export async function executeDispatch(
       launched = await adapter.launch(launchBrief)
       rt.crash.dispatchLaunched() // 崩溃注入②（F3-11）：launch 已返回、work_records 在途落账前——受控测试缝，默认零行为
       startSessionArchive(ledger, { ticket, personId: person.id, sessionId: launched.sessionId, at }) // 相位 3 会话归档 start 行（写失败抛→DISPATCH_FAIL，无归档不派）
-      lanes.acquire(action.lane, ticket, at)
+      const laneEpoch = lanes.acquire(action.lane, ticket, at) // studio-dev-809：租约 epoch 随 inflight 携带，完成面校验
       const transitioned = await platform.issues.transition(ticket, action.toState)
       const workRecordId = makeId(at)
       ledger.insertWorkRecord({
@@ -324,6 +324,7 @@ export async function executeDispatch(
         briefPath,
         attempt,
         lane: action.lane,
+        laneEpoch,
         personId: person.id,
         dispatchedAtSeq: seq,
         ...(instructionsPath !== undefined ? { instructionsPath } : {}),
