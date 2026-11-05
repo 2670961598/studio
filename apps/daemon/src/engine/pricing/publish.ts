@@ -44,7 +44,7 @@ import {
   type UnitPrice,
 } from '@studio-next/core'
 import type { Ledger } from '@studio-next/store'
-import { localDateString, PRICING_TICKET_TYPE } from './pricing.ts'
+import { localDateString, PRICING_STALE_CHECK_HOUR, PRICING_TICKET_TYPE } from './pricing.ts'
 
 /** 附件相对路径（消费面 pricing/pricing.ts 的同一落点——单一事实源） */
 export const PRICING_DELIVERABLE_REL = path.join('deliverables', 'pricing.yaml')
@@ -305,4 +305,157 @@ export function pricingBriefBlock(d: PricingDeliverable, modelsPath?: string): s
     '  价格差异/缺档=立即在 REPORT 明报失败，不得改附件凑失败为绿（消费面 fail-closed）。',
     '',
   ].join('\n')
+}
+
+// ---------------------------------------------------------------------------
+// 自愈兜底（studio-dev-837）：price_snapshots 供给面断供
+// ---------------------------------------------------------------------------
+
+/** 自愈补种 kv 日锚（daemon_kv；值=已完成补种的本地日 'YYYY-MM-DD'） */
+export const PRICING_SEED_DATE_KEY = 'pricing.seed_date'
+
+/** 自愈补种单据号前缀（与一次性 seed-pricing 脚本同锚形；审计可辨） */
+export const PRICING_SEED_TICKET_PREFIX = 'seed-pricing:'
+
+/** 补种失败告警 note 前缀（DAILY_ALARM；src 区分发布/stale/补种三源） */
+const SEED_ALARM_PREFIX = 'src=pricing-seed;'
+
+export interface PricingSeedDeps {
+  ledger: Ledger
+  company: string
+  /** models.yaml 三档（catalog.tiers()；undefined/缺档=态 B/坏配置 → 失败不前进，下拍重试） */
+  tiers: readonly ModelTier[] | undefined
+  now(): number
+  makeId(ts: number): string
+  /** 补种失败告警（DAILY_ALARM，挂心跳哨兵单） */
+  emitAlarm(note: string): void
+  onError(message: string): void
+}
+
+export interface PricingSeedTickReport {
+  /** 归属本地日 */
+  date: string
+  /** 本次是否完成补种（true=新写/补齐；false=已存在/kv 命中/失败） */
+  seeded: boolean
+  /** 新增行数（幂等跳过不计） */
+  appended: number
+  /** 结果：kv=今日已补/已有快照/partial=半表补齐/error=失败待下拍重试/catalog-absent=态B零行为/before-window=晨间发布窗前 */
+  outcome: 'kv' | 'existing' | 'seeded' | 'partial' | 'error' | 'catalog-absent' | 'before-window'
+}
+
+/** 补种失败摘要（brief；events.note 可读性） */
+function seedErrBrief(err: unknown): string {
+  if (err instanceof Error) {
+    const sub = (err as { subcause?: string }).subcause
+    const one = err.message.replace(/\s+/g, ' ').trim()
+    const brief = one.length > 200 ? `${one.slice(0, 200)}…` : one
+    return sub !== undefined ? `${sub}：${brief}` : brief
+  }
+  return String(err)
+}
+
+/** 快照自然键（studio-dev-837 F1）：(provider,model,price_date,slot)——已有任意来源行即跳过，绝不覆盖 */
+function snapshotNaturalKey(row: { provider: string; model: string; price_date: string; slot: string }): string {
+  return `${row.provider}\u0000${row.model}\u0000${row.price_date}\u0000${row.slot}`
+}
+
+function seedSourceNote(date: string): string {
+  return `models.yaml 内置价目自动补种（${date}；price_snapshot 供给面自愈兜底 studio-dev-837）`
+}
+
+/**
+ * 当日首拍自愈兜底（相位 7 尾、runPricingStaleCheck 之前）：
+ *   - 今日已有快照 → 尊重既有（定价单/人工/脚本）跳过并写日锚；
+ *   - 否则用 models.yaml 三档生成 today 表（build→render→parse→validate 全自检后**才写**，
+ *     写侧 fail-closed；半表=先验后写，异常不写坏价）；
+ *   - 逐行 appendPriceSnapshot（唯一写面；单据键=seed-pricing:<today>、自然键 (company,
+ *     provider, model, price_date, slot, version)），同输入重跑 appended=false 幂等；
+ *   - 失败：DAILY_ALARM src=pricing-seed + onError，**kv 不前进**（下拍重试）；异常不抛出
+ *     （调用方相位 7 尾不被阻塞，cost-close 仍按桥口径出数）。
+ */
+export function ensurePricingSnapshotTick(deps: PricingSeedDeps): PricingSeedTickReport {
+  const at = deps.now()
+  const date = localDateString(at)
+  const sourceTicket = `${PRICING_SEED_TICKET_PREFIX}${date}`
+  // 前置：catalog 缺席（态 B，无 models.yaml）=零行为（不写/不告警/不报错——既有 bash 面基线）；
+  // 晨间发布窗前（<10:00）不补种：先让定价岗/发布单跑完，避免同日被 seed 抢先造成 version+1。
+  if (deps.tiers === undefined || deps.tiers.length === 0) {
+    return { date, seeded: false, appended: 0, outcome: 'catalog-absent' }
+  }
+  if (new Date(at).getHours() < PRICING_STALE_CHECK_HOUR) {
+    return { date, seeded: false, appended: 0, outcome: 'before-window' }
+  }
+  if (deps.ledger.kvGet(PRICING_SEED_DATE_KEY) === date) {
+    return { date, seeded: false, appended: 0, outcome: 'kv' }
+  }
+  try {
+    const existing = deps.ledger.listPriceSnapshots({ company: deps.company, price_date: date })
+    const fromSeed = existing.filter((r) => r.source_ticket === sourceTicket).length
+    // F1/F2：非本 seed 来源的今日快照（人工/定价单/脚本）=完全尊重——不 build、不写、不告警，
+    // 只写日锚跳过（无覆盖风险）。本 seed 来源的部分行才进入「半表补齐」判定。
+    if (existing.length > 0 && fromSeed === 0) {
+      deps.ledger.kvSet(PRICING_SEED_DATE_KEY, date)
+      return { date, seeded: false, appended: 0, outcome: 'existing' }
+    }
+    // 有本 seed 行（可能半表）：build 失败必须失败路径（不写 kv、告警、下拍重试）——严禁
+    // 静默 catch 后 kvSet(today) 导致半表永久不再补齐（F2）。
+    let table: PricingTable
+    if (existing.length > 0) {
+      table = buildPricingTable({ tiers: deps.tiers, priceDate: date, sourceNote: seedSourceNote(date) })
+      // 完整性按自然键集合判定（而非行数）：既有行可能含表外模型/异 slot，行数会虚高；
+      // 只有「表内键已有任意来源行」才算已覆盖，缺键才补（F1 不覆盖其他来源行）。
+      const existingKeys = new Set(existing.map((r) => snapshotNaturalKey(r)))
+      const missingKeys = table.models.flatMap((m) =>
+        m.prices.map((p) => snapshotNaturalKey({ provider: m.provider, model: m.model, price_date: date, slot: p.slot })),
+      ).filter((key) => !existingKeys.has(key))
+      if (missingKeys.length === 0) {
+        deps.ledger.kvSet(PRICING_SEED_DATE_KEY, date)
+        return { date, seeded: false, appended: 0, outcome: 'existing' }
+      }
+    } else {
+      table = buildPricingTable({ tiers: deps.tiers, priceDate: date, sourceNote: seedSourceNote(date) })
+    }
+    // 自检（与收割后置步/seed-pricing 脚本同一 parse+覆盖闸；生成器↔消费面永不漂移）
+    const parsed = parsePricingTable(renderPricingTableYaml(table))
+    validatePricingTable(
+      parsed,
+      (deps.tiers ?? []).map((t) => ({ provider: t.provider, model: t.model })),
+    )
+    // F1：按自然键 (provider,model,date,slot) 跳过已有**任意来源**行——只补缺键，绝不追加
+    // version+1 覆盖当日人工/定价单价（resolveSnapshotPrice 取最高 version）。
+    const existingKeys = new Set(existing.map((r) => snapshotNaturalKey(r)))
+    let appended = 0
+    for (const m of parsed.models) {
+      for (const p of m.prices) {
+        const naturalKey = snapshotNaturalKey({ provider: m.provider, model: m.model, price_date: parsed.priceDate, slot: p.slot })
+        if (existingKeys.has(naturalKey)) continue // 已有（任意来源）→ 不覆盖
+        const r = deps.ledger.appendPriceSnapshot({
+          id: `ps-${deps.makeId(deps.now())}`,
+          company: deps.company,
+          provider: m.provider,
+          model: m.model,
+          price_date: parsed.priceDate,
+          slot: p.slot,
+          input_per_m: p.inputPerM,
+          output_per_m: p.outputPerM,
+          ...(p.cacheReadPerM !== undefined ? { cache_read_per_m: p.cacheReadPerM } : {}),
+          ...(p.cacheCreationPerM !== undefined ? { cache_creation_per_m: p.cacheCreationPerM } : {}),
+          currency: 'USD',
+          billing_track: m.billingTrack,
+          ...(m.planMonthlyUsd !== undefined ? { plan_monthly_usd: m.planMonthlyUsd } : {}),
+          source_note: parsed.sourceNote,
+          source_ticket: sourceTicket,
+          published_by: 'HF-1',
+        })
+        if (r.appended) appended += 1
+      }
+    }
+    deps.ledger.kvSet(PRICING_SEED_DATE_KEY, date)
+    return { date, seeded: appended > 0, appended, outcome: existing.length > 0 ? 'partial' : 'seeded' }
+  } catch (err) {
+    const msg = seedErrBrief(err)
+    deps.onError(`定价快照自愈兜底失败（${date}）：${msg}`)
+    deps.emitAlarm(`${SEED_ALARM_PREFIX}date=${date}；自愈兜底失败：${msg}——kv 不前进（下拍重试），cost-close 按桥口径降级不阻断`)
+    return { date, seeded: false, appended: 0, outcome: 'error' }
+  }
 }

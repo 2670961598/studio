@@ -12,6 +12,7 @@ import type { CompanyWriteTickReport } from '../company-write/runtime.ts'
 import { costCloseDeps, runCostCloseTick } from '../cost-close/close.ts'
 import type { HrSyncTickReport } from '../hrsync/hrsync.ts'
 import { runPricingStaleCheck, type PricingStaleTickReport } from '../pricing/pricing.ts'
+import { ensurePricingSnapshotTick } from '../pricing/publish.ts'
 import { recordReconcileTick } from '../records/hooks.ts'
 import { heartbeatSentinelRecord } from '../sentinel/sentinels.ts'
 import {
@@ -128,6 +129,32 @@ export async function accountPhase(
       maxMs: scheduleWaits.length > 0 ? Math.max(...scheduleWaits) : 0,
     }
     const queuePersons = new Set(todoQueueRows.map((r) => r.person)).size
+    // —— 相位 7 尾·定价快照供给自愈兜底（studio-dev-837）：当日首拍、stale 检查之前——
+    //    价格供给面（定价单）从未接线导致 price_snapshots 恒 0；本步用 models.yaml 内置价目
+    //    (catalog.tiers) 自动补种 today 快照（唯一写面 appendPriceSnapshot + 单据/自然键幂等）。
+    //    失败：DAILY_ALARM src=pricing-seed + errors，kv 不前进（下拍重试）；异常不抛出——
+    //    不得阻塞收口/本拍（cost-close 仍按桥口径出数、自有 degraded 告警）。
+    try {
+      ensurePricingSnapshotTick({
+        ledger,
+        company: config.company,
+        tiers: rt.deps.catalog !== undefined ? rt.deps.catalog.tiers() : undefined,
+        now,
+        makeId,
+        emitAlarm: (note) => {
+          makeEvent(
+            'DAILY_ALARM',
+            heartbeatSentinelRecord(config.heartbeatIssue, config.deptFallback, now()),
+            1,
+            tickEvents,
+            { note },
+          )
+        },
+        onError: (message) => errors.push(message),
+      })
+    } catch (err) {
+      errors.push(`定价快照自愈兜底异常：${err instanceof Error ? err.message : String(err)}`)
+    }
     // —— 相位 7 尾·定价 stale 检查（132-§6.2 单B·studio-dev-169，P5 每晨必更守夜）：
     // 本地日 10:00 后首拍一日一跑（kv 日锚+事件 note 派生双层幂等）；stale≥2 或从未
     // 定价 → DAILY_ALARM 挂心跳哨兵单。体在 engine/pricing/pricing.ts——engine 只留缝。
