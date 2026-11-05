@@ -46,6 +46,7 @@ import { isSafeRelativeOutputPath, parseJobOps } from '@studio-next/company'
 import type { IssueRecord, TicketId } from '@studio-next/contract'
 import type { Ledger } from '@studio-next/store'
 import { reportFileName } from './output-account.ts'
+import { commitReconIndex, invalidateReconIndex, reconIndexOf } from './harvest-recon-index.ts'
 import { expectedSentinel, verifySidecarSentinelAtPath } from './sentinel.ts'
 
 /**
@@ -199,6 +200,10 @@ export interface HarvestReconResult {
   invalid: number
   /** 127-A R4⑥：patrol 巡查物化单计数（零收割语义——只计观测不事件化） */
   patrolArtifacts: number
+  /** 本次扫描模式（增量改造观测面；full=全量重建，delta=只扫新增） */
+  scanMode?: 'full' | 'delta'
+  /** 本次扫描事件数（full=全量行数，delta=新增行数） */
+  newEvents?: number
 }
 
 /** 单文件 sha256（内容哈希幂等的判定基元；读失败=undefined——调用面转人工） */
@@ -214,13 +219,6 @@ function sha256Of(file: string): string | undefined {
 function reportPathOfGatePass(note: string | undefined): string | undefined {
   if (note === undefined) return undefined
   const m = /(?:^|[;；])report=([^;；]+)/.exec(note)
-  return m !== null ? (m[1] as string) : undefined
-}
-
-/** 既有 REPORT_MISSING 事件的去重键（事件派生可重放——append-only 不释放；全/半角分号兼收） */
-function reportedKeyOf(note: string | undefined): string | undefined {
-  if (note === undefined) return undefined
-  const m = /(?:^|[;；])recon-key=([^;；]+)/.exec(note)
   return m !== null ? (m[1] as string) : undefined
 }
 
@@ -267,22 +265,12 @@ export function runHarvestRecon(deps: HarvestReconDeps): HarvestReconResult {
     }
   }
   try {
-    // 事件派生索引（单次全量扫描——与 buildEventIndex 同量级，节流拍才跑）：
-    const events = ledger.queryEvents()
-    const anchorOf = new Map<TicketId, { jobId: string; company: string; note: string | undefined }>() // PATROL 锚（首条口径与 accountJobOutput 同）
-    const gatePass = new Map<TicketId, { ts: number; note: string | undefined; attempt: number }>()
-    const reported = new Set<string>() // 既有对账事件 recon-key（幂等去重——三类同键位）
-    for (const e of events) {
-      if (e.event === 'PATROL') {
-        const m = /(?:^|;)job=([^;]+)/.exec(e.note ?? '')
-        if (m !== null && !anchorOf.has(e.issue)) anchorOf.set(e.issue, { jobId: m[1] as string, company: e.company, note: e.note })
-      } else if (e.event === 'GATE_PASS' && !gatePass.has(e.issue)) {
-        gatePass.set(e.issue, { ts: e.ts, note: e.note, attempt: e.attempt })
-      } else if (e.event === 'REPORT_MISSING' || e.event === 'SENTINEL_MISSING' || e.event === 'HARVEST_INVALID') {
-        const key = reportedKeyOf(e.note)
-        if (key !== undefined) reported.add(key)
-      }
-    }
+    // 事件派生索引（studio-dev-812 后续：增量——缓存+kv chain-seq 游标命中只扫新增；
+    // 缺失/超前/空洞/ts 乱序回退全量并修复游标；失败抛出由本函数 catch 明报，不漏事件）。
+    const indexOutcome = reconIndexOf(ledger)
+    result.scanMode = indexOutcome.mode
+    result.newEvents = indexOutcome.newEvents
+    const { anchorOf, gatePass, reported } = indexOutcome.state
     /**
      * 归档在位后的读回门（127-A R4④⑤，inPlace/补收核过两处调用）：
      *   内容门 → HARVEST_INVALID（空壳/占位）；哨兵门 → SENTINEL_MISSING（欠账不重派）。
@@ -504,7 +492,9 @@ export function runHarvestRecon(deps: HarvestReconDeps): HarvestReconResult {
         deps.onProblem?.(`对账补收 ${ticket}：搬运失败(${msg})——现场保留待人工`)
       }
     }
+    commitReconIndex(ledger, indexOutcome) // 索引消费成功才提交游标/缓存；失败回滚（不漏事件）
   } catch (err) {
+    invalidateReconIndex(ledger)
     const msg = err instanceof Error ? err.message : String(err)
     result.manual += 1
     deps.onProblem?.(`对账步索引失败：${msg}`)

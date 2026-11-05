@@ -294,6 +294,11 @@ export async function runServe(
     const drift = at - lastLoopSampleAt - 50
     lastLoopSampleAt = at
     if (at - loopLagWindowStart > 60_000) {
+      // studio-dev-812 后续单（可选观测）：60s 窗 max lag>1000ms 打一行（healthz 已有 loop.lagMs；
+      // 一行/分钟，成本可忽略，闭环「未归因」尖峰）。不改契约/事件词。
+      if (loopLagMaxMs > 1000) {
+        console.log(`[loop-lag] lagMs=${String(loopLagMaxMs)} seq=${String(lastReport?.seq ?? 0)}`)
+      }
       loopLagWindowStart = at
       loopLagMaxMs = 0
     }
