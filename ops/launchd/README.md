@@ -180,3 +180,12 @@ tail -3 "$HOME/Library/Logs/studio-next/infra-watchdog.out.log"
 `alertOnly: true`（或 `--alert-only`）只告警不动作；docker 恢复=强杀 Docker.app 后重开（正在写盘时
 先按 RB-07 保数据）；容器恢复=`docker start`；studio-dev 恢复=`launchctl kickstart -k` guardian。
 profit daemon 当前无 guardian（`guardianLabel: null` → 只告警），守护化后补 label 即可自动恢复。
+
+**boot/deploy 抑制窗（studio-dev 812 后续单，默认启用）**：探活失败时若命中以下信号，只告警不执行
+`recoveryCommands`（事件 `recovery-suppressed`，带 `suppressionReason`/`loop.lagMs`/`uptimeMs`/`failures`/
+`lastReason`；恢复/告警事件同样带这些观测字段）：
+- healthz 仍可解析且 `body.uptimeMs < suppression.bootUptimeMs`（默认 120000）→ daemon 启动中；
+- 可选 `deployStateFile` 指向 deploy 状态 JSON：`status/state=deploying` 或 `deployedAt` 距今 <
+  `suppression.deployWindowMs`（默认 120000）→ 部署中（配置示例 `"deployStateFile": null`，需显式填写
+  如 `<DEPLOY_DIR>.deploy-state.json`（部署树对应的 .deploy-state.json）；缺省不启用=fail-open，行为与旧版一致）。
+抑制只压 recovery、不压告警：持续失败仍每轮 `probe-failed`，若真挂死（uptime 已超窗/部署窗结束）照常恢复。

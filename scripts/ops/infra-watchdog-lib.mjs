@@ -20,6 +20,8 @@ export const DEFAULT_WATCHDOG_CONFIG = Object.freeze({
   failureThreshold: 2,
   alertRepeatMs: 300_000,
   recovery: { enabled: true, cooldownMs: 600_000, maxPerHour: 3 },
+  /** boot/deploy 抑制窗（studio-dev 812 后续单；缺省启用；仅抑制 recovery，不抑制告警） */
+  suppression: { bootUptimeMs: 120_000, deployWindowMs: 120_000 },
   probes: {
     docker: { socket: '/var/run/docker.sock', timeoutMs: 3_000 },
     matrix: { url: 'http://127.0.0.1:8008/_matrix/client/versions', timeoutMs: 3_000 },
@@ -71,6 +73,8 @@ export function normalizeConfig(raw) {
     stateFile: typeof cfg.stateFile === 'string' && cfg.stateFile !== '' ? cfg.stateFile : null,
     recoveryCommands: normalizeRecoveryCommands(cfg.recoveryCommands),
     alertOnly: cfg.alertOnly === true,
+    suppression: normalizeSuppression(cfg.suppression),
+    deployStateFile: typeof cfg.deployStateFile === 'string' && cfg.deployStateFile !== '' ? cfg.deployStateFile : null,
   }
   return normalized
 }
@@ -116,6 +120,90 @@ export function normalizeRecoveryCommands(raw) {
   return out
 }
 
+/** 抑制窗配置归一化（缺省=120s/120s；未知键 fail-fast 保持配置纪律） */
+export function normalizeSuppression(raw) {
+  if (raw === undefined) return { ...DEFAULT_WATCHDOG_CONFIG.suppression }
+  if (typeof raw !== 'object' || raw === null) throw new Error('suppression 必须是对象')
+  const unknown = Object.keys(raw).filter((k) => k !== 'bootUptimeMs' && k !== 'deployWindowMs')
+  if (unknown.length > 0) throw new Error(`suppression 含未知键：${unknown.join('/')}`)
+  const positive = (value, name, fallback) => {
+    if (value === undefined) return fallback
+    const num = Number(value)
+    if (!Number.isFinite(num) || num <= 0) throw new Error(`suppression.${name} 必须是正整数`)
+    return Math.trunc(num)
+  }
+  return {
+    bootUptimeMs: positive(raw.bootUptimeMs, 'bootUptimeMs', DEFAULT_WATCHDOG_CONFIG.suppression.bootUptimeMs),
+    deployWindowMs: positive(raw.deployWindowMs, 'deployWindowMs', DEFAULT_WATCHDOG_CONFIG.suppression.deployWindowMs),
+  }
+}
+
+/**
+ * 部署状态抑制判定（纯函数；state=deploy.mjs 状态文件解析形）：
+ *   - state.state==='deploying'（兼容 status）→ deploying；
+ *   - deployedAt（ISO 或 ms）距今 < deployWindowMs → deploy-recent；
+ * 非法/缺失=null（fail-open，不加噪声）。
+ */
+export function deploySuppressionReason(deployState, now, windowMs) {
+  if (typeof deployState !== 'object' || deployState === null) return null
+  const state = typeof deployState.state === 'string' ? deployState.state : deployState.status
+  if (state === 'deploying') return { reason: 'deploying' }
+  const raw = deployState.deployedAt
+  const at = typeof raw === 'number' ? raw : typeof raw === 'string' ? Date.parse(raw) : Number.NaN
+  if (!Number.isFinite(at)) return null
+  const ageMs = now - at
+  if (ageMs >= 0 && ageMs < windowMs) return { reason: 'deploy-recent', deployedAt: new Date(at).toISOString(), ageMs }
+  return null
+}
+
+/** 探活结果 → 审计观测字段（loop.lagMs/uptimeMs 从 healthz body 取；拿不到=null，另记 lastReason） */
+export function observabilityOf(probe, targetState) {
+  const body = probe?.body
+  const loopLagMs = body !== null && typeof body === 'object' && typeof body.loop?.lagMs === 'number' ? body.loop.lagMs : null
+  const uptimeMs = body !== null && typeof body === 'object' && typeof body.uptimeMs === 'number' ? body.uptimeMs : null
+  return {
+    loopLagMs,
+    uptimeMs,
+    failures: targetState?.failures ?? 0,
+    lastReason: targetState?.lastReason ?? null,
+  }
+}
+
+/**
+ * 失败拍抑制判定（纯函数；仅抑制 recovery，不抑制告警）：
+ *   ① boot：本拍 body.uptimeMs < bootUptimeMs（即使探活失败也解析 503 body）或上次成功探活
+ *      为低 uptime 且距今 < bootUptimeMs → 正在启动；
+ *   ② deploy：每轮读取的 deployState 命中 deploying/近窗 → 部署中。
+ * 返回 {reason,...} = 抑制；null = 不抑制（行为与旧版一致，fail-open）。
+ */
+export function suppressionOf({ target, probe, targetState, deployState, config, now }) {
+  const windowMs = config.suppression?.bootUptimeMs ?? DEFAULT_WATCHDOG_CONFIG.suppression.bootUptimeMs
+  if (target === 'studioDev') {
+    const bodyUptime = probe?.body !== null && typeof probe?.body === 'object' && typeof probe.body.uptimeMs === 'number' ? probe.body.uptimeMs : null
+    if (bodyUptime !== null && bodyUptime >= 0 && bodyUptime < windowMs) {
+      return { reason: 'boot-uptime', uptimeMs: bodyUptime, loopLagMs: probe?.body?.loop?.lagMs ?? null }
+    }
+    const lastOkAt = targetState?.lastOkAt
+    const lastOkUptime = targetState?.lastOkUptimeMs
+    if (typeof lastOkAt === 'number' && typeof lastOkUptime === 'number' && now - lastOkAt < windowMs && lastOkUptime < windowMs) {
+      return { reason: 'boot-recent', uptimeMs: lastOkUptime, loopLagMs: null, lastOkAt }
+    }
+  }
+  const deploy = deploySuppressionReason(deployState, now, config.suppression?.deployWindowMs ?? DEFAULT_WATCHDOG_CONFIG.suppression.deployWindowMs)
+  return deploy === null ? null : { ...deploy, loopLagMs: null, uptimeMs: null }
+}
+
+/** 读部署状态文件（缺失/坏 JSON → null=fail-open；只读不修改） */
+export function readDeployStateFile(file) {
+  if (typeof file !== 'string' || file === '' || !existsSync(file)) return null
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf8'))
+    return typeof parsed === 'object' && parsed !== null ? parsed : null
+  } catch {
+    return null
+  }
+}
+
 /** HTTP 探活（fetch 注入；AbortSignal 超时；恒不抛） */
 export async function probeHttp(url, options = {}) {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch
@@ -133,9 +221,10 @@ export async function probeHttp(url, options = {}) {
       status: response.status,
       reason: ok ? 'ok' : okStatus ? 'body-not-ok' : `http-${String(response.status)}`,
       latencyMs: nowImpl() - startedAt,
+      body: typeof body === 'object' && body !== null ? body : null,
     }
   } catch (err) {
-    return { ok: false, status: null, reason: `unreachable:${err instanceof Error ? err.message : String(err)}`, latencyMs: nowImpl() - startedAt }
+    return { ok: false, status: null, reason: `unreachable:${err instanceof Error ? err.message : String(err)}`, latencyMs: nowImpl() - startedAt, body: null }
   }
 }
 

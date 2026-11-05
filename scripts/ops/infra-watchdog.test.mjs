@@ -23,7 +23,9 @@ import {
   DEFAULT_WATCHDOG_CONFIG,
   classifyProbe,
   decideFailureActions,
+  deploySuppressionReason,
   normalizeConfig,
+  suppressionOf,
   probeContainer,
   probeDockerSocket,
   probeHttp,
@@ -386,4 +388,156 @@ test('B1：shipped example 形状经 CLI --once 实跑 exit0（占位替换 + �
   const result = await runCliAsync(['--config', configPath, '--once', '--json'])
   assert.equal(result.status, 0, result.stderr)
   assert.ok(existsSync(path.join(dir, 'alerts.jsonl')))
+})
+
+// ————————————————————————— 812 后续单：boot/deploy 抑制窗 + 恢复审计 —————————————————————————
+
+/** CLI 抑制面夹具：健康目标全绿；studioDev 由 handler 控制；recovery 命令写 marker */
+async function suppressionFixture(healthHandler, extraConfig = {}) {
+  const dir = tempRoot()
+  const markerDir = path.join(dir, 'markers')
+  mkdirSync(markerDir, { recursive: true })
+  const healthyBase = await startHttp((_req, res) => {
+    res.setHeader('content-type', 'application/json')
+    res.end('{"ok":true}')
+  })
+  const healthBase = await startHttp(healthHandler)
+  const dockerSocket = await fakeUnixSocket((socket) => {
+    socket.once('data', () => {
+      socket.end('HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK')
+    })
+  })
+  const binDir = await writeFakeBin(dir, {
+    launchctl: `#!/bin/sh\necho "$@" >> ${markerDir}/launchctl-calls\nexit 0\n`,
+  })
+  const alertsFile = path.join(dir, 'infra-alerts.jsonl')
+  const stateFile = path.join(dir, 'state.json')
+  const configPath = path.join(dir, 'watchdog.json')
+  const config = {
+    schema: 'studio-next/infra-watchdog-config/v1',
+    probeIntervalMs: 20,
+    failureThreshold: 1,
+    alertRepeatMs: 1,
+    logDir: dir,
+    alertsFile,
+    stateFile,
+    recovery: { enabled: true, cooldownMs: 1, maxPerHour: 99 },
+    containers: [],
+    probes: {
+      docker: { socket: dockerSocket, timeoutMs: 500 },
+      matrix: { url: `${healthyBase}/matrix`, timeoutMs: 500 },
+      taiga: { url: `${healthyBase}/taiga`, timeoutMs: 500 },
+      studioDev: { url: `${healthBase}/healthz`, timeoutMs: 500, guardianLabel: 'io.studionext.daemon' },
+      studioProfit: { processPattern: null, guardianLabel: null },
+    },
+    recoveryCommands: { studioDevKickstart: ['launchctl', 'kickstart', '-k', 'gui/0/io.studionext.daemon'] },
+    ...extraConfig,
+  }
+  writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8')
+  return {
+    dir,
+    configPath,
+    alertsFile,
+    markerDir,
+    stateFile,
+    run: async (extraArgs = []) =>
+      runCliAsync(['--config', configPath, '--once', '--json', ...extraArgs], { PATH: `${binDir}:${process.env.PATH ?? ''}` }),
+    runRounds: async (runs) =>
+      runCliAsync(['--config', configPath, '--runs', String(runs), '--interval-ms', '20', '--json'], { PATH: `${binDir}:${process.env.PATH ?? ''}` }),
+    events: () => {
+      if (!existsSync(alertsFile)) return []
+      return readFileSync(alertsFile, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line))
+    },
+    recoveredCommand: () => existsSync(path.join(markerDir, 'launchctl-calls')),
+  }
+}
+
+test('抑制窗：daemon 启动中（healthz body.uptimeMs<120s）→ 只告警不 recovery，事件带观测', async () => {
+  const fx = await suppressionFixture((_req, res) => {
+    res.statusCode = 500
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({ ok: false, uptimeMs: 30_000, loop: { lagMs: 4_200 } }))
+  })
+  const result = await fx.run()
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(fx.recoveredCommand(), false, 'boot 抑制窗内不得执行 recoverCommands')
+  const events = fx.events()
+  const suppressed = events.find((e) => e.event === 'recovery-suppressed' && e.target === 'studioDev')
+  assert.ok(suppressed, '缺 recovery-suppressed 事件（抑制不可查）')
+  assert.equal(suppressed.suppressionReason, 'boot-uptime')
+  assert.equal(suppressed.uptimeMs, 30_000)
+  assert.equal(suppressed.loopLagMs, 4_200)
+  assert.ok(events.some((e) => e.event === 'probe-failed' && e.target === 'studioDev' && e.failures >= 1), '抑制不得吞告警')
+  assert.equal(events.some((e) => e.event === 'recovery-attempt'), false)
+})
+
+test('抑制窗：部署中（deployStateFile status=deploying）→ 不 recovery；解除后仍失败才恢复', async () => {
+  const deployStateFile = path.join(tempRoot(), 'deploy-state.json')
+  writeFileSync(deployStateFile, JSON.stringify({ status: 'deploying', deployedAt: new Date().toISOString() }), 'utf8')
+  const fx = await suppressionFixture(
+    (_req, res) => {
+      res.statusCode = 500
+      res.end('{"ok":false}')
+    },
+    { deployStateFile },
+  )
+  assert.equal((await fx.run()).status, 0)
+  assert.equal(fx.recoveredCommand(), false, 'deploying 状态不得 recovery')
+  assert.ok(fx.events().some((e) => e.event === 'recovery-suppressed' && e.suppressionReason === 'deploying'))
+  // 抑制解除（部署完成，deployedAt 早于窗口）→ 仍失败应恢复；审计带 lastReason 等观测
+  writeFileSync(deployStateFile, JSON.stringify({ status: 'active', deployedAt: new Date(Date.now() - 3_600_000).toISOString() }), 'utf8')
+  assert.equal((await fx.run()).status, 0)
+  assert.equal(fx.recoveredCommand(), true, '抑制解除后持续失败应恢复')
+  const attempt = fx.events().find((e) => e.event === 'recovery-attempt' && e.target === 'studioDev')
+  assert.ok(attempt, '缺 recovery-attempt')
+  assert.equal(attempt.lastReason, 'http-500')
+  assert.ok(typeof attempt.failures === 'number' && attempt.failures >= 1)
+})
+
+test('抑制不掩盖持续失败：连续多轮仍告警、抑制事件只一条、恢复后照常动作', async () => {
+  let mode = 'booting'
+  const fx = await suppressionFixture(
+    (_req, res) => {
+      res.statusCode = 500
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify(mode === 'booting' ? { ok: false, uptimeMs: 30_000 } : { ok: false, uptimeMs: 999_000 }))
+    },
+    { probeIntervalMs: 20 },
+  )
+  await fx.runRounds(2)
+  assert.equal(fx.recoveredCommand(), false)
+  const suppressed = fx.events().filter((e) => e.event === 'recovery-suppressed' && e.target === 'studioDev')
+  assert.equal(suppressed.length, 1, '抑制事件应按原因去重（不逐轮刷屏）')
+  const failed = fx.events().filter((e) => e.event === 'probe-failed' && e.target === 'studioDev')
+  assert.ok(failed.length >= 2, `持续失败应逐轮告警（实得 ${String(failed.length)}）`)
+  // uptime 已超窗（真挂死）→ 下一轮解除抑制并恢复
+  mode = 'hung'
+  await fx.run()
+  assert.equal(fx.recoveredCommand(), true, '真挂死不得被抑制永久掩盖')
+})
+
+test('无抑制配置/信号：行为与旧版一致（失败达阈值→直接 recovery，无 recovery-suppressed）', async () => {
+  const fx = await suppressionFixture((_req, res) => {
+    res.statusCode = 500
+    res.end('{"ok":false}')
+  })
+  const noCfgRun = await fx.run()
+  assert.equal(noCfgRun.status, 0, `stdout=${noCfgRun.stdout} stderr=${noCfgRun.stderr}`)
+  assert.equal(fx.recoveredCommand(), true, '无配置时不得改变既有恢复行为')
+  const events = fx.events()
+  assert.ok(events.some((e) => e.event === 'recovery-attempt' && e.target === 'studioDev'))
+  assert.equal(events.some((e) => e.event === 'recovery-suppressed'), false)
+})
+
+test('suppressionOf/deploySuppressionReason：纯面判定（boot 低 uptime/部署近窗/fail-open）', () => {
+  const base = normalizeConfig({})
+  const now = Date.now()
+  const lowUptime = suppressionOf({ target: 'studioDev', probe: { ok: false, body: { uptimeMs: 30_000 } }, targetState: { failures: 2 }, deployState: null, config: base, now })
+  assert.equal(lowUptime?.reason, 'boot-uptime')
+  const highUptime = suppressionOf({ target: 'studioDev', probe: { ok: false, body: { uptimeMs: 999_000 } }, targetState: { failures: 2 }, deployState: null, config: base, now })
+  assert.equal(highUptime, null)
+  assert.equal(deploySuppressionReason({ status: 'deploying' }, now, 120_000)?.reason, 'deploying')
+  assert.equal(deploySuppressionReason({ deployedAt: new Date(now - 1_000).toISOString() }, now, 120_000)?.reason, 'deploy-recent')
+  assert.equal(deploySuppressionReason({ deployedAt: new Date(now - 3_600_000).toISOString() }, now, 120_000), null)
+  assert.equal(deploySuppressionReason(null, now, 120_000), null)
 })

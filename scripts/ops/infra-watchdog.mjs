@@ -34,6 +34,9 @@ import {
   classifyProbe,
   decideFailureActions,
   normalizeConfig,
+  observabilityOf,
+  readDeployStateFile,
+  suppressionOf,
   probeContainer,
   probeDockerSocket,
   probeHttp,
@@ -173,6 +176,8 @@ async function runRound(config, state, paths, options) {
     return entry
   }
   const now = Date.now()
+  // 部署抑制窗（可选；缺省 fail-open）——每轮读一次状态文件，缺失/坏 JSON 均不抑制（与旧版一致）
+  const deployState = config.deployStateFile !== null ? readDeployStateFile(config.deployStateFile) : null
   const targets = targetList(config).filter((name) => {
     if (name === 'studioProfit' && (config.probes.studioProfit.processPattern === null || config.probes.studioProfit.processPattern === undefined)) return false
     return true
@@ -182,14 +187,23 @@ async function runRound(config, state, paths, options) {
     const targetState = state.targets[target] ?? { failures: 0, lastAlertAt: 0, lastRecoveryAt: 0, recoveryTimes: [] }
     const classified = classifyProbe(target, probe)
     if (probe.ok) {
+      const obs = observabilityOf(probe, targetState)
       if (targetState.failures > 0) {
-        emit('info', 'recovered', { target, failures: targetState.failures, lastReason: targetState.lastReason ?? null })
+        emit('info', 'recovered', { target, ...obs })
       }
-      state.targets[target] = { failures: 0, lastAlertAt: 0, lastRecoveryAt: targetState.lastRecoveryAt, recoveryTimes: targetState.recoveryTimes }
+      state.targets[target] = {
+        failures: 0,
+        lastAlertAt: 0,
+        lastRecoveryAt: targetState.lastRecoveryAt,
+        recoveryTimes: targetState.recoveryTimes,
+        lastOkAt: now,
+        lastOkUptimeMs: obs.uptimeMs ?? targetState.lastOkUptimeMs ?? null,
+      }
       continue
     }
     targetState.failures += 1
     targetState.lastReason = probe.reason
+    const obs = observabilityOf(probe, targetState)
     const decision = decideFailureActions({
       failures: targetState.failures,
       state: targetState,
@@ -201,19 +215,39 @@ async function runRound(config, state, paths, options) {
       emit(classified.level, 'probe-failed', {
         target,
         reason: probe.reason,
-        failures: targetState.failures,
         threshold: config.failureThreshold,
+        ...obs,
       })
       targetState.lastAlertAt = now
     }
+    // 抑制窗（boot/deploy）：只抑制 recovery，不抑制告警（持续失败仍逐轮可见）；
+    // 事件只在进入/原因变化时落一条，避免每轮刷屏。
+    const suppression = suppressionOf({ target, probe, targetState, deployState, config, now })
+    if (suppression !== null) {
+      const previous = targetState.suppression?.reason
+      targetState.suppression = { reason: suppression.reason, since: previous === suppression.reason ? (targetState.suppression?.since ?? now) : now }
+      if (previous !== suppression.reason) {
+        emit('warn', 'recovery-suppressed', {
+          target,
+          reason: probe.reason,
+          suppressionReason: suppression.reason,
+          ...obs,
+          ...(suppression.uptimeMs !== undefined ? { suppressedUptimeMs: suppression.uptimeMs } : {}),
+          ...(suppression.deployedAt !== undefined ? { deployedAt: suppression.deployedAt } : {}),
+        })
+      }
+      state.targets[target] = targetState
+      continue
+    }
+    if (targetState.suppression !== undefined) delete targetState.suppression
     if (decision.recover.allowed) {
       const plan = recoveryPlan(target, config, probe)
       targetState.lastRecoveryAt = now
       targetState.recoveryTimes = [...decision.recoveryTimes, now]
       if (plan.commands.length === 0) {
-        emit('warn', 'recovery-skipped', { target, reason: probe.reason, note: plan.note })
+        emit('warn', 'recovery-skipped', { target, reason: probe.reason, note: plan.note, ...observabilityOf(probe, targetState) })
       } else {
-        emit('warn', 'recovery-attempt', { target, reason: probe.reason, commands: plan.commands.map((argv) => argv.join(' ')), note: plan.note })
+        emit('warn', 'recovery-attempt', { target, reason: probe.reason, commands: plan.commands.map((argv) => argv.join(' ')), note: plan.note, ...observabilityOf(probe, targetState) })
         for (const argv of plan.commands) {
           const result = runCommand(argv, { dryRun: config.dryRun === true || options['dry-run'] === true })
           if (result.dryRun === true) {
@@ -226,12 +260,13 @@ async function runRound(config, state, paths, options) {
             command: result.command,
             status: result.status,
             stderr: result.stderr === '' ? null : result.stderr,
+            ...observabilityOf(probe, targetState),
           })
           if (!ok) break
         }
       }
     } else if (targetState.failures >= config.failureThreshold) {
-      emit('warn', 'recovery-skipped', { target, reason: probe.reason, note: decision.recover.reason })
+      emit('warn', 'recovery-skipped', { target, reason: probe.reason, note: decision.recover.reason, ...observabilityOf(probe, targetState) })
     }
     state.targets[target] = targetState
   }

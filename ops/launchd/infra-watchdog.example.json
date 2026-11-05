@@ -12,6 +12,11 @@
     "cooldownMs": 600000,
     "maxPerHour": 3
   },
+  "suppression": {
+    "bootUptimeMs": 120000,
+    "deployWindowMs": 120000
+  },
+  "deployStateFile": null,
   "containers": [
     "matrix-synapse",
     "taiga-docker-taiga-gateway-1"
