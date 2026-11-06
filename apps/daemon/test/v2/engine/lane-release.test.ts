@@ -176,3 +176,33 @@ describe('812 派发失败释放带 epoch（epoch 只 +1，同泳道可立即再
     expect(lanes.state('core').holder).toBeNull()
   })
 })
+
+
+describe('812 后续单：lane 每拍续租（引擎级长跑跨 TTL）', () => {
+  it('inflight 长跑跨 TTL：同泳道候选仍 HOLD_LANE_BUSY（不被 TTL 抢道）；release 后 epoch+1 可再派', async () => {
+    const stack = await createWorkStack('lane-renew-longrun', {
+      laneTtlMs: 1_000, // 极小 TTL，模拟 90s 长跑跨越
+      limits: { maxActionsPerTick: 5, maxInflight: 5, maxInflightPerPerson: 5 },
+    })
+    stack.mode.value = 'stalled' // worker 长跑不结束（stalled 流驻留）
+    const first = await createTicket(stack, '长跑占 core')
+    const second = await createTicket(stack, '同泳道排队')
+    let dispatched = false
+    for (let i = 0; i < 4 && !dispatched; i += 1) {
+      const report = await tick(stack)
+      if (report.actions.some((a) => a.type === 'dispatch' && a.ticket === first)) dispatched = true
+    }
+    expect(dispatched).toBe(true)
+    expect((await issueOf(stack, first)).state).toBe('已派发')
+    // 每次 tick 前把钟推过 TTL（2s>1s）；续租在 tick 入口/决策前执行 → 租约仍活
+    let sawLaneHold = false
+    for (let i = 0; i < 3; i += 1) {
+      stack.clock.advance(2_000)
+      const report = await tick(stack)
+      if (report.phases.stateDiff.decisions.some((d) => d.ticket === second && d.code === 'HOLD_LANE_BUSY')) sawLaneHold = true
+    }
+    expect(sawLaneHold).toBe(true) // 未续租时：TTL 过期→第二单会被派发（缺陷形态）
+    // 首单仍在途（stalled）——第二单未被派发
+    expect((await issueOf(stack, second)).state).not.toBe('已派发')
+  }, 60_000)
+})

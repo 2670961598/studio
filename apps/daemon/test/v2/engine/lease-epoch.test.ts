@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import type { EventRecord } from '@studio-next/contract'
 import { createLaneRegistry, type EpochStore } from '../../../src/engine/lanes/registry.ts'
 import { createMergeLeaseRegistry } from '../../../src/engine/merge/merge-lease.ts'
+import { renewLaneLeases } from '../../../src/engine/lanes/registry.ts'
 import { epochOfInflight, releaseTicketLane, releaseWithEpoch } from '../../../src/engine/lanes/release.ts'
 import { executeStallResponse } from '../../../src/engine/watchdog/stall-response.ts'
 import { harvestHostOf } from '../../../src/engine/runtime/hosts.ts'
@@ -235,5 +236,65 @@ describe('812 stall-response A 面 stale 预检（kill 前拒收）', () => {
     expect(result.ok).toBe(true)
     expect(h.events.some((e) => e.name === 'STALL' && e.note.includes('续租'))).toBe(true)
     expect(h.ended()).toBe(0) // 续租不杀不收口
+  })
+})
+
+
+describe('812 后续单：lane 租约每拍续租（renew）', () => {
+  it('renew 延长 expiresAt、不 bump epoch、isCurrent 仍 true（连续续租）', () => {
+    const lanes = createLaneRegistry(1_000)
+    const epoch = lanes.acquire('core', 't-1', 1_000)
+    expect(lanes.state('core').expiresAt).toBe(2_000)
+    expect(lanes.renew('core', 't-1', 1_500, epoch)).toBe(true)
+    expect(lanes.state('core').expiresAt).toBe(2_500)
+    expect(lanes.renew('core', 't-1', 2_000)).toBe(true) // epoch 缺省=holder 续
+    expect(lanes.state('core').expiresAt).toBe(3_000)
+    expect(lanes.epochOf('core')).toBe(epoch) // 不 bump
+    expect(lanes.isCurrent('core', epoch)).toBe(true)
+    expect(lanes.state('core').holder).toBe('t-1') // 不删租约
+  })
+  it('非 holder / 旧 epoch：renew=false 且零副作用（expiresAt/epoch/holder 不动）', () => {
+    const lanes = createLaneRegistry(1_000)
+    const epoch = lanes.acquire('core', 't-1', 1_000)
+    lanes.release('core', 't-1', epoch) // epoch→1（无主）
+    const newEpoch = lanes.acquire('core', 't-2', 2_000)
+    const before = lanes.state('core')
+    expect(lanes.renew('core', 't-1', 3_000, epoch)).toBe(false) // 非 holder
+    expect(lanes.renew('core', 't-2', 3_000, epoch)).toBe(false) // 旧 epoch
+    expect(lanes.state('core')).toEqual(before) // 零副作用
+    expect(newEpoch).toBe(1)
+    expect(lanes.renew('core', 't-2', 3_000, newEpoch)).toBe(true)
+    expect(lanes.state('core').expiresAt).toBe(4_000)
+  })
+  it('renewLaneLeases：无 inflight=0 零行为；有 inflight 按 laneEpoch 续租；旧 epoch 静默跳过', () => {
+    const lanes = createLaneRegistry(1_000)
+    const epoch = lanes.acquire('core', 't-1', 1_000)
+    const inflight = new Map([['t-1', { ticket: 't-1', lane: 'core', laneEpoch: epoch }]])
+    expect(renewLaneLeases({ inflight: new Map(), lanes }, 1_500)).toBe(0)
+    expect(lanes.state('core').expiresAt).toBe(2_000) // 无 inflight 零行为
+    expect(renewLaneLeases({ inflight, lanes }, 1_500)).toBe(1)
+    expect(lanes.state('core').expiresAt).toBe(2_500)
+    // 旧 epoch（被 release 后 epoch+1）→ renew false，不推进/不误续
+    expect(lanes.release('core', 't-1', epoch)).toMatchObject({ ok: true, currentEpoch: 1 })
+    const staleInflight = new Map([['t-1', { ticket: 't-1', lane: 'core', laneEpoch: epoch }]])
+    expect(renewLaneLeases({ inflight: staleInflight, lanes }, 2_000)).toBe(0)
+    expect(lanes.state('core').holder).toBeNull()
+  })
+  it('release/stop epoch fence 不回归：renew 后旧 epoch 释放仍 stale、新 epoch 正常', () => {
+    const lanes = createLaneRegistry(1_000)
+    const epoch = lanes.acquire('core', 't-1', 1_000)
+    lanes.renew('core', 't-1', 1_500, epoch)
+    expect(lanes.release('core', 't-1', epoch + 1)).toMatchObject({ ok: false, reason: 'stale-epoch' })
+    expect(lanes.state('core').holder).toBe('t-1')
+    expect(lanes.release('core', 't-1', epoch)).toMatchObject({ ok: true, reason: 'released', currentEpoch: 1 })
+    expect(lanes.epochOf('core')).toBe(1)
+  })
+  it('merge 租约 renew 路径不受影响（lane renew 不改 merge 语义）', () => {
+    const merge = createMergeLeaseRegistry(1_000)
+    expect(merge.acquire('co:dev', 't-1', 1_000)).toBe(true)
+    const epoch = merge.epochOf('co:dev')
+    expect(merge.renew('co:dev', 't-1', 1_500, epoch)).toBe(true)
+    expect(merge.state('co:dev', 1_500).expiresAt).toBe(2_500)
+    expect(merge.renew('co:dev', 't-1', 1_500, epoch + 1)).toBe(false)
   })
 })

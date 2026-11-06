@@ -56,6 +56,13 @@ export interface LaneRegistry {
   epochOf(lane: string): number
   /** 是否仍是当前 epoch（完成面前置校验；stale=拒收） */
   isCurrent(lane: string, epoch: number): boolean
+  /**
+   * 续租（studio-dev-812 后续单：lane 每拍续命，治 90s TTL 抢道→stale 重派）：
+   * 仅当租约存在、holder===ticket、且（epoch 缺省或===当前 lease.epoch）时把 expiresAt
+   * 推到 at+laneTtlMs 并返回 true；否则 false。**不 bump epoch**、不删租约、不改
+   * state/isCurrent/release/stop 语义。
+   */
+  renew(lane: string, ticket: TicketId, at: number, epoch?: number): boolean
   /** 释放（epoch 在场则栅栏校验；缺省=兼容旧 holder 校验） */
   release(lane: string, ticket: TicketId, epoch?: number): LeaseReleaseResult
   /** stop 闩（幂等；与 release 同栅栏语义） */
@@ -111,7 +118,36 @@ export function createLaneRegistry(laneTtlMs: number, store?: EpochStore): LaneR
     },
     epochOf: (lane) => load(lane),
     isCurrent: (lane, epoch) => epoch === load(lane),
+    renew(lane: string, ticket: TicketId, at: number, epoch?: number): boolean {
+      const lease = lanes.get(lane)
+      if (lease === undefined || lease.holder !== ticket) return false
+      if (epoch !== undefined && epoch !== lease.epoch) return false
+      lease.expiresAt = at + laneTtlMs
+      return true
+    },
     release: (lane, ticket, epoch) => releaseInternal(lane, ticket, epoch),
     stop: (lane, ticket, epoch) => releaseInternal(lane, ticket, epoch),
   }
+}
+
+/**
+ * 每拍续租宿主（studio-dev-812 后续单）：结构探测——engine runtime 的 inflight/lanes 满足此形。
+ * 只处理带 lane 的在途 entry（lane 恒有；laneEpoch 可选——缺 epoch 时按 holder 续）。
+ */
+export interface LaneRenewHost {
+  readonly inflight: ReadonlyMap<TicketId, { readonly ticket: TicketId; readonly lane: string; readonly laneEpoch?: number }>
+  readonly lanes: LaneRegistry
+}
+
+/**
+ * 每拍续租：遍历在途 entry，按 ticket/lane/laneEpoch 调 lanes.renew；幂等、失败静默。
+ * 返回实际续租条数（观测/测试用；不落台账）。必须在 state-diff 决策前执行（相位 1 头/
+ * tick 入口），否则 TTL 到期瞬间 decide 会先看到无主而抢道。
+ */
+export function renewLaneLeases(host: LaneRenewHost, at: number): number {
+  let renewed = 0
+  for (const entry of host.inflight.values()) {
+    if (host.lanes.renew(entry.lane, entry.ticket, at, entry.laneEpoch)) renewed += 1
+  }
+  return renewed
 }
