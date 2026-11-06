@@ -96,7 +96,17 @@ export function phaseAnchorsOf(events: readonly EventRecord[]): Map<string, Set<
 export function reconcileProjection(
   records: readonly HistRecord[],
   events: readonly EventRecord[],
-  options: { readonly rosterSubjects?: ReadonlySet<string> } = {},
+  options: {
+    readonly rosterSubjects?: ReadonlySet<string>
+    /**
+     * studio-dev-878（REC-WORK-01 窗口边界假阳性）：REC-WORK-01 是「每单恰好一条一次性
+     * intake」——它的 produced_at 可能远早于同单重派 DISPATCH，滑出增量窗口后不能以
+     * 「窗口内无记录」判 missing。提供本参数（全量 REC-WORK-01 行）时，missing 判定改用
+     * 全量 intake 集合；窗口 records 只用于 duplicate/undeterminable（避免历史 intake 的
+     * 事件锚滑窗后误报 undeterminable）。缺省=旧窗口语义（向后兼容）。
+     */
+    readonly allTimeIntakes?: readonly HistRecord[]
+  } = {},
 ): ProjectionReconciliation {
   const differences: ProjectionDifference[] = []
   // 名册派生族对账（刀B）：①缺幂等键 subjectId＝不可判定坏行 ②subject 不在名册＝凭空主体
@@ -137,8 +147,19 @@ export function reconcileProjection(
   }
   const dispatched = dispatchedTicketsOf(events)
   const issueSet = new Set(events.map((event) => event.issue))
+  // missing 判定：优先全量 intake 集合（A 方案）；duplicate/undeterminable 仍按窗口 records。
+  const intakeSubjects = new Set<string>()
+  if (options.allTimeIntakes !== undefined) {
+    for (const record of options.allTimeIntakes) {
+      if (record.recordType !== 'REC-WORK-01') continue
+      const subject = record.idempotencyKey?.subjectId
+      if (subject !== undefined) intakeSubjects.add(subject)
+    }
+  } else {
+    for (const subject of bySubject.keys()) intakeSubjects.add(subject)
+  }
   for (const ticket of dispatched) {
-    if (!bySubject.has(ticket)) {
+    if (!intakeSubjects.has(ticket)) {
       differences.push({
         kind: 'missing',
         recordType: 'REC-WORK-01',

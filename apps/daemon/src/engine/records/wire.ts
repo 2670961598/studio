@@ -510,9 +510,17 @@ export function createRecordWire(deps: RecordWireDeps): RecordWire {
       counters.reconcile += 1
       const roster = deps.roster?.roster()
       const records = hist.query({ company, ...(since > 0 ? { since } : {}) }, readContext)
+      // REC-WORK-01 是每单恰好一条 intake（produced_at 远早于重派 DISPATCH 时可滑出增量窗口）：
+      // 对账改全量读该类型（仅 REC-WORK-01，行数≈单数、成本可忽略），其余类型保持窗口口径。
+      // 这样窗口边界不再误报 missing；真缺失（全量也没有）仍报。REC-WORK-06 仍走窗口——
+      // 同类「记录老、相位锚新」风险登记在案（当前 0 行，未开面）。
+      const allTimeIntakes = hist.query({ company, type: 'REC-WORK-01' }, readContext)
       const events = deps.readEvents !== undefined ? deps.readEvents(since) : []
       const rosterSubjects = roster !== undefined ? new Set(roster.people.map((person) => person.id)) : undefined
-      const reconciled = reconcileProjection(records, events, rosterSubjects !== undefined ? { rosterSubjects } : {})
+      const reconciled = reconcileProjection(records, events, {
+        ...(rosterSubjects !== undefined ? { rosterSubjects } : {}),
+        allTimeIntakes,
+      })
       if (!reconciled.settled) {
         deps.log?.(
           `[records] 对账差异 ${reconciled.differences.length} 条（checked=${reconciled.checked}）：` +

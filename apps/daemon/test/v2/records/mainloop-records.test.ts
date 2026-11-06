@@ -12,6 +12,7 @@
 import { afterAll, describe, expect, it } from 'vitest'
 import type { ReadContext } from '@studio-next/contract'
 import { createHistFace, type Ledger } from '@studio-next/store'
+import type { EventRecord } from '@studio-next/contract'
 import {
   BLOCKED_RECORD_FAMILIES,
   UNBLOCKED_RECORD_FAMILIES,
@@ -30,6 +31,7 @@ import {
   type RecordWire,
 } from '../../../src/engine/records/index.ts'
 import { createTicket, createWorkStack, disposeWorkStacks, eventsOf, runTicks, type WorkTestStack } from './fixtures/work-stack.ts'
+import { makeUlid } from '../../../src/engine/tools/id.ts'
 
 afterAll(async () => {
   await disposeWorkStacks()
@@ -324,5 +326,110 @@ describe('形状闸与状态桥接（契约面不改）', () => {
     // 核心桥接断言（docs/18-§2.1 ↔ v2/11 §14.1）：已派发=in_progress、证据就绪=awaiting_review
     expect(PLATFORM_TO_WORK_STATE[PLATFORM_STATES.dispatched]).toBe('in_progress')
     expect(PLATFORM_TO_WORK_STATE[PLATFORM_STATES.evidenceReady]).toBe('awaiting_review')
+  })
+})
+
+
+// ————————————————————— studio-dev-878 REC-WORK-01 窗口边界假阳性 —————————————————————
+
+/** 建带记录写面 + 事件读面的真栈（对账读者 readEvents 接线） */
+async function stackWithReadEvents(label: string): Promise<{ stack: WorkTestStack; wire: RecordWire }> {
+  let wire: RecordWire | undefined
+  const stack = await createWorkStack(label, {}, {
+    recordsOf: ({ ledger, company }) => {
+      wire = createRecordWire({ hist: histOf(ledger), company, readEvents: (since) => ledger.queryEvents({ company, since }) })
+      return wire
+    },
+  })
+  if (wire === undefined) throw new Error('recordsOf 未被夹具调用（夹具契约破坏）')
+  return { stack, wire }
+}
+
+/** HistRecord.producedAt：retention 形状 string|number（ISO 或 epoch ms）→ epoch ms */
+function producedEpoch(record: { producedAt?: string | number } | undefined): number {
+  const raw = record?.producedAt
+  return typeof raw === 'number' ? raw : typeof raw === 'string' ? Date.parse(raw) : 0
+}
+
+function dispatchEvent(ticket: string, ts: number): EventRecord {
+  return {
+    id: makeUlid(ts),
+    ts,
+    company: COMPANY,
+    issue: ticket,
+    event: 'DISPATCH',
+    actor: 'daemon',
+    attempt: 2,
+    level: 2,
+    dept: 'departments/工程部',
+    tokens: { input: 0 },
+    note: 'reconcile-window fixture',
+  }
+}
+
+describe('878 REC-WORK-01 窗口边界：intake 全量读（A）', () => {
+  it('intake 滑出窗口 + 重派 DISPATCH 在窗内：allTimeIntakes 提供 → settled=true、无 missing', async () => {
+    const { stack } = await stackWithRecords('rec-878-windowout')
+    const ticket = await createTicket(stack, '窗口边界单')
+    await runTicks(stack, 2)
+    const hist = histOf(stack.ledger)
+    const allTimeIntakes = hist.query({ company: COMPANY, type: 'REC-WORK-01' }, READ_CTX)
+    expect(allTimeIntakes).toHaveLength(1)
+    const producedAt = producedEpoch(allTimeIntakes[0])
+    const events = [dispatchEvent(ticket, producedAt + 60_000)] // 记录窗外、事件窗内
+    // 旧窗口语义：窗口 records 为空 → 误报 missing（对照证据）
+    const legacy = reconcileProjection([], events)
+    expect(legacy.settled).toBe(false)
+    expect(legacy.differences.some((d) => d.kind === 'missing' && d.recordType === 'REC-WORK-01' && d.subjectId === ticket)).toBe(true)
+    // A：全量 intake 集合 → settled、零差异
+    const fixed = reconcileProjection([], events, { allTimeIntakes })
+    expect(fixed.settled).toBe(true)
+    expect(fixed.differences).toEqual([])
+  })
+
+  it('intake 真缺失（全量也没有）→ 仍 missing、settled=false', () => {
+    const events = [dispatchEvent('demo-ghost', Date.parse('2026-11-06T10:00:00.000Z'))]
+    const reconciled = reconcileProjection([], events, { allTimeIntakes: [] })
+    expect(reconciled.settled).toBe(false)
+    expect(reconciled.differences.some((d) => d.kind === 'missing' && d.subjectId === 'demo-ghost')).toBe(true)
+  })
+
+  it('窗口内正常路径不回归：records 窗内 intake + 窗内 events → settled（有无 allTime 均绿）', async () => {
+    const { stack } = await stackWithRecords('rec-878-windowin')
+    const ticket = await createTicket(stack, '窗内正常单')
+    await runTicks(stack, 2)
+    const hist = histOf(stack.ledger)
+    const all = hist.query({ company: COMPANY, type: 'REC-WORK-01' }, READ_CTX)
+    const events = [dispatchEvent(ticket, producedEpoch(all[0]) + 1_000)]
+    const windowRecords = hist.query({ company: COMPANY }, READ_CTX)
+    expect(reconcileProjection(windowRecords, events).settled).toBe(true)
+    expect(reconcileProjection(windowRecords, events, { allTimeIntakes: all }).settled).toBe(true)
+  })
+
+  it('wire.reconcile 集成：since 越过 intake 但事件窗内有 DISPATCH → settled=true（不再假阳性）', async () => {
+    const { stack, wire } = await stackWithReadEvents('rec-878-wire')
+    const ticket = await createTicket(stack, 'wire 窗口边界单')
+    await runTicks(stack, 2)
+    const hist = histOf(stack.ledger)
+    const intake = hist.query({ company: COMPANY, type: 'REC-WORK-01' }, READ_CTX)[0]
+    expect(intake).toBeDefined()
+    const producedAt = producedEpoch(intake)
+    stack.ledger.appendEvent(dispatchEvent(ticket, producedAt + 60_000))
+    // since 越过 intake.producedAt：窗口 records 排除该 intake，但事件窗内仍有重派 DISPATCH
+    const reconciled = wire.reconcile(producedAt + 1)
+    expect(reconciled.settled).toBe(true)
+    expect(reconciled.differences).toEqual([])
+  })
+
+  it('REC-WORK-06 仍窗口口径（同类风险登记，不回归现有 missing 语义）', () => {
+    const work06 = {
+      recordId: 'rec-work-06:demo:x',
+      recordType: 'REC-WORK-06',
+      recordVersion: 1,
+      idempotencyKey: { recordType: 'REC-WORK-06', subjectId: 'demo-x', operationClass: 'transition', requesterSequence: 'x-1' },
+      producedAt: Date.parse('2026-11-06T10:00:00.000Z'),
+    } as never
+    const reconciled = reconcileProjection([work06], [])
+    expect(reconciled.differences.some((d) => d.kind === 'missing' && d.recordType === 'REC-WORK-06')).toBe(true)
   })
 })

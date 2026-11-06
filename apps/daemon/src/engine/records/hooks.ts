@@ -266,7 +266,9 @@ export function recordHarvestChain(args: {
 /** 对账读者节流（每 N 拍一跑；与 harvestReconEveryTicks 同量级——观测面不追每拍） */
 export const RECORDS_RECONCILE_EVERY_TICKS = 30
 
-/** 对账窗口重叠量（1h）：窗口下界回退一段，避免「记录在窗内、其事件锚在窗前」的假 missing */
+/** 对账窗口重叠量（1h）：窗口下界回退一段，避免「记录在窗内、其事件锚在窗前」的假 missing。
+ *  注（studio-dev-878）：REC-WORK-01 已改全量读（一次性 intake 可能滑出窗口）；REC-WORK-06 仍窗口，
+ *  同类「记录老、相位锚新」风险登记在案。 */
 export const RECORDS_RECONCILE_OVERLAP_MS = 60 * 60 * 1000
 
 /** 对账读者所需的 kv 面（daemon_kv；装配面注入 ledger） */
