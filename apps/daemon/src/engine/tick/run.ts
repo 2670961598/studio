@@ -9,6 +9,7 @@
  * 显式出参传值（无隐式共享可变面——唯一共享是拍作用域 TickCtx）。
  */
 import type { TickReport } from '../tick-report/types.ts'
+import { renewLaneLeases } from '../lanes/registry.ts'
 import { mergeQueueFace } from '../merge/merge-lease.ts'
 import type { EngineRuntime } from '../runtime/types.ts'
 import { accountPhase } from './account.ts'
@@ -34,6 +35,10 @@ export async function runTick(rt: EngineRuntime): Promise<TickReport> {
     errors: [],
     mutations: 0,
   }
+
+  // studio-dev-812 后续单：lane 租约每拍续租（在 state-diff 决策前——长跑 worker 跨 TTL
+  // 不被抢道/epoch bump；幂等/失败静默；不写台账/不加事件词）。
+  renewLaneLeases(rt, startedAt)
 
   const collected = await collectPhase(rt, ctx)
   const sd = await stateDiffPhase(rt, ctx, collected)
