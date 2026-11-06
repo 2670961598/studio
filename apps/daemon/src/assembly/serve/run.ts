@@ -24,7 +24,7 @@ import { writeExitMarkOnStop } from '../../control/restart/checkpoint.ts'
 import { orphanSweepDue, type OrphanRecoveryResult } from '../../engine/recovery/orphan-recovery.ts'
 import type { TickReport } from '../../engine/tick-report/types.ts'
 import { takeOverRunningWorkRecords } from '../../engine/harvest/inflight-takeover.ts'
-import { holdLaneBusyLinesOf, noopLinesOf, renderTick } from '../render/tick.ts'
+import { holdLaneBusyLinesOf, noopAggregatedLinesOf, renderTick } from '../render/tick.ts'
 import { DEMO_SNAPSHOT } from '../demo/demo-snapshot.ts'
 import { loadCompanyAtBoot } from '../assets/boot.ts'
 import { wirePlatform } from '../platform/wire.ts'
@@ -399,6 +399,7 @@ export async function runServe(
 
   // 泳道 hold 观测去重表（studio-dev-713；跨拍持有：同单同租约快照只落一行，防刷屏）
   const holdLaneSeen = new Map<string, string>()
+  const noopSeen = new Map<string, string>() // noop 聚合签名去重（跨拍持有）
 
   while (!stopped) {
     try {
@@ -408,8 +409,10 @@ export async function runServe(
       lastTickAt = Date.now()
       if (report.phases.collect.cursorLoop) cursorLoopSeen = true
       console.log(`[serve] ${renderTick(report)}`)
-      // noop 观测面（见 renderNoopDecision 头注）：静默 noop=观察黑洞，逐条落行
-      for (const line of noopLinesOf(report)) console.log(line)
+      // noop 观测面（见 renderNoopAggregatedLinesOf 头注）：静默 noop=观察黑洞；按 (code,state)
+      // 聚合+签名去重（归档票 ~135 行/拍 → 稳态 0–3 行/拍；样本 ticket+count 保留可追溯；
+      // 逐票全量入口 noopLinesOf 仍在，排障可用）。
+      for (const line of noopAggregatedLinesOf(report, noopSeen)) console.log(line)
       // 泳道租约 hold 观测面（见 renderHoldLaneBusy 头注；签名去重）
       for (const line of holdLaneBusyLinesOf(report, holdLaneSeen)) console.log(line)
       for (const err of report.errors) console.error(`[serve] tick#${report.seq} 错误：${err}`)

@@ -76,3 +76,69 @@ export function holdLaneBusyLinesOf(report: TickReport, seen: Map<string, string
   for (const [ticket, signature] of current) seen.set(ticket, signature)
   return lines
 }
+
+/** noop 聚合行（方案 A+B：按 (code,state) 分组、签名去重；count+前 3 样本可追溯） */
+export function renderNoopAggregate(seq: number, code: string, state: string, tickets: readonly string[]): string {
+  const sample = tickets.slice(0, 3).join(',')
+  const rest = tickets.length - 3
+  return (
+    `[serve] tick#${seq} noop聚合：code=${code} state=${state} count=${String(tickets.length)} ` +
+    `samples=${sample}${rest > 0 ? `(+${String(rest)} 其余)` : ''}（noop 无台账事件；按签名去重，未变不重复）`
+  )
+}
+
+/**
+ * 一拍 noop 聚合观测行（studio-dev-878 后续：归档票 noop 日志 35% 降噪；方案 A+B）。
+ *
+ * 背景：archived 票每拍仍进候选（平台全量镜像），每拍 ~135 行 `noop：<ticket> code=… state=Archived`；
+ * 本 boot 约 21 万行（35%），且批量日志/决策连带单次 8.8s lag 尖峰。noop 无台账事件，日志=唯一
+ * 观测面，不能闭嘴；改为**按 (code,state) 聚合 + 签名去重**：
+ *   - 每拍把同码同态决策聚合为一行（count + 前 3 样本 ticket + 其余计数）——可追溯；
+ *   - 签名=(code,state,sorted tickets) 与上拍相同 → 不输出（稳态 0–3 行/拍）；
+ *   - 新票加入/移除、code/state 变化 → 签名变，输出新聚合行；
+ *   - 组从决策集消失 → 清 seen（再现可重新可见，避免永久遮蔽）；
+ *   - 变化组 >3 时只输出前 2 组+1 行其余汇总，保证 ≤3 行/拍；
+ *   - 逐票全量入口保留 `noopLinesOf(report)`（旧函数不动，排障/verbose 用）。
+ * seen 由调用方跨拍持有（同 holdLaneBusyLinesOf 范式）。
+ */
+export function noopAggregatedLinesOf(report: TickReport, seen: Map<string, string>): string[] {
+  const groups = new Map<string, { code: string; state: string; tickets: string[] }>()
+  for (const entry of report.phases.stateDiff.decisions) {
+    if (entry.actionType !== 'noop') continue
+    const key = `${entry.code}|${entry.state}`
+    const group = groups.get(key) ?? { code: entry.code, state: entry.state, tickets: [] }
+    group.tickets.push(entry.ticket)
+    groups.set(key, group)
+  }
+  const changed: Array<{ code: string; state: string; tickets: string[] }> = []
+  for (const key of [...groups.keys()].sort()) {
+    const group = groups.get(key)
+    if (group === undefined) continue
+    const tickets = [...group.tickets].sort()
+    const signature = tickets.join(',')
+    if (seen.get(key) === signature) continue
+    changed.push({ code: group.code, state: group.state, tickets })
+  }
+  // seen 清理：本拍不存在的组移除（释放/关单/归档退出后不再永久遮蔽）
+  for (const key of [...seen.keys()]) {
+    if (!groups.has(key)) seen.delete(key)
+  }
+  for (const key of [...groups.keys()]) {
+    const group = groups.get(key)
+    if (group !== undefined) seen.set(key, [...group.tickets].sort().join(','))
+  }
+  const lines: string[] = []
+  if (changed.length <= 3) {
+    for (const group of changed) lines.push(renderNoopAggregate(report.seq, group.code, group.state, group.tickets))
+    return lines
+  }
+  // 变化组 >3：前 2 组逐组 + 第 3 行汇总其余（保证 ≤3 行/拍）
+  for (const group of changed.slice(0, 2)) lines.push(renderNoopAggregate(report.seq, group.code, group.state, group.tickets))
+  const rest = changed.slice(2)
+  const total = rest.reduce((n, group) => n + group.tickets.length, 0)
+  lines.push(
+    `[serve] tick#${report.seq} noop聚合：其余 ${String(rest.length)} 组 count=${String(total)} ` +
+      `samples=${rest[0]?.tickets.slice(0, 3).join(',') ?? ''}（noop 无台账事件；按签名去重，未变不重复）`,
+  )
+  return lines
+}
