@@ -18,11 +18,13 @@ import {
   isJudgeExecutorName,
   loadAgentConfig,
   wireRegistry,
+  type AgentConfig,
+  type AgentExecutorConfig,
   type ExecutorRegistry,
 } from '@studio-next/adapters'
 import { EMPTY_SELECTION_CHAIN } from '@studio-next/adapters/bindcard'
 import { extractPersonAttrs } from '@studio-next/company'
-import { assertJudgeRoleLow, createModelCatalog, fingerprint, parseModelsYaml, type TierId } from '@studio-next/core'
+import { assertJudgeRoleLow, createModelCatalog, fingerprint, parseModelsYaml, type ModelsConfig, type TierId } from '@studio-next/core'
 import { configInvalid } from '@studio-next/contract'
 import type { ModelCatalog, TicketId } from '@studio-next/contract'
 import type { Ledger } from '@studio-next/store'
@@ -104,6 +106,47 @@ function personExecutorsOf(config: ServeConfig): Readonly<Record<string, string>
 }
 
 /**
+ * 档位 executor 名 → models.yaml tier（studio-dev-882：executor model 声明镜像注入）。
+ * dsh/dsh-mid=中档（现役缺省），dsh-high=高档，dsh-low=低档；judge 等其它位不注入。
+ */
+const TIER_EXECUTOR: Readonly<Record<string, TierId>> = {
+  dsh: 'mid',
+  'dsh-mid': 'mid',
+  'dsh-high': 'high',
+  'dsh-low': 'low',
+}
+
+/**
+ * 把 models.yaml tiers 派生为 agent.yaml executor 的 `patches['agent-default-model']`
+ * 声明镜像（132-§6.1 单A 唯一消费面=dshModelFromPatches→ResultStats.model）。
+ *
+ * 为什么必须回填：agent.yaml 是声明位，但 models.yaml 是价目/模型单一事实源；serve 原本只把
+ * tier overlay 喂给 dsh CLI `--patch`，adapter 构造期拿不到 model → ResultStats.model 缺省 →
+ * harvest `usage=daily skip（无 model）` fail-closed（work_records.model 全 NULL、USD 恒 0）。
+ * 本函数只做确定性投影，不猜模型：tier 缺/形状坏时对应 executor 保持原样（后续
+ * checkTierPositionDeclarations 仍会 fail-closed；catalog 完全缺失则根本不会调用）。
+ * 已有显式 `agent-default-model` 声明**不覆盖**（保留人工声明，漂移由 check 闸拒启）。
+ */
+export function injectTierModelPatches(agentConf: AgentConfig, models: ModelsConfig): AgentConfig {
+  const executors: AgentExecutorConfig[] = agentConf.executors.map((rec) => {
+    const tier = TIER_EXECUTOR[rec.name]
+    if (tier === undefined) return rec
+    const spec = models.tiers[tier]
+    if (spec === undefined) return rec // 缺档不伪造（check 闸/价目装载会明报）
+    const existing = rec.patches?.['agent-default-model']
+    if (existing !== undefined) return rec // 显式声明优先；与 tiers 漂移由 checkTierPositionDeclarations 拒启
+    return {
+      ...rec,
+      patches: {
+        ...(rec.patches ?? {}),
+        'agent-default-model': { config: { provider: spec.provider, model: spec.model } },
+      },
+    }
+  })
+  return { ...agentConf, executors }
+}
+
+/**
  * 装配 executor 面：注册表双形态（agentYaml/fake）→ bridge overlay provisioning →
  * 冻结验收命令单一事实源 → 价目表/模型档 → judge 注册位启动闸 → 队列小模型两址。
  * 失败即抛（CONFIG_INVALID 明报不猜）——调用方（buildServeRuntime）不做二次吞错。
@@ -114,9 +157,18 @@ export function wireExecutorFace(config: ServeConfig, deps: ExecutorFaceDeps): E
   // —— executor 注册双形态（v0.5 真单刀）：agentYaml=真注册表；缺省=fake（demo 不变）——
   const registry = createRegistry()
   let agentConf: ReturnType<typeof loadAgentConfig> | undefined
+  /** models.yaml 早解析结果（agentYaml 分支注入声明镜像用；价目表分支复用，避免二次读盘） */
+  let parsedModelsEarly: ModelsConfig | undefined
   if (config.agentYaml !== undefined) {
     const agentText = readFileSync(path.resolve(config.agentYaml), 'utf8')
     agentConf = loadAgentConfig(agentText)
+    // studio-dev-882：先按 models.yaml 回填四档 executor 的 model 声明镜像，再 wireRegistry
+    // （DshAdapter 构造期读 patches → ResultStats.model）；catalog 缺失则不解析/不注入。
+    if (config.models !== undefined) {
+      const modelsText = readFileSync(path.resolve(config.models), 'utf8')
+      parsedModelsEarly = parseModelsYaml(modelsText)
+      agentConf = injectTierModelPatches(agentConf, parsedModelsEarly)
+    }
     // resolver 组合（studio-dev-196）：judge 外包 tier——`<family>-<tier>` 档位（patches
     // 透传，agentconfig.ts）+ `<family>-judge` 判断位两层都可注册（此前裸 builtinResolver
     // 对两形态都 unknown-executor——judge 位从未真正可装配的潜伏缺口随本单一并闭合）。
@@ -175,8 +227,7 @@ export function wireExecutorFace(config: ServeConfig, deps: ExecutorFaceDeps): E
   let catalog: ModelCatalog | undefined
   let modelRoles: Readonly<Record<string, TierId>> | undefined
   if (config.models !== undefined) {
-    const text = readFileSync(path.resolve(config.models), 'utf8')
-    const parsed = parseModelsYaml(text)
+    const parsed = parsedModelsEarly ?? parseModelsYaml(readFileSync(path.resolve(config.models), 'utf8'))
     catalog = createModelCatalog(parsed)
     modelRoles = parsed.roles
     log(`[serve] 价目表装载：${config.models}（fingerprint=${fingerprint(parsed)}；估算态 A：estimateCost 校准+双帽）`)
@@ -193,6 +244,12 @@ export function wireExecutorFace(config: ServeConfig, deps: ExecutorFaceDeps): E
     )
   } else {
     log('[serve] 无价目表：预算闸态 B 降级（估算=适配器自报、仅票级帽——见 src/engine/budget-gate.ts 头注两态）；模型档路由面关（派发行为不变）')
+    if (config.agentYaml !== undefined) {
+      log(
+        '[serve] 警告：无 models 段——executor model 声明镜像不注入（provider/model 无从可知，不猜模型）；' +
+          'harvest usage/cost 投影保持 fail-closed skip 语义（work_records.model=NULL、USD 不折算）',
+      )
+    }
   }
   // 显式单级覆盖（studio-dev-196）：daemon.yaml modelTierTickets（解析即验在装载 case 面；
   // 此处装配期转 map——空串=空表合法：面开但只靠角色映射路由）
