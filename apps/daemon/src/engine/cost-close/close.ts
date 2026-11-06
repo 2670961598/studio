@@ -271,6 +271,32 @@ function reconcileAtDate(deps: CostCloseDeps, x: string): ReconSegment {
   return reconcileDate(x, costRows, gatePass)
 }
 
+/**
+ * cache 缺价低估计数（studio-dev-883 后续：日闭告警 B1）：
+ * foldCostUsd 对 cache_read/cache_creation 缺价按 0 计并登记在 plan.unpricedBuckets；
+ * 本函数汇总这些桶的 **token 数与行数**（不改 rows/usd/append-only 语义，仅观测可见）。
+ */
+export interface CacheUnpricedSummary {
+  /** cache_read+cache_creation 中未定价桶的 token 总数 */
+  tokens: number
+  /** 含 cache 未定价桶的 plan 行数 */
+  rows: number
+}
+export function cacheUnpricedOf(plans: readonly CostCellPlan[]): CacheUnpricedSummary {
+  let tokens = 0
+  let rows = 0
+  for (const plan of plans) {
+    let hit = false
+    for (const bucket of plan.unpricedBuckets) {
+      if (bucket !== 'cache_read' && bucket !== 'cache_creation') continue
+      hit = true
+      tokens += bucket === 'cache_read' ? plan.tokens.cache_read : plan.tokens.cache_creation
+    }
+    if (hit) rows += 1
+  }
+  return { tokens, rows }
+}
+
 /** 单日收口：折算→首冻（重入跳过已冻格）→kv 前进→降级告警→事件→报告文件 */
 function closeDate(deps: CostCloseDeps, x: string, at: number, snapshots: readonly PriceSnapshotRecord[]): { finalRows: number; alarms: number } {
   const usage = deps.ledger.listUsageDaily({ company: deps.company, usage_date: x })
@@ -317,12 +343,21 @@ function closeDate(deps: CostCloseDeps, x: string, at: number, snapshots: readon
   const staleCount = plans.filter((p) => p.priceBasis === 'snapshot' && !p.exact && p.staleDays > 0).length
   const bridgeCount = plans.filter((p) => p.priceBasis === 'models-yaml').length
   const unpricedCount = plans.filter((p) => p.priceBasis === 'unpriced').length
-  if (staleCount + bridgeCount + unpricedCount > 0) {
-    deps.emitAlarm(`${CLOSE_NOTE_PREFIX}date=${x};degraded=stale:${String(staleCount)},bridge:${String(bridgeCount)},unpriced:${String(unpricedCount)}（不静默：沿用/桥/无价收口，详见报告注因段）`)
+  // studio-dev-883：cache 桶缺价按 0 计是**低估**（cache 常占 token 大头）；原先 degraded 只数
+  // priceBasis（snapshot 命中但缺 cache 价=静默低计）。此计数只做可见性，不改 rows/usd。
+  const cacheUnpriced = cacheUnpricedOf(plans)
+  const cacheUnpricedNote =
+    cacheUnpriced.tokens > 0 ? `;cache-unpriced=${String(cacheUnpriced.tokens)};cache-unpriced-rows=${String(cacheUnpriced.rows)}` : ''
+  if (staleCount + bridgeCount + unpricedCount > 0 || cacheUnpriced.tokens > 0) {
+    deps.emitAlarm(
+      `${CLOSE_NOTE_PREFIX}date=${x};degraded=stale:${String(staleCount)},bridge:${String(bridgeCount)},unpriced:${String(unpricedCount)}${cacheUnpricedNote}（不静默：沿用/桥/无价/cache 缺价收口，详见报告注因段）`,
+    )
     alarms += 1
   }
   const usd = plans.reduce((s, p) => s + p.usd, 0)
-  deps.emitReport(`${CLOSE_NOTE_PREFIX}date=${x};rows=${String(finalRows)};usd=${usd.toFixed(4)};stale:${String(staleCount)},bridge:${String(bridgeCount)},unpriced:${String(unpricedCount)}`)
+  deps.emitReport(
+    `${CLOSE_NOTE_PREFIX}date=${x};rows=${String(finalRows)};usd=${usd.toFixed(4)};stale:${String(staleCount)},bridge:${String(bridgeCount)},unpriced:${String(unpricedCount)}${cacheUnpricedNote}`,
+  )
   // 报告装配（对账段+巡检面+分析面）——文件与 insertReport（companyDir 未开=跳过）
   if (deps.companyDir !== undefined) {
     writeCloseReport(deps, x, at, plans, snapshots)
@@ -400,11 +435,14 @@ function writeCloseReport(
       .filter((s) => s.billing_track === 'coding_plan' && s.plan_monthly_usd !== undefined)
       .map((s) => ({ provider: s.provider, model: s.model, planMonthlyUsd: s.plan_monthly_usd as number })),
   })
-  // 注因段（机械解释非猜测：对账差成因/定价降级）
+  // 注因段（机械解释非猜测：对账差成因/定价降级/cache 缺价低估）
+  const cacheUnpriced = cacheUnpricedOf(plans)
   const notes: string[] = []
   if (recon.diverged) notes.push(`对账差 $${recon.deltaUsd.toFixed(4)}（异源口径：收口时刻 vs 收割时刻的快照版本/沿用天窗；分模型段见 perModel）`)
   if (plans.some((p) => p.priceBasis !== 'snapshot' || !p.exact)) notes.push('定价降级收口（stale 沿用/桥/无价）——DAILY_ALARM 已同步')
-  const body = buildCostCloseReport({
+  if (cacheUnpriced.tokens > 0) notes.push(`cache 缺价低估：cache_read/cache_creation 共 ${String(cacheUnpriced.tokens)} tokens 未计价（按 0 计，USD 为下界）——B2 扩 cache 价需批示；DAILY_ALARM 已同步`)
+  const body = {
+    ...buildCostCloseReport({
     company: deps.company,
     date: x,
     generatedAt: at,
@@ -415,7 +453,10 @@ function writeCloseReport(
     insights,
     ...(notes.length > 0 ? { notes } : {}),
     closedBy: `cost-close:${x}`,
-  })
+    }),
+    // studio-dev-883：报告 JSON 增观测字段（不改 rows/usd/契约；旧读者忽略未知键）
+    cacheUnpriced: { tokens: cacheUnpriced.tokens, rows: cacheUnpriced.rows },
+  }
   const dir = path.join(companyDir, 'reports', '综合部', 'cost-close')
   const resolvedDir = path.resolve(dir)
   const rootResolved = path.resolve(companyDir)
