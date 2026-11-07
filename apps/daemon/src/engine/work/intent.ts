@@ -147,6 +147,11 @@ export function collectWorkIntents(deps: WorkIntakeDeps): WorkIntakeResult {
   if (rescanEvery > 0 && deps.seq % rescanEvery === 0) {
     for (const issue of [...deps.issues].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
       if (deps.closed.has(issue.id) || candidateSeen.has(issue.id)) continue
+      // studio-dev-884（P2 观测治理）：Archived 单**永不进 flow 状态集**（任何 flow 都无该态，
+      // decide 恒 NOOP_UNKNOWN_STATE——每拍 ~135 决策/日志、无任何可执行语义）。平台归档态
+      // 亦无 dispatch/transition 面；取消归档/改状态时的活动增量仍走 ① 活动驱动补回，状态漂移
+      // 由 statusSetPatrol 覆盖。故 rescan 跳过 Archived（不动 collect/state-diff 其他语义）。
+      if (issue.state === 'Archived') continue
       deps.candidates.push({
         ticket: issue.id,
         intent: { kind: 'ticket', company: deps.company, ticket: issue.id, source: `mirror:${issue.updated}`, priority: 0 }, // 应急修(2026-11-02): 加 updated 使回滚后键变→可重派(P0#417)
