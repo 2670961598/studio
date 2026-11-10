@@ -15,6 +15,7 @@
  */
 import {
   createRegistry,
+  DSH_DEFAULT_CMD,
   isJudgeExecutorName,
   loadAgentConfig,
   wireRegistry,
@@ -147,6 +148,34 @@ export function injectTierModelPatches(agentConf: AgentConfig, models: ModelsCon
 }
 
 /**
+ * mid 档 overlay 自动挂载（studio-dev-885：mid 纳入 models.yaml 单源）。
+ *
+ * 历史：mid=现役 dsh profile 缺省（`~/.dsh/profiles/...`）；2026-11-07 模型源切换时
+ * models.yaml 已切 GLM，但 profile 默认模型未同步 → mid 档持续 GoUsageLimitError，需手改
+ * profile 才对齐（双源漂移）。修法①：三档 overlay 全部生成，serve 启动时把 mid overlay
+ * 以 `--patch` 尾插到 dsh/dsh-mid executor 的 cmd（后写胜；不碰宿主 agent.yaml/profile 文件），
+ * 使 mid 由 models.yaml 派生；profile 默认仅兜底。high/low 维持现有「agent.yaml cmd 手动挂
+ * --patch」不变（本单只闭环 mid）。
+ *
+ * 纯函数：不改原 AgentConfig；返回 {config,mounted}（mounted=被挂载的 executor 名，测试/日志用）。
+ */
+export function mountMidTierOverlay(agentConf: AgentConfig, midOverlayPath: string | undefined): { config: AgentConfig; mounted: readonly string[] } {
+  if (midOverlayPath === undefined) return { config: agentConf, mounted: [] }
+  const mounted: string[] = []
+  const executors: AgentExecutorConfig[] = agentConf.executors.map((rec) => {
+    if (rec.name !== 'dsh' && rec.name !== 'dsh-mid') return rec
+    const cmd = rec.cmd ?? DSH_DEFAULT_CMD
+    // 幂等：同 overlay 已在 cmd 中（重启前 agent.yaml 已手挂）则不重复追加
+    for (let i = 0; i < cmd.length - 1; i += 1) {
+      if (cmd[i] === '--patch' && cmd[i + 1] === midOverlayPath) return rec
+    }
+    mounted.push(rec.name)
+    return { ...rec, cmd: [...cmd, '--patch', midOverlayPath] }
+  })
+  return { config: { ...agentConf, executors }, mounted }
+}
+
+/**
  * 装配 executor 面：注册表双形态（agentYaml/fake）→ bridge overlay provisioning →
  * 冻结验收命令单一事实源 → 价目表/模型档 → judge 注册位启动闸 → 队列小模型两址。
  * 失败即抛（CONFIG_INVALID 明报不猜）——调用方（buildServeRuntime）不做二次吞错。
@@ -159,6 +188,9 @@ export function wireExecutorFace(config: ServeConfig, deps: ExecutorFaceDeps): E
   let agentConf: ReturnType<typeof loadAgentConfig> | undefined
   /** models.yaml 早解析结果（agentYaml 分支注入声明镜像用；价目表分支复用，避免二次读盘） */
   let parsedModelsEarly: ModelsConfig | undefined
+  let midMountedEarly: readonly string[] = []
+  /** 早生成的 tier overlays（agentYaml 分支；价目表分支复用，避免二次写盘/日志分叉） */
+  let tierOverlaysEarly: Record<TierId, string> | undefined
   if (config.agentYaml !== undefined) {
     const agentText = readFileSync(path.resolve(config.agentYaml), 'utf8')
     agentConf = loadAgentConfig(agentText)
@@ -168,6 +200,12 @@ export function wireExecutorFace(config: ServeConfig, deps: ExecutorFaceDeps): E
       const modelsText = readFileSync(path.resolve(config.models), 'utf8')
       parsedModelsEarly = parseModelsYaml(modelsText)
       agentConf = injectTierModelPatches(agentConf, parsedModelsEarly)
+      // studio-dev-885：mid overlay 在 wireRegistry **之前**生成并挂到 dsh/dsh-mid cmd
+      // （adapter 构造期即拿到 --patch；profile 缺省仅兜底）。
+      tierOverlaysEarly = provisionModelTierOverlays(path.resolve(config.rootDir), parsedModelsEarly)
+      const mounted = mountMidTierOverlay(agentConf, tierOverlaysEarly.mid)
+      agentConf = mounted.config
+      if (mounted.mounted.length > 0) midMountedEarly = mounted.mounted
     }
     // resolver 组合（studio-dev-196）：judge 外包 tier——`<family>-<tier>` 档位（patches
     // 透传，agentconfig.ts）+ `<family>-judge` 判断位两层都可注册（此前裸 builtinResolver
@@ -234,16 +272,21 @@ export function wireExecutorFace(config: ServeConfig, deps: ExecutorFaceDeps): E
     // —— 模型档执行面（studio-dev-196，制作人 2026-10-22 三档定调）：低/高档 dsh overlay
     //    生成（mid=现役缺省不生成）+ 档位声明一致性闸（agent.yaml 档位镜像 vs tiers 漂移
     //    =启动拒——三面同源纪律，见 src/engine/model-tier.ts 头注）。
-    const tierOverlays = provisionModelTierOverlays(path.resolve(config.rootDir), parsed)
+    const tierOverlays = tierOverlaysEarly ?? provisionModelTierOverlays(path.resolve(config.rootDir), parsed)
     if (agentConf !== undefined) checkTierPositionDeclarations(agentConf.executors, parsed)
     const overlayDesc = Object.entries(tierOverlays)
       .map(([t, p]) => `${t}=${p}`)
       .join('、')
     log(
-      `[serve] 模型档执行面开（tier→executor 路由：单级覆盖>岗单锚>角色映射）：overlay ${overlayDesc !== '' ? overlayDesc : '（无——低/高档 tier 缺失）'}；中档=现役 profile 缺省（现役即中档）；agent.yaml 档位 cmd 追加 --patch <该路径> 即挂载`,
+      `[serve] 模型档执行面开（tier→executor 路由：单级覆盖>岗单锚>角色映射）：overlay ${overlayDesc !== '' ? overlayDesc : '（无——tier 缺失）'}；` +
+        `mid overlay ${midMountedEarly.length > 0 ? `已自动挂载到 ${midMountedEarly.join('/')} cmd（models.yaml 单源；profile 缺省仅兜底）` : '未挂载（无 dsh/dsh-mid executor；profile 缺省兜底）'}；` +
+        `high/low 仍由 agent.yaml 档位 cmd 追加 --patch <该路径> 挂载`,
     )
   } else {
     log('[serve] 无价目表：预算闸态 B 降级（估算=适配器自报、仅票级帽——见 src/engine/budget-gate.ts 头注两态）；模型档路由面关（派发行为不变）')
+    if (config.agentYaml !== undefined) {
+      log('[serve] 模型档 overlay：无 models 段——三档 overlay 不生成、mid overlay 未挂载（dsh profile 缺省兜底；不猜模型）')
+    }
     if (config.agentYaml !== undefined) {
       log(
         '[serve] 警告：无 models 段——executor model 声明镜像不注入（provider/model 无从可知，不猜模型）；' +

@@ -8,7 +8,7 @@
  *   2. modelTierDispatchFace：档位名在册 → 指名解析 + `tier=<t>@<位名>` 锚；
  *      不在册 → 缺省回退 + 降级锚（fake 注册表面开不炸派发）；familyOf 剥档位
  *      后缀（dsh-mid 缺省 → 高档落 dsh-high）。
- *   3. provisionModelTierOverlays：low/high 两文件确定性生成（0600）、mid 不生成；
+ *   3. provisionModelTierOverlays：三档文件确定性生成（0600；885 起 mid 也生成）；
  *      内容=单一 agent-default-model patch（tiers 单一事实源直录）。
  *   4. parseModelTierTickets：合法/空串=空表/坏段/未知档/重复单号 fail-closed。
  *   5. checkTierPositionDeclarations：镜像与 tiers 同源绿；漂移 CONFIG_INVALID；
@@ -157,7 +157,7 @@ describe('modelTierDispatchFace（在册指名/缺位降级；familyOf 剥档位
 
 // ————————————————————————— 3. overlay 生成 —————————————————————————
 
-describe('provisionModelTierOverlays（低/高档生成；mid=现役不生成）', () => {
+describe('provisionModelTierOverlays（三档生成；885 起 mid 纳入单源）', () => {
   let dir = ''
   beforeAll(async () => {
     dir = await mkdtemp(path.join(tmpdir(), 'studio-next-tier-overlay-'))
@@ -166,13 +166,16 @@ describe('provisionModelTierOverlays（低/高档生成；mid=现役不生成）
     await rm(dir, { recursive: true, force: true })
   })
 
-  it('low/high 两文件确定性生成（0600）；mid 不生成；内容=tiers 直录', () => {
+  it('三档文件确定性生成（0600）；内容=tiers 直录', () => {
     const out = provisionModelTierOverlays(dir, MODELS)
-    expect(Object.keys(out).sort()).toStrictEqual(['high', 'low'])
+    expect(Object.keys(out).sort()).toStrictEqual(['high', 'low', 'mid'])
     const low = readFileSync(out.low!, 'utf8')
     expect(low).toContain('- id: agent-default-model')
     expect(low).toContain('provider: glm')
     expect(low).toContain('model: GLM-5.3-Flash')
+    const mid = readFileSync(out.mid!, 'utf8')
+    expect(mid).toContain('provider: glm')
+    expect(mid).toContain('model: GLM-5.3')
     const high = readFileSync(out.high!, 'utf8')
     expect(high).toContain('provider: deepseek')
     expect(high).toContain('model: deepseek-flash')

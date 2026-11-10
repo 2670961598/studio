@@ -18,11 +18,13 @@
  *   2. modelTierDispatchFace：档 → 执行位名（`<family>-<tier>`）→ 注册表解析；位不在册
  *      → 缺省回退 + 降级锚（明报不静默——DISPATCH note 可观测；fake 注册表自然走回退）。
  *   3. provisionModelTierOverlays / parseModelTierTickets / checkTierPositionDeclarations：
- *      serve 装配面（overlay 生成=低/高档 dsh --patch 文件；显式覆盖表解析即验；
+ *      serve 装配面（overlay 生成=三档 dsh --patch 文件；显式覆盖表解析即验；
  *      档位声明与 models.yaml 漂移=启动拒——fail-closed）。
  *
- * 中档不生成 overlay：缺省=现役 headless profile 的 agent-default-model（GLM-5.3）——
- * 「现役即中档」是制作人定调的直接落位，少一个文件少一份漂移面。
+ * 三档同源（studio-dev-885）：high/mid/low 全部由 models.yaml 生成 overlay；mid 档由
+ * serve 自动挂载到 dsh/dsh-mid executor cmd（dsh 多层 --patch 后写胜）。历史「mid=现役
+ * profile 缺省」仅作**未挂载 overlay 时的兜底**（不再承担 mid 正式供给）——2026-11-07
+ * 模型源切换时 mid 曾因 profile 默认模型未随 models.yaml 变更而持续 429，本单闭环双源漂移。
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -125,12 +127,9 @@ export function modelTierDispatchFace(
  * （确定性内容）。**mid 不生成**（缺省=现役 profile）。返回存在的位（serve 日志与
  * agent.yaml 挂载指引素材）；tier 缺失（models.yaml 形状坏）→ 该位省略不炸启动。
  */
-export function provisionModelTierOverlays(
-  rootDir: string,
-  models: ModelsConfig,
-): Partial<Record<Exclude<TierId, 'mid'>, string>> {
-  const out: Partial<Record<Exclude<TierId, 'mid'>, string>> = {}
-  for (const tier of ['high', 'low'] as const) {
+export function provisionModelTierOverlays(rootDir: string, models: ModelsConfig): Record<TierId, string> {
+  const out: Partial<Record<TierId, string>> = {}
+  for (const tier of TIER_IDS) {
     const spec = models.tiers[tier]
     if (spec === undefined) continue
     const overlayPath = path.join(rootDir, 'tmp', `dsh-tier-${tier}.yml`)
@@ -139,7 +138,7 @@ export function provisionModelTierOverlays(
       `# 模型档 overlay（studio-dev-196，制作人 2026-10-22 三档定调）——tier=${tier}：`,
       `# ${spec.provider}/${spec.model}（models.yaml tiers.${tier} 单一事实源）。挂法：agent.yaml`,
       `# 对应档位 cmd 追加 \`--patch <本文件绝对路径>\`（dsh 多层 --patch 后写胜）。`,
-      `# 中档无此文件：缺省=现役 profile 的 agent-default-model（现役即中档）。`,
+      `# 三档同源（studio-dev-885）：mid 由 serve 自动挂载到 dsh/dsh-mid cmd；profile 缺省仅兜底。`,
       `- id: agent-default-model`,
       `  config:`,
       `    provider: ${spec.provider}`,
@@ -150,7 +149,7 @@ export function provisionModelTierOverlays(
     writeFileSync(overlayPath, text, { encoding: 'utf8', mode: 0o600 })
     out[tier] = overlayPath
   }
-  return out
+  return out as Record<TierId, string>
 }
 
 /**
