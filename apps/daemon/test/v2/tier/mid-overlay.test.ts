@@ -57,30 +57,87 @@ describe('885 三档 overlay 生成（mid 纳入单源）', () => {
   })
 })
 
-describe('885 mid overlay 自动挂载（只动 dsh/dsh-mid cmd）', () => {
-  it('dsh 显式 cmd 尾插 --patch；dsh-mid 缺省 cmd 用 DSH_DEFAULT_CMD；幂等；high/low 不动', () => {
-    const agent = loadAgentConfig(GENERIC_AGENT)
+/** 每个 --patch 都必须位于 --json 之前（dsh CLI 全局旗标；P0 #1138 unknown option 回归面） */
+function expectPatchesBeforeJson(cmd: readonly string[]): void {
+  const jsonAt = cmd.indexOf('--json')
+  if (jsonAt < 0) return
+  const patchIndexes = cmd.map((arg, i) => (arg === '--patch' ? i : -1)).filter((i) => i >= 0)
+  expect(patchIndexes.length).toBeGreaterThan(0)
+  for (const i of patchIndexes) expect(i, `--patch@${String(i)} 位于 --json@${String(jsonAt)} 之后：${cmd.join(' ')}`).toBeLessThan(jsonAt)
+}
+
+describe('885 mid overlay 自动挂载（只动 dsh/dsh-mid cmd；--patch 必须在 --json 前）', () => {
+  it('dsh 显式 cmd（含 bridge --patch/--json）：mid --patch 插到 --json 之前；幂等；high/low 不动', () => {
+    const agent = loadAgentConfig(`
+executors:
+  dsh:
+    default: true
+    cmd: ["dsh", "--profile", "headless", "--patch", "bridge.yml", "--json"]
+  dsh-mid:
+    cmd: ["dsh", "--profile", "headless", "--patch", "bridge.yml", "--json"]
+  dsh-high: {}
+  dsh-low: {}
+`)
     const p = path.join(ROOT, 'overlays', 'dsh-tier-mid.yml')
     const first = mountMidTierOverlay(agent, p)
     const dsh = first.config.executors.find((e) => e.name === 'dsh')
+    expect(dsh?.cmd).toEqual(['dsh', '--profile', 'headless', '--patch', 'bridge.yml', '--patch', p, '--json'])
+    // 不变量：所有 --patch 索引 < --json 索引（反之=生产 unknown option 回归）
+    expectPatchesBeforeJson(dsh?.cmd ?? [])
+    const dshCmd = dsh?.cmd ?? []
+    expect(dshCmd.indexOf('--json')).toBe(dshCmd.length - 1) // --json 保持尾部全局旗标
     const mid = first.config.executors.find((e) => e.name === 'dsh-mid')
-    expect(dsh?.cmd).toEqual([...DSH_DEFAULT_CMD, '--patch', p])
-    expect(mid?.cmd).toEqual([...DSH_DEFAULT_CMD, '--patch', p])
+    expect(mid?.cmd).toEqual(['dsh', '--profile', 'headless', '--patch', 'bridge.yml', '--patch', p, '--json'])
+    expectPatchesBeforeJson(mid?.cmd ?? [])
     expect([...first.mounted].sort()).toEqual(['dsh', 'dsh-mid'])
-    // 幂等：同 overlay 已挂 → 不重复追加
+    // 幂等：同 overlay 已挂 → 不重复插
     const second = mountMidTierOverlay(first.config, p)
     expect(second.mounted).toEqual([])
-    expect(second.config.executors.find((e) => e.name === 'dsh')?.cmd).toEqual([...DSH_DEFAULT_CMD, '--patch', p])
+    expect(second.config.executors.find((e) => e.name === 'dsh')?.cmd).toEqual(dsh?.cmd)
     // 原 config 不被就地修改
-    expect(agent.executors.find((e) => e.name === 'dsh')?.cmd).toBeUndefined()
-    // 非 mid 档位/其它家族不挂载
+    expect(agent.executors.find((e) => e.name === 'dsh')?.cmd).toEqual(['dsh', '--profile', 'headless', '--patch', 'bridge.yml', '--json'])
+    // 非 mid 档位不挂载
     for (const name of ['dsh-high', 'dsh-low']) {
       expect(first.config.executors.find((e) => e.name === name)?.cmd).toBeUndefined()
     }
     expect(mountMidTierOverlay(agent, undefined).mounted).toEqual([])
   })
-})
 
+  it('dsh-mid 缺省 cmd 用 DSH_DEFAULT_CMD：--patch 也插在 --json 前', () => {
+    const agent = loadAgentConfig(GENERIC_AGENT)
+    const p = path.join(ROOT, 'overlays', 'dsh-tier-mid.yml')
+    const first = mountMidTierOverlay(agent, p)
+    for (const name of ['dsh', 'dsh-mid']) {
+      const cmd = first.config.executors.find((e) => e.name === name)?.cmd ?? []
+      const jsonAt = DSH_DEFAULT_CMD.indexOf('--json')
+      expect(cmd).toEqual(jsonAt >= 0 ? [...DSH_DEFAULT_CMD.slice(0, jsonAt), '--patch', p, ...DSH_DEFAULT_CMD.slice(jsonAt)] : [...DSH_DEFAULT_CMD, '--patch', p])
+      expectPatchesBeforeJson(cmd)
+    }
+    expect([...first.mounted].sort()).toEqual(['dsh', 'dsh-mid'])
+  })
+
+  it('flags-before---json 不变量：bridge patch 与 mid patch 全部在 --json 前（全挂载集合扫描）', () => {
+    const agent = loadAgentConfig(`
+executors:
+  dsh:
+    default: true
+    cmd: ["dsh", "--profile", "headless", "--patch", "bridge.yml", "--json"]
+  dsh-mid:
+    cmd: ["dsh", "--profile", "headless", "--patch", "bridge.yml", "--json"]
+`)
+    const p = path.join(ROOT, 'overlays', 'dsh-tier-mid.yml')
+    const result = mountMidTierOverlay(agent, p)
+    for (const rec of result.config.executors) {
+      if (rec.cmd === undefined) continue
+      expectPatchesBeforeJson(rec.cmd)
+      if (rec.name === 'dsh' || rec.name === 'dsh-mid') {
+        const midAt = rec.cmd.indexOf(p)
+        expect(midAt).toBeGreaterThan(0)
+        expect(midAt).toBeLessThan(rec.cmd.indexOf('--json'))
+      }
+    }
+  })
+})
 describe('885 serve 装配：mid overlay 生成+挂载接线', () => {
   it('agentYaml+models：启动日志含 mid 自动挂载，high/low overlay 照生成', () => {
     const root = path.join(ROOT, 'serve')

@@ -170,7 +170,11 @@ export function mountMidTierOverlay(agentConf: AgentConfig, midOverlayPath: stri
       if (cmd[i] === '--patch' && cmd[i + 1] === midOverlayPath) return rec
     }
     mounted.push(rec.name)
-    return { ...rec, cmd: [...cmd, '--patch', midOverlayPath] }
+    // dsh CLI 的全局旗标 `--json` 必须在尾部（其后再出现子命令选项会报 unknown option）；
+    // 故 `--patch <mid>` 插到 `--json` **之前**；无 --json 才退回末尾追加（P0 hotfix 2026-11-11）。
+    const jsonAt = cmd.indexOf('--json')
+    const patched = jsonAt >= 0 ? [...cmd.slice(0, jsonAt), '--patch', midOverlayPath, ...cmd.slice(jsonAt)] : [...cmd, '--patch', midOverlayPath]
+    return { ...rec, cmd: patched }
   })
   return { config: { ...agentConf, executors }, mounted }
 }
