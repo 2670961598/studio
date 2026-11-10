@@ -62,7 +62,7 @@ function isCalendarDate(v: string): boolean {
 
 /** 单价合法性（zod 已拒 NaN/Infinity；此处守直接调用面 + 负数/缺键） */
 function assertPrice(tier: ModelTier): UnitPrice {
-  const p: { inputPerM?: unknown; outputPerM?: unknown } = tier.price
+  const p: { inputPerM?: unknown; outputPerM?: unknown; cacheReadPerM?: unknown; cacheCreationPerM?: unknown } = tier.price
   if (typeof p.inputPerM !== 'number' || typeof p.outputPerM !== 'number') {
     configInvalid('pricing-publish/tier-invalid', `档 ${tier.tier} 缺 price.inputPerM/outputPerM（models.yaml 三档价目必填）`)
   }
@@ -76,7 +76,19 @@ function assertPrice(tier: ModelTier): UnitPrice {
       configInvalid('pricing-publish/tier-invalid', `档 ${tier.tier} 的 ${key}=${String(v)} 非有限非负数（坏价目不发布）`)
     }
   }
-  return { inputPerM, outputPerM }
+  // B2：cache 价可选键——声明即校验非负有限并透传到价目表/快照行（render/parse/store 列已支持）
+  const cache: Partial<Pick<UnitPrice, 'cacheReadPerM' | 'cacheCreationPerM'>> = {}
+  for (const [key, v] of [
+    ['cacheReadPerM', p.cacheReadPerM],
+    ['cacheCreationPerM', p.cacheCreationPerM],
+  ] as const) {
+    if (v === undefined) continue
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) {
+      configInvalid('pricing-publish/tier-invalid', `档 ${tier.tier} 的 price.${key}=${String(v)} 非有限非负数（坏价目不发布）`)
+    }
+    cache[key] = v
+  }
+  return { inputPerM, outputPerM, ...cache }
 }
 
 /**
@@ -140,10 +152,16 @@ export function buildPricingTable(input: {
     }
     // 同模型异价：消费面按 provider/model 取价，两个价不可并存——拒，不静默择一
     const prev = existing.prices[0]
-    if (prev === undefined || prev.inputPerM !== unit.inputPerM || prev.outputPerM !== unit.outputPerM) {
+    if (
+      prev === undefined ||
+      prev.inputPerM !== unit.inputPerM ||
+      prev.outputPerM !== unit.outputPerM ||
+      prev.cacheReadPerM !== unit.cacheReadPerM ||
+      prev.cacheCreationPerM !== unit.cacheCreationPerM
+    ) {
       configInvalid(
         'pricing-publish/price-conflict',
-        `模型 ${key} 在多个档声明了不同单价（${prev?.inputPerM ?? '?'}/${prev?.outputPerM ?? '?'} vs ${unit.inputPerM}/${unit.outputPerM}）——消费面按 provider/model 唯一取价，拒绝歧义表`,
+        `模型 ${key} 在多个档声明了不同单价（${prev?.inputPerM ?? '?'}/${prev?.outputPerM ?? '?'}/${prev?.cacheReadPerM ?? '-'}/${prev?.cacheCreationPerM ?? '-'} vs ${unit.inputPerM}/${unit.outputPerM}/${unit.cacheReadPerM ?? '-'}/${unit.cacheCreationPerM ?? '-'}）——消费面按 provider/model 唯一取价，拒绝歧义表`,
       )
     }
   }

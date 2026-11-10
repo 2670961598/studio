@@ -465,7 +465,17 @@ export function bridgePriceFor(
   if (snap !== undefined) return snap
   const tier = tiers.find(t => t.provider === key.provider && t.model === key.model)
   if (tier !== undefined) {
-    return { source: 'models-yaml', unit: { inputPerM: tier.price.inputPerM, outputPerM: tier.price.outputPerM } }
+    // B2（132-§6.1 单B，制作人 2026-11-10 过审）：models-yaml 桥透传 cache 价键（snapshot 分支
+    // 已支持；foldCostUsd 对缺价仍按 0 计+unpricedBuckets）。
+    return {
+      source: 'models-yaml',
+      unit: {
+        inputPerM: tier.price.inputPerM,
+        outputPerM: tier.price.outputPerM,
+        ...(tier.price.cacheReadPerM !== undefined ? { cacheReadPerM: tier.price.cacheReadPerM } : {}),
+        ...(tier.price.cacheCreationPerM !== undefined ? { cacheCreationPerM: tier.price.cacheCreationPerM } : {}),
+      },
+    }
   }
   return undefined
 }

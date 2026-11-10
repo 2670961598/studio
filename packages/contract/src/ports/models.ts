@@ -8,6 +8,13 @@ export interface PriceEntry {
   /** 每百万 token 美元 */
   inputPerM: number
   outputPerM: number
+  /**
+   * cache 命中读价（USD/百万 token，可选；132-§6.1 单B 扩键批示 2026-11-10 制作人过审）。
+   * 缺省=未声明（foldCostUsd 按 0 计并登记 unpricedBuckets，下界口径）。
+   */
+  cacheReadPerM?: number | undefined
+  /** cache 创建/写价（USD/百万 token，可选；缺省=未声明，同上） */
+  cacheCreationPerM?: number | undefined
 }
 
 export interface ModelTier {

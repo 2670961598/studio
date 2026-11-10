@@ -66,6 +66,9 @@ export interface ModelsIssue {
 const PriceSchema = z.strictObject({
   inputPerM: z.number().nonnegative(),
   outputPerM: z.number().nonnegative(),
+  // B2 cache 价扩键（132-§6.1 单B；2026-11-10 制作人过审）：可选、非负有限（zod number 默认拒 NaN/Infinity）
+  cacheReadPerM: z.number().nonnegative().optional(),
+  cacheCreationPerM: z.number().nonnegative().optional(),
 })
 
 const TierSpecSchema = z.strictObject({
@@ -280,8 +283,16 @@ export function createModelCatalog(config: ModelsConfig): ModelCatalog {
           fix: `未知模型档 ${String(tier)}：三档仅 high/mid/low（17-§4）`,
         }])
       }
-      // 精度口径（本单冻结）：双精度直算不凑整；cached 桶不计价（见文件头注）
-      return { usd: (tokens.input / 1e6) * t.price.inputPerM + (tokens.output / 1e6) * t.price.outputPerM }
+      // 精度口径（本单冻结）：双精度直算不凑整；cache 桶仅在档位价声明 cache 键时计价
+      // （B2 扩键：缺省=不声明，保持旧口径零行为；旧账兼容读 cached 别名）。
+      const cacheRead = tokens.cache_read ?? tokens.cached ?? 0
+      const cacheCreation = tokens.cache_creation ?? 0
+      const usd =
+        (tokens.input / 1e6) * t.price.inputPerM +
+        (tokens.output / 1e6) * t.price.outputPerM +
+        (cacheRead / 1e6) * (t.price.cacheReadPerM ?? 0) +
+        (cacheCreation / 1e6) * (t.price.cacheCreationPerM ?? 0)
+      return { usd }
     },
   }
 }

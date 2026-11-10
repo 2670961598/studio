@@ -226,3 +226,56 @@ describe('price_snapshots 单据幂等（补种/重放面）', () => {
     }
   })
 })
+
+
+describe('B2 cache 价扩键：publish 渲染/消费/快照列', () => {
+  const cacheTier = (id: ModelTier['tier']): ModelTier => ({
+    tier: id,
+    provider: 'glm',
+    model: 'GLM-5.3',
+    price: { inputPerM: 1.1111, outputPerM: 3.8889, cacheReadPerM: 0.2778, cacheCreationPerM: 0 },
+  })
+  const CACHE_MODEL: ModelTier[] = [cacheTier('high'), cacheTier('mid'), cacheTier('low')]
+
+  it('三档含 cache 键 → 价目表 unit 透传 + 渲染 cacheReadPerM/cacheCreationPerM + parse 往返', () => {
+    const table = buildPricingTable({ tiers: CACHE_MODEL, priceDate: '2026-11-11', sourceNote: 'B2 cache 价' })
+    expect(table.models).toHaveLength(1) // 三档同模型同价折叠
+    expect(table.models[0]?.prices[0]).toMatchObject({ inputPerM: 1.1111, outputPerM: 3.8889, cacheReadPerM: 0.2778, cacheCreationPerM: 0 })
+    const text = renderPricingTableYaml(table)
+    expect(text).toContain('cacheReadPerM: 0.2778')
+    expect(text).toContain('cacheCreationPerM: 0')
+    const parsed = parsePricingTable(text)
+    expect(parsed.models[0]?.prices[0]?.cacheReadPerM).toBe(0.2778)
+    expect(() => validatePricingTable(parsed, CACHE_MODEL)).not.toThrow()
+  })
+
+  it('生成→消费闭环：pricing.yaml cache 键落 price_snapshots cache 列（非空）', () => {
+    const ws = path.join(ROOT, 'ws-b2-cache')
+    writePricingDeliverable({ workspace: ws, tiers: CACHE_MODEL, priceDate: '2026-11-11' })
+    const ledger = openLedger(path.join(ROOT, 'ledger-b2-cache.sqlite'))
+    try {
+      const result = consumePricingPublish({
+        ledger,
+        ticket: 'studio-dev-b2-cache',
+        issueType: 'pricing',
+        workspace: ws,
+        company: 'test-co',
+        personId: 'HF-1',
+        declared: CACHE_MODEL.map((t) => ({ provider: t.provider, model: t.model })),
+        now: () => Date.now(),
+        makeId: (ts) => makeUlid(ts),
+        emitAlarm: () => {},
+        onError: () => {},
+      })
+      expect(result.noteSuffix).toContain(';pricing=1行@2026-11-11')
+      const rows = ledger.listPriceSnapshots({ company: 'test-co', source_ticket: 'studio-dev-b2-cache' })
+      expect(rows).toHaveLength(1)
+      expect(rows[0]?.cache_read_per_m).toBe(0.2778)
+      expect(rows[0]?.cache_creation_per_m).toBe(0)
+      expect(rows[0]?.input_per_m).toBe(1.1111)
+    } finally {
+      ledger.close()
+    }
+  })
+
+})
