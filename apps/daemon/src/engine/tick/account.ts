@@ -175,6 +175,7 @@ export async function accountPhase(
           )
         },
         onError: (message) => errors.push(message),
+        log: (line) => console.log(line),
       })
       ctx.mutations += pricingStale.alarmed
     } catch (err) {

@@ -43,6 +43,13 @@ export const PRICING_STALE_CHECK_DATE_KEY = 'pricing.stale_check_date'
 /** 已告 note 派生前缀（幂等键语源；docs/22-§三.2） */
 const STALE_ALARM_PREFIX = 'src=pricing-stale;'
 
+/**
+ * 退役判定窗口（studio-dev-886）：未在册（declared=false）且最近 N 个自然日无 usage →
+ * 视为 retired：不写 DAILY_ALARM，仅在 tick 报告/log 记 retired（真实 stale 仍告警）。
+ * 近 N 天=usage_date ≥ date-N（含边界日，日历日比较，与 usage_daily 口径一致）。
+ */
+export const PRICING_RETIRED_USAGE_DAYS = 3
+
 /** 本地日串 'YYYY-MM-DD'（晨间窗为本地业务时间——reportFileName 同口径取本地字段） */
 export function localDateString(ms: number): string {
   const d = new Date(ms)
@@ -175,6 +182,8 @@ export interface PricingStaleDeps {
   now(): number
   emitAlarm(note: string): void
   onError(message: string): void
+  /** 观测日志（退役模型/告警面；缺省不输出，非空不吞） */
+  log?: (line: string) => void
 }
 
 export interface PricingStaleTickReport {
@@ -184,6 +193,19 @@ export interface PricingStaleTickReport {
   checked: number
   /** 本次新发 DAILY_ALARM 数（幂等去重后） */
   alarmed: number
+  /** 退役模型（未在册且近 N 日无 usage；不告警、仅可见） */
+  retired: number
+  /** 退役模型键（provider/model；排障/报告用） */
+  retiredModels: readonly string[]
+}
+
+/** YYYY-MM-DD 前移 N 天（日历日；与 usage_date 字符串口径一致） */
+function shiftDate(date: string, days: number): string {
+  const [y, m, d] = date.split('-').map(Number) as [number, number, number]
+  const t = Date.UTC(y, m - 1, d) + days * 86_400_000
+  const back = new Date(t)
+  const pad = (v: number): string => String(v).padStart(2, '0')
+  return `${back.getUTCFullYear()}-${pad(back.getUTCMonth() + 1)}-${pad(back.getUTCDate())}`
 }
 
 /** 已告集派生：近 3 日本公司 DAILY_ALARM 中 src=pricing-stale 的 (model,date) 对 */
@@ -207,26 +229,43 @@ export function runPricingStaleCheck(deps: PricingStaleDeps): PricingStaleTickRe
   const at = deps.now()
   const date = localDateString(at)
   const hour = new Date(at).getHours()
-  if (hour < PRICING_STALE_CHECK_HOUR) return { date, checked: 0, alarmed: 0 }
-  if (deps.ledger.kvGet(PRICING_STALE_CHECK_DATE_KEY) === date) return { date, checked: 0, alarmed: 0 }
+  if (hour < PRICING_STALE_CHECK_HOUR) return { date, checked: 0, alarmed: 0, retired: 0, retiredModels: [] }
+  if (deps.ledger.kvGet(PRICING_STALE_CHECK_DATE_KEY) === date) return { date, checked: 0, alarmed: 0, retired: 0, retiredModels: [] }
   try {
     const rows = deps.ledger.listPriceSnapshots({ company: deps.company })
     const entries = pricingStaleReport(rows, deps.declared, date)
     const seen = alarmedKeys(deps.ledger, deps.company, at - 3 * 86_400_000)
+    // 近 N 日 usage 模型集（retired 判定；declared=false 且不在近用集 → 退役，不告警）
+    const usageSince = shiftDate(date, -PRICING_RETIRED_USAGE_DAYS)
+    const recentModels = new Set(
+      deps.ledger
+        .listUsageDaily({ company: deps.company })
+        .filter((row) => row.usage_date >= usageSince && row.usage_date <= date)
+        .map((row) => row.model),
+    )
     let alarmed = 0
+    const retiredModels: string[] = []
     for (const e of entries) {
       const modelKey = `${e.provider}/${e.model}`
+      // 退役：未在册 + 近 N 日无 usage → 只记 retired，不写 DAILY_ALARM（真实 stale 仍告警）
+      if (!e.declared && !recentModels.has(modelKey)) {
+        retiredModels.push(modelKey)
+        continue
+      }
       const stale = e.staleDays === undefined ? 'never' : String(e.staleDays)
       const note = `${STALE_ALARM_PREFIX}model=${modelKey};date=${date};stale=${stale}${e.declared ? '' : ';declared=no(在册)'}`
       if (!e.alarm || seen.has(`${modelKey}|${date}`)) continue
       deps.emitAlarm(note)
       alarmed += 1
     }
+    if (retiredModels.length > 0) {
+      deps.log?.(`[pricing] 退役模型 ${String(retiredModels.length)} 个不告警（未在册且近 ${String(PRICING_RETIRED_USAGE_DAYS)} 日无 usage）：${retiredModels.slice(0, 5).join('、')}${retiredModels.length > 5 ? `(+${String(retiredModels.length - 5)})` : ''}`)
+    }
     deps.ledger.kvSet(PRICING_STALE_CHECK_DATE_KEY, date)
-    return { date, checked: entries.length, alarmed }
+    return { date, checked: entries.length, alarmed, retired: retiredModels.length, retiredModels }
   } catch (err) {
     // 检查面自身故障如实上报（不写 kv 锚——下一拍重试；告警不发——检查故障≠价格 stale）
     deps.onError(`定价 stale 检查失败：${errBrief(err)}`)
-    return { date, checked: 0, alarmed: 0 }
+    return { date, checked: 0, alarmed: 0, retired: 0, retiredModels: [] }
   }
 }
