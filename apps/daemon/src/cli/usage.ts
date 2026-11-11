@@ -79,6 +79,15 @@ export const SECTION = {
        id/状态/资产类型/blast_radius/version/谱系父/资产路径/diff 哈希（(created_at,id) 升序）；
        库不存在即拒（只读面不代建库）
 `,
+  'qa-report': `  studio-next qa-report --db <库路径> --company <slug> [--date YYYY-MM-DD] [--out-dir <目录>]
+                             [--log <daemon.log>] [--models <models.yaml>] [--top N]
+       #811 阶段1 QA 只读指标报表（observe-only）：从本仓台账只读生成昨日 QA 指标 JSON+Markdown
+       （GATE_PASS/GATE_FAIL/STALL/JOB_STALE/ESCALATE/CLOSE 计数、失败原因 top-N、模型/tier 分布、
+       单耗时 median/p90；--log 可选 tail 摘要 noop/loop-lag，不参与日期对比）。只 SELECT
+       （node:sqlite readOnly，不走 openLedger），不写台账/单据/事件，不做门禁/阻断；
+       输出默认 <companyDir>/var/reports/qa/qa-report-<date>.json|.md（不写公司 git 树）；重跑同字节。
+       坏日期/坏库 exit 1/2 且零输出。指标定义见 docs/quality/README.md（台账事实源 docs/17-§3）
+`,
   jobs: `  studio-next jobs list --db <库路径>
         调度表只读列表（127-A R2，docs/17-§2）：岗逐行 job_id/cron/dept/status/型/
         下跑槽/末跑槽（next_run_at 升序——越窗分诊先看这里）；库不存在即拒（只读面
@@ -218,6 +227,11 @@ export const CONCISE = {
   studio-next candidates list --db <库路径>
   例：studio-next candidates list --db var/ledger.sqlite
   本命令全文：studio-next candidates list --help
+`,
+  'qa-report': `qa-report —— #811 QA 只读指标报表（observe-only：只 SELECT/不写台账/不做门禁；JSON+MD；默认 <companyDir>/var/reports/qa/）
+  studio-next qa-report --db <库路径> --company <slug> [--date YYYY-MM-DD] [--out-dir <目录>] [--log <daemon.log>] [--models <models.yaml>] [--top N]
+  例：studio-next qa-report --db var/ledger.sqlite --company my-corp --date 2026-11-10
+  本命令全文：studio-next qa-report --help
 `,
   jobs: `jobs <子命令> —— 调度岗面命令组（127-A R2）：list（调度表只读列表）/ catchup（手动补跑——next_run_at 推到当下，下一拍 scheduler 照常物化）
   例：studio-next jobs catchup --db var/ledger.sqlite --job hf-finance-daily

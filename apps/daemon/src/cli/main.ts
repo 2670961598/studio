@@ -28,6 +28,7 @@ import { cmdCompany } from './company.ts'
 import { cmdValidate } from './validate.ts'
 import { cmdLedger } from './ledger.ts'
 import { cmdCandidates } from './candidates.ts'
+import { cmdQaReport } from './qa-report.ts'
 import { cmdJobs } from './jobs.ts'
 import { cmdSandbox } from './sandbox.ts'
 import { cmdCutover } from './cutover.ts'
@@ -54,6 +55,8 @@ async function main(): Promise<number> {
       return cmdLedger(rest)
     case 'candidates':
       return cmdCandidates(rest)
+    case 'qa-report':
+      return cmdQaReport(rest)
     case 'jobs':
       return cmdJobs(rest)
     case 'sandbox':

@@ -51,8 +51,8 @@ describe('单源装配对账（S1a：usage.ts=命令文档唯一源）', () => {
 
   it('18 顶级命令齐全（main.ts 分发表=SECTION 键集——DEV-14 增 gen-templates）', () => {
     expect(Object.keys(SECTION)).toEqual([
-      'init', 'gen-templates', 'company', 'validate', 'ledger', 'candidates', 'jobs', 'sandbox',
-      'cutover', 'gray', 'postmortem', 'panel', 'overview', 'external', 'serve', 'taiga-cure',
+      'init', 'gen-templates', 'company', 'validate', 'ledger', 'candidates', 'qa-report', 'jobs', 'sandbox',
+      'cutover', 'gray', 'postmortem', 'panel', 'overview', 'serve', 'taiga-cure',
       'reload', 'stop',
     ])
   })
