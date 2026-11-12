@@ -79,6 +79,18 @@ export const SECTION = {
        id/状态/资产类型/blast_radius/version/谱系父/资产路径/diff 哈希（(created_at,id) 升序）；
        库不存在即拒（只读面不代建库）
 `,
+  'qa-eval': `  studio-next qa-eval --db <库路径> --company <slug> --date YYYY-MM-DD [--golden-dir <目录>]
+                            [--out-dir <目录>] [--golden-version v1] [--baseline qa-report.json] [--models <models.yaml>] [--top N]
+       #811 阶段2 golden 评测（observe-only）：读 <companyDir>/var/qa/golden 的 golden+manifest，
+       对 target 日窗口算一次通过率/失败原因 JSD+top/耗时漂移/tier 分布/outcome 与 coverage，
+       输出 qa-eval/v1 JSON+MD（结论先行、baseline 版本+sha256+样本量；drift 只观测不阻断）。
+       --build-golden <目录> 为**显式人工入口**（QA-1 审后运行；已存在即拒、不自动覆盖；
+       交付/常规流程绝不自动生成 golden）。只读 node:sqlite（未走 openLedger），不写台账/单据/事件。
+       输出默认 <companyDir>/var/reports/qa/qa-eval-<date>.json|.md；--baseline 可载入阶段1 qa-report JSON
+       以其窗口指标替代 golden 基线做 drift（golden 仍供 coverage/逐单；版本/sha/builtUntil 保留）。
+       坏参数/坏库/坏 golden/坏 baseline exit≠0 零输出。
+       口径/版本/人工审流程：docs/quality/golden.md（阶段1：docs/quality/README.md）
+`,
   'qa-report': `  studio-next qa-report --db <库路径> --company <slug> [--date YYYY-MM-DD] [--out-dir <目录>]
                              [--log <daemon.log>] [--models <models.yaml>] [--top N]
        #811 阶段1 QA 只读指标报表（observe-only）：从本仓台账只读生成昨日 QA 指标 JSON+Markdown
@@ -227,6 +239,12 @@ export const CONCISE = {
   studio-next candidates list --db <库路径>
   例：studio-next candidates list --db var/ledger.sqlite
   本命令全文：studio-next candidates list --help
+`,
+  'qa-eval': `qa-eval —— #811 阶段2 golden 评测（observe-only：只读/不写台账/不做门禁；drift 不阻断；JSON+MD）
+  studio-next qa-eval --db <库路径> --company <slug> --date YYYY-MM-DD [--golden-dir <目录>] [--out-dir <目录>] [--models <models.yaml>]
+  studio-next qa-eval --build-golden <目录> --db <库路径> --company <slug> [--count 80] [--until YYYY-MM-DD] [--version v1]（显式人工入口，已存在即拒）
+  例：studio-next qa-eval --db var/ledger.sqlite --company my-corp --date 2026-11-10
+  本命令全文：studio-next qa-eval --help
 `,
   'qa-report': `qa-report —— #811 QA 只读指标报表（observe-only：只 SELECT/不写台账/不做门禁；JSON+MD；默认 <companyDir>/var/reports/qa/）
   studio-next qa-report --db <库路径> --company <slug> [--date YYYY-MM-DD] [--out-dir <目录>] [--log <daemon.log>] [--models <models.yaml>] [--top N]

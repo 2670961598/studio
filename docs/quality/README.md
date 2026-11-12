@@ -60,3 +60,15 @@ studio-next qa-report --db <ledger.sqlite> --company <slug> [--date YYYY-MM-DD] 
 - 不做 golden 基线/断言/门禁/自动阻断（后续阶段，且须保持 observe-only 可回滚）。
 - 不查/不校验 events 哈希链（需要写模式打开；审计另有 `ledger` 命令面）。
 - 不写公司 git 树、不改宿主 config、不引外网。
+
+## 7. 阶段2：golden 评测（`qa-eval`，observe-only）
+
+- golden 数据（不入仓）：`<companyDir>/var/qa/golden/golden-v<n>.json` + `manifest.json`（sha256/
+  版本/样本量）；显式构建入口=`studio-next qa-eval --build-golden <目录> --db … --company …`
+  （QA-1 人工审后运行；已存在即拒、不自动覆盖）。
+- 评测：`studio-next qa-eval --db … --company … --date YYYY-MM-DD [--golden-dir …] [--out-dir …] [--baseline qa-report.json]`
+  → `qa-eval/v1` JSON+MD（结论先行；baseline 版本+sha256+样本量；onePass/失败原因 JSD/top 漂移/
+  耗时 median+p90 漂移/tier 分布 pp/outcome/coverage）。`--baseline` 可载入阶段1 qa-report JSON，以其窗口
+  指标替代 golden 基线做 drift（golden 仍供 coverage/逐单）；drift 只观测，**不阻断、不 exit≠0**。
+- 只读/边界与阶段1同：node:sqlite readOnly 仅 SELECT、不写台账/单据/事件/事件词/schema、不接主循环。
+- schema/选取规则/人工审流程：`docs/quality/golden.md`。
