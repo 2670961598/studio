@@ -28,6 +28,7 @@ import { cmdCompany } from './company.ts'
 import { cmdValidate } from './validate.ts'
 import { cmdLedger } from './ledger.ts'
 import { cmdCandidates } from './candidates.ts'
+import { cmdProvenance } from './prov/prov-command.ts'
 import { cmdQaEval } from './qa/qa-eval.ts'
 import { cmdQaReport } from './qa-report.ts'
 import { cmdJobs } from './jobs.ts'
@@ -60,6 +61,8 @@ async function main(): Promise<number> {
       return cmdQaReport(rest)
     case 'qa-eval':
       return cmdQaEval(rest)
+    case 'provenance':
+      return cmdProvenance(rest)
     case 'jobs':
       return cmdJobs(rest)
     case 'sandbox':

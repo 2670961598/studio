@@ -72,3 +72,12 @@ studio-next qa-report --db <ledger.sqlite> --company <slug> [--date YYYY-MM-DD] 
   指标替代 golden 基线做 drift（golden 仍供 coverage/逐单）；drift 只观测，**不阻断、不 exit≠0**。
 - 只读/边界与阶段1同：node:sqlite readOnly 仅 SELECT、不写台账/单据/事件/事件词/schema、不接主循环。
 - schema/选取规则/人工审流程：`docs/quality/golden.md`。
+
+## 8. Airlock provenance（A+C phase1，observe-only）
+
+- `studio-next provenance trace <ticket> --db … --company …`：单票全链路（只读派生图，事件只作边证据）；
+- `studio-next provenance impact --from <ticket|eventId|alertId> [--since/--until]`：告警/单票影响面
+  （≤2 跳；direct/inferred/gap+缺口；只观察不动作）；
+- 输出 `<companyDir>/var/reports/provenance/`（JSON+MD，原子写/幂等同字节/失败零输出）；
+  `note` 白名单脱敏、artifact basename+hash 前缀；只读 `node:sqlite`，不写台账/事件/schema、不接主循环。
+- 图模型/置信/脱敏/限制：`docs/quality/provenance.md`。

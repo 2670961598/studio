@@ -79,6 +79,17 @@ export const SECTION = {
        id/状态/资产类型/blast_radius/version/谱系父/资产路径/diff 哈希（(created_at,id) 升序）；
        库不存在即拒（只读面不代建库）
 `,
+  provenance: `  studio-next provenance trace <ticket> --db <库路径> --company <slug> [--out-dir <目录>] [--depth N]
+  studio-next provenance impact --from <ticket|eventId|alertId> --db <库路径> --company <slug>
+                                [--since YYYY-MM-DD|epochMs] [--until …] [--depth N] [--out-dir <目录>]
+       Airlock provenance（A+C phase1，observe-only）：只读派生 provenance 图（events/work_records/
+       sessions/ticket_mirror/price_snapshots；不新增存储/表/事件词）。trace=单票全链路（dispatch/attempt/
+       artifact/merge/close + 审计/告警）；impact=告警/单票影响面（≤2 跳，affected ticket/person/dept/
+       artifact/session/commit + direct/inferred/gap 置信与缺口）。事件默认不作节点（只作边证据）。
+       输出 <companyDir>/var/reports/provenance/prov-trace|impact-<name>.json|.md（原子写/幂等同字节/
+       失败零输出）；note 仅白名单 token 脱敏，artifact 仅 basename+hash 前缀；空图/未知 from exit0 空形状；
+       **只观察不动作**（不隔离/不重派/不改单）；坏参数/坏库 exit≠0。口径：docs/quality/provenance.md
+`,
   'qa-eval': `  studio-next qa-eval --db <库路径> --company <slug> --date YYYY-MM-DD [--golden-dir <目录>]
                             [--out-dir <目录>] [--golden-version v1] [--baseline qa-report.json] [--models <models.yaml>] [--top N]
        #811 阶段2 golden 评测（observe-only）：读 <companyDir>/var/qa/golden 的 golden+manifest，
@@ -239,6 +250,12 @@ export const CONCISE = {
   studio-next candidates list --db <库路径>
   例：studio-next candidates list --db var/ledger.sqlite
   本命令全文：studio-next candidates list --help
+`,
+  provenance: `provenance <trace|impact> —— Airlock 只读派生 provenance 图（observe-only：trace 单票全链路 / impact 告警影响面 ≤2 跳；不写台账/不动作）
+  studio-next provenance trace <ticket> --db <库路径> --company <slug> [--out-dir <目录>]
+  studio-next provenance impact --from <ticket|eventId|alertId> --db <库路径> --company <slug> [--since YYYY-MM-DD] [--until YYYY-MM-DD]
+  例：studio-next provenance trace studio-dev-1234 --db var/ledger.sqlite --company studio-dev
+  本命令全文：studio-next provenance --help（各子命令 -h 看分面）
 `,
   'qa-eval': `qa-eval —— #811 阶段2 golden 评测（observe-only：只读/不写台账/不做门禁；drift 不阻断；JSON+MD）
   studio-next qa-eval --db <库路径> --company <slug> --date YYYY-MM-DD [--golden-dir <目录>] [--out-dir <目录>] [--models <models.yaml>]
