@@ -18,9 +18,9 @@
  */
 import { describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isEventName } from '@studio-next/contract'
 import type {
@@ -502,6 +502,30 @@ describe('三不入强制点（v2/15 §4.5；SEC-SEC-05）', () => {
 
 // ————————————————————— 四、仓面扫描门禁脚本（IMPL-07-11 验收） —————————————————————
 
+/**
+ * 本仓扫描夹具：复制 **git tracked 文件快照** 到仓外临时根再扫。
+ * 目的：只读判定仓内容（tracked=仓库事实），避免并行测试在仓根创建的 `.tmp-*`/`.sn-*`
+ * 瞬时临时文件干扰造成顺序/并发假红（/Volumes 与 /tmp 语义一致）；不扫未跟踪文件。
+ */
+function snapshotTrackedRepo(): { root: string; cleanup: () => void } {
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..')
+  const list = spawnSync('git', ['-C', repoRoot, 'ls-files', '-z'], { encoding: 'buffer' })
+  if (list.status !== 0) throw new Error(`git ls-files 失败：${String(list.stderr)}`)
+  const root = mkdtempSync(join(tmpdir(), 'sn-outbound-tracked-'))
+  const files = list.stdout.toString('utf8').split('\u0000').filter(Boolean)
+  for (const rel of files) {
+    const src = join(repoRoot, rel)
+    const dst = join(root, rel)
+    try {
+      mkdirSync(dirname(dst), { recursive: true })
+      copyFileSync(src, dst)
+    } catch {
+      /* tracked 但当前文件缺失（删除未提交等）：跳过（扫描面=可读文件） */
+    }
+  }
+  return { root, cleanup: () => rmSync(root, { recursive: true, force: true }) }
+}
+
 describe('scripts/scan-repo-secrets.mjs：命中即拒、干净即过、本仓零新增', () => {
   it('本机路径/IP/凭证模式夹具 → exit 1，五规则逐条命中（值不回显）', () => {
     withTempDir((dir) => {
@@ -538,16 +562,23 @@ describe('scripts/scan-repo-secrets.mjs：命中即拒、干净即过、本仓�
     })
   })
 
-  it('本仓扫描 → exit 0（新增命中=0；存量基线显式登记>0，--strict 量存量债）', () => {
-    const run = runScanner(['--json'])
-    expect(run.raw).not.toBe('')
-    expect(run.status).toBe(0)
-    expect(run.json?.newHits).toEqual([])
-    // 存量债不静默：基线计数可见、过期基线须清理（只减不增）
-    expect((run.json?.baselineHits ?? []).length).toBeGreaterThan(0)
-    expect(run.json?.staleBaseline).toBe(0)
-    // --strict（目标态零命中）当前应判负——基线未清前不得宣称「仓面已净」
-    const strict = runScanner(['--strict'])
-    expect(strict.status).toBe(1)
+  it('本仓扫描（tracked 快照）→ exit 0（新增命中=0；存量基线显式登记>0，--strict 量存量债）', () => {
+    // 扫描仓外 tracked 快照：不受并行测试在仓根创建的 .tmp-*/.sn-* 瞬时文件影响；
+    // 既验证仓库事实内容，又保证 /Volumes 与 /tmp 语义一致（不依赖 /private/tmp 通用根）。
+    const snap = snapshotTrackedRepo()
+    try {
+      const run = runScanner(['--root', snap.root, '--json'])
+      expect(run.raw).not.toBe('')
+      expect(run.status).toBe(0)
+      expect(run.json?.newHits).toEqual([])
+      // 存量债不静默：基线计数可见、过期基线须清理（只减不增）
+      expect((run.json?.baselineHits ?? []).length).toBeGreaterThan(0)
+      expect(run.json?.staleBaseline).toBe(0)
+      // --strict（目标态零命中）当前应判负——基线未清前不得宣称「仓面已净」
+      const strict = runScanner(['--root', snap.root, '--strict'])
+      expect(strict.status).toBe(1)
+    } finally {
+      snap.cleanup()
+    }
   })
 })

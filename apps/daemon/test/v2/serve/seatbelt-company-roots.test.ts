@@ -12,9 +12,11 @@ const WORKROOT = '/srv/787-seatbelt-work'
 const COMPANY_DIR = `${WORKROOT}/demo/company`
 const cleanups: string[] = []
 afterEach(() => { for (const dir of cleanups.splice(0)) rmSync(dir, { recursive: true, force: true }) })
+const REPO_PARENT = path.dirname(process.cwd())
 function repoTemp(prefix: string): string {
-  // 仓库内临时目录（不用 /tmp：/var/folders 属基础设施白名单，无法验证扁平布局的全局根拒绝）
-  const dir = mkdtempSync(path.join(process.cwd(), `.tmp-787v4-${prefix}-`))
+  // 仓外兄弟临时目录（不污染仓根扫描）；环境若把该路径放进 /private/tmp 通用白名单，
+  // 真实路径放行不能当规则证据——规则拒绝面另用 synthetic /srv 路径经纯函数断言。
+  const dir = mkdtempSync(path.join(REPO_PARENT, `.sn-787v4-${prefix}-`))
   cleanups.push(dir)
   return dir
 }
@@ -134,18 +136,28 @@ describe('787：每公司 seatbeltWriteRoots 校验', () => {
     }
   })
 
-  it('v4：扁平布局（profit）companyDir 本身=公司根 → <companyDir>/.AIWS 通过；父目录 .AIWS 全局根拒', () => {
+  it('v4：扁平布局（profit）companyDir 本身=公司根 → <companyDir>/.AIWS 与 <companyDir>/workspaces 通过', () => {
     const w = repoTemp('flat')
     const profit = path.join(w, 'studio-profit')
     mkdirSync(profit, { recursive: true })
     writeFileSync(path.join(profit, 'daemon.yaml'), '# marker\n', 'utf8')
     expect(detectCompanyLayout(profit).layout).toBe('flat')
-    expect(() => parseDaemonConfig(yamlWithRoots([path.join(profit, '.AIWS'), path.join(profit, 'company', 'workspaces')], profit))).not.toThrow()
+    // 合法根：扁平布局 <companyDir>=<CROOT>，写域只有 <companyDir>/.AIWS 与 <companyDir>/workspaces
+    expect(() => parseDaemonConfig(yamlWithRoots([path.join(profit, '.AIWS'), path.join(profit, 'workspaces')], profit))).not.toThrow()
     // profit 旧全局根 = <WORKROOT>/.AIWS（dirname(companyDir)/.AIWS）→ cross-company 拒
     expect(() => parseDaemonConfig(yamlWithRoots([path.join(w, '.AIWS')], profit))).toThrow(/787/)
     // 兄弟公司根 → 拒
     mkdirSync(path.join(w, 'studio-dev', '.AIWS'), { recursive: true })
     expect(() => parseDaemonConfig(yamlWithRoots([path.join(w, 'studio-dev', '.AIWS')], profit))).toThrow(/787/)
+    // 白名单规则：扁平布局下 companyDir/company/workspaces 不在写域（<companyDir>/workspaces 才是）→ not-whitelisted。
+    // 用 synthetic /srv 纯函数断言，避免仓在 /private/tmp 时被基础设施通用根“放过”造成假绿。
+    expect(
+      checkCompanySeatbeltWriteRoots(
+        { tier: 'workspace-write', writeRoots: ['/srv/787-work/profit/company/workspaces'], authorization: 'x' },
+        '/srv/787-work/profit',
+        'flat',
+      ).map((v) => v.reason),
+    ).toEqual(['not-whitelisted'])
   })
 
   it('v4：嵌套布局（studio-dev）companyDir 父目录=公司根 → <CROOT>/.AIWS 通过；全局/兄弟仍拒', () => {
