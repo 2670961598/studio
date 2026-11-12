@@ -175,6 +175,8 @@ export interface ProvTrace {
   readonly edges: readonly ProvEdge[]
   readonly gaps: readonly string[]
   readonly nodeCounts: Readonly<Record<ProvNodeKind, number>>
+  readonly truncated: boolean
+  readonly limits: ProvLimits
   readonly reason?: string
 }
 function countsOf(nodes: readonly ProvNode[]): Record<ProvNodeKind, number> {
@@ -182,7 +184,20 @@ function countsOf(nodes: readonly ProvNode[]): Record<ProvNodeKind, number> {
   for (const n of nodes) counts[n.kind] += 1
   return counts
 }
-function neighbors(graph: ProvGraph, id: string, directed: boolean): Array<{ edge: ProvEdge; next: string }> {
+
+export interface ProvLimits {
+  readonly traceNodes: number
+  readonly traceEdges: number
+  readonly impactNodes: number
+  readonly impactEdges: number
+  readonly listTop: number
+  readonly mdTop: number
+  readonly hubFanout: number
+}
+/** 输出/展开上限（P1 fix：防 hub 炸图；JSON/MD 都适用） */
+export const PROV_LIMITS: ProvLimits = { traceNodes: 200, traceEdges: 400, impactNodes: 300, impactEdges: 600, listTop: 50, mdTop: 20, hubFanout: 50 }
+
+function neighbors(graph: ProvGraph, id: string, directed = false): Array<{ edge: ProvEdge; next: string }> {
   const out: Array<{ edge: ProvEdge; next: string }> = []
   for (const e of graph.edges) {
     if (e.from === id) out.push({ edge: e, next: e.to })
@@ -190,37 +205,100 @@ function neighbors(graph: ProvGraph, id: string, directed: boolean): Array<{ edg
   }
   return out
 }
-function bfs(graph: ProvGraph, root: string, maxDepth: number): { nodes: ProvNode[]; edges: ProvEdge[]; gaps: string[] } {
+function inWindow(edge: ProvEdge, since: number | undefined, until: number | undefined): boolean {
+  if (edge.time <= 0) return true // 表结构边（mirror/price）无事件时间；仅事件边参与窗口过滤
+  if (since !== undefined && edge.time < since) return false
+  if (until !== undefined && edge.time >= until) return false
+  return true
+}
+
+/** trace 可穿越的 ticket-family 节点（不穿 person/dept hub；hub 只作终端属性节点） */
+const TRACE_WALK: ReadonlySet<ProvNodeKind> = new Set(['ticket', 'attempt', 'session', 'artifact', 'commit', 'executor', 'alert', 'audit'])
+const TRACE_TERMINAL: ReadonlySet<ProvNodeKind> = new Set(['person', 'dept', 'model', 'price'])
+
+/**
+ * trace：只沿 ticket-family 边 BFS（ticket↔attempt↔session/artifact/commit/executor + 自身
+ * audit/alert），**不穿过 person/dept hub**（hub 作为终端属性节点保留）→ 单票结果有界；
+ * 节点/边超限时标 truncated。
+ */
+export function traceTicket(graph: ProvGraph, ticket: string, maxDepth = 8): ProvTrace {
+  const root = nid('ticket', safeKey(ticket))
+  if (!graph.nodes.some((n) => n.id === root)) {
+    return { schema: 'prov-trace/v1', root: null, ticket, depth: 0, nodes: [], edges: [], gaps: [], nodeCounts: countsOf([]), truncated: false, limits: PROV_LIMITS, reason: 'ticket-not-in-derived-graph' }
+  }
   const byId = new Map(graph.nodes.map((n) => [n.id, n]))
   const visited = new Map<string, number>([[root, 0]])
   const chosenEdges: ProvEdge[] = []
+  const edgeSeen = new Set<string>()
+  let truncated = false
   const queue = [root]
   while (queue.length > 0) {
     const cur = queue.shift() as string
     const depth = visited.get(cur) ?? 0
     if (depth >= maxDepth) continue
-    for (const { edge, next } of neighbors(graph, cur, false)) {
-      if (!chosenEdges.includes(edge)) chosenEdges.push(edge)
+    for (const { edge, next } of neighbors(graph, cur)) {
+      const nextNode = byId.get(next)
+      if (nextNode === undefined) continue
+      if (!TRACE_WALK.has(nextNode.kind) && !TRACE_TERMINAL.has(nextNode.kind)) continue
+      // trace 只覆盖 root ticket 的链路：共享 artifact/commit/attempt 不得把其它 ticket 拉进来
+      if (nextNode.kind === 'ticket' && next !== root) continue
+      if (chosenEdges.length >= PROV_LIMITS.traceEdges) {
+        truncated = true
+        break
+      }
+      const key = `${edge.from}|${edge.to}|${edge.kind}|${edge.sourceEventId ?? ''}`
+      if (!edgeSeen.has(key)) {
+        edgeSeen.add(key)
+        chosenEdges.push(edge)
+      }
       if (!visited.has(next)) {
+        if (visited.size >= PROV_LIMITS.traceNodes) {
+          truncated = true
+          continue
+        }
         visited.set(next, depth + 1)
-        queue.push(next)
+        // hub 仅终端：加入可见节点但不入队（不展开）
+        if (TRACE_WALK.has(nextNode.kind)) queue.push(next)
+        // model 作终端时额外展示其 price 节点（只读展示，不继续展开）
+        if (nextNode.kind === 'model') {
+          for (const priceLink of neighbors(graph, next)) {
+            const priceNode = byId.get(priceLink.next)
+            if (priceNode?.kind !== 'price') continue
+            if (chosenEdges.length >= PROV_LIMITS.traceEdges || visited.size >= PROV_LIMITS.traceNodes) break
+            const pk = `${priceLink.edge.from}|${priceLink.edge.to}|${priceLink.edge.kind}|${priceLink.edge.sourceEventId ?? ''}`
+            if (!edgeSeen.has(pk)) {
+              edgeSeen.add(pk)
+              chosenEdges.push(priceLink.edge)
+            }
+            if (!visited.has(priceLink.next)) visited.set(priceLink.next, depth + 2)
+          }
+        }
       }
     }
   }
   const nodes = [...visited.keys()].map((id) => byId.get(id)).filter((n): n is ProvNode => n !== undefined)
-  return { nodes, edges: chosenEdges, gaps: chosenEdges.filter((e) => e.confidence === 'gap').map((e) => `${e.from}→${e.to}`) }
-}
-
-/** 单票全链路 trace（无向 BFS；事件不作节点；缺图=空形状 exit0） */
-export function traceTicket(graph: ProvGraph, ticket: string, maxDepth = 8): ProvTrace {
-  const root = nid('ticket', safeKey(ticket))
-  if (!graph.nodes.some((n) => n.id === root)) {
-    return { schema: 'prov-trace/v1', root: null, ticket, depth: 0, nodes: [], edges: [], gaps: [], nodeCounts: countsOf([]), reason: 'ticket-not-in-derived-graph' }
+  return {
+    schema: 'prov-trace/v1',
+    root,
+    ticket,
+    depth: maxDepth,
+    nodes: nodes.sort((a, b) => a.id.localeCompare(b.id)),
+    edges: chosenEdges,
+    gaps: chosenEdges.filter((e) => e.confidence === 'gap').map((e) => `${e.from}→${e.to}`),
+    nodeCounts: countsOf(nodes),
+    truncated,
+    limits: PROV_LIMITS,
   }
-  const { nodes, edges, gaps } = bfs(graph, root, maxDepth)
-  return { schema: 'prov-trace/v1', root, ticket, depth: maxDepth, nodes: nodes.sort((a, b) => a.id.localeCompare(b.id)), edges, gaps, nodeCounts: countsOf(nodes) }
 }
 
+export interface ProvHubStat {
+  readonly hub: string
+  readonly kind: ProvNodeKind
+  readonly shown: number
+  readonly total: number
+  readonly truncated: boolean
+  readonly inferred: number
+}
 export interface ProvImpact {
   readonly schema: 'prov-impact/v1'
   readonly from: string
@@ -236,10 +314,15 @@ export interface ProvImpact {
     readonly commits: readonly string[]
     readonly alerts: readonly string[]
   }
+  readonly affectedTotals: { readonly tickets: number; readonly persons: number; readonly depts: number; readonly artifacts: number; readonly sessions: number; readonly commits: number; readonly alerts: number }
   readonly confidence: { readonly direct: number; readonly inferred: number; readonly gap: number }
   readonly gaps: readonly string[]
   readonly nodes: readonly ProvNode[]
   readonly edges: readonly ProvEdge[]
+  readonly hubs: readonly ProvHubStat[]
+  readonly truncated: boolean
+  readonly limits: ProvLimits
+  readonly samples: readonly string[]
   readonly reason?: string
 }
 
@@ -254,69 +337,126 @@ export function resolveFrom(graph: ProvGraph, from: string): ProvNode | undefine
   return undefined
 }
 
-/** 影响面（无向 BFS ≤maxDepth；direct=1 跳 / inferred=2 跳；缺口边单列；只观察不动作） */
-export function impactOf(graph: ProvGraph, from: string, maxDepth = 2): ProvImpact {
+/**
+ * impact：从 source 出发 ≤2 跳；dept **不展开**（终端），person 展开但每 hub fan-out ≤50
+ * （person→ticket 标 inferred；超出计数+样本）；窗口=事件/边时间过滤（表结构边除外）；
+ * 输出列表 top50、节点/边 cap、truncated/samples 明示。
+ */
+export function impactOf(graph: ProvGraph, from: string, maxDepth = 2, window: { since?: number; until?: number } = {}): ProvImpact {
+  const empty = (): ProvImpact => ({
+    schema: 'prov-impact/v1',
+    from,
+    source: null,
+    depth: 0,
+    window: { since: window.since ?? null, until: window.until ?? null },
+    affected: { tickets: [], persons: [], depts: [], artifacts: [], sessions: [], commits: [], alerts: [] },
+    affectedTotals: { tickets: 0, persons: 0, depts: 0, artifacts: 0, sessions: 0, commits: 0, alerts: 0 },
+    confidence: { direct: 0, inferred: 0, gap: 0 },
+    gaps: [],
+    nodes: [],
+    edges: [],
+    hubs: [],
+    truncated: false,
+    limits: PROV_LIMITS,
+    samples: [],
+    reason: 'unknown-from',
+  })
   const source = resolveFrom(graph, from)
-  if (source === undefined) {
-    return {
-      schema: 'prov-impact/v1',
-      from,
-      source: null,
-      depth: 0,
-      window: { since: null, until: null },
-      affected: { tickets: [], persons: [], depts: [], artifacts: [], sessions: [], commits: [], alerts: [] },
-      confidence: { direct: 0, inferred: 0, gap: 0 },
-      gaps: [],
-      nodes: [],
-      edges: [],
-      reason: 'unknown-from',
-    }
-  }
+  if (source === undefined) return empty()
+  const since = window.since ?? undefined
+  const until = window.until ?? undefined
   const byId = new Map(graph.nodes.map((n) => [n.id, n]))
   const visited = new Map<string, number>([[source.id, 0]])
   const chosen = new Map<string, ProvEdge>()
-  const queue = [source.id]
+  const hubs: ProvHubStat[] = []
+  const samples: string[] = []
+  let truncated = false
+  const queue: string[] = [source.id]
   while (queue.length > 0) {
     const cur = queue.shift() as string
     const depth = visited.get(cur) ?? 0
     if (depth >= maxDepth) continue
-    for (const { edge, next } of neighbors(graph, cur, false)) {
-      chosen.set(`${edge.from}|${edge.to}|${edge.kind}|${edge.sourceEventId ?? ''}`, edge)
+    const curNode = byId.get(cur)
+    if (curNode === undefined) continue
+    // dept 默认不展开（hub 只作终端）；person 展开但 cap
+    if (curNode.kind === 'dept') continue
+    let candidates = neighbors(graph, cur).filter(({ edge }) => inWindow(edge, since, until))
+    if (curNode.kind === 'person') {
+      const before = candidates.length
+      if (candidates.length > PROV_LIMITS.hubFanout) {
+        truncated = true
+        samples.push(`hub ${curNode.label} fan-out ${String(before)} > ${String(PROV_LIMITS.hubFanout)}（仅展示前 ${String(PROV_LIMITS.hubFanout)}）`)
+        candidates = candidates.slice(0, PROV_LIMITS.hubFanout)
+      }
+      const inferredTicketEdges = candidates.filter(({ next }) => byId.get(next)?.kind === 'ticket').length
+      hubs.push({ hub: curNode.label, kind: 'person', shown: candidates.length, total: before, truncated: before > candidates.length, inferred: inferredTicketEdges })
+    }
+    for (const { edge, next } of candidates) {
+      if (chosen.size >= PROV_LIMITS.impactEdges) {
+        truncated = true
+        break
+      }
+      const nextNode = byId.get(next)
+      if (nextNode === undefined) continue
+      // person→ticket 视为 inferred（hub 推断），其余保留原 confidence
+      const confidence: ProvConfidence = curNode.kind === 'person' && nextNode.kind === 'ticket' ? 'inferred' : edge.confidence
+      const emitted: ProvEdge = confidence === edge.confidence ? edge : { ...edge, confidence }
+      const key = `${emitted.from}|${emitted.to}|${emitted.kind}|${emitted.sourceEventId ?? ''}|${emitted.confidence}`
+      if (!chosen.has(key)) chosen.set(key, emitted)
       if (!visited.has(next)) {
+        if (visited.size >= PROV_LIMITS.impactNodes) {
+          truncated = true
+          continue
+        }
         visited.set(next, depth + 1)
-        queue.push(next)
+        if (nextNode.kind !== 'dept') queue.push(next)
       }
     }
   }
   const nodes = [...visited.keys()].map((id) => byId.get(id)).filter((n): n is ProvNode => n !== undefined)
   const edges = [...chosen.values()]
-  const byKind = (kind: ProvNodeKind): string[] => nodes.filter((n) => n.kind === kind).map((n) => n.label).sort()
+  const byKindAll = (kind: ProvNodeKind): ProvNode[] => nodes.filter((n) => n.kind === kind).sort((a, b) => a.label.localeCompare(b.label))
+  const top = (kind: ProvNodeKind): string[] => byKindAll(kind).slice(0, PROV_LIMITS.listTop).map((n) => n.label)
+  const totals = {
+    tickets: byKindAll('ticket').length,
+    persons: byKindAll('person').length,
+    depts: byKindAll('dept').length,
+    artifacts: byKindAll('artifact').length,
+    sessions: byKindAll('session').length,
+    commits: byKindAll('commit').length,
+    alerts: byKindAll('alert').length,
+  }
   const directIds = new Set([...visited.entries()].filter(([, d]) => d === 1).map(([id]) => id))
-  const directEdges = edges.filter((e) => directIds.has(e.from === source.id ? e.to : e.from))
-  const inferredEdges = edges.filter((e) => !directEdges.includes(e))
+  const directEdges = edges.filter((e) => directIds.has(e.from === source.id ? e.to : e.from) && e.confidence !== 'inferred')
+  const inferredEdges = edges.filter((e) => e.confidence === 'inferred' || (!directEdges.includes(e) && e.confidence !== 'gap'))
   const times = edges.map((e) => e.time).filter((t) => t > 0)
   return {
     schema: 'prov-impact/v1',
     from,
     source,
     depth: maxDepth,
-    window: { since: times.length > 0 ? Math.min(...times) : null, until: times.length > 0 ? Math.max(...times) : null },
+    window: { since: since ?? (times.length > 0 ? Math.min(...times) : null), until: until ?? (times.length > 0 ? Math.max(...times) : null) },
     affected: {
-      tickets: byKind('ticket'),
-      persons: byKind('person'),
-      depts: byKind('dept'),
-      artifacts: byKind('artifact'),
-      sessions: byKind('session'),
-      commits: byKind('commit'),
-      alerts: byKind('alert'),
+      tickets: top('ticket'),
+      persons: top('person'),
+      depts: top('dept'),
+      artifacts: top('artifact'),
+      sessions: top('session'),
+      commits: top('commit'),
+      alerts: top('alert'),
     },
+    affectedTotals: totals,
     confidence: {
       direct: directEdges.length,
       inferred: inferredEdges.filter((e) => e.confidence !== 'gap').length,
       gap: edges.filter((e) => e.confidence === 'gap').length,
     },
-    gaps: edges.filter((e) => e.confidence === 'gap').map((e) => `${e.from}→${e.to}`),
+    gaps: edges.filter((e) => e.confidence === 'gap').map((e) => `${e.from}→${e.to}`).slice(0, PROV_LIMITS.listTop),
     nodes: nodes.sort((a, b) => a.id.localeCompare(b.id)),
     edges,
+    hubs,
+    truncated: truncated || Object.keys(totals).some((k) => ((totals as Record<string, number>)[k] ?? 0) > PROV_LIMITS.listTop),
+    limits: PROV_LIMITS,
+    samples,
   }
 }

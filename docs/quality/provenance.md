@@ -55,6 +55,7 @@ studio-next provenance impact --from <ticket|eventId|alertId> --db <ledger.sqlit
 
 - 派生图受数据完整度限制：`work_records` 无 company 列（按 ticket 集代理）、旧事件缺
   attempt/session、artifact 只到 ref 层 → 报告标 gap/coverage，不冒充完整因果。
-- 影响面最多 2 跳；不自动扩大传播/不做时间序列推断；golden/因果推断后置。
+- 影响面最多 2 跳；hub fan-out 上限 50（超出只计数+样本）；窗口默认锚点±24h；不做时间序列
+  推断/golden 后置；输出 cap 见上（truncated/samples 明示）。
 - 事件默认不作节点（需要时查 `--from <eventId>` 的 alert 节点/边证据）；price/model 只读展示。
 - 会话/时钟口径沿台账原值；本命令无 wall-clock 字段（幂等同字节）。

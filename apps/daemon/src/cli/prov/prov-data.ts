@@ -131,9 +131,19 @@ export function readProvData(dbPath: string, company: string, options: ProvReadO
     let sessions: ProvSessionRow[] = []
     if (issueList.length > 0) {
       const ph = issueList.map(() => '?').join(',')
+      const workWhere = ['issue IN (' + ph + ')']
+      const workParams: Array<string | number> = [...issueList]
+      if (options.since !== undefined) {
+        workWhere.push('started_at >= ?')
+        workParams.push(options.since)
+      }
+      if (options.until !== undefined) {
+        workWhere.push('started_at < ?')
+        workParams.push(options.until)
+      }
       const workRaw = db
-        .prepare(`SELECT issue, person_id, executor, session_id, attempt, started_at, ended_at, status, model, report_ref, summary_ref FROM work_records WHERE issue IN (${ph}) ORDER BY issue, started_at`)
-        .all(...issueList) as Array<Record<string, unknown>>
+        .prepare(`SELECT issue, person_id, executor, session_id, attempt, started_at, ended_at, status, model, report_ref, summary_ref FROM work_records WHERE ${workWhere.join(' AND ')} ORDER BY issue, started_at`)
+        .all(...workParams) as Array<Record<string, unknown>>
       work = workRaw.map((r) => ({
         issue: str(r['issue']),
         personId: str(r['person_id']),
@@ -147,9 +157,19 @@ export function readProvData(dbPath: string, company: string, options: ProvReadO
         reportRef: optStr(r['report_ref']),
         summaryRef: optStr(r['summary_ref']),
       }))
+      const sessionWhere = ['issue IN (' + ph + ')']
+      const sessionParams: Array<string | number> = [...issueList]
+      if (options.since !== undefined) {
+        sessionWhere.push('started_at >= ?')
+        sessionParams.push(options.since)
+      }
+      if (options.until !== undefined) {
+        sessionWhere.push('started_at < ?')
+        sessionParams.push(options.until)
+      }
       const sessionRaw = db
-        .prepare(`SELECT session_id, issue, person_id, started_at, ended_at, turns FROM sessions WHERE issue IN (${ph}) ORDER BY started_at`)
-        .all(...issueList) as Array<Record<string, unknown>>
+        .prepare(`SELECT session_id, issue, person_id, started_at, ended_at, turns FROM sessions WHERE ${sessionWhere.join(' AND ')} ORDER BY started_at`)
+        .all(...sessionParams) as Array<Record<string, unknown>>
       sessions = sessionRaw.map((r) => ({
         sessionId: str(r['session_id']),
         issue: str(r['issue']),
@@ -171,6 +191,28 @@ export function readProvData(dbPath: string, company: string, options: ProvReadO
       outputPerM: num(r['output_per_m']),
     }))
     return { events, work, sessions, mirror, prices }
+  } finally {
+    db.close()
+  }
+}
+
+
+/**
+ * `--from` 锚点时间（impact 默认窗口 [anchor−24h, anchor+24h]）：
+ * 支持 alert:/ticket: 前缀、裸 ticket、裸事件 id（ULID）；未知=null。只读 SELECT。
+ */
+export function findProvAnchorTime(dbPath: string, company: string, from: string): number | null {
+  if (!existsSync(dbPath)) throw new Error(`台账不存在：${dbPath}（只读面不代建库）`)
+  const rawFrom = from.startsWith('ticket:') ? from.slice('ticket:'.length) : from.startsWith('alert:') ? from.slice('alert:'.length) : from
+  const db = new DatabaseSync(dbPath, { readOnly: true })
+  try {
+    const byId = db.prepare('SELECT ts FROM events WHERE company = ? AND id = ? LIMIT 1').get(company, rawFrom) as Record<string, unknown> | undefined
+    if (byId !== undefined) return num(byId['ts'])
+    const byIssue = db.prepare('SELECT MIN(ts) AS min_ts, MAX(ts) AS max_ts FROM events WHERE company = ? AND issue = ?').get(company, rawFrom) as Record<string, unknown> | undefined
+    const maxTs = byIssue === undefined || byIssue['max_ts'] === null ? null : num(byIssue['max_ts'])
+    if (maxTs !== null) return maxTs
+    const mirror = db.prepare('SELECT updated FROM ticket_mirror WHERE company = ? AND issue = ? LIMIT 1').get(company, rawFrom) as Record<string, unknown> | undefined
+    return mirror === undefined ? null : num(mirror['updated'])
   } finally {
     db.close()
   }

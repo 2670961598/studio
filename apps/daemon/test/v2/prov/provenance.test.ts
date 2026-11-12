@@ -196,3 +196,73 @@ describe('provenance phase1：时间窗/深度边界', () => {
     expect(found.affected.tickets).toContain('T-2')
   })
 })
+
+
+/** 批量夹具：T-1 + N 张同 person/dept 的无关票（测 trace 不穿 hub、impact hub cap） */
+function bulkFixture(name: string, count: number): Fixture {
+  const dbPath = path.join(ROOT, `${name}.sqlite`)
+  const ledger = openLedger(dbPath)
+  try {
+    const add = (ticket: string, offset: number): void => {
+      ledger.upsertTicketMirror({ issue: ticket, company: COMPANY, created: base, updated: base + offset, state: '已交付', type: 'devtask', dept: DEPT, level: 2, lane: 'core', dispatcher: 'AGENT-1' })
+      appendBulk(ledger, ticket, base + offset, 'DISPATCH', null)
+      appendBulk(ledger, ticket, base + offset + 1000, 'GATE_PASS', `report=/secret/bulk/${ticket}/REPORT.md`)
+      appendBulk(ledger, ticket, base + offset + 2000, 'CLOSE', null)
+      ledger.insertWorkRecord({ id: `wr-${ticket}`, issue: ticket, person_id: 'AGENT-1', executor: 'dsh-mid', session_id: `S-${ticket}`, started_at: base + offset, ended_at: base + offset + 2000, attempt: 1, status: 'done', model: 'glm/GLM-5.3' })
+    }
+    add('T-1', 0)
+    for (let i = 0; i < count; i += 1) add(`BULK-${String(i)}`, 10_000 + i * 10)
+  } finally {
+    ledger.close()
+  }
+  return { dbPath, outDir: path.join(ROOT, `${name}-out`), alertId: '', hash: createHash('sha256').update(readFileSync(dbPath)).digest('hex'), mtimeMs: statSync(dbPath).mtimeMs }
+}
+function appendBulk(ledger: ReturnType<typeof openLedger>, ticket: string, ts: number, event: string, note: string | null): void {
+  seq += 1
+  ledger.appendEvent({ id: makeUlid(ts + seq), ts: ts + seq, company: COMPANY, issue: ticket, event: event as never, actor: 'AGENT-1', attempt: 1, level: 2, dept: DEPT, tokens: { input: 1 }, ...(note !== null ? { note } : {}) })
+}
+
+describe('provenance P1 fix：trace 不穿 hub / 规模有界', () => {
+  it('同 dept/person 的批量无关票不出现在 trace；nodes/edges 有界、输出 <100KB', async () => {
+    const fx = bulkFixture('trace-bounded', 60)
+    expect(await cmdProvenance(['trace', 'T-1', '--db', fx.dbPath, '--company', COMPANY, '--out-dir', fx.outDir])).toBe(0)
+    const { path: file, json, md } = readJson(fx.outDir, 'prov-trace-T-1')
+    const nodes = json['nodes'] as Array<{ kind: string; label: string }>
+    const ticketLabels = nodes.filter((n) => n.kind === 'ticket').map((n) => n.label)
+    expect(ticketLabels).toEqual(['T-1']) // 不穿 person/dept hub → 无无关 ticket
+    expect(nodes.length).toBeLessThan(100)
+    expect((json['edges'] as unknown[]).length).toBeLessThan(200)
+    expect(json['truncated']).toBe(false)
+    expect(statSync(file).size).toBeLessThan(100 * 1024)
+    expect(md.length).toBeLessThan(100 * 1024)
+    expect(md).toContain('规模上限：nodes≤200/edges≤400')
+  })
+})
+
+describe('provenance P1 fix：impact hub cap + truncated 标注', () => {
+  it('person hub fan-out 60>50：受影响列表 cap、inferred 标注、truncated/samples 明示', async () => {
+    const fx = bulkFixture('impact-cap', 60)
+    expect(await cmdProvenance(['impact', '--from', 'T-1', '--db', fx.dbPath, '--company', COMPANY, '--out-dir', fx.outDir])).toBe(0)
+    const { json, md } = readJson(fx.outDir, 'prov-impact')
+    const impact = json as {
+      affected: { tickets: string[] }
+      affectedTotals: { tickets: number }
+      confidence: { inferred: number }
+      hubs: Array<{ kind: string; shown: number; total: number; truncated: boolean; inferred: number }>
+      truncated: boolean
+      samples: string[]
+    }
+    expect(impact.affected.tickets.length).toBeLessThanOrEqual(51) // source + hub cap 50
+    expect(impact.affectedTotals.tickets).toBeGreaterThanOrEqual(51)
+    expect(impact.confidence.inferred).toBeGreaterThan(0)
+    const hub = impact.hubs.find((h) => h.kind === 'person')
+    expect(hub).toBeDefined()
+    expect(hub?.shown).toBeLessThanOrEqual(50)
+    expect(hub?.total).toBeGreaterThan(50)
+    expect(hub?.truncated).toBe(true)
+    expect(impact.truncated).toBe(true)
+    expect(impact.samples.some((x) => x.includes('fan-out'))).toBe(true)
+    expect(md).toContain('truncated=true')
+    expect(md).toContain('fan-out')
+  })
+})

@@ -12,7 +12,7 @@ import path from 'node:path'
 import { CONCISE, SECTION } from '../usage.ts'
 import { errText } from '../argv.ts'
 import { helpOk, usageFail, wantsHelp } from '../help.ts'
-import { readProvData, type ProvData } from './prov-data.ts'
+import { findProvAnchorTime, readProvData, type ProvData } from './prov-data.ts'
 import { buildProvenanceGraph, impactOf, traceTicket } from './provenance-graph.ts'
 import { renderImpactJson, renderImpactMarkdown, renderTraceJson, renderTraceMarkdown, writeProvFiles } from './prov-report.ts'
 
@@ -120,13 +120,23 @@ export async function cmdProvenance(argv: string[]): Promise<number> {
       console.log(`provenance trace 已生成：${jsonPath} / ${mdPath}（ticket=${parsed.ticket} nodes=${String(trace.nodes.length)} edges=${String(trace.edges.length)} gaps=${String(trace.gaps.length)}；observe-only）`)
       return 0
     }
+    // 默认窗口=from 锚点 ±24h（P1 fix：窗口真限制图展开，而非仅报告文字）
+    let since = parsed.since
+    let until = parsed.until
+    if (since === undefined && until === undefined) {
+      const anchor = findProvAnchorTime(parsed.args.db, parsed.args.company, parsed.from)
+      if (anchor !== null) {
+        since = anchor - 24 * 3_600_000
+        until = anchor + 24 * 3_600_000
+      }
+    }
     const data = readCommon(parsed.args, {
-      ...(parsed.since !== undefined ? { since: parsed.since } : {}),
-      ...(parsed.until !== undefined ? { until: parsed.until } : {}),
+      ...(since !== undefined ? { since } : {}),
+      ...(until !== undefined ? { until } : {}),
     })
     const graph = buildProvenanceGraph(data)
-    const impact = impactOf(graph, parsed.from, parsed.args.depth ?? 2)
-    const name = parsed.from.startsWith('alert:') || parsed.from.startsWith('ticket:') ? parsed.from : toLocalDate(parsed.until ?? Date.now()) + '-' + parsed.from
+    const impact = impactOf(graph, parsed.from, parsed.args.depth ?? 2, { ...(since !== undefined ? { since } : {}), ...(until !== undefined ? { until } : {}) })
+    const name = parsed.from.startsWith('alert:') || parsed.from.startsWith('ticket:') ? parsed.from : toLocalDate(since ?? parsed.until ?? Date.now()) + '-' + parsed.from
     const { jsonPath, mdPath } = writeProvFiles('impact', parsed.args.outDir, name, renderImpactJson(impact), renderImpactMarkdown(impact))
     console.log(
       `provenance impact 已生成：${jsonPath} / ${mdPath}（from=${parsed.from} source=${impact.source?.id ?? '未知/空'} tickets=${String(impact.affected.tickets.length)} gaps=${String(impact.gaps.length)}；observe-only 不动作）`,
