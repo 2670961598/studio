@@ -34,6 +34,7 @@ import { closeSessionArchive } from '../sessions/archive.ts' // 会话归档接�
 import type { EngineRuntime } from '../runtime/types.ts'
 import type { Inflight } from '../tick/types.ts'
 import { applyWorkTransition } from '../work/transition.ts'
+import { recordSourceFailure, recordSourceSuccess, serializeRoutingState } from '../routing/router.ts'
 
 /** 判定体（原收割后半零改动迁移）：折算态（要件 1/2）→ gateRunner（要件 3/4）→ 收口 */
 export async function finalizeHarvest(
@@ -85,6 +86,22 @@ export async function finalizeHarvest(
     terminalObserved: entry.foldCompleted !== undefined,
     terminalError,
   })
+  // —— task-56 多源路由回填：按本次在途单选中的源记录成功/失败（冷却下一 attempt 选下一源） ——
+  if (rt.modelRouting !== undefined && entry.routedSourceId !== undefined && entry.routedTier !== undefined) {
+    const sources = rt.modelRouting.sources[entry.routedTier]
+    const source = sources?.find((s) => s.id === entry.routedSourceId)
+    if (source !== undefined) {
+      if (requirements.fourOk) {
+        rt.modelRouting.state = recordSourceSuccess(rt.modelRouting.state, source, now())
+      } else {
+        const err = entry.foldTerminalError !== undefined ? { message: entry.foldTerminalError } : { status: 0, message: 'harvest-not-four' }
+        const rec = recordSourceFailure(rt.modelRouting.state, source, err, now())
+        rt.modelRouting.state = rec.state
+        makeEvent('ESCALATE', fresh, entry.attempt, tickEvents, { note: `MODEL_ROUTING_FAILOVER;tier=${entry.routedTier};source=${source.id};class=${rec.class};cooldownMs=${String(rec.cooldownMs)}（task-56）` })
+      }
+      ledger.kvSet('model-routing.state', serializeRoutingState(rt.modelRouting.state))
+    }
+  }
   // 收割批次登记（IMPL-06-03 / REC-EVD-01 观察面）：区间幂等键/证据项草案/gaps/结构位——
   // 零事件零迁移零预算动作（判定与收口仍在下文与 failHarvest）
   harvestBatches.record({ ticket, attempt: entry.attempt, deliverer: entry.personId }, requirements, { reportPath: gate.reportPath })

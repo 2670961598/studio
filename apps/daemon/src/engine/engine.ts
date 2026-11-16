@@ -269,6 +269,18 @@ export function createEngine(deps: EngineDeps): Engine {
     get config(): Engine['config'] {
       return rt.config
     },
+    modelRoutingHealth: () => {
+      if (rt.modelRouting === undefined) return undefined
+      const now = Date.now()
+      return {
+        sources: Object.entries(rt.modelRouting.sources).flatMap(([tier, sources]) =>
+          (sources ?? []).map((source) => {
+            const st = rt.modelRouting?.state[source.id]
+            return { tier, id: source.id, available: (st?.cooldownUntil ?? 0) <= now, cooldownUntil: st?.cooldownUntil ?? 0, ...(st?.lastFailureClass !== undefined ? { lastFailureClass: st.lastFailureClass } : {}), ...(st?.lastSuccessAt !== undefined ? { lastSuccessAt: st.lastSuccessAt } : {}) }
+          }),
+        ),
+      }
+    },
     get harvestBatches() {
       return rt.harvestBatches
     },

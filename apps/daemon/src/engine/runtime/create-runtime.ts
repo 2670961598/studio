@@ -36,6 +36,7 @@ import type { EngineDeps } from './contract.ts'
 import { harvestHostOf, stallHostOf } from './hosts.ts'
 import type { EngineRuntime, EngineSeams } from './types.ts'
 import { createCompanyWriteQueue } from '../company-write/runtime.ts'
+import { deserializeRoutingState } from '../routing/router.ts'
 
 /** 装配引擎运行时宿主（构造期一次性；零拍内副作用） */
 export function createRuntime(deps: EngineDeps, seams: EngineSeams): EngineRuntime {
@@ -102,6 +103,8 @@ export function createRuntime(deps: EngineDeps, seams: EngineSeams): EngineRunti
 
   // 预算闸依赖（docs/16-§三 / 20-§六.8）：判定=core reserve/settle，落账=ledger.appendBudget，
   // 行 id=makeId（ULID，id.ts）；catalog 缺省=态 B 降级（两态见 budget-gate.ts 头注）
+  // task-56：模型多源路由状态（daemon_kv 持久化；坏值保守重置）
+  const routingState = deps.modelRouting !== undefined ? deserializeRoutingState(ledger.kvGet('model-routing.state')) : undefined
   const budgetDeps: BudgetGateDeps = {
     ledger,
     makeId,
@@ -209,6 +212,8 @@ export function createRuntime(deps: EngineDeps, seams: EngineSeams): EngineRunti
     config,
     catalog: deps.catalog,
     acceptance,
+    routingWarnings: new Set<string>(),
+    ...(deps.modelRouting !== undefined && routingState !== undefined ? { modelRouting: { ...deps.modelRouting, state: routingState } } : {}),
     applyModelsUpdate: (update) => {
       // task-34：拍边界一次性替换内存价目表/角色路由；在途 worker 不停；adapter model
       // 声明刷新归 serve 层（DshAdapter.setModel——in-flight 用 launch 捕获值不串档）
@@ -217,6 +222,7 @@ export function createRuntime(deps: EngineDeps, seams: EngineSeams): EngineRunti
         ;(rt.config as { modelTierByRole?: Readonly<Record<string, import('@studio-next/core').TierId>> }).modelTierByRole = update.modelTierByRole
       }
       ;(budgetDeps as { catalog?: import('@studio-next/contract').ModelCatalog }).catalog = update.catalog
+      if (update.sources !== undefined && rt.modelRouting !== undefined) rt.modelRouting.sources = update.sources
       mergeHost.modelTiers = () => update.catalog.tiers()
     },
     records,

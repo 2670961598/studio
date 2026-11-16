@@ -211,7 +211,7 @@ export function buildServeRuntime(
   const { workspaceRoot, workspaceClock } = wireWorkspaceFace(config, snapshot, clock, log)
 
   // —— executor 面装配（注册表/桥接 overlay/价目表与档位/judge 两址）——体=runtime-executor（20-§十五.三 先拆再增：本段零 engine 实例依赖，构造结果供下方 engine 注入与启动日志）
-  const { registry, catalog, modelRoles, modelTierTickets, judgeHook, acceptance, realGate, restartProbe, capabilitySupply, dispatchSelection } = wireExecutorFace(config, {
+  const { registry, catalog, modelRoles, modelTierTickets, modelSources, judgeHook, acceptance, realGate, restartProbe, capabilitySupply, dispatchSelection } = wireExecutorFace(config, {
     ledger,
     clock,
     log,
@@ -322,6 +322,7 @@ export function buildServeRuntime(
     submit: (order: unknown) => (companyWriteFace === undefined ? Promise.reject(new Error('company-write 未装配')) : companyWriteFace.submit(order)),
   }
   const engine = createEngine({
+    ...(modelSources !== undefined ? { modelRouting: { sources: modelSources, rootDir: path.resolve(config.rootDir) } } : {}),
     platform: enginePlatform,
     signature: identity.signature, // 署名三值注入（SEC-FC-06/SEC-SIG-01；studio-dev-529）：system＋onBehalfOf=决定人——engine 写路径 actor 取决定人，构造期校验先行
     ...(workerKeys !== undefined ? { workerKeys } : {}),
@@ -384,8 +385,8 @@ export function buildServeRuntime(
     clock,
     makeId: makeUlid,
     log,
-    apply: ({ catalog, modelTierByRole, tierModels }) => {
-      engine.applyModelsUpdate({ catalog, ...(modelTierByRole !== undefined ? { modelTierByRole } : {}) })
+    apply: ({ catalog, modelTierByRole, tierModels, sources }) => {
+      engine.applyModelsUpdate({ catalog, ...(modelTierByRole !== undefined ? { modelTierByRole } : {}), ...(sources !== undefined ? { sources } : {}) })
       // adapter model 声明镜像刷新：仅影响**后续** launch（DshAdapter 在途用 launch 捕获值）
       for (const [name, model] of Object.entries(tierModels)) {
         if (!registry.list().some((entry) => entry.name === name)) continue

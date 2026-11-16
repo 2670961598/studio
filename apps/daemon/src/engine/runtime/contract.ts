@@ -73,6 +73,11 @@ export interface EngineDeps extends HarvestRecordingDeps {
    * 仅票级帽；两态说明见 src/engine/budget-gate.ts 头注）。
    */
   catalog?: ModelCatalog
+  /** task-56 多源模型路由计划（缺省=面关；sources per tier + overlay rootDir） */
+  modelRouting?: {
+    sources: Partial<Record<import('@studio-next/core').TierId, readonly import('@studio-next/core').ModelSourceSpec[]>>
+    rootDir: string
+  }
   /**
    * worker 级 wkey 生命周期（可选注入；缺省不注入=关闭，行为零变更）：
    * dispatch 相位按单签发+env 通道注入；GATE_FAIL/断路（DEV-46 非终局）=env-离场不吊销，
@@ -195,6 +200,8 @@ export interface Engine extends HarvestRecordingObservation {
   /** 到期强收：整树杀在途 + running 收口 interrupted（不判四要件；返回如实清单） */
   forceSettleTimeout(): Promise<DrainSettleResult>
   readonly config: EngineConfig
+  /** task-56 路由源只读健康面（未接线=undefined） */
+  modelRoutingHealth?(): { sources: readonly { tier: string; id: string; available: boolean; cooldownUntil: number; lastFailureClass?: string; lastSuccessAt?: number }[] } | undefined
   /** 收割批次簿观测面（IMPL-06-03 / REC-EVD-01）：只读视图；写口仅收割相位（batch.ts） */
   readonly harvestBatches: HarvestBatchLedger
 }
@@ -209,6 +216,8 @@ export interface ModelRuntimeUpdate {
   catalog: ModelCatalog
   /** models.yaml roles（岗位→档）——缺省不换（保持启动装配；热切正常恒传） */
   modelTierByRole?: Readonly<Record<string, TierId>>
+  /** task-56：sources 计划热切（缺省不换；serve 层热点替换，在途不换源） */
+  sources?: Partial<Record<TierId, readonly import('@studio-next/core').ModelSourceSpec[]>>
 }
 
 /** applyCompanyUpdate 入参：公司目录快照在引擎内的全部消费面（整组换，不半换） */

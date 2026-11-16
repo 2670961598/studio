@@ -34,6 +34,8 @@ export interface ModelsHotSwapApplyInput {
   readonly modelTierByRole: Readonly<Record<string, TierId>>
   /** executor 位名 → provider/model（serve 层刷新 DshAdapter 声明镜像；在途不受影响） */
   readonly tierModels: Readonly<Record<string, string | undefined>>
+  /** task-56：新 sources 计划（serve 热切原子替换；在途不换源） */
+  readonly sources?: Partial<Record<import('@studio-next/core').TierId, readonly import('@studio-next/core').ModelSourceSpec[]>>
   /** 已落盘 overlay 绝对路径（观测/测试） */
   readonly overlays: Readonly<Record<TierId, string>>
 }
@@ -185,7 +187,7 @@ export function createModelsHotSwap(deps: ModelsHotSwapDeps): ModelsHotSwap {
     let overlays: Record<TierId, string>
     try {
       overlays = provisionModelTierOverlays(path.resolve(deps.rootDir), parsed)
-      deps.apply({ catalog, modelTierByRole: parsed.roles, tierModels, overlays })
+      deps.apply({ catalog, modelTierByRole: parsed.roles, tierModels, overlays, ...(parsed.sources !== undefined ? { sources: parsed.sources } : {}) })
     } catch (err) {
       restore(backups)
       stats.failures += 1

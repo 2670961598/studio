@@ -25,7 +25,7 @@ import {
 } from '@studio-next/adapters'
 import { EMPTY_SELECTION_CHAIN } from '@studio-next/adapters/bindcard'
 import { extractPersonAttrs } from '@studio-next/company'
-import { assertJudgeRoleLow, createModelCatalog, fingerprint, parseModelsYaml, type ModelsConfig, type TierId } from '@studio-next/core'
+import { assertJudgeRoleLow, createModelCatalog, fingerprint, localDateKey, modelSourcesOf, parseModelsYaml, type ModelSourceSpec, type ModelsConfig, type TierId } from '@studio-next/core'
 import { configInvalid } from '@studio-next/contract'
 import type { ModelCatalog, TicketId } from '@studio-next/contract'
 import type { Ledger } from '@studio-next/store'
@@ -41,6 +41,7 @@ import type { DispatchSelectionDeps } from '../../engine/work/dispatch-selection
 import { wireCapabilitySupply } from './capability-face.ts'
 import type { CapabilitySupplyFace } from '../../engine/capability/index.ts'
 import type { ServeConfig } from './config.ts'
+import { makeUlid } from '../../engine/tools/id.ts'
 
 /**
  * demo 冻结验收命令（单一常量双消费：装配器 L4 acceptance + Blind 读面验收面——
@@ -73,6 +74,8 @@ export interface ExecutorFace extends RestartProbeFace {
   modelRoles: Readonly<Record<string, TierId>> | undefined
   /** 显式单级覆盖表（modelTierTickets 解析产物；未配=undefined） */
   modelTierTickets: Readonly<Record<TicketId, TierId>> | undefined
+  /** task-56：models.yaml sources 归一计划（缺省=旧单源；dispatch 选源/overlay 用） */
+  modelSources?: Partial<Record<TierId, readonly ModelSourceSpec[]>> | undefined
   /** 队列小模型两址钩子（judgeSites 开且面齐时） */
   judgeHook: QueueJudgeHook | undefined
   /** 冻结验收命令（acceptance 配置给定=真单模式；缺省 demo 占位） */
@@ -192,6 +195,7 @@ export function wireExecutorFace(config: ServeConfig, deps: ExecutorFaceDeps): E
   let agentConf: ReturnType<typeof loadAgentConfig> | undefined
   /** models.yaml 早解析结果（agentYaml 分支注入声明镜像用；价目表分支复用，避免二次读盘） */
   let parsedModelsEarly: ModelsConfig | undefined
+  let modelSourcesEarly: Partial<Record<TierId, readonly ModelSourceSpec[]>> | undefined
   let midMountedEarly: readonly string[] = []
   /** 早生成的 tier overlays（agentYaml 分支；价目表分支复用，避免二次写盘/日志分叉） */
   let tierOverlaysEarly: Record<TierId, string> | undefined
@@ -272,7 +276,37 @@ export function wireExecutorFace(config: ServeConfig, deps: ExecutorFaceDeps): E
     const parsed = parsedModelsEarly ?? parseModelsYaml(readFileSync(path.resolve(config.models), 'utf8'))
     catalog = createModelCatalog(parsed)
     modelRoles = parsed.roles
-    log(`[serve] 价目表装载：${config.models}（fingerprint=${fingerprint(parsed)}；估算态 A：estimateCost 校准+双帽）`)
+    modelSourcesEarly = parsed.sources
+    // task-56：per-source price snapshot 播种（实际源价目归属；同日幂等；异常只告警不拒启）
+    const priceDate = localDateKey(clock())
+    const seeded = new Set<string>()
+    for (const tier of ['high', 'mid', 'low'] as const) {
+      for (const source of modelSourcesOf(parsed, tier)) {
+        const key = `${source.provider}/${source.model}`
+        if (seeded.has(key)) continue
+        seeded.add(key)
+        try {
+          ledger.appendPriceSnapshot({
+            id: `ps-${makeUlid(clock())}`,
+            company: config.company,
+            provider: source.provider,
+            model: source.model,
+            price_date: priceDate,
+            slot: 'peak',
+            input_per_m: source.price.inputPerM,
+            output_per_m: source.price.outputPerM,
+            ...(source.price.cacheReadPerM !== undefined ? { cache_read_per_m: source.price.cacheReadPerM } : {}),
+            ...(source.price.cacheCreationPerM !== undefined ? { cache_creation_per_m: source.price.cacheCreationPerM } : {}),
+            source_note: `models.yaml sources[] 路由源价目（tier=${tier};source=${source.id}；task-56）`,
+            source_ticket: `seed-routing:${priceDate}:${tier}:${source.id}`,
+            published_by: 'serve-routing',
+          })
+        } catch (err) {
+          log(`[serve] 路由源价目播种警告（${tier}/${source.id}）：${err instanceof Error ? err.message : String(err)}（不拒启；预算归属可能缺价）`)
+        }
+      }
+    }
+    log(`[serve] 价目表装载：${config.models}（fingerprint=${fingerprint(parsed)}；估算态 A：estimateCost 校准+双帽；sources price snapshots seeded=${String(seeded.size)}）`)
     // —— 模型档执行面（studio-dev-196，制作人 2026-10-22 三档定调）：低/高档 dsh overlay
     //    生成（mid=现役缺省不生成）+ 档位声明一致性闸（agent.yaml 档位镜像 vs tiers 漂移
     //    =启动拒——三面同源纪律，见 src/engine/model-tier.ts 头注）。
@@ -370,6 +404,7 @@ export function wireExecutorFace(config: ServeConfig, deps: ExecutorFaceDeps): E
     registry,
     capabilitySupply,
     catalog,
+    ...(modelSourcesEarly !== undefined ? { modelSources: modelSourcesEarly } : {}),
     modelRoles,
     modelTierTickets: modelTierTicketsMap,
     judgeHook,

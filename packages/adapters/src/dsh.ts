@@ -151,6 +151,8 @@ export class DshAdapter implements ExecutorAdapter {
   private readonly cmd: readonly string[]
   private readonly seatbelt: DshSeatbeltOptions | undefined
   private model: string | undefined
+  /** task-56：本次 launch 的源 overlay（per-source --patch；launch 前由 serve 路由层设置，在途不影响） */
+  private sourceOverlayPath: string | undefined
 
   /**
    * cmd 可注入（测试用假 CLI）；缺省 `dsh --profile headless --json`（17-§6）。
@@ -176,6 +178,21 @@ export class DshAdapter implements ExecutorAdapter {
    */
   setModel(model: string | undefined): void {
     this.model = model
+  }
+
+  /** task-56：设置本 executor 下一次 launch 的源 overlay（undefined=清空）；已有在途进程不受影响 */
+  setSourceOverlay(overlayPath: string | undefined): void {
+    this.sourceOverlayPath = overlayPath
+  }
+
+  /** task-66 F2：读当前声明（execute 在 launch 前后恢复用） */
+  getSourceOverlay(): string | undefined {
+    return this.sourceOverlayPath
+  }
+
+  /** task-66 F2：读当前 model 声明（execute 在 launch 前后恢复用） */
+  getModel(): string | undefined {
+    return this.model
   }
 
   /** seatbelt 圈定是否实际生效（mode='auto' 且构造在案） */
@@ -284,14 +301,22 @@ export class DshAdapter implements ExecutorAdapter {
 
   /** launch/resumeWithSession 共用落法：extraArgs 插在 `--` 任务串之前（dsh 旗标区） */
   private async spawnHeadless(task: TaskBrief, extraArgs: string[]): Promise<Handle> {
-    const [binary = DSH_DEFAULT_CMD[0] ?? 'dsh', ...args] = this.cmd
+    const [binary = DSH_DEFAULT_CMD[0] ?? 'dsh', ...baseArgs] = this.cmd
+    // task-66 F1：附加选项（per-source --patch / session-id 等）必须插在 `--json` **之前**，
+    // `--json` 是 dsh 的输出旗标、须收尾；默认 cmd 含 --json 时不得把 --patch 追加到其后。
+    const jsonIndex = baseArgs.lastIndexOf('--json')
+    const insertAt = jsonIndex >= 0 ? jsonIndex : baseArgs.length
+    const additions = [...(this.sourceOverlayPath !== undefined ? ['--patch', this.sourceOverlayPath] : []), ...extraArgs]
+    const args = additions.length > 0
+      ? [...baseArgs.slice(0, insertAt), ...additions, ...baseArgs.slice(insertAt)]
+      : baseArgs
     const taskText = await readTaskText(task.briefPath)
     // seatbelt 写域圈定（DEV-29 原型 attempt3，docs/43-§五②）：profile 随派发参数化生成
     // ——写域缺省=task.workspace+dshHomeRedirect+extraWriteRoots（judge 派发面走
     // writeRootsOverride 覆写=仅一次性 DSH_HOME，studio-dev-164 红队 2）；profile 缺省落
     // workspace/.seatbelt/（证据随单走，17-§6；judge 面 profileDir 移工作区外）；argv 以
     // sandbox-exec 包装（应用点=未沙箱派发方，嵌套 apply 被拒——detect 前置已闸）。
-    let wrappedArgv: string[] = [binary, ...args, ...extraArgs, '--', taskText]
+    let wrappedArgv: string[] = [binary, ...args, '--', taskText]
     let dshHomeEnv: Record<string, string> = {}
     // 外层 seatbelt 是否**实际包装了 argv**（=圈定生效的唯一判据：mode='auto' 且 profile 已
     // 生成/落盘/包装；env 的内层沙箱透传（见下）只以本标志为条件，不以「配了 mode='auto'」为
@@ -323,7 +348,7 @@ export class DshAdapter implements ExecutorAdapter {
         mkdirSync(profileDir, { recursive: true })
         const profilePath = join(profileDir, seatbeltProfileFileName())
         writeFileSync(profilePath, profileText, 'utf8')
-        wrappedArgv = seatbeltArgv(profilePath, [binary, ...args, ...extraArgs, '--', taskText])
+        wrappedArgv = seatbeltArgv(profilePath, [binary, ...args, '--', taskText])
         outerSeatbeltApplied = true
       }
     }

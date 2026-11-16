@@ -52,6 +52,8 @@ export interface HealthzInput {
   readonly maxTickAgeMs?: number
   /** 链摘要最大可接受陈旧度（缺省 10min；过期=不健康，防「拿旧摘要冒充」） */
   readonly chainMaxAgeMs?: number
+  /** task-56 路由源只读状态（缺省不出现于 body） */
+  readonly routing?: { readonly sources: readonly { readonly tier: string; readonly id: string; readonly available: boolean; readonly cooldownUntil: number; readonly lastFailureClass?: string; readonly lastSuccessAt?: number }[] } | undefined
   /** 事件循环延迟观测（studio-dev-785 加法字段；缺省不出现于 body） */
   readonly loop?: { readonly lagMs: number; readonly windowMs: number }
 }
@@ -154,6 +156,7 @@ export function buildHealthz(input: HealthzInput): HealthzReport {
         sinceSeq: input.chain.sinceSeq ?? 0,
       },
       ...(input.loop !== undefined ? { loop: { lagMs: Math.max(0, input.loop.lagMs), windowMs: Math.max(0, input.loop.windowMs) } } : {}),
+      ...(input.routing !== undefined ? { routing: input.routing } : {}),
       reasons,
     },
   }

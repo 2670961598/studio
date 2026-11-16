@@ -105,9 +105,29 @@ roles: {main_worker: mid, verifier: high}
 - 价格归属 work_records/price snapshot；日闭 COST_RECON；
 - 本地 daemon E2E：两源 429→第二源成功、耗尽切换、全失败可读；gate/CLOSE 不回归；typecheck/定向/verify:v2/无 skip。
 
-## 9. 实现状态/拆分建议
+## 9. 实现状态（task-56 dispatch 接线；task-66 返工修订 2026-11-17）
 
-本切片已落：
+- F1（task-66）：per-source `--patch` / session-id 等附加选项统一插在 `--json` **之前**（默认 cmd 含 --json 时不再尾插）；
+- F2：execute 在 launch 前捕获 dsh 的 overlay/model，launch 成功/失败 finally 清回（argv 在 spawn 快照，在途不串）；
+- F3：预算 remaining 用引擎预算折叠 `cap − settled − reserved`（issue/person/company scope）；allowBudgetDowngrade 暂无配置来源，显式默认 false（MVP 限制，接配置另立提案）；
+- F4：预算预检拒绝先落 `ESCALATE` note `MODEL_ROUTING_BUDGET_HOLD;…`（tier/cap/remaining/estimated/source），再 fail-closed，不新增事件词；**按 ticket+source 去重**（同票同源一次 HOLD，连续 tick 重试不刷屏）。
+
+
+已落：
+- dispatch 选源 → per-source overlay（DshAdapter launch 尾插 `--patch`，在途 argv 快照）→ launch；
+- source-aware budget reserve（选源价目刷入本次 catalog）；任务 cap + 公司日预算(cost_guard.dailyBudgetUsd.company−当日 cost_daily) 预检；超帽 HOLD（`MODEL_ROUTING_FAIL;BUDGET_EXCEEDED`），不降档；
+- harvest 回填（四要件**成功后才** recordSuccess；失败按分类 recordFailure 冷却 + ESCALATE `MODEL_ROUTING_FAILOVER`；状态 daemon_kv；launch 成功≠收割成功，不在 dispatch 提前记 success）；下一 attempt 选下一源（同一次 dispatch 内 launch 失败不自动重试——**限制**）；
+- per-source price snapshot 启动播种（source_ticket=`seed-routing:<date>:<tier>:<id>`；同日幂等/异常告警不拒启）；
+- models.yaml 热切：sources 随 applyModelsUpdate 原子替换（在途不换源）；fingerprint 已含 sources（core canonicalize 全对象）；
+- host E2E 脚本 `scripts/qa/model-routing-e2e.sh`（E2E 覆盖 failover/fail-all/budget/single；budget 场景 cap=1+超大整数源价，F4 落 `ESCALATE MODEL_ROUTING_BUDGET_HOLD;` 可读事件，断言 DISPATCH=0+BUDGET_EXCEEDED；单测覆盖预算 precheck 全不可用）（**task-59 第10跑最终 B 口径**：E2E 只验路由本体——failover=dispatch≥2+primary/secondary routing notes+cooldown；fail-all=dispatch≥2+恰两条 MODEL_ROUTING_FAILOVER+worker argv primary/secondary；**ALL_SOURCES_UNAVAILABLE 由 router 单测覆盖**（`全部冷却/禁用 → ALL_SOURCES_UNAVAILABLE 可读`），不在 E2E 硬等；四要件/CLOSE 由单测+生产验收覆盖，不冒充三层全过）（failover/fail-all/budget/single 四场景；宿主需非嵌套 seatbelt；显式 `seatbeltTier: workspace-write` + `.AIWS` 写根；**`OUT/root` 先 realpath**（macOS `/tmp`→`/private/tmp`，否则 seatbelt profile 写域与真实路径不一致导致 worker EPERM/REPORT 缺失——task-59 宿主根因）；worker 记录 argv/sourceHit 供复验）。
+未完成/风险（MVP 明示）：
+- healthz 已加只读 `routing.sources[]`（available/cooldownUntil/lastFailureClass/lastSuccessAt）；面板专用视图未接；
+- 同一次 dispatch 内 launch 失败的自动换源未做（下一 attempt 换源；E2E 脚本 failover 验证这一点）；
+- source price snapshot 的“实际源归属”在 harvest 依赖 adapter setModel + 新播种快照；混合源日需日闭按源汇总注明；
+- hot swap 新源 price snapshot 不即时补种（下一次 serve 启动/ seed tick 才补；MVP 限制）；
+- host E2E 未在 builder 会话跑（嵌套 seatbelt 阻塞 dsh detect），需 Lead/verifier 宿主复跑脚本。
+
+本切片（task-51）已落：
 - `packages/core/src/models.ts`：sources schema/归一/fingerprint 待补；`modelSourcesOf`；
 - `apps/daemon/src/engine/routing/router.ts`：选择/预算预检/失败分类/冷却/half-open/序列化；
 - `apps/daemon/test/v2/routing/model-routing.test.ts` 5/5。

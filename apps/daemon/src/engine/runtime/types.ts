@@ -110,6 +110,14 @@ export interface EngineRuntime {
   readonly catalog: ModelCatalog | undefined
   /** 验收口径门（task-39）：派发/CLOSE 前读；warned=告警去重集 */
   acceptance: import('../acceptance/index.ts').AcceptanceGateConfig
+  /** task-66 F4：路由告警去重（ticket|source|kind；避免同 tick/连续 tick 刷屏） */
+  routingWarnings: Set<string>
+  /** task-56 多源路由：源计划 + rootDir + 持久化状态（dispatch 选源/overlay/冷却） */
+  readonly modelRouting?: {
+    sources: Partial<Record<import('@studio-next/core').TierId, readonly import('@studio-next/core').ModelSourceSpec[]>>
+    readonly rootDir: string
+    state: import('../routing/router.ts').RoutingState
+  }
   /** task-34 模型热切：拍边界替换价目表/角色路由（实现 clamp 在 createRuntime 闭包内） */
   applyModelsUpdate(update: import('./contract.ts').ModelRuntimeUpdate): void
   readonly records: RecordWirePort | undefined

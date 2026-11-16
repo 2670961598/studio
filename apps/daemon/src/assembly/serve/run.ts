@@ -353,6 +353,7 @@ export async function runServe(
             chain: readChainSnapshot(),
             chainMaxAgeMs,
             loop: { lagMs: loopLagMaxMs, windowMs: Math.max(1, Date.now() - loopLagWindowStart) },
+            ...(engine.modelRoutingHealth?.() !== undefined ? { routing: engine.modelRoutingHealth() } : {}),
           }),
       })
     }

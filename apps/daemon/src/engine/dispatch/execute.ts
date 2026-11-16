@@ -57,6 +57,9 @@ import type { IssueRecord } from '@studio-next/contract'
 import { releaseWithEpoch } from '../lanes/release.ts'
 import { CONVERSATION_ACCEPTANCE } from '../conversation/protocol.ts'
 import { evaluateDispatchAcceptance } from '../acceptance/index.ts'
+import { selectModelSource } from '../routing/router.ts'
+import { provisionSourceOverlay } from '../routing/overlay.ts'
+import { budgetView, createModelCatalog, foldBudgets, type ModelsConfig, type ModelSourceSpec } from '@studio-next/core'
 
 export async function executeDispatch(
   rt: EngineRuntime,
@@ -289,8 +292,65 @@ export async function executeDispatch(
       // 判定 → 过闸=双行落账（issue 先 person 后；落账与 launch 之间失败=不派，异常
       // 上抛本 catch→DISPATCH_FAIL）；超帽=refusal 行落账+不派；duplicate=沿用未结预留
       // （失败保留重派语义）。拟稿待批点清单见 src/engine/budget-gate.ts 头注。
+      // —— task-56 多源路由：选源（优先级+可用性+预算预检）→ per-source overlay → 源价目预算闸 ——
+      let routedSource: ModelSourceSpec | undefined
+      let routedCatalog: ReturnType<typeof createModelCatalog> | undefined
+      let routingNote = ''
+      let routedBinding: { dsh: { setSourceOverlay?: (p: string | undefined) => void; setModel?: (m: string | undefined) => void; getSourceOverlay?: () => string | undefined; getModel?: () => string | undefined }; overlay: string | undefined; model: string | undefined } | undefined
+      if (rt.modelRouting !== undefined && tierResolve !== undefined && rt.catalog !== undefined && adapter.name === 'dsh') {
+        const sources = rt.modelRouting.sources[tierResolve.tier]
+        if (sources !== undefined && sources.length > 0) {
+          const briefChars = assembled.brief.text.length
+          const inputTokens = Math.ceil(briefChars / 4)
+          const tokens = { input: inputTokens, output: Math.ceil(inputTokens * 0.5) }
+          const ticketCap = taskBrief.budgetCap?.usd ?? config.budgetTicketCapUsd
+          // task-66 F3：remaining = cap − settled − reserved（沿用 budget-gate 的 issue/person/company 行折叠口径）
+          const budgetState = foldBudgets([
+            ...ledger.queryBudgets({ scope_kind: 'issue', scope_id: ticket }),
+            ...ledger.queryBudgets({ scope_kind: 'person', scope_id: person.id }),
+            ...ledger.queryBudgets({ scope_kind: 'company', scope_id: config.company }),
+          ])
+          const ticketView = budgetView(budgetState, 'issue', ticket)
+          const ticketRemaining = ticketCap !== undefined ? Math.max(0, ticketCap - ticketView.settled - ticketView.reserved) : undefined
+          const companyView = budgetView(budgetState, 'company', config.company)
+          const companyRemaining = costGuard !== undefined
+            ? Math.max(0, costGuard.dailyBudgetUsd.company - companyView.settled - companyView.reserved)
+            : undefined
+          // allowBudgetDowngrade 暂无配置来源：显式默认 false（MVP 限制，接配置另立提案）
+          const outcome = selectModelSource({
+            tier: tierResolve.tier,
+            sources,
+            state: rt.modelRouting.state,
+            now: at,
+            tokens,
+            ...(ticketRemaining !== undefined || companyRemaining !== undefined
+              ? { budget: { ...(ticketRemaining !== undefined ? { ticketRemainingUsd: ticketRemaining } : {}), ...(companyRemaining !== undefined ? { companyRemainingUsd: companyRemaining } : {}), allowBudgetDowngrade: false } }
+              : { budget: { allowBudgetDowngrade: false } }),
+          })
+          if (!outcome.ok) {
+            if (outcome.reason === 'BUDGET_EXCEEDED') {
+              // task-66 F4 去重：同 ticket+source 只留一条 HOLD（连续 tick 重试不刷屏）
+              const warnKey = `${ticket}|${outcome.source?.id ?? 'none'}|budget-hold`
+              if (!rt.routingWarnings.has(warnKey)) {
+                rt.routingWarnings.add(warnKey)
+                makeEvent('ESCALATE', fresh, index.attemptOf(ticket), tickEvents, {
+                  note: `MODEL_ROUTING_BUDGET_HOLD;tier=${tierResolve.tier};cap=${ticketCap !== undefined ? `ticket=$${String(ticketCap)}` : 'ticket=none'};remaining=ticket=$${ticketRemaining !== undefined ? ticketRemaining.toFixed(4) : 'n/a'};company=$${companyRemaining !== undefined ? companyRemaining.toFixed(4) : 'n/a'};estimated=$${outcome.estimatedUsd?.toFixed(4) ?? 'n/a'};source=${outcome.source?.id ?? 'n/a'}（task-66 budget HOLD；不降档）`,
+                })
+              }
+            }
+            const note = `MODEL_ROUTING_FAIL;tier=${tierResolve.tier};reason=${outcome.reason};${outcome.detail}（task-56 fail-closed 不降档）`
+            return fail(note)
+          }
+          routedSource = outcome.source
+          const tiers = Object.fromEntries(rt.catalog.tiers().map((t) => [t.tier, { provider: t.provider, model: t.model, price: t.price }])) as ModelsConfig['tiers']
+          tiers[tierResolve.tier] = { provider: routedSource.provider, model: routedSource.model, price: routedSource.price }
+          routedCatalog = createModelCatalog({ tiers, roles: rt.config.modelTierByRole ?? { main_worker: 'mid' } })
+          routingNote = `;routing=${routedSource.id};routing-price=in$${String(routedSource.price.inputPerM)}/out$${String(routedSource.price.outputPerM)}${outcome.skipped.length > 0 ? `;routing-skipped=${outcome.skipped.join('|')}` : ''}`
+        }
+      }
       const personDay = personDayGateInput(costGuard, person, ledger, at) // 闸四·人日 hard 线（R6）：段声明且有 gate 档才带
-      const gate = await gateDispatch(budgetDeps, {
+      const gateDeps = routedCatalog !== undefined ? { ...budgetDeps, catalog: routedCatalog } : budgetDeps
+      const gate = await gateDispatch(gateDeps, {
         ticket,
         personId: person.id,
         adapter,
@@ -311,6 +371,14 @@ export async function executeDispatch(
         )
       }
       if (gate.kind === 'reserved') budget.budgetReserved += 1
+      if (routedSource !== undefined && rt.modelRouting !== undefined && tierResolve !== undefined) {
+        const overlayPath = provisionSourceOverlay(rt.modelRouting.rootDir, tierResolve.tier, routedSource)
+        const dsh = adapter as { setSourceOverlay?: (p: string | undefined) => void; setModel?: (m: string | undefined) => void; getSourceOverlay?: () => string | undefined; getModel?: () => string | undefined }
+        routedBinding = { dsh, overlay: dsh.getSourceOverlay?.(), model: dsh.getModel?.() }
+        dsh.setSourceOverlay?.(overlayPath)
+        dsh.setModel?.(`${routedSource.provider}/${routedSource.model}`)
+        // task-59：success 归 harvest 收口（launch 成功≠收割成功），此处不写 success/状态
+      }
       rt.crash.dispatchReserved() // 崩溃注入①（F3-11）：reserve 双行已落账、launch 前——受控测试缝，默认零行为（src/engine/crash-points.ts）
       // worker wkey 签发+注入（17-§7：预算过闸后、launch 前——超帽拒派不签发凭据）：
       // mint（scope=六动词全集、一 attempt 一 key）→ TaskBrief.credentials（v1.4 env 通道，
@@ -327,7 +395,15 @@ export async function executeDispatch(
         ...taskBrief,
         ...(minted !== undefined ? { credentials: workerKeyCredentials(minted.token) } : {}),
       }
-      launched = await adapter.launch(launchBrief)
+      try {
+        launched = await adapter.launch(launchBrief)
+      } finally {
+        // task-66 F2：launch 后清回；argv 已在 spawn 时快照，在途子进程不受影响；失败也清
+        if (routedBinding !== undefined) {
+          routedBinding.dsh.setSourceOverlay?.(routedBinding.overlay)
+          routedBinding.dsh.setModel?.(routedBinding.model)
+        }
+      }
       rt.crash.dispatchLaunched() // 崩溃注入②（F3-11）：launch 已返回、work_records 在途落账前——受控测试缝，默认零行为
       startSessionArchive(ledger, { ticket, personId: person.id, sessionId: launched.sessionId, at }) // 相位 3 会话归档 start 行（写失败抛→DISPATCH_FAIL，无归档不派）
       const liveLaneEpoch = lanes.acquire(action.lane, ticket, at) // studio-dev-809/812：二次 acquire 保留；inflight 用最新租约 epoch
@@ -355,6 +431,7 @@ export async function executeDispatch(
         lane: action.lane,
         laneEpoch: liveLaneEpoch,
         personId: person.id,
+        ...(routedSource !== undefined && tierResolve !== undefined ? { routedSourceId: routedSource.id, routedTier: tierResolve.tier } : {}),
         dispatchedAtSeq: seq,
         ...(instructionsPath !== undefined ? { instructionsPath } : {}),
       })
@@ -373,7 +450,7 @@ export async function executeDispatch(
         size: Buffer.byteLength(assembled.agentsMd.text, 'utf8'),
         payload_hash: `sha256:${createHash('sha256').update(assembled.agentsMd.text, 'utf8').digest('hex')}`,
         ...(resumeFace !== undefined ? { causation_id: resumeFace.causationId } : {}),
-        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version}${tierFace?.noteAnchor ?? ''};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${minted !== undefined ? `;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=${minted.nonce}` : ''}${action.breakerProbe === true ? `;breaker=half-open-probe（冷却窗过——单次试探：成功即复位，失败回全开续冷却，DEV-46）` : ''}${seatbeltSegment}${selectionAnchor}${prm.noteAnchor}${resolved.autoAssignNote ?? ''}${queueAnchorInfo.waitAnchor}${resumeFace?.noteAnchor ?? ''}`,
+        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version}${tierFace?.noteAnchor ?? ''};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${minted !== undefined ? `;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=${minted.nonce}` : ''}${action.breakerProbe === true ? `;breaker=half-open-probe（冷却窗过——单次试探：成功即复位，失败回全开续冷却，DEV-46）` : ''}${seatbeltSegment}${selectionAnchor}${prm.noteAnchor}${resolved.autoAssignNote ?? ''}${queueAnchorInfo.waitAnchor}${resumeFace?.noteAnchor ?? ''}${routingNote}`,
       })
       // 派发成功即出队（129-§6.2）：携带条删——GATE_FAIL 回滚再入队走 touchQueueCarry
       // 新钟（attempt 轮次可区分，队列等待观测口径=每誓一钟，不跨轮累计）。

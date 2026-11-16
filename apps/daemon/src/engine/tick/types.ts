@@ -344,6 +344,9 @@ export interface Inflight {
   laneEpoch?: number
   /** 派工对象工号（收割 settle 的人档行 scope；reserve 链的 person 桥同源） */
   personId: string
+  /** task-56 多源路由：本次 launch 选中的源（在途不换；收割回填用） */
+  routedSourceId?: string
+  routedTier?: import('@studio-next/core').TierId
   /** 派发拍序：本拍派发的下一拍才可收割（同拍单至多一动作的收割侧落点） */
   dispatchedAtSeq: number
   /**
