@@ -56,6 +56,7 @@ import type { EngineRuntime } from '../runtime/types.ts'
 import type { IssueRecord } from '@studio-next/contract'
 import { releaseWithEpoch } from '../lanes/release.ts'
 import { CONVERSATION_ACCEPTANCE } from '../conversation/protocol.ts'
+import { evaluateDispatchAcceptance } from '../acceptance/index.ts'
 
 export async function executeDispatch(
   rt: EngineRuntime,
@@ -96,6 +97,20 @@ export async function executeDispatch(
       emitEscalate: (note) => makeEvent('ESCALATE', fresh, index.attemptOf(ticket), tickEvents, { note }) })
     if (inflight.has(ticket)) return fail('该单已有在途工位（幂等跳过，不双写）')
     const fresh = await platform.issues.get(ticket)
+    // —— 验收口径门（task-39；提案 task-38）：功能类新单缺 acceptance_criteria → enforce 拒派 /
+    //    observe 告警放行；存量 legacy 只告警不阻塞（enforceSince 持久化判定）。——
+    const acceptanceGate = evaluateDispatchAcceptance(rt.acceptance, fresh)
+    if (!acceptanceGate.allow) {
+      const blockKey = `${ticket}|acceptance-dispatch-blocked`
+      if (!rt.acceptance.warned?.has(blockKey)) {
+        rt.acceptance.warned?.add(blockKey)
+        makeEvent('ESCALATE', fresh, index.attemptOf(ticket), tickEvents, { note: acceptanceGate.note ?? 'ACCEPTANCE_BLOCKED（缺验收标准，task-39）' })
+      }
+      return fail(acceptanceGate.note ?? 'ACCEPTANCE_BLOCKED（缺验收标准，task-39）')
+    }
+    if (acceptanceGate.note !== undefined) {
+      makeEvent('ESCALATE', fresh, index.attemptOf(ticket), tickEvents, { note: acceptanceGate.note })
+    }
     // 派工对象解析（轨2 R1①，studio-dev-345）：面开且无 assignee→分配器选人+写回平台
     // （在途最小/同级轮转/并发帽；失败 fail-closed 顺延不回退缺省人）；体=assign/auto-assign.ts
     const resolved = await resolveDispatchPerson(assignRuntime(), { ticket, fresh, ...(autoAssign !== undefined ? { carried: autoAssign } : {}), ...(dispatchPersons !== undefined ? { dispatchPersons } : {}) })

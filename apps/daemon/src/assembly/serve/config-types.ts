@@ -81,6 +81,10 @@ export interface ServeConfig extends HrServeConfig, RestartServeConfig, Signatur
   mirrorRescanEveryTicks: number
   /** demo 自动批（真制作人批准信号经网关动作词归一） */
   autoApprove: boolean
+  /** 验收口径模式（task-39）：off|observe|enforce（缺省 observe） */
+  acceptanceEnforce: 'off' | 'observe' | 'enforce'
+  /** 存量判定线 epoch ms（缺省=首次启动时间，daemon_kv 持久化） */
+  acceptanceEnforceSince?: number
   /** 批示归一层·制作人账号（studio-dev-171，docs/18-§2.5）：批示豁免位（§2.3 任意
    * 介入不受限——含派单律）；缺省=未知 actor 面 fail-closed 拒 */
   directiveProducer?: string
@@ -313,6 +317,7 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   breakerCooldownMs: ENGINE_CONFIG_DEFAULTS.breakerCooldownMs ?? 30 * 60_000,
   mirrorRescanEveryTicks: ENGINE_CONFIG_DEFAULTS.mirrorRescanEveryTicks ?? 30,
   autoApprove: false,
+  acceptanceEnforce: 'off',
   jobs: false,
   jobPollMs: 15_000,
   matrix: false,

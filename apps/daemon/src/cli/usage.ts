@@ -74,6 +74,13 @@ export const SECTION = {
   studio-next ledger rebuild <源.jsonl> <目标库>
        JSONL → 新库重放（单事务原子；F2-12）
 `,
+  acceptance: `  studio-next acceptance record --db <库路径> --company <slug> --ticket <单号> --status pass|return|need-evidence|waived
+                                  --by <验收方> --evidence <证据说明/路径> [--signoff lead-verifier|eng0|producer]
+       验收结论记录（task-39，提案 task-38）：写一条既有事件词 APPROVE（note \`ACCEPTANCE;status=…\`；
+       不新增事件词/表/schema），由派发/CLOSE 闸读取；验收方/证据必填（不伪造），不自动改单。
+       status=pass|waived 视为通过；return/need-evidence 不通过（功能类 CLOSE enforce 下 HOLD）。
+       分级签收：低风险=lead-verifier；中风险=eng0；高风险/契约/对外=producer（本命令记录签名位）。
+`,
   candidates: `  studio-next candidates list --db <库路径>
        进化管线现状只读列表（v0.10，docs/16-§四）：汇总行（总数+状态分布）+ 候选逐行
        id/状态/资产类型/blast_radius/version/谱系父/资产路径/diff 哈希（(created_at,id) 升序）；
@@ -245,6 +252,11 @@ export const CONCISE = {
   ledger: `ledger <子命令> —— 台账面命令组：drill（删库重建演习）/ dump（events→JSONL 导出）/ rebuild（JSONL→新库重放）
   例：studio-next ledger drill ./new-ledger.sqlite
   本组全文：studio-next ledger --help（各子命令 -h 看分面全文）
+`,
+  acceptance: `acceptance <record> —— 验收结论记录（task-39）：写既有 APPROVE 事件，供派发/CLOSE 验收闸读取；不自动改单
+  studio-next acceptance record --db <库路径> --company <slug> --ticket <单号> --status pass|return|need-evidence|waived --by <验收方> --evidence <证据> [--signoff lead-verifier|eng0|producer]
+  例：studio-next acceptance record --db var/ledger.sqlite --company my-corp --ticket ISSUE-7 --status pass --by verifier --evidence "REPORT#L12;verify:v2 exit0"
+  本命令全文：studio-next acceptance --help
 `,
   candidates: `candidates list —— 进化管线现状只读列表（汇总+逐行候选档案；只读面不代建库）
   studio-next candidates list --db <库路径>

@@ -349,6 +349,13 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'executionGuardRoles': cfg.executionGuardRoles = parseTextList(value, key); break
       case 'executionGuardKeywords': cfg.executionGuardKeywords = parseTextList(value, key); break
       case 'autoApprove': cfg.autoApprove = bool(value, key); break
+      case 'acceptanceEnforce': {
+        const mode = str(value, key)
+        if (mode !== 'off' && mode !== 'observe' && mode !== 'enforce') throw new Error(`daemon.yaml：acceptanceEnforce 须为 off|observe|enforce（实得 ${mode}）`)
+        cfg.acceptanceEnforce = mode
+        break
+      }
+      case 'acceptanceEnforceSince': cfg.acceptanceEnforceSince = num(value, key); break
       case 'directiveProducer': cfg.directiveProducer = str(value, key); break
       case 'directiveWhitelist': {
         const v = str(value, key)

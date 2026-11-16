@@ -148,6 +148,10 @@ export interface EngineConfig {
   breakerCooldownMs?: number
   /** demo 模式自动批（真制作人批准信号经网关动作词归一，v0 布尔拟稿） */
   autoApprove: boolean
+  /** 验收口径模式（task-39；提案 task-38）：off=关；observe=只告警放行（默认，提案先观察）；enforce=缺标准拒派/缺结论 HOLD */
+  acceptanceEnforce?: 'off' | 'observe' | 'enforce'
+  /** 存量判定线（epoch ms；ticket_mirror.created < 此值=legacy 不阻塞只告警）；缺省=首次启动时间（kv 持久化） */
+  acceptanceEnforceSince?: number
   /** 零动作拍 HEARTBEAT 的哨兵单号（contract events.issue 必填——拟稿待批） */
   heartbeatIssue: string
   /** 每拍 activity 翻页上限 */
@@ -281,6 +285,7 @@ export const ENGINE_CONFIG_DEFAULTS: EngineConfig = {
   breakerThreshold: 3,
   breakerCooldownMs: 30 * 60_000,
   autoApprove: false,
+  acceptanceEnforce: 'off',
   heartbeatIssue: '-',
   maxActivityPages: 10,
   killGraceMs: 5_000,

@@ -27,6 +27,7 @@ import { cmdGenTemplates } from './gen-templates.ts'
 import { cmdCompany } from './company.ts'
 import { cmdValidate } from './validate.ts'
 import { cmdLedger } from './ledger.ts'
+import { cmdAcceptance } from './acceptance.ts'
 import { cmdCandidates } from './candidates.ts'
 import { cmdProvenance } from './prov/prov-command.ts'
 import { cmdQaEval } from './qa/qa-eval.ts'
@@ -57,6 +58,8 @@ async function main(): Promise<number> {
       return cmdLedger(rest)
     case 'candidates':
       return cmdCandidates(rest)
+    case 'acceptance':
+      return cmdAcceptance(rest)
     case 'qa-report':
       return cmdQaReport(rest)
     case 'qa-eval':

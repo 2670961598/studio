@@ -32,6 +32,7 @@ describe('issues 生命周期全链', () => {
       type: 'task',
       dept: 'platform',
       level: 2,
+      description: 'desc-1',
     })
     expect(b.parent).toBe('LOCAL-1')
     // updated 是合法 ISO-8601 时间戳
@@ -59,7 +60,7 @@ describe('issues 生命周期全链', () => {
     expect(log.length).toBe(3)
   })
 
-  it('setField：各维度写入后 get 可见；description 留痕不进记录', async () => {
+  it('setField：各维度写入后 get 可见；description 亦回传（task-43 F2）', async () => {
     const p = createLocalPlatform(root)
     const a = await p.issues.create({ title: '甲' })
     await p.issues.setField(a.id, 'assignee', 'emp-007')
@@ -79,8 +80,9 @@ describe('issues 生命周期全链', () => {
       type: 'bug',
       level: 3,
       parent: 'LOCAL-9',
+      description: '新描述',
     })
-    // description 在事件流里留痕
+    // description 在事件流里留痕（同时 get() 可读）
     const log = readFileSync(join(root, 'issues', `${a.id}.jsonl`), 'utf8')
     expect(log).toContain('"field":"description"')
   })

@@ -12,7 +12,7 @@
  * 端口缺口注记（只记录不改 contract）：
  *   - IssueQuery.project 无处可读（IssueRecord/IssueCreate 均无 project 维）——
  *     LocalFile 是单项目平台，该过滤维忽略（不能凭空造数据）
- *   - IssueCreate.description 可写但 IssueRecord 无此字段，get() 查不回（事件里有留痕）
+ *   - IssueCreate.description 可写且 IssueRecord 回传（task-43 F2：验收块需 get() 可读；事件流仍留痕）
  *   - IssueCreate 无 lane，lane 只能经 setField 补
  *   - 建单落位（docs/25-§3.2 IssueCreate.initialState）：显式入参 > provision
  *     states[0]（流程初态）> 默认 open；provision 存在时显式入参必须在 states 声明集内
@@ -149,7 +149,10 @@ function applySetField(rec: IssueRecord, field: string, value: unknown): void {
     if (field === 'title' && value.trim() === '') {
       throw new LocalPlatformError('CONFIG_INVALID', 'bad-field-value', 'title 不能置空')
     }
-    if (field === 'description') return // 事件留痕；IssueRecord 无此字段（端口缺口注记见头注）
+    if (field === 'description') {
+      rec.description = value
+      return
+    }
     rec[field as 'type' | 'dept' | 'lane' | 'assignee' | 'parent'] = value
     return
   }
@@ -163,6 +166,7 @@ export function deriveIssue(id: TicketId, events: IssueEvent[]): IssueRecord {
     if (ev.type === 'created') {
       validateIssueCreate(ev.input)
       rec = { id, title: ev.input.title, state: ev.state, updated: ev.ts }
+      if (ev.input.description !== undefined) rec.description = ev.input.description
       if (ev.input.type !== undefined) rec.type = ev.input.type
       if (ev.input.dept !== undefined) rec.dept = ev.input.dept
       if (ev.input.level !== undefined) rec.level = ev.input.level

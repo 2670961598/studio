@@ -57,6 +57,25 @@ export function createRuntime(deps: EngineDeps, seams: EngineSeams): EngineRunti
         : writeSignature.actorRef
   const makeId = deps.makeId ?? makeUlid
 
+  // —— 验收口径门（task-39；提案 task-38）：模式/存量线在构造期一次确定 ——
+  //   存量线首次启动落 daemon_kv（重启续用），ticket_mirror.created < 线=legacy（只告警不阻塞）
+  const acceptanceMode = deps.config.acceptanceEnforce ?? 'observe'
+  const acceptanceKvKey = 'acceptance.enforce_since'
+  let acceptanceSince = deps.config.acceptanceEnforceSince
+  if (acceptanceSince === undefined) {
+    const raw = ledger.kvGet(acceptanceKvKey)
+    const parsed = raw === null ? Number.NaN : Number(raw)
+    acceptanceSince = Number.isSafeInteger(parsed) && parsed > 0 ? parsed : clock()
+    if (!Number.isSafeInteger(parsed) || parsed <= 0) ledger.kvSet(acceptanceKvKey, String(acceptanceSince))
+  }
+  const acceptance: import('../acceptance/index.ts').AcceptanceGateConfig = {
+    mode: acceptanceMode,
+    enforceSince: acceptanceSince,
+    ledger,
+    company: config.company,
+    warned: new Set<string>(),
+  }
+
   // 公司面可替换绑定（docs/38-§2 L1）：applyCompanyUpdate 整组换（拍边界）——
   // people/assembler 被 resolvePerson/executeDispatch 闭包引用，let 化后热替换即生效
   const assembler = deps.assembler
@@ -189,6 +208,7 @@ export function createRuntime(deps: EngineDeps, seams: EngineSeams): EngineRunti
     gateRunner,
     config,
     catalog: deps.catalog,
+    acceptance,
     applyModelsUpdate: (update) => {
       // task-34：拍边界一次性替换内存价目表/角色路由；在途 worker 不停；adapter model
       // 声明刷新归 serve 层（DshAdapter.setModel——in-flight 用 launch 捕获值不串档）

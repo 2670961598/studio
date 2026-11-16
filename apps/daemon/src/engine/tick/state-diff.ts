@@ -17,6 +17,7 @@ import { drainIntents } from '../intents/drain.ts'
 import { personViewOf, type QueueJudgeCandidate } from '../judge/sites129.ts'
 import { closeRoomDuty } from '../rooms/room-duty.ts'
 import { personGateSnapshot } from '../sentinel/shape.ts'
+import { evaluateCloseAcceptance } from '../acceptance/index.ts'
 import { createSplitMaterializer } from '../split/materialize.ts'
 import {
   acceptRevivals,
@@ -386,6 +387,8 @@ export async function stateDiffPhase(
         }
       },
       revokeCredential: (ticket) => revokeWorkerKey(workerKeys, ticket),
+      acceptanceOf: (issue) => evaluateCloseAcceptance(rt.acceptance, issue),
+      acceptanceWarned: rt.acceptance.warned,
       ...(roomClose !== undefined ? { closeRoom: roomClose } : {}),
     }
   return {

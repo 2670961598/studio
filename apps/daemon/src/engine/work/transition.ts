@@ -30,6 +30,7 @@ import type { EventRecord, FlowPlatform, IssueRecord, TicketId } from '@studio-n
 import { flowAnchors, type Action, type StateFlow } from '@studio-next/core'
 import type { TickActionResult } from '../tick-report/types.ts'
 import type { RecordPhaseFactsPort, RecordWirePort } from '../records/index.ts'
+import type { AcceptanceGateResult } from '../acceptance/index.ts'
 
 // ————————————————————————— 事件面 —————————————————————————
 
@@ -229,6 +230,10 @@ export interface WorkRecycleHost extends WorkPhaseHost {
   readonly releaseLane: (ticket: TicketId, lane: string) => void
   /** 关单凭据吊销（17-§7「关单即吊销」；false=未签发过凭据——note 证据面） */
   readonly revokeCredential: (ticket: TicketId) => boolean
+  /** 验收口径门（task-39）：功能类 CLOSE 前检查；缺省=面关 */
+  readonly acceptanceOf?: (issue: IssueRecord) => AcceptanceGateResult
+  /** 验收告警去重集（与派发闸共用 rt.acceptance.warned） */
+  readonly acceptanceWarned?: Set<string> | undefined
   /** 单据房间归档（失败 ESCALATE 不阻回收；缺省＝面未开） */
   readonly closeRoom?: (ticket: TicketId, carrier: IssueRecord, attempt: number) => Promise<void>
 }
@@ -247,10 +252,26 @@ export async function runRecycleTransitions(
   for (const action of queue) {
     try {
       const fresh = await host.platform.issues.get(action.ticket)
+      const attemptNo = host.attemptOf(action.ticket)
+      // —— 验收口径门（task-39；提案 task-38）：功能类 CLOSE 前需 pass/waived+证据 ——
+      //   enforce 缺结论=HOLD（不释放/不吊销/不 CLOSE；下一拍继续评估），observe/legacy 告警放行。
+      const acceptanceGate = host.acceptanceOf?.(fresh)
+      if (acceptanceGate !== undefined && !acceptanceGate.allow) {
+        const detail = acceptanceGate.note ?? 'ACCEPTANCE_HOLD（功能类缺验收结论，task-39）'
+        host.errors.push(`回收 HOLD ${action.ticket}：${detail}`)
+        host.actionResults.push({ ticket: action.ticket, actionType: action.type, ok: false, detail })
+        const holdKey = `${action.ticket}|acceptance-close-hold`
+        if (!host.acceptanceWarned?.has(holdKey)) {
+          host.acceptanceWarned?.add(holdKey)
+          host.emit('ESCALATE', fresh, attemptNo, { note: detail })
+        }
+        continue
+      }
+      if (acceptanceGate?.note !== undefined) host.emit('ESCALATE', fresh, attemptNo, { note: acceptanceGate.note })
       const lane = fresh.lane ?? host.defaultLane
       host.releaseLane(action.ticket, lane)
       const wkeyRevoked = host.revokeCredential(action.ticket)
-      const attempt = host.attemptOf(action.ticket)
+      const attempt = attemptNo
       await applyWorkTransition(host, {
         ticket: action.ticket,
         attempt,
