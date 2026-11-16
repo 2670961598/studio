@@ -1,0 +1,79 @@
+# PROVENANCE —— workbench-core vendor snapshot
+
+- 来源：`<workbenchRoot>/packages/issues`、`<workbenchRoot>/packages/collab`（Workbench 源码快照，**未改 Workbench 仓库**）。
+- 快照时间：`2026-11-11T10:07:34Z`（Workbench `verification/snapshot.txt` final snapshot，post doc refresh）。
+- Node 版本（上游快照记录）：`v25.6.1`；包版本：`@studio-next/issues 0.1.0`、`@studio-next/collab 0.1.0`。
+- **制作人授权（2026-11-17 批复）**：Workbench 代码归我司所有，**可 vendor** 到本仓；本目录及薄包装仅内部使用/开发。
+- 许可/版权：上游**无 LICENSE 文件**；本仓按制作人上述授权声明再分发/修改，保留上游 README/来源说明；若后续取得正式许可文件，以正式许可为准并更新本文件。
+- 变更：本目录为**逐字节源码拷贝**（除 `collab/README.md` 两行本机绝对路径替换为 `<workspaceRoot>` 占位符，避免仓内 host path），未 fork/改业务代码；tests 随快照保留。
+- 薄包装：`vendor/workbench-core/index.ts` 仅 re-export `issues`/`collab`，不依赖宿主路径/StudioNext/DSH。
+- 树快照 sha256（按 `rel:sha256` 排序拼接）：`b0cb24cb7160d13306b7e37b11d00aafee8eb4ddebff5df68f7920af0404f3a2`
+- 文件数：63
+
+## 文件 sha256
+
+```text
+fe3f8994bf4b25d6e081bff72bd529f0585cdb6f0bfcb4e9c6b9d908299e87d2  README.md
+fc0fd08b4dabac332622b040005bb539d209cf8cda69607717085c3acc003a01  collab/README.md
+44effaa92517a275736939746ca28223601f36962e4407f5454af05f197fc768  collab/package.json
+fad8bfa490c81de2bcc8b65e32559bd231cc6a429e1e53c1769ad0f87ae5efa1  collab/src/cursor.ts
+8990af89c1510825fe4b86e731bb000887bdb86d5657448a17a9ba8ce7903251  collab/src/errors.ts
+86edef1ee37a7b20fe71e3013d214bcf2d13213409dffdc85c3ed9e4bf5e7db9  collab/src/ids.ts
+25ed570ae4a421a19073aa747169c9e736fc773710ef54e8379b1b7c1e7b0c76  collab/src/index.ts
+bb6a080299e5d633502540490bba956afd1411f74b6c280d02f024ec5f0e5e8e  collab/src/keys.ts
+06dbc88978c2239388e9dc83e15cb3c64ed9b874208a61d3da5b3f200c4da3cf  collab/src/memory-store.ts
+6e536e5e97f0c8fa39c226a9239c92ca0fa56d683e1ef4b8c7512b51c560824c  collab/src/service.ts
+382157ba2d70168ff4902d97684797f1773ffc96cb64ed2bc0a232d85769ee4b  collab/src/sqlite-store.ts
+9f9abbd5ab86ef19a900b6756767edd674d764fc99f7f36f36288303d283cd55  collab/src/store.ts
+b10c18c1ef7a3d291bc77a261c617ddeae3f375f286e30f3f9d5af73064dff89  collab/src/types.ts
+dd36778d1a98caf13d5b6ff832e8743890dfb59e72b4c31adb9c32053c709761  collab/test/batch.test.ts
+21cc5d16fd7b6170e68a3e049240598818e98a3db5a766a3684f214428757d08  collab/test/collab.test.ts
+a0e8deb60c903ac04a60bb0e0257ec3295b60f8b496c6c94258d8fb40f90a7e3  collab/test/cursor.test.ts
+83df146a5060e50e519e1235de3c2c2596f60ce0b134681a67ac0a0690557867  collab/test/helpers.ts
+51ad77dce0f3e24e4eec259f474e1b6457125604c5887b3cf64991e1acbccdf6  collab/test/idempotency.test.ts
+b41597901acc6e2408cb6c6b2ac02816192968182e2b95b51e7d50c8c02d3941  collab/test/persistence.test.ts
+a26beba8535fa27d85bec6f8335a1ddb9d295403a21a138a4be973375e6484c6  collab/test/security.test.ts
+6cd0f62da5be614f1333e2023a02a2ddaa0e6f715c270241b83f7530a925972c  collab/test/storage-contract.test.ts
+4c90a917871191ca9ddd8ef6238d9ea0594ac1a97abfaf2a3ab6b75a41fcf929  collab/test/stress.test.ts
+4470ce93d19e5f2c61f0862f0525c859b136d00aa02c1d6d9d0733d077b7e59e  collab/test/wake.test.ts
+c700bbf28b6d324aeea57fe559ca6f11cbce07bf2c32abcc1a6060cb958b7a97  collab/tsconfig.json
+e5e56dd480afaee73cb30be6eeff2ca4251165caade2c7dd84a71eab17de1951  index.ts
+c7dc1f7593b106ed071868e598c2e06c37c3f19157f80218ff28ca6609fcef9c  issues/README.md
+5853c651b54d58faeb27ef59fb509b650c9fa5de70d7064c4244f739e12d2e7f  issues/package.json
+d346d810d4f64bb626b2c99cbf6d331a829f3097b071546f27f898664f147c89  issues/src/catalog.ts
+0a2e1ed50030e22b3440435500dda3cb3b8ee0e78f0975450459c4b98aaa4e2a  issues/src/core.ts
+7eb1577f438f4ebf2cb1eab9b41b8cadf28e2bdb8fb8e28fc58e0c07f7978b3c  issues/src/cursor.ts
+c530f475517ade7f6214b0d91abb07eb0bbbf3a287ccab1183c8160e8a52584d  issues/src/errors.ts
+0c8270a261d7b49154086b234cd418d408826303c38eac033c58fd9f82f84909  issues/src/evidence.ts
+7d10f8304c0d18d8c69315f87d7cd0ee7cd3e47f992d46c9e566828ee623481c  issues/src/index.ts
+726c114b3fb7966978346c743b480ba167d1ab15866b30cb019ed94bb7700eef  issues/src/memory-store.ts
+b6658c386466951a39b8fbb62a7e81f4a02930aa7ada88549ae41166d74216f5  issues/src/service-admin.ts
+3d399ad096b9c49cc6ed2efb9e0995431b47047eba6f0357518a57be32a76b1b  issues/src/service-batch.ts
+9f262665426239f0920a4e512a81049399ec27de17263cb3a23071bae01ee764  issues/src/service-evidence.ts
+c47189ce45a07db14e4b3d0cd6a563ebfd3e0fdce7fb8ecf2ff90829078c4888  issues/src/service-parent-comment.ts
+8b3ed29a46ae092d6583e0cd0e4f2b5649556f8c4601d31b27d50746cde2d4d8  issues/src/service-queries.ts
+692c19d60c2b82b891fe9f1fe5bedd8f1d7e9157e92cbcb44bd0c83042ded412  issues/src/service-tickets.ts
+4e6e20f61db4913af6f47809739e1bcbe6eefa3f1b999d06f9362254f20d1aac  issues/src/service-workflow.ts
+2d6fb60dee52f488acb0a12321dd273fb92e27dd3604f3a42a941cdd2fb212ce  issues/src/service.ts
+fc56819653b7d16bb30eacd5acaf63b0cfa7a8c83f5065a674cf7a9a96ca8078  issues/src/sqlite-schema.ts
+51e4028bff798fcc164a74f0481d91bbdf663b4639113f50c64478d2a0ac4702  issues/src/sqlite-store.ts
+c1a5c55da7da3a4f56b1974cc1e957a007519204f445dcd5303918b8e3d93bae  issues/src/store.ts
+81d840ad105db025cf297598b3f1f159bd3065d60a4c73ad3e2d18d365566c09  issues/src/types.ts
+074afba400b5511cd9daddea61dacee7994cc7038136d71036b941d705f60a73  issues/src/util.ts
+b0f927bf4e08a85d0d980ebeb3d10a79438f8a7982ed73b50e683384ebbbf9d6  issues/src/validation.ts
+33446647074da5197bd78110f75f055a297cf4d79a73eecf8eafded640182f3b  issues/test/batch.test.ts
+ac59328b772916dd28d46c02deef855e8cf9ec5ec2b887637ac3303cf4da48fc  issues/test/cas-idempotency.test.ts
+3593f352a36545cf769eb91f44e4301e4c89f7a1c42b4bb2195a7c6515585397  issues/test/comments.test.ts
+6961a7448e7e3bc553756d80c82506df68fa5cc25decb2f4dc6e856dacd95f46  issues/test/cursor-validation.test.ts
+c781deb478c62a2fc43aba76cfa5585859941ae64fb2f7a436afe0f87b55a299  issues/test/evidence-gate.test.ts
+66bbdc3da5ea7ab57b411729d29a397675a55e4b9af8ef6f2394b45377d2b181  issues/test/helpers.ts
+8269daf5cd59bd972dfab34ac8b90e164b5c65ff13da193230a0935e543405a9  issues/test/parent.test.ts
+2d1df78e500234871c134c07f7366e2acfb29d964f9ecc3ecb67d459f0f71e36  issues/test/persistence.test.ts
+d91ace2073f0f2ea2e7c2dac0f893a18e7af56150357c41e9606caa7c901afd3  issues/test/reopen.test.ts
+71ad9fa2f7e1eb42e705e84dcf8fb60b10630abcceba67184ba8fd9825ce7ec4  issues/test/smoke.test.ts
+d6e424cf0080ba9ed59a283921dbec9d336ef90db061f8a9e2b06b78367d2d86  issues/test/state-matrix.test.ts
+3e83e95592fce21263b804755d5d81842d32ecbde93a969c4f6d3bf5abb4e570  issues/test/store-contract.test.ts
+da61f3f985019e28c3193eaa4b8f7ef7a427ea479235744bf29b9e3ab439391b  issues/test/stress.test.ts
+ac059479c37ddb3dc0649971038b52dc4a770051370b4c317cc8803a7f396122  issues/test/ticket-flow.test.ts
+7e0371bd581a4224ea66dbdb8e529ba2253d715a30753b619537c7511cdac5d3  issues/tsconfig.json
+```
