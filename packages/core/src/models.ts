@@ -45,11 +45,41 @@ export interface TierSpec {
   price: PriceEntry
 }
 
+/** 模型源（task-51 多源路由；models.yaml tiers.<t>.sources[] 的归一元素） */
+export interface ModelSourceSpec {
+  /** 源 id（同档内唯一；缺省按序 source-1/source-2…） */
+  id: string
+  provider: string
+  model: string
+  /** 越小越优先（同档内；缺省按书写序 0/1/2…） */
+  priority: number
+  price: PriceEntry
+  /** 额度口径（MVP 仅登记/审计，不主动探测；缺省 unbounded） */
+  quota?: { kind?: 'monthly' | 'five_hour' | 'unbounded' | undefined; limitUsd?: number | undefined; resetAt?: number | null | undefined } | undefined
+  /** 冷却参数（缺省 base 60s / max 8h / circuitAfter 3） */
+  cooldown?: { baseMs?: number | undefined; maxMs?: number | undefined; circuitAfter?: number | undefined } | undefined
+  /** 是否启用（缺省 true） */
+  enabled?: boolean | undefined
+}
+
 /** models.yaml 装载结果（parseModelsYaml 的返回形；createModelCatalog/fingerprint 的入参） */
 export interface ModelsConfig {
   tiers: { high: TierSpec; mid: TierSpec; low: TierSpec }
   /** 岗位→档（键开放：公司可扩展岗位；main_worker 必在——parse 闸保证，类型面用 string 键） */
   roles: Record<string, TierId>
+  /**
+   * 显式多源计划（task-51；仅当 yaml 某档声明 sources 时出现）。缺省=旧单源格式，
+   * 消费方用 modelSourcesOf() 归一（保持旧解析结果对象零额外键，兼容既有断言）。
+   */
+  sources?: Partial<Record<TierId, readonly ModelSourceSpec[]>>
+}
+
+/** 归一档位源列表：显式 sources 或旧 provider/model/price 单源（priority=0，id=default） */
+export function modelSourcesOf(config: ModelsConfig, tier: TierId): readonly ModelSourceSpec[] {
+  const explicit = config.sources?.[tier]
+  if (explicit !== undefined && explicit.length > 0) return explicit
+  const spec = config.tiers[tier]
+  return [{ id: 'default', provider: spec.provider, model: spec.model, priority: 0, price: { ...spec.price } }]
 }
 
 /** 校验问题（沿 company DirectoryIssue 的「行号+规则+修法」三件套；文件名固定 models.yaml） */
@@ -71,10 +101,45 @@ const PriceSchema = z.strictObject({
   cacheCreationPerM: z.number().nonnegative().optional(),
 })
 
-const TierSpecSchema = z.strictObject({
+const ModelSourceSchema = z.strictObject({
+  id: z.string().min(1),
   provider: z.string().min(1),
   model: z.string().min(1),
+  priority: z.number().int().nonnegative().optional(),
   price: PriceSchema,
+  quota: z.strictObject({
+    kind: z.enum(['monthly', 'five_hour', 'unbounded']).optional(),
+    limitUsd: z.number().nonnegative().optional(),
+    resetAt: z.number().nonnegative().nullable().optional(),
+  }).optional(),
+  cooldown: z.strictObject({
+    baseMs: z.number().int().nonnegative().optional(),
+    maxMs: z.number().int().nonnegative().optional(),
+    circuitAfter: z.number().int().positive().optional(),
+  }).optional(),
+  enabled: z.boolean().optional(),
+})
+
+const TierSpecSchema = z.strictObject({
+  provider: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
+  price: PriceSchema.optional(),
+  /** task-51：同档多源（旧单源三键仍严格兼容；同档不得同时声明两形态） */
+  sources: z.array(ModelSourceSchema).min(1).optional(),
+}).superRefine((v, ctx) => {
+  const legacy = v.provider !== undefined || v.model !== undefined || v.price !== undefined
+  if (v.sources !== undefined) {
+    if (legacy) ctx.addIssue({ code: 'custom', message: 'tier 须二选一：旧 provider/model/price 或 sources[]（不得混写）' })
+    const ids = new Set<string>()
+    for (const [i, src] of v.sources.entries()) {
+      if (ids.has(src.id)) ctx.addIssue({ code: 'custom', message: `sources[${String(i)}].id 重复：${src.id}` })
+      ids.add(src.id)
+    }
+    return
+  }
+  if (v.provider === undefined || v.model === undefined || v.price === undefined) {
+    ctx.addIssue({ code: 'custom', message: 'tier 缺 sources[] 或旧 provider/model/price 三键' })
+  }
 })
 
 const ModelsConfigSchema = z.strictObject({
@@ -184,13 +249,28 @@ export function parseModelsYaml(text: string): ModelsConfig {
     }])
   }
 
+  // 归一：旧三键原样；sources[] 派生 tier 首源供旧消费面（overlay/目录），并保留源计划
+  const tiers = {} as ModelsConfig['tiers']
+  const sources: Partial<Record<TierId, readonly ModelSourceSpec[]>> = {}
+  for (const tier of TIER_IDS) {
+    const raw = checked.data.tiers[tier]
+    if (raw.sources !== undefined) {
+      const normalized = raw.sources.map((src, i) => ({ ...src, priority: src.priority ?? i }))
+      const first = normalized[0]!
+      tiers[tier] = { provider: first.provider, model: first.model, price: first.price }
+      sources[tier] = normalized
+    } else {
+      tiers[tier] = {
+        provider: raw.provider as string,
+        model: raw.model as string,
+        price: raw.price as PriceEntry,
+      }
+    }
+  }
   return {
-    tiers: {
-      high: checked.data.tiers.high,
-      mid: checked.data.tiers.mid,
-      low: checked.data.tiers.low,
-    },
+    tiers,
     roles: { ...checked.data.roles },
+    ...(Object.keys(sources).length > 0 ? { sources } : {}),
   }
 }
 
