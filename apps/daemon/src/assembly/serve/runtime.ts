@@ -77,6 +77,7 @@ import { wireServeApi } from '../api/serve-face.ts'
 import { wireSecretTrust, type SecretDeclarationInput } from '../trust/wire.ts'
 import { wireServeHarvestRecords } from '../harvest/records-wire.ts'
 import { createCompanyWriteFace, type CompanyWriteFace } from '../../engine/company-write/runtime.ts'
+import { createModelsHotSwap, type ModelsHotSwap } from './models-hot-swap.ts'
 import { createCompanyApplySegment } from './company-apply.ts'
 
 import type { ServeRecordsOptions, ServeRuntime } from './runtime-types.ts'
@@ -372,6 +373,28 @@ export function buildServeRuntime(
     },
   })
 
+  // —— models.yaml 动态模型热切（task-34；零重启/不打断在途单） ——
+  //    复用 885 overlay 生成/196 价目/882 model 声明镜像；监听面独立于 L1 reload（理由见提案）。
+  const modelsHotSwap: ModelsHotSwap = createModelsHotSwap({
+    modelsPath: config.models,
+    rootDir: path.resolve(config.rootDir),
+    company: config.company,
+    deptFallback: engineConfig.deptFallback,
+    ledger,
+    clock,
+    makeId: makeUlid,
+    log,
+    apply: ({ catalog, modelTierByRole, tierModels }) => {
+      engine.applyModelsUpdate({ catalog, ...(modelTierByRole !== undefined ? { modelTierByRole } : {}) })
+      // adapter model 声明镜像刷新：仅影响**后续** launch（DshAdapter 在途用 launch 捕获值）
+      for (const [name, model] of Object.entries(tierModels)) {
+        if (!registry.list().some((entry) => entry.name === name)) continue
+        const adapter = registry.resolve(name) as { setModel?: (m: string | undefined) => void }
+        if (typeof adapter.setModel === 'function') adapter.setModel(model)
+      }
+    },
+  })
+
   // 任职闸门接线留痕（启动日志；studio-dev-550）——真机验证据此 grep「任职闸门」
   log('[serve] 任职闸门已装配：mode=strict（v2/02 §3.4：非在岗/任职事实缺失/不一致=拒出工，HOLD_NOT_IN_SERVICE，fail-closed）')
 
@@ -549,6 +572,7 @@ export function buildServeRuntime(
     evolveSelfCheck,
     restartProbe,
     ...(hotReload !== undefined ? { hotReload } : {}),
+    modelsHotSwap,
     ...(companyWriteFace !== undefined ? { companyWrite: companyWriteFace } : {}),
     // 129-E（184）：续命意图推送面露头（resume: true 时；调用面归 B4 CLI resume——另批）
     ...(resumePublish !== undefined ? { resumePublish } : {}),
@@ -560,6 +584,7 @@ export function buildServeRuntime(
       // 先关 API 入口（不再接新请求）→ 停源（不再进新意图）→ 引擎 drain → 关台账（22-§三.3）
       await api.close()
       sources.stopAll()
+      modelsHotSwap.close()
       await engine.dispose()
       ledger.close()
     },

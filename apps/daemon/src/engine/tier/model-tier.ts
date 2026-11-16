@@ -26,7 +26,7 @@
  * profile 缺省」仅作**未挂载 overlay 时的兜底**（不再承担 mid 正式供给）——2026-11-07
  * 模型源切换时 mid 曾因 profile 默认模型未随 models.yaml 变更而持续 429，本单闭环双源漂移。
  */
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { configInvalid } from '@studio-next/contract'
 import type { ExecutorAdapter, PersonId, PersonRef, TicketId } from '@studio-next/contract'
@@ -146,7 +146,19 @@ export function provisionModelTierOverlays(rootDir: string, models: ModelsConfig
       ``,
     ].join('\n')
     mkdirSync(path.dirname(overlayPath), { recursive: true, mode: 0o700 })
-    writeFileSync(overlayPath, text, { encoding: 'utf8', mode: 0o600 })
+    // 原子写（task-34 动态热切：worker 下一次 spawn 读文件——不允许读到半写内容）
+    const tmpPath = `${overlayPath}.tmp-${String(process.pid)}`
+    try {
+      writeFileSync(tmpPath, text, { encoding: 'utf8', mode: 0o600 })
+      renameSync(tmpPath, overlayPath)
+    } catch (err) {
+      try {
+        unlinkSync(tmpPath)
+      } catch {
+        /* tmp 已不存在 */
+      }
+      throw err
+    }
     out[tier] = overlayPath
   }
   return out as Record<TierId, string>

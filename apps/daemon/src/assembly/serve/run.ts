@@ -170,7 +170,7 @@ export async function runServe(
     declarationPresent: config.recordRootGrantAbsence !== undefined,
   })
   if (injection.skippedReason !== undefined) console.log(`[records][anchor-grant] ${injection.skippedReason}`)
-  const { engine, sources, stop, hotReload, notifyRelay, conversationRelay, api, ops, restartProbe } = buildServeRuntime(config, ledger, snapshot, {
+  const { engine, sources, stop, hotReload, modelsHotSwap, notifyRelay, conversationRelay, api, ops, restartProbe } = buildServeRuntime(config, ledger, snapshot, {
     ...(opts?.matrixSource !== undefined ? { matrixSource: opts.matrixSource } : {}),
     ...(opts?.matrixRoomFace !== undefined ? { matrixRoomFace: opts.matrixRoomFace } : {}),
     ...(opts?.notifyBroadcast !== undefined ? { notifyBroadcast: opts.notifyBroadcast } : {}),
@@ -462,6 +462,8 @@ export async function runServe(
     } else {
       answeredRequestId = answerReloadNoCompanyDir(path.resolve(config.rootDir), config.company, answeredRequestId)
     }
+    // —— models.yaml 动态热切（task-34）：拍边界 hash 去抖检测；失败恒不抛/旧配置继续跑 ——
+    await modelsHotSwap?.check()
     // —— 重启后自检（studio-dev-504 S5；#497 §4.8）：tick 窗口/总超时到即跑一次，四口径
     //    ＋takeover 交叉核对；幂等闸/落盘/失败 ALARM+ESCALATE 全在编排器内（不宣称恢复）。
     await restart.maybeRunSelfcheck({

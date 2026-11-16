@@ -252,6 +252,9 @@ export function createEngine(deps: EngineDeps): Engine {
     applyCompanyUpdate(update: CompanyRuntimeUpdate): void {
       applyCompanyUpdate(rt, update)
     },
+    applyModelsUpdate(update): void {
+      rt.applyModelsUpdate(update)
+    },
     dispose: () => disposeEngine(rt),
     beginDrain(nextReason: string): void {
       rt.drainCtl.begin(nextReason)

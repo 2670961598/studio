@@ -167,6 +167,8 @@ export function assertCredentialKeys(creds: Record<string, string>): void {
 export interface SessionState {
   readonly subprocess: Subprocess
   readonly startedAt: number
+  /** launch 时捕获的 model 声明镜像（动态热切后仍是该 worker 的实际模型，resultStats 用） */
+  modelAtLaunch?: string
   /** stream() 消费时累积的归一事件（resultStats 的账目来源） */
   readonly events: StreamEvent[]
   /** 逐行 stdout 原文缓冲（证据留痕，未解析；台账落盘归 daemon） */

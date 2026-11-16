@@ -108,6 +108,8 @@ export interface EngineRuntime {
   readonly gateRunner: GateRunner
   readonly config: EngineConfig
   readonly catalog: ModelCatalog | undefined
+  /** task-34 模型热切：拍边界替换价目表/角色路由（实现 clamp 在 createRuntime 闭包内） */
+  applyModelsUpdate(update: import('./contract.ts').ModelRuntimeUpdate): void
   readonly records: RecordWirePort | undefined
   readonly workerKeys: WorkerKeyDeps | undefined
   readonly rooms: RoomDuty | undefined

@@ -150,7 +150,7 @@ export class DshAdapter implements ExecutorAdapter {
 
   private readonly cmd: readonly string[]
   private readonly seatbelt: DshSeatbeltOptions | undefined
-  private readonly model: string | undefined
+  private model: string | undefined
 
   /**
    * cmd 可注入（测试用假 CLI）；缺省 `dsh --profile headless --json`（17-§6）。
@@ -168,6 +168,14 @@ export class DshAdapter implements ExecutorAdapter {
     }
     this.seatbelt = opts?.seatbelt
     this.model = opts?.model
+  }
+
+  /**
+   * 动态模型热切（task-34）：更新**后续 launch** 的 model 声明镜像；在途 worker 的
+   * resultStats 用 launch 时捕获的 model（SessionState.modelAtLaunch），不被换档影响。
+   */
+  setModel(model: string | undefined): void {
+    this.model = model
   }
 
   /** seatbelt 圈定是否实际生效（mode='auto' 且构造在案） */
@@ -362,6 +370,7 @@ export class DshAdapter implements ExecutorAdapter {
     const state: SessionState = {
       subprocess,
       startedAt: Date.now(),
+      ...(this.model !== undefined ? { modelAtLaunch: this.model } : {}),
       events: [],
       rawLines: [],
       streamConsumed: false,
@@ -465,7 +474,7 @@ export class DshAdapter implements ExecutorAdapter {
       tokens: aggregateUsage(state.events),
       duration: (state.endedAt ?? Date.now()) - state.startedAt,
       turns: state.events.filter((e) => e.type === 'step_end').length,
-      ...(this.model !== undefined ? { model: this.model } : {}),
+      ...(state.modelAtLaunch !== undefined ? { model: state.modelAtLaunch } : {}),
     }
   }
 

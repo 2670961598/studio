@@ -14,6 +14,7 @@ import type { Scheduler } from '../../engine/scheduler.ts'
 import type { SourceRegistry } from '../../engine/sources.ts'
 import type { EvolveSelfCheckReport } from '../../evolve/evolve-guard.ts'
 import type { HotReload } from '../../control/hot-reload.ts'
+import type { ModelsHotSwap } from './models-hot-swap.ts'
 import type { ServeApiWiring } from '../api/serve-face.ts'
 import type { ServeConfig } from './config.ts'
 import type { RestartProbeFace } from './executor-face.ts'
@@ -56,6 +57,8 @@ export interface ServeRuntime extends ServeOpsFace, RestartProbeFace {
    * answerReloadNoCompanyDir 回执拒绝）。详见 src/control/hot-reload.ts 头注。
    */
   hotReload?: HotReload
+  /** models.yaml 动态热切执行体（task-34；models 段缺省=面关仍存在，check 空转） */
+  modelsHotSwap?: ModelsHotSwap
   /**
    * 启动期进化判负自检汇报（src/evolve/evolve-guard.ts，v0 观察模式）：ESCALATE 事件已在装配期
    * 落账（unauthorized 时）；本字段为汇报面（测试/面板观测锚）。

@@ -16,7 +16,7 @@ import type {
   ModelCatalog,
   PersonRef,
 } from '@studio-next/contract'
-import type { FlowTable } from '@studio-next/core'
+import type { FlowTable, TierId } from '@studio-next/core'
 import type { ExecutorRegistry, SeatbeltGrant } from '@studio-next/adapters'
 import type { Ledger } from '@studio-next/store'
 import type { EngineSignatureDraft } from '../signature/index.ts'
@@ -178,6 +178,11 @@ export interface Engine extends HarvestRecordingObservation {
    * 不在 L1 热更面。
    */
   applyCompanyUpdate(update: CompanyRuntimeUpdate): void
+  /**
+   * 模型档热切（task-34）：拍边界一次性替换内存价目表与角色路由；在途 worker 不停，
+   * 下一次 spawn 用新 overlay/adapter model 声明。失败面归调用方前置校验（抛错=旧态不动）。
+   */
+  applyModelsUpdate(update: ModelRuntimeUpdate): void
   /** 在途 drain（v0：对内存 handle 优雅 kill；work_records 留 running——重启接管归后续刀） */
   dispose(): Promise<void>
   // —— 受权重启 draining 面（studio-dev-504 S2；docs/17-§2 相位 3 闸，不增删相位）——
@@ -192,6 +197,18 @@ export interface Engine extends HarvestRecordingObservation {
   readonly config: EngineConfig
   /** 收割批次簿观测面（IMPL-06-03 / REC-EVD-01）：只读视图；写口仅收割相位（batch.ts） */
   readonly harvestBatches: HarvestBatchLedger
+}
+
+/**
+ * applyModelsUpdate 入参（task-34 动态模型热切）：models.yaml 重读后的内存装配面。
+ * 调用方=serve 文件监听/热切执行体（拍边界，单线程无并发 tick）；在途 worker 不受影响
+ *（旧 worker 的 model 归属由 adapter launch 捕获值保证，不被新档串写）。
+ */
+export interface ModelRuntimeUpdate {
+  /** 新价目表（parsed tiers → createModelCatalog；预算闸/GATE_PASS 成本/日闭同源） */
+  catalog: ModelCatalog
+  /** models.yaml roles（岗位→档）——缺省不换（保持启动装配；热切正常恒传） */
+  modelTierByRole?: Readonly<Record<string, TierId>>
 }
 
 /** applyCompanyUpdate 入参：公司目录快照在引擎内的全部消费面（整组换，不半换） */

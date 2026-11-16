@@ -189,6 +189,16 @@ export function createRuntime(deps: EngineDeps, seams: EngineSeams): EngineRunti
     gateRunner,
     config,
     catalog: deps.catalog,
+    applyModelsUpdate: (update) => {
+      // task-34：拍边界一次性替换内存价目表/角色路由；在途 worker 不停；adapter model
+      // 声明刷新归 serve 层（DshAdapter.setModel——in-flight 用 launch 捕获值不串档）
+      ;(rt as unknown as { catalog: typeof update.catalog }).catalog = update.catalog
+      if (update.modelTierByRole !== undefined) {
+        ;(rt.config as { modelTierByRole?: Readonly<Record<string, import('@studio-next/core').TierId>> }).modelTierByRole = update.modelTierByRole
+      }
+      ;(budgetDeps as { catalog?: import('@studio-next/contract').ModelCatalog }).catalog = update.catalog
+      mergeHost.modelTiers = () => update.catalog.tiers()
+    },
     records,
     workerKeys,
     rooms,
