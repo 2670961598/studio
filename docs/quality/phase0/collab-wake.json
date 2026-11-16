@@ -1,0 +1,61 @@
+{
+  "ok": true,
+  "rooms": {
+    "broadcast": "broadcast",
+    "group": "group",
+    "dm": "dm"
+  },
+  "mention": {
+    "seq": 3,
+    "roomSeq": 1,
+    "replayed": true
+  },
+  "broadcast": {
+    "seq": 1,
+    "replayed": false
+  },
+  "dm": {
+    "seq": 2
+  },
+  "read": {
+    "groupUnreadAfterRead": 0,
+    "broadcastUnreadAfter": 0,
+    "dmUnreadAfter": 0
+  },
+  "wake": {
+    "pendingBefore": 3,
+    "wakes": [
+      {
+        "cause": "mention_all",
+        "channel": "dsh_followup",
+        "status": "pending"
+      },
+      {
+        "cause": "mention",
+        "channel": "dsh_followup",
+        "status": "pending"
+      },
+      {
+        "cause": "mention",
+        "channel": "dsh_followup",
+        "status": "pending"
+      }
+    ],
+    "lease": {
+      "leaseId": "lease:505d49b7-0cbd-41af-839a-9ff07257fc42:5885bf99-6105-44a7-9ee1-5a9e1bb0ddb5",
+      "expiresAt": 1794849797340,
+      "holder": "505d49b7-0cbd-41af-839a-9ff07257fc42",
+      "simulated": true
+    },
+    "acked": 3,
+    "alreadyAcked": 3,
+    "pendingAfter": 0
+  },
+  "matrixFaceGap": [
+    "vendor collab 无 relay/lease API：本 PoC 用进程内 lease map 模拟，P1 缺口（生产需 relay 投递/租约/重试）",
+    "无跨进程/跨节点 wake 推送；daemon Matrix face 依赖 Matrix 事件回执，需 sidecar 适配器",
+    "无 daemon PORT/事件台账对接；READ/WAKE/ACK 状态需映射到 daemon 观测面",
+    "vendor read cursor 为 HMAC 绑定 room+principal；daemon Matrix face 需按公司/租户封装密钥",
+    "许可/授权风险已由 Phase0 切片1 PROVENANCE 记录（无 LICENSE，制作人授权）"
+  ]
+}

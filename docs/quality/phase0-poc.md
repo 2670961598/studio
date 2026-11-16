@@ -41,3 +41,31 @@ send + list messages + markRead。实际输出（2026-11-17）：
   不改 daemon、不替代 Taiga/Matrix。
 - task-64：10 张真实单迁移 diff/ID/external_ref + collab mention→wake（relay/lease/ack 薄适配与 P1 缺口）。
 - 已知限制：vendor 快照是冻结拷贝，升级需整目录替换+PROVENANCE 更新；上游无正式 LICENSE，授权记录见上。
+
+## 5. 切片2：10 单迁移 diff（task-70 返工后）
+
+只读生产台账 `ticket_mirror` 导出 10 张真实单（多状态/部门/父子覆盖；台账无 title/description/comments 表，显式 gap）：
+
+```sh
+node --experimental-strip-types scripts/qa/phase0-ticket-migration.ts \
+  --ledger <production-ledger.sqlite> --out /tmp/phase0-evidence
+```
+
+结果（证据 `docs/quality/phase0/`）：
+- 10/10 导入 vendor issues；externalRef↔vendor key **roundtrip 10/10 true**；
+- **state matched 10/10**：按 vendor 矩阵逐单重放 T1→T2→T3→T6→T7（assignee/reviewer、summary/report evidence、T7 前按当前 revision 落 daemon gate verdict）；`ticket-diff.json` 每单含 `stateAttempts[]`（tried target/ruleId/from/after/errorCode/details），无 stateExemption；
+- type/dept/level/lane/assignee/parent 元数据写 labels/body；parent 在选集中父先子后传递；
+- comments=0（生产台账无评论表，显式 gap）；attachments=not-migrated（显式）；title/description 台账无字段，合成并记录 gap；
+- 逐单 diff 见 `docs/quality/phase0/ticket-diff.{md,json}`。
+
+## 6. 切片2：collab mention→wake（task-70 返工后）
+
+```sh
+node --experimental-strip-types scripts/qa/phase0-collab-wake.ts --out /tmp/phase0-evidence
+```
+
+结果（`docs/quality/phase0/collab-wake.{md,json}`）：broadcast/group/DM 三通道均建并发送；
+directed mention/mentionAll 产生 **3 个 wake**；send 幂等重放 `replayed=true`；inbox ack 3 个后 pending=0；
+不同 key 重复 ack → `alreadyAcked=3`；group/broadcast/DM read cursor 均正常；relay/lease 进程内薄适配模拟。
+**Matrix face 差距/P1 缺口**：vendor 无 relay/lease API、无跨进程 wake 推送、未接 daemon PORT/台账、
+cursor 密钥需按租户隔离；详见报告。

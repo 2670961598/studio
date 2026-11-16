@@ -1,0 +1,577 @@
+{
+  "schema": "phase0-ticket-diff/v1",
+  "selected": 10,
+  "imported": 10,
+  "fieldsCompared": [
+    "externalRef",
+    "state",
+    "type",
+    "dept",
+    "level",
+    "lane",
+    "assignee",
+    "parent",
+    "comments",
+    "attachments"
+  ],
+  "idRoundtrip": true,
+  "stateMatched": 10,
+  "stateExemptions": 0,
+  "commentsImported": 0,
+  "commentsGap": "production ledger has no comments table; comments not available offline (explicit gap, no fabrication)",
+  "attachments": "not-migrated (explicit)",
+  "titleGap": "ledger mirror has no title/description; title synthesized from externalRef/type/state",
+  "mapping": [
+    {
+      "externalRef": "studio-dev-1495",
+      "vendorTicketId": "tkt_4df23b4bedd74bf6962c124c3db59b6a",
+      "vendorKey": "PH0-1",
+      "importedStateCode": 3,
+      "originalState": "已派发",
+      "desiredStateCode": 3,
+      "stateMatched": true,
+      "stateAttempts": [
+        {
+          "targetStateCode": 2,
+          "ruleId": "T1",
+          "fromStateCode": 1,
+          "status": "ok",
+          "afterStateCode": 2
+        },
+        {
+          "targetStateCode": 3,
+          "ruleId": "T2",
+          "fromStateCode": 2,
+          "status": "ok",
+          "afterStateCode": 3
+        }
+      ],
+      "parentTransferred": false,
+      "comments": 0,
+      "attachments": "not-migrated",
+      "roundtripIdPreserved": true,
+      "exportedVendorKey": "PH0-1"
+    },
+    {
+      "externalRef": "studio-dev-1493",
+      "vendorTicketId": "tkt_2409af6bb8c84c389ec59ed48d8ca908",
+      "vendorKey": "PH0-2",
+      "importedStateCode": 6,
+      "originalState": "已交付",
+      "desiredStateCode": 6,
+      "stateMatched": true,
+      "stateAttempts": [
+        {
+          "targetStateCode": 2,
+          "ruleId": "T1",
+          "fromStateCode": 1,
+          "status": "ok",
+          "afterStateCode": 2
+        },
+        {
+          "targetStateCode": 3,
+          "ruleId": "T2",
+          "fromStateCode": 2,
+          "status": "ok",
+          "afterStateCode": 3
+        },
+        {
+          "targetStateCode": 4,
+          "ruleId": "T3",
+          "fromStateCode": 3,
+          "status": "ok",
+          "afterStateCode": 4
+        },
+        {
+          "targetStateCode": 5,
+          "ruleId": "T6",
+          "fromStateCode": 4,
+          "status": "ok",
+          "afterStateCode": 5
+        },
+        {
+          "targetStateCode": 6,
+          "ruleId": "T7",
+          "fromStateCode": 5,
+          "status": "ok",
+          "afterStateCode": 6
+        }
+      ],
+      "parentTransferred": false,
+      "comments": 0,
+      "attachments": "not-migrated",
+      "roundtripIdPreserved": true,
+      "exportedVendorKey": "PH0-2"
+    },
+    {
+      "externalRef": "studio-dev-1494",
+      "vendorTicketId": "tkt_7d91e40f78a7497ea98fec619a4b2be8",
+      "vendorKey": "PH0-3",
+      "importedStateCode": 6,
+      "originalState": "已交付",
+      "desiredStateCode": 6,
+      "stateMatched": true,
+      "stateAttempts": [
+        {
+          "targetStateCode": 2,
+          "ruleId": "T1",
+          "fromStateCode": 1,
+          "status": "ok",
+          "afterStateCode": 2
+        },
+        {
+          "targetStateCode": 3,
+          "ruleId": "T2",
+          "fromStateCode": 2,
+          "status": "ok",
+          "afterStateCode": 3
+        },
+        {
+          "targetStateCode": 4,
+          "ruleId": "T3",
+          "fromStateCode": 3,
+          "status": "ok",
+          "afterStateCode": 4
+        },
+        {
+          "targetStateCode": 5,
+          "ruleId": "T6",
+          "fromStateCode": 4,
+          "status": "ok",
+          "afterStateCode": 5
+        },
+        {
+          "targetStateCode": 6,
+          "ruleId": "T7",
+          "fromStateCode": 5,
+          "status": "ok",
+          "afterStateCode": 6
+        }
+      ],
+      "parentTransferred": false,
+      "comments": 0,
+      "attachments": "not-migrated",
+      "roundtripIdPreserved": true,
+      "exportedVendorKey": "PH0-3"
+    },
+    {
+      "externalRef": "studio-dev-1491",
+      "vendorTicketId": "tkt_5b36cc0d75f14b878353e13b4c9eea5f",
+      "vendorKey": "PH0-4",
+      "importedStateCode": 6,
+      "originalState": "已交付",
+      "desiredStateCode": 6,
+      "stateMatched": true,
+      "stateAttempts": [
+        {
+          "targetStateCode": 2,
+          "ruleId": "T1",
+          "fromStateCode": 1,
+          "status": "ok",
+          "afterStateCode": 2
+        },
+        {
+          "targetStateCode": 3,
+          "ruleId": "T2",
+          "fromStateCode": 2,
+          "status": "ok",
+          "afterStateCode": 3
+        },
+        {
+          "targetStateCode": 4,
+          "ruleId": "T3",
+          "fromStateCode": 3,
+          "status": "ok",
+          "afterStateCode": 4
+        },
+        {
+          "targetStateCode": 5,
+          "ruleId": "T6",
+          "fromStateCode": 4,
+          "status": "ok",
+          "afterStateCode": 5
+        },
+        {
+          "targetStateCode": 6,
+          "ruleId": "T7",
+          "fromStateCode": 5,
+          "status": "ok",
+          "afterStateCode": 6
+        }
+      ],
+      "parentTransferred": false,
+      "comments": 0,
+      "attachments": "not-migrated",
+      "roundtripIdPreserved": true,
+      "exportedVendorKey": "PH0-4"
+    },
+    {
+      "externalRef": "studio-dev-1492",
+      "vendorTicketId": "tkt_d781055287ba44469524225bf212e69c",
+      "vendorKey": "PH0-5",
+      "importedStateCode": 6,
+      "originalState": "已交付",
+      "desiredStateCode": 6,
+      "stateMatched": true,
+      "stateAttempts": [
+        {
+          "targetStateCode": 2,
+          "ruleId": "T1",
+          "fromStateCode": 1,
+          "status": "ok",
+          "afterStateCode": 2
+        },
+        {
+          "targetStateCode": 3,
+          "ruleId": "T2",
+          "fromStateCode": 2,
+          "status": "ok",
+          "afterStateCode": 3
+        },
+        {
+          "targetStateCode": 4,
+          "ruleId": "T3",
+          "fromStateCode": 3,
+          "status": "ok",
+          "afterStateCode": 4
+        },
+        {
+          "targetStateCode": 5,
+          "ruleId": "T6",
+          "fromStateCode": 4,
+          "status": "ok",
+          "afterStateCode": 5
+        },
+        {
+          "targetStateCode": 6,
+          "ruleId": "T7",
+          "fromStateCode": 5,
+          "status": "ok",
+          "afterStateCode": 6
+        }
+      ],
+      "parentTransferred": false,
+      "comments": 0,
+      "attachments": "not-migrated",
+      "roundtripIdPreserved": true,
+      "exportedVendorKey": "PH0-5"
+    },
+    {
+      "externalRef": "studio-dev-1490",
+      "vendorTicketId": "tkt_a3741df3c61e4d6b87a28004513997e4",
+      "vendorKey": "PH0-6",
+      "importedStateCode": 6,
+      "originalState": "已交付",
+      "desiredStateCode": 6,
+      "stateMatched": true,
+      "stateAttempts": [
+        {
+          "targetStateCode": 2,
+          "ruleId": "T1",
+          "fromStateCode": 1,
+          "status": "ok",
+          "afterStateCode": 2
+        },
+        {
+          "targetStateCode": 3,
+          "ruleId": "T2",
+          "fromStateCode": 2,
+          "status": "ok",
+          "afterStateCode": 3
+        },
+        {
+          "targetStateCode": 4,
+          "ruleId": "T3",
+          "fromStateCode": 3,
+          "status": "ok",
+          "afterStateCode": 4
+        },
+        {
+          "targetStateCode": 5,
+          "ruleId": "T6",
+          "fromStateCode": 4,
+          "status": "ok",
+          "afterStateCode": 5
+        },
+        {
+          "targetStateCode": 6,
+          "ruleId": "T7",
+          "fromStateCode": 5,
+          "status": "ok",
+          "afterStateCode": 6
+        }
+      ],
+      "parentTransferred": false,
+      "comments": 0,
+      "attachments": "not-migrated",
+      "roundtripIdPreserved": true,
+      "exportedVendorKey": "PH0-6"
+    },
+    {
+      "externalRef": "studio-dev-1489",
+      "vendorTicketId": "tkt_4892ddb1a0894291b482464bf90b02bd",
+      "vendorKey": "PH0-7",
+      "importedStateCode": 6,
+      "originalState": "已交付",
+      "desiredStateCode": 6,
+      "stateMatched": true,
+      "stateAttempts": [
+        {
+          "targetStateCode": 2,
+          "ruleId": "T1",
+          "fromStateCode": 1,
+          "status": "ok",
+          "afterStateCode": 2
+        },
+        {
+          "targetStateCode": 3,
+          "ruleId": "T2",
+          "fromStateCode": 2,
+          "status": "ok",
+          "afterStateCode": 3
+        },
+        {
+          "targetStateCode": 4,
+          "ruleId": "T3",
+          "fromStateCode": 3,
+          "status": "ok",
+          "afterStateCode": 4
+        },
+        {
+          "targetStateCode": 5,
+          "ruleId": "T6",
+          "fromStateCode": 4,
+          "status": "ok",
+          "afterStateCode": 5
+        },
+        {
+          "targetStateCode": 6,
+          "ruleId": "T7",
+          "fromStateCode": 5,
+          "status": "ok",
+          "afterStateCode": 6
+        }
+      ],
+      "parentTransferred": false,
+      "comments": 0,
+      "attachments": "not-migrated",
+      "roundtripIdPreserved": true,
+      "exportedVendorKey": "PH0-7"
+    },
+    {
+      "externalRef": "studio-dev-1488",
+      "vendorTicketId": "tkt_89fb80d7ff2e47dba7bf01ff0108afe2",
+      "vendorKey": "PH0-8",
+      "importedStateCode": 6,
+      "originalState": "已交付",
+      "desiredStateCode": 6,
+      "stateMatched": true,
+      "stateAttempts": [
+        {
+          "targetStateCode": 2,
+          "ruleId": "T1",
+          "fromStateCode": 1,
+          "status": "ok",
+          "afterStateCode": 2
+        },
+        {
+          "targetStateCode": 3,
+          "ruleId": "T2",
+          "fromStateCode": 2,
+          "status": "ok",
+          "afterStateCode": 3
+        },
+        {
+          "targetStateCode": 4,
+          "ruleId": "T3",
+          "fromStateCode": 3,
+          "status": "ok",
+          "afterStateCode": 4
+        },
+        {
+          "targetStateCode": 5,
+          "ruleId": "T6",
+          "fromStateCode": 4,
+          "status": "ok",
+          "afterStateCode": 5
+        },
+        {
+          "targetStateCode": 6,
+          "ruleId": "T7",
+          "fromStateCode": 5,
+          "status": "ok",
+          "afterStateCode": 6
+        }
+      ],
+      "parentTransferred": false,
+      "comments": 0,
+      "attachments": "not-migrated",
+      "roundtripIdPreserved": true,
+      "exportedVendorKey": "PH0-8"
+    },
+    {
+      "externalRef": "studio-dev-1487",
+      "vendorTicketId": "tkt_f9ed6e421bea47029a46dad0bb3513e5",
+      "vendorKey": "PH0-9",
+      "importedStateCode": 6,
+      "originalState": "已交付",
+      "desiredStateCode": 6,
+      "stateMatched": true,
+      "stateAttempts": [
+        {
+          "targetStateCode": 2,
+          "ruleId": "T1",
+          "fromStateCode": 1,
+          "status": "ok",
+          "afterStateCode": 2
+        },
+        {
+          "targetStateCode": 3,
+          "ruleId": "T2",
+          "fromStateCode": 2,
+          "status": "ok",
+          "afterStateCode": 3
+        },
+        {
+          "targetStateCode": 4,
+          "ruleId": "T3",
+          "fromStateCode": 3,
+          "status": "ok",
+          "afterStateCode": 4
+        },
+        {
+          "targetStateCode": 5,
+          "ruleId": "T6",
+          "fromStateCode": 4,
+          "status": "ok",
+          "afterStateCode": 5
+        },
+        {
+          "targetStateCode": 6,
+          "ruleId": "T7",
+          "fromStateCode": 5,
+          "status": "ok",
+          "afterStateCode": 6
+        }
+      ],
+      "parentTransferred": false,
+      "comments": 0,
+      "attachments": "not-migrated",
+      "roundtripIdPreserved": true,
+      "exportedVendorKey": "PH0-9"
+    },
+    {
+      "externalRef": "studio-dev-1486",
+      "vendorTicketId": "tkt_69a7e97e4410422999f473b9ae52dfd1",
+      "vendorKey": "PH0-10",
+      "importedStateCode": 6,
+      "originalState": "已交付",
+      "desiredStateCode": 6,
+      "stateMatched": true,
+      "stateAttempts": [
+        {
+          "targetStateCode": 2,
+          "ruleId": "T1",
+          "fromStateCode": 1,
+          "status": "ok",
+          "afterStateCode": 2
+        },
+        {
+          "targetStateCode": 3,
+          "ruleId": "T2",
+          "fromStateCode": 2,
+          "status": "ok",
+          "afterStateCode": 3
+        },
+        {
+          "targetStateCode": 4,
+          "ruleId": "T3",
+          "fromStateCode": 3,
+          "status": "ok",
+          "afterStateCode": 4
+        },
+        {
+          "targetStateCode": 5,
+          "ruleId": "T6",
+          "fromStateCode": 4,
+          "status": "ok",
+          "afterStateCode": 5
+        },
+        {
+          "targetStateCode": 6,
+          "ruleId": "T7",
+          "fromStateCode": 5,
+          "status": "ok",
+          "afterStateCode": 6
+        }
+      ],
+      "parentTransferred": false,
+      "comments": 0,
+      "attachments": "not-migrated",
+      "roundtripIdPreserved": true,
+      "exportedVendorKey": "PH0-10"
+    }
+  ],
+  "exported": [
+    {
+      "externalRef": "studio-dev-1486",
+      "vendorKey": "PH0-10",
+      "title": "[studio-dev-1486] task · 已交付",
+      "stateCode": 6
+    },
+    {
+      "externalRef": "studio-dev-1487",
+      "vendorKey": "PH0-9",
+      "title": "[studio-dev-1487] patrol · 已交付",
+      "stateCode": 6
+    },
+    {
+      "externalRef": "studio-dev-1488",
+      "vendorKey": "PH0-8",
+      "title": "[studio-dev-1488] task · 已交付",
+      "stateCode": 6
+    },
+    {
+      "externalRef": "studio-dev-1489",
+      "vendorKey": "PH0-7",
+      "title": "[studio-dev-1489] patrol · 已交付",
+      "stateCode": 6
+    },
+    {
+      "externalRef": "studio-dev-1490",
+      "vendorKey": "PH0-6",
+      "title": "[studio-dev-1490] task · 已交付",
+      "stateCode": 6
+    },
+    {
+      "externalRef": "studio-dev-1492",
+      "vendorKey": "PH0-5",
+      "title": "[studio-dev-1492] patrol · 已交付",
+      "stateCode": 6
+    },
+    {
+      "externalRef": "studio-dev-1491",
+      "vendorKey": "PH0-4",
+      "title": "[studio-dev-1491] task · 已交付",
+      "stateCode": 6
+    },
+    {
+      "externalRef": "studio-dev-1494",
+      "vendorKey": "PH0-3",
+      "title": "[studio-dev-1494] patrol · 已交付",
+      "stateCode": 6
+    },
+    {
+      "externalRef": "studio-dev-1493",
+      "vendorKey": "PH0-2",
+      "title": "[studio-dev-1493] task · 已交付",
+      "stateCode": 6
+    },
+    {
+      "externalRef": "studio-dev-1495",
+      "vendorKey": "PH0-1",
+      "title": "[studio-dev-1495] task · 已派发",
+      "stateCode": 3
+    }
+  ]
+}
