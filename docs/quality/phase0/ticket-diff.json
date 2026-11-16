@@ -24,11 +24,11 @@
   "mapping": [
     {
       "externalRef": "studio-dev-1495",
-      "vendorTicketId": "tkt_4df23b4bedd74bf6962c124c3db59b6a",
+      "vendorTicketId": "tkt_c63d449b63ba467ca1889f5128c2e464",
       "vendorKey": "PH0-1",
-      "importedStateCode": 3,
-      "originalState": "已派发",
-      "desiredStateCode": 3,
+      "importedStateCode": 6,
+      "originalState": "已交付",
+      "desiredStateCode": 6,
       "stateMatched": true,
       "stateAttempts": [
         {
@@ -44,9 +44,30 @@
           "fromStateCode": 2,
           "status": "ok",
           "afterStateCode": 3
+        },
+        {
+          "targetStateCode": 4,
+          "ruleId": "T3",
+          "fromStateCode": 3,
+          "status": "ok",
+          "afterStateCode": 4
+        },
+        {
+          "targetStateCode": 5,
+          "ruleId": "T6",
+          "fromStateCode": 4,
+          "status": "ok",
+          "afterStateCode": 5
+        },
+        {
+          "targetStateCode": 6,
+          "ruleId": "T7",
+          "fromStateCode": 5,
+          "status": "ok",
+          "afterStateCode": 6
         }
       ],
-      "parentTransferred": false,
+      "parentTransferred": null,
       "comments": 0,
       "attachments": "not-migrated",
       "roundtripIdPreserved": true,
@@ -54,7 +75,7 @@
     },
     {
       "externalRef": "studio-dev-1493",
-      "vendorTicketId": "tkt_2409af6bb8c84c389ec59ed48d8ca908",
+      "vendorTicketId": "tkt_e56bd1bbcd024b40a6598be9257ae6b4",
       "vendorKey": "PH0-2",
       "importedStateCode": 6,
       "originalState": "已交付",
@@ -97,7 +118,7 @@
           "afterStateCode": 6
         }
       ],
-      "parentTransferred": false,
+      "parentTransferred": null,
       "comments": 0,
       "attachments": "not-migrated",
       "roundtripIdPreserved": true,
@@ -105,7 +126,7 @@
     },
     {
       "externalRef": "studio-dev-1494",
-      "vendorTicketId": "tkt_7d91e40f78a7497ea98fec619a4b2be8",
+      "vendorTicketId": "tkt_e1d8deac271d4032bf1ef6049e5a19af",
       "vendorKey": "PH0-3",
       "importedStateCode": 6,
       "originalState": "已交付",
@@ -148,7 +169,7 @@
           "afterStateCode": 6
         }
       ],
-      "parentTransferred": false,
+      "parentTransferred": null,
       "comments": 0,
       "attachments": "not-migrated",
       "roundtripIdPreserved": true,
@@ -156,7 +177,7 @@
     },
     {
       "externalRef": "studio-dev-1491",
-      "vendorTicketId": "tkt_5b36cc0d75f14b878353e13b4c9eea5f",
+      "vendorTicketId": "tkt_c8b2c6d586ee4b95a0f26e438bf02e5c",
       "vendorKey": "PH0-4",
       "importedStateCode": 6,
       "originalState": "已交付",
@@ -199,7 +220,7 @@
           "afterStateCode": 6
         }
       ],
-      "parentTransferred": false,
+      "parentTransferred": null,
       "comments": 0,
       "attachments": "not-migrated",
       "roundtripIdPreserved": true,
@@ -207,7 +228,7 @@
     },
     {
       "externalRef": "studio-dev-1492",
-      "vendorTicketId": "tkt_d781055287ba44469524225bf212e69c",
+      "vendorTicketId": "tkt_8d120678411c451dbb825953ab89f1e0",
       "vendorKey": "PH0-5",
       "importedStateCode": 6,
       "originalState": "已交付",
@@ -250,7 +271,7 @@
           "afterStateCode": 6
         }
       ],
-      "parentTransferred": false,
+      "parentTransferred": null,
       "comments": 0,
       "attachments": "not-migrated",
       "roundtripIdPreserved": true,
@@ -258,7 +279,7 @@
     },
     {
       "externalRef": "studio-dev-1490",
-      "vendorTicketId": "tkt_a3741df3c61e4d6b87a28004513997e4",
+      "vendorTicketId": "tkt_4451d0a5489f4e219a8a7edc5a73ba86",
       "vendorKey": "PH0-6",
       "importedStateCode": 6,
       "originalState": "已交付",
@@ -301,7 +322,7 @@
           "afterStateCode": 6
         }
       ],
-      "parentTransferred": false,
+      "parentTransferred": null,
       "comments": 0,
       "attachments": "not-migrated",
       "roundtripIdPreserved": true,
@@ -309,7 +330,7 @@
     },
     {
       "externalRef": "studio-dev-1489",
-      "vendorTicketId": "tkt_4892ddb1a0894291b482464bf90b02bd",
+      "vendorTicketId": "tkt_76255196511e45c0a440657d52be3602",
       "vendorKey": "PH0-7",
       "importedStateCode": 6,
       "originalState": "已交付",
@@ -352,7 +373,7 @@
           "afterStateCode": 6
         }
       ],
-      "parentTransferred": false,
+      "parentTransferred": null,
       "comments": 0,
       "attachments": "not-migrated",
       "roundtripIdPreserved": true,
@@ -360,7 +381,7 @@
     },
     {
       "externalRef": "studio-dev-1488",
-      "vendorTicketId": "tkt_89fb80d7ff2e47dba7bf01ff0108afe2",
+      "vendorTicketId": "tkt_7f5ea61e28854b26960c4378aa666e29",
       "vendorKey": "PH0-8",
       "importedStateCode": 6,
       "originalState": "已交付",
@@ -403,7 +424,7 @@
           "afterStateCode": 6
         }
       ],
-      "parentTransferred": false,
+      "parentTransferred": null,
       "comments": 0,
       "attachments": "not-migrated",
       "roundtripIdPreserved": true,
@@ -411,7 +432,7 @@
     },
     {
       "externalRef": "studio-dev-1487",
-      "vendorTicketId": "tkt_f9ed6e421bea47029a46dad0bb3513e5",
+      "vendorTicketId": "tkt_970a984c8b29416db000730c8ef398c6",
       "vendorKey": "PH0-9",
       "importedStateCode": 6,
       "originalState": "已交付",
@@ -454,7 +475,7 @@
           "afterStateCode": 6
         }
       ],
-      "parentTransferred": false,
+      "parentTransferred": null,
       "comments": 0,
       "attachments": "not-migrated",
       "roundtripIdPreserved": true,
@@ -462,7 +483,7 @@
     },
     {
       "externalRef": "studio-dev-1486",
-      "vendorTicketId": "tkt_69a7e97e4410422999f473b9ae52dfd1",
+      "vendorTicketId": "tkt_0d031f474d42443b98c88b2e46c493ca",
       "vendorKey": "PH0-10",
       "importedStateCode": 6,
       "originalState": "已交付",
@@ -505,14 +526,30 @@
           "afterStateCode": 6
         }
       ],
-      "parentTransferred": false,
+      "parentTransferred": null,
       "comments": 0,
       "attachments": "not-migrated",
       "roundtripIdPreserved": true,
       "exportedVendorKey": "PH0-10"
     }
   ],
+  "parentFixture": {
+    "parentKey": "PH0-11",
+    "childKey": "PH0-12",
+    "parentId": "tkt_bbb9d9331bfa4615b4236995ab1a487a",
+    "linked": true
+  },
   "exported": [
+    {
+      "vendorKey": "PH0-12",
+      "title": "[PH0-CHILD] fixture",
+      "stateCode": 1
+    },
+    {
+      "vendorKey": "PH0-11",
+      "title": "[PH0-PARENT] fixture",
+      "stateCode": 1
+    },
     {
       "externalRef": "studio-dev-1486",
       "vendorKey": "PH0-10",
@@ -570,8 +607,8 @@
     {
       "externalRef": "studio-dev-1495",
       "vendorKey": "PH0-1",
-      "title": "[studio-dev-1495] task · 已派发",
-      "stateCode": 3
+      "title": "[studio-dev-1495] task · 已交付",
+      "stateCode": 6
     }
   ]
 }

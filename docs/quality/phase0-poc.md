@@ -54,7 +54,7 @@ node --experimental-strip-types scripts/qa/phase0-ticket-migration.ts \
 结果（证据 `docs/quality/phase0/`）：
 - 10/10 导入 vendor issues；externalRef↔vendor key **roundtrip 10/10 true**；
 - **state matched 10/10**：按 vendor 矩阵逐单重放 T1→T2→T3→T6→T7（assignee/reviewer、summary/report evidence、T7 前按当前 revision 落 daemon gate verdict）；`ticket-diff.json` 每单含 `stateAttempts[]`（tried target/ruleId/from/after/errorCode/details），无 stateExemption；
-- type/dept/level/lane/assignee/parent 元数据写 labels/body；parent 在选集中父先子后传递；
+- type/dept/level/lane/assignee/parent 元数据写 labels/body；生产 10 单 parent 全 SQL NULL → `parentTransferred=null`（无父，不误记 false）；另用受控 fixture（PH0-PARENT→PH0-CHILD）证明 parentId 传递并断言 linked=true。
 - comments=0（生产台账无评论表，显式 gap）；attachments=not-migrated（显式）；title/description 台账无字段，合成并记录 gap；
 - 逐单 diff 见 `docs/quality/phase0/ticket-diff.{md,json}`。
 

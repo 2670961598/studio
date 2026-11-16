@@ -16,14 +16,14 @@ const outDir = argOf('--out') ?? '/tmp/phase0-evidence'
 if (ledgerPath === undefined) { console.error('用法：--ledger <ledger.sqlite> [--out <dir>]'); process.exit(2) }
 mkdirSync(outDir, { recursive: true })
 const db = new DatabaseSync(ledgerPath, { readOnly: true })
-type Row = { issue: string; state: string; type: string; dept: string; level: number; dispatcher: string; parent?: string; lane?: string; assignee?: string; created: number; updated: number }
+type Row = { issue: string; state: string; type: string; dept: string; level: number; dispatcher: string; parent?: string | null; lane?: string | null; assignee?: string | null; created: number; updated: number }
 const rows = db.prepare('SELECT issue,state,type,dept,level,dispatcher,parent,lane,assignee,created,updated FROM ticket_mirror ORDER BY updated DESC LIMIT 200').all() as Row[]
 // 选 10 张：尽量覆盖多状态/多部门/父子单；不足则取前 N
 const picked: Row[] = []
 const states = new Set<string>(); const depts = new Set<string>()
 for (const r of rows) {
   if (picked.length >= 10) break
-  if (!states.has(r.state) || !depts.has(r.dept) || r.parent !== undefined || picked.length < 6) { picked.push(r); states.add(r.state); depts.add(r.dept) }
+  if (!states.has(r.state) || !depts.has(r.dept) || r.parent != null || picked.length < 6) { picked.push(r); states.add(r.state); depts.add(r.dept) }
 }
 for (const r of rows) { if (picked.length >= 10) break; if (!picked.includes(r)) picked.push(r) }
 db.close()
@@ -91,14 +91,14 @@ try {
   // 先建父单在 selected 内的票据，再建子单；父不在 10 张内=parent 保持空并豁免
   const byIssue = new Map(picked.map((r) => [r.issue, r]))
   const ordered: Row[] = []
-  const emit = (r: Row): void => { if (ordered.includes(r)) return; if (r.parent !== undefined && byIssue.has(r.parent)) emit(byIssue.get(r.parent)!); ordered.push(r) }
+  const emit = (r: Row): void => { if (ordered.includes(r)) return; if (r.parent != null && byIssue.has(r.parent)) emit(byIssue.get(r.parent)!); ordered.push(r) }
   for (const r of picked) emit(r)
   const createdByExternal = new Map<string, { id: string; revision: number }>()
   for (const r of ordered) {
     const st = stateCodeOf(r.state)
     const labelOf = (v: string): string => v.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32)
     const labels = ['phase0-imported', `ext-id-${labelOf(r.issue)}`, `ext-state-${String(st.code)}`, `ext-type-${labelOf(r.type)}`, `ext-dept-${labelOf(r.dept)}`, `ext-level-${String(r.level)}`]
-    const parentVendor = r.parent !== undefined ? createdByExternal.get(r.parent) : undefined
+    const parentVendor = r.parent != null ? createdByExternal.get(r.parent) : undefined
     let t = await platform.service.createTicket(dev.id, {
       projectId: project.id,
       ...(parentVendor !== undefined ? { parentId: parentVendor.id } : {}),
@@ -128,8 +128,14 @@ try {
     imported.push({ original: r, ticketId: t.id, key: t.key })
     const failed = attempts.find((a) => a['status'] === 'error')
     const stateExemption = stateMatched ? undefined : `target=${String(st.code)} rule=${String(RULE_OF_TARGET[st.code] ?? 'n/a')}；最后失败=${String(failed?.['errorCode'] ?? 'unknown')}（details=${JSON.stringify(failed?.['details'] ?? {})}）；合法路径已按 vendor 矩阵补 assignee/reviewer/evidence${st.code === 6 ? '/gate' : ''}，仍未到达；不 force/不伪造`
-    mapping.push({ externalRef: r.issue, vendorTicketId: t.id, vendorKey: t.key, importedStateCode: t.stateCode, originalState: r.state, desiredStateCode: st.code, stateMatched, stateAttempts: attempts, parentTransferred: r.parent === undefined ? null : parentVendor !== undefined, comments: 0, attachments: 'not-migrated', ...(stateExemption !== undefined ? { stateExemption } : {}) })
+    mapping.push({ externalRef: r.issue, vendorTicketId: t.id, vendorKey: t.key, importedStateCode: t.stateCode, originalState: r.state, desiredStateCode: st.code, stateMatched, stateAttempts: attempts, parentTransferred: r.parent == null ? null : parentVendor !== undefined, comments: 0, attachments: 'not-migrated', ...(stateExemption !== undefined ? { stateExemption } : {}) })
   }
+  // task-72：生产 10 单 parent 全 SQL NULL（无父子对），用受控 fixture 证明 parent 传递路径
+  const fxParent = await platform.service.createTicket(dev.id, { projectId: project.id, title: '[PH0-PARENT] fixture', body: 'parent fixture', idempotencyKey: 'fixture-parent' })
+  const fxChild = await platform.service.createTicket(dev.id, { projectId: project.id, title: '[PH0-CHILD] fixture', body: 'child fixture', parentId: fxParent.id, idempotencyKey: 'fixture-child' })
+  const fxChildView = await platform.service.getTicket(dev.id, { projectId: project.id, idOrKey: fxChild.id })
+  const parentFixture = { parentKey: fxParent.key, childKey: fxChild.key, parentId: fxChildView.parentId, linked: fxChildView.parentId === fxParent.id }
+  if (!parentFixture.linked) throw new Error('parent fixture link failed')
   // 回导出：按 externalRef label 映射回原 ID，验证映射 roundtrip
   const page = await platform.service.listTickets(dev.id, { projectId: project.id, limit: 50 })
   const exported = page.items.map((t) => {
@@ -154,11 +160,12 @@ try {
     attachments: 'not-migrated (explicit)',
     titleGap: 'ledger mirror has no title/description; title synthesized from externalRef/type/state',
     mapping,
+    parentFixture,
     exported,
   }
   writeFileSync(path.join(outDir, 'ticket-export.json'), JSON.stringify({ rows: picked }, null, 2))
   writeFileSync(path.join(outDir, 'ticket-diff.json'), JSON.stringify(diff, null, 2))
-  const md = [`# Phase0 10 单迁移 diff`, '', `- selected=${String(picked.length)} imported=${String(mapping.length)}`, `- ID roundtrip=${String(diff.idRoundtrip)}`, `- state matched=${String(diff.stateMatched)} / exemptions=${String(diff.stateExemptions)}`, `- comments=0（台账无评论表，显式 gap）`, `- attachments=not-migrated（显式）`, '', '## 逐单（含 stateAttempts）', ...mapping.flatMap((m) => [`- ${String(m['externalRef'])} → ${String(m['vendorKey'])}（id=${String(m['vendorTicketId'])}）desired=${String(m['desiredStateCode'])} imported=${String(m['importedStateCode'])} roundtrip=${String(m['roundtripIdPreserved'])}`, `  attempts: ${(m['stateAttempts'] as Attempt[]).map((a) => `${String(a['targetStateCode'])}:${String(a['ruleId'])}:${String(a['status'])}${a['errorCode'] !== undefined ? `(${String(a['errorCode'])})` : ''}`).join(' → ')}`, ...(m['stateExemption'] !== undefined ? [`  exemption: ${String(m['stateExemption'])}`] : [])])].join('\n') + '\n'
+  const md = [`# Phase0 10 单迁移 diff`, '', `- selected=${String(picked.length)} imported=${String(mapping.length)}`, `- ID roundtrip=${String(diff.idRoundtrip)}`, `- state matched=${String(diff.stateMatched)} / exemptions=${String(diff.stateExemptions)}`, `- comments=0（台账无评论表，显式 gap）`, `- attachments=not-migrated（显式）`, `- parent：生产 10 单全 SQL NULL → parentTransferred=null（无父）；受控 fixture=${String(parentFixture.linked)}（${parentFixture.parentKey}→${parentFixture.childKey}）`, '', '## 逐单（含 stateAttempts）', ...mapping.flatMap((m) => [`- ${String(m['externalRef'])} → ${String(m['vendorKey'])}（id=${String(m['vendorTicketId'])}）desired=${String(m['desiredStateCode'])} imported=${String(m['importedStateCode'])} roundtrip=${String(m['roundtripIdPreserved'])}`, `  attempts: ${(m['stateAttempts'] as Attempt[]).map((a) => `${String(a['targetStateCode'])}:${String(a['ruleId'])}:${String(a['status'])}${a['errorCode'] !== undefined ? `(${String(a['errorCode'])})` : ''}`).join(' → ')}`, ...(m['stateExemption'] !== undefined ? [`  exemption: ${String(m['stateExemption'])}`] : [])])].join('\n') + '\n'
   writeFileSync(path.join(outDir, 'ticket-diff.md'), md)
-  console.log(JSON.stringify({ ok: true, selected: picked.length, imported: mapping.length, idRoundtrip: diff.idRoundtrip, stateMatched: diff.stateMatched, stateExemptions: diff.stateExemptions, outDir }))
+  console.log(JSON.stringify({ ok: true, selected: picked.length, imported: mapping.length, idRoundtrip: diff.idRoundtrip, stateMatched: diff.stateMatched, stateExemptions: diff.stateExemptions, parentFixture: parentFixture.linked, outDir }))
 } finally { platform.close() }
