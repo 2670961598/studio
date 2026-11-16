@@ -40,6 +40,8 @@ export interface AcceptanceDecision {
 const PASSING: ReadonlySet<AcceptanceStatus> = new Set(['pass', 'waived'])
 /** 报告/巡检/策划/提案类：沿用四要件+QA，不要求功能验收字段 */
 const REPORT_LIKE_TYPES: ReadonlySet<string> = new Set(['report', 'patrol', 'proposal', 'pricing', 'review', 'research'])
+/** scheduler 岗 payload.type 的 report-like 集合（与平台 issue.type 归一，task-50） */
+const REPORT_LIKE_JOB_TYPES: ReadonlySet<string> = new Set(['report', 'patrol', 'proposal', 'pricing', 'review', 'research', 'audit'])
 const ACCEPTANCE_NOTE_PREFIX = 'ACCEPTANCE;'
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -93,9 +95,38 @@ export function parseAcceptanceCriteria(description: string | undefined): { ok: 
   }
 }
 
-/** 功能类=非报告/巡检/策划/提案类；缺 type 按功能类（保守，需验收） */
-export function isFunctionalIssue(issue: Pick<IssueRecord, 'type'>): boolean {
+/** scheduler 岗 payload.type → 是否 report-like（平台 issue.type 不可靠时按来源归一；task-50） */
+export function isReportLikeJobType(jobType: string | undefined): boolean {
+  return jobType !== undefined && REPORT_LIKE_JOB_TYPES.has(jobType)
+}
+
+/**
+ * 功能类=非报告/巡检/策划/提案类；缺 type 按功能类（保守，需验收）。
+ * 优先用**派发来源的 job payload.type** 归一：scheduler 物化的日报/巡检单在平台可能落成
+ * type=task（#1488 实证），不能据此当功能类——否则 observe 噪音、enforce 停摆定时岗。
+ */
+export function isFunctionalIssue(issue: Pick<IssueRecord, 'type'>, jobType?: string): boolean {
+  if (isReportLikeJobType(jobType)) return false
   return issue.type === undefined || issue.type === '' || !REPORT_LIKE_TYPES.has(issue.type)
+}
+
+/**
+ * 从该单的 PATROL 留痕取 job_id → jobs 表 payload.type（只读；不新字段/不改契约）：
+ * schedule 物化器 PATROL note 形如 `intent=...;job=<id>;cron=...;role=...`。
+ * 取最新一条有效 PATROL；无 job/无 payload.type 返回 undefined（按 issue.type 判定）。
+ */
+function scheduledJobTypeOf(cfg: AcceptanceGateConfig, ticket: TicketId): string | undefined {
+  const events = cfg.ledger.queryEvents({ issue: ticket })
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const e = events[i]
+    if (e === undefined || e.event !== 'PATROL' || e.note === undefined) continue
+    const jobId = /(?:^|;)job=([^;]+)/.exec(e.note)?.[1]
+    if (jobId === undefined) continue
+    const job = cfg.ledger.getJob(jobId)
+    const type = (job?.payload as { type?: unknown } | undefined)?.type
+    if (typeof type === 'string' && type !== '') return type
+  }
+  return undefined
 }
 
 /** 验收结论解析（APPROVE note 前缀；最新一条生效） */
@@ -144,7 +175,8 @@ function legacyOf(cfg: AcceptanceGateConfig, ticket: TicketId): { legacy: boolea
 
 /** 派发入口验收：功能类新单缺/坏 acceptance_criteria → enforce 拒派；observe 告警放行；legacy 告警放行 */
 export function evaluateDispatchAcceptance(cfg: AcceptanceGateConfig, issue: IssueRecord): AcceptanceGateResult {
-  if (cfg.mode === 'off' || !isFunctionalIssue(issue)) return { allow: true, kind: 'ok' }
+  const jobType = scheduledJobTypeOf(cfg, issue.id)
+  if (cfg.mode === 'off' || !isFunctionalIssue(issue, jobType)) return { allow: true, kind: 'ok' }
   const result = parseAcceptanceCriteria(issue.description)
   if (result.ok) return { allow: true, kind: 'ok' }
   const leg = legacyOf(cfg, issue.id)
@@ -156,7 +188,8 @@ export function evaluateDispatchAcceptance(cfg: AcceptanceGateConfig, issue: Iss
 
 /** CLOSE 前验收：功能类需 pass/waived 结论；return/need-evidence/缺失 → enforce HOLD，observe/legacy 告警放行 */
 export function evaluateCloseAcceptance(cfg: AcceptanceGateConfig, issue: IssueRecord): AcceptanceGateResult {
-  if (cfg.mode === 'off' || !isFunctionalIssue(issue)) return { allow: true, kind: 'ok' }
+  const jobType = scheduledJobTypeOf(cfg, issue.id)
+  if (cfg.mode === 'off' || !isFunctionalIssue(issue, jobType)) return { allow: true, kind: 'ok' }
   const events = cfg.ledger.queryEvents({ issue: issue.id })
   const decision = acceptanceDecisionOf(events)
   if (decision !== undefined && PASSING.has(decision.status)) return { allow: true, kind: 'ok' }

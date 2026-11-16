@@ -30,11 +30,13 @@
 
 `executeDispatch` 在取到 fresh issue 后调用 `evaluateDispatchAcceptance`：
 功能类（非 report/patrol/proposal/pricing 等）× enforce：缺/坏标准 → `DISPATCH_FAIL`（拒派，不占资源）；
+类型判定优先按 **scheduler 物化来源** 归一：由 PATROL note `job=` 查 jobs 表 `payload.type`（report/patrol/audit 等），
+平台 `issue.type` 落成 `task` 也不误判功能类（task-50 #1488 缺陷）；
 legacy/observe → ESCALATE 告警一次（进程内 warned 去重）后放行；off=零行为。
 
 ## 3. CLOSE 前验收闸
 
-功能类在相位 6 回收（CLOSE 前）检查最新验收结论（事件 `APPROVE` note `ACCEPTANCE;status=…`）：
+功能类在相位 6 回收（CLOSE 前）检查最新验收结论（类型同派发闸按 job payload.type 归一）（事件 `APPROVE` note `ACCEPTANCE;status=…`）：
 `pass|waived` 放行；`return|need-evidence/缺失` → enforce 下 **HOLD**（不释放泳道/不吊销/不 CLOSE，
 下一拍继续评估并 ESCALATE），observe/legacy 告警放行。报告类不适用（四要件+QA 原样）。
 

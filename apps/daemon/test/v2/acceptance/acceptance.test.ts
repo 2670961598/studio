@@ -36,10 +36,23 @@ function ledgerOf(name: string) {
   ledger.upsertTicketMirror({ issue: 'T-NEW', company: COMPANY, created: 2_000, updated: 2_000, state: '已交付', type: 'devtask', dept: 'departments/工程部', level: 2, dispatcher: 'AGENT-1' })
   ledger.upsertTicketMirror({ issue: 'T-LEGACY', company: COMPANY, created: 500, updated: 500, state: '已交付', type: 'devtask', dept: 'departments/工程部', level: 2, dispatcher: 'AGENT-1' })
   ledger.upsertTicketMirror({ issue: 'T-REPORT', company: COMPANY, created: 2_000, updated: 2_000, state: '已交付', type: 'report', dept: 'departments/研发部', level: 1, dispatcher: 'AGENT-1' })
+  ledger.upsertTicketMirror({ issue: 'T-FUNC', company: COMPANY, created: 2_000, updated: 2_000, state: '已交付', type: 'task', dept: 'departments/工程部', level: 2, dispatcher: 'AGENT-1' })
+  ledger.upsertTicketMirror({ issue: 'T-SCHED', company: COMPANY, created: 2_000, updated: 2_000, state: '已交付', type: 'task', dept: 'departments/综合部', level: 1, dispatcher: 'OPS-1' })
+  ledger.upsertTicketMirror({ issue: 'T-SCHED-PATROL', company: COMPANY, created: 2_000, updated: 2_000, state: '已交付', type: 'task', dept: 'departments/综合部', level: 1, dispatcher: 'OPS-1' })
   return ledger
 }
 function cfg(ledger: ReturnType<typeof ledgerOf>, mode: AcceptanceGateConfig['mode'] = 'enforce'): AcceptanceGateConfig {
   return { mode, enforceSince: 1_000, ledger, company: COMPANY, warned: new Set<string>() }
+}
+/** 模拟 scheduler 物化：jobs 表 payload.type + PATROL note job=...（平台 issue.type 仍是 task） */
+function seedScheduled(ledger: ReturnType<typeof ledgerOf>, ticket: string, jobId: string, jobType: string): void {
+  ledger.upsertJob({ job_id: jobId, company: COMPANY, dept: 'departments/综合部', cron: '0 * * * *', role: 'OPS-1', level: 2, model_tier: 'low', payload: { type: jobType }, next_run_at: 0 })
+  const ts = 10_000
+  ledger.appendEvent({
+    id: makeUlid(ts), ts, company: COMPANY, issue: ticket, event: 'PATROL', actor: 'daemon', attempt: 1, level: 1,
+    dept: 'departments/综合部', tokens: { input: 0 },
+    note: `intent=scheduler|schedule|${COMPANY}|${jobId}@${ts};job=${jobId};cron=0 * * * *;role=OPS-1;dedup=${jobId}@${ts};来源=scheduler`,
+  })
 }
 
 describe('acceptance_criteria：解析与功能类判定', () => {
@@ -111,6 +124,34 @@ describe('CLOSE 前验收闸', () => {
       // 新单 enforce 同三态仍 HOLD（不回归）
       recordAcceptance({ ledger, company: COMPANY, ticket: 'T-NEW', status: 'need-evidence', by: 'verifier', evidence: 'e', signoff: 'lead-verifier', at: 7_000, makeId: (ts) => makeUlid(ts) })
       expect(evaluateCloseAcceptance(c, issue('T-NEW'))).toMatchObject({ allow: false, kind: 'blocked-return' })
+    } finally {
+      ledger.close()
+    }
+  })
+})
+
+describe('task-50：scheduler 单按 job payload.type 归一（issue.type=task 不误判功能类）', () => {
+  it('scheduler+payload report/patrol + mirror type=task → observe 零告警、enforce 放行；真正功能类仍拦', () => {
+    const ledger = ledgerOf('typefix')
+    try {
+      seedScheduled(ledger, 'T-SCHED', 'daily-report-研发部', 'report')
+      seedScheduled(ledger, 'T-SCHED-PATROL', 'ops-infra-patrol-综合部', 'patrol')
+      const observe = cfg(ledger, 'observe')
+      expect(evaluateDispatchAcceptance(observe, issue('T-SCHED', { type: 'task' }))).toEqual({ allow: true, kind: 'ok' })
+      expect(evaluateDispatchAcceptance(observe, issue('T-SCHED-PATROL', { type: 'task' }))).toEqual({ allow: true, kind: 'ok' })
+      // CLOSE 闸同口径：report-like scheduler 单无验收结论也放行
+      expect(evaluateCloseAcceptance(observe, issue('T-SCHED', { type: 'task' })).allow).toBe(true)
+      expect(evaluateCloseAcceptance(observe, issue('T-SCHED-PATROL', { type: 'task' })).allow).toBe(true)
+      const enforce = cfg(ledger, 'enforce')
+      expect(evaluateDispatchAcceptance(enforce, issue('T-SCHED', { type: 'task' })).allow).toBe(true)
+      expect(evaluateDispatchAcceptance(enforce, issue('T-SCHED-PATROL', { type: 'task' })).allow).toBe(true)
+      expect(evaluateCloseAcceptance(enforce, issue('T-SCHED', { type: 'task' })).allow).toBe(true)
+      // 真正功能类（无 scheduler PATROL/job 来源）仍按 task 拦截/告警
+      expect(evaluateDispatchAcceptance(enforce, issue('T-FUNC', { type: 'task' }))).toMatchObject({ allow: false, kind: 'blocked-missing' })
+      expect(evaluateDispatchAcceptance(observe, issue('T-FUNC', { type: 'task' }))).toMatchObject({ allow: true, kind: 'observe-missing' })
+      expect(evaluateCloseAcceptance(enforce, issue('T-FUNC', { type: 'task' })).allow).toBe(false)
+      // legacy 行为不变（非 scheduler 存量）
+      expect(evaluateDispatchAcceptance(enforce, issue('T-LEGACY'))).toMatchObject({ allow: true, kind: 'legacy' })
     } finally {
       ledger.close()
     }
