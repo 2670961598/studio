@@ -15,11 +15,43 @@ export PATH="${PATH:-/usr/bin:/bin}:/opt/homebrew/bin"
 export STUDIO_GATEWAY_SECRET="${STUDIO_GATEWAY_SECRET:-$(openssl rand -hex 24)}"
 command -v bun >/dev/null || { echo "FAIL: bun 不在 PATH" >&2; exit 2; }
 command -v sqlite3 >/dev/null || { echo "FAIL: sqlite3 不在 PATH" >&2; exit 2; }
+# task-76：trap + 真实 pid/进程组清理（原 `( ... & echo $! )` 子 shell pid 记录不可靠）
+CLEANUP_PIDS=(); CLEANUP_ROOTS=()
+ACCEPT_EVIDENCE_LAST="${ACCEPT_EVIDENCE_LAST:-/private/tmp/typefix-e2e-evidence-last}"
+stop_pid() {
+  local pid="$1"
+  kill -0 "$pid" 2>/dev/null || return 0
+  pkill -TERM -P "$pid" 2>/dev/null || true
+  kill -TERM "$pid" 2>/dev/null || true
+  for _ in $(seq 1 30); do kill -0 "$pid" 2>/dev/null || return 0; sleep 0.1; done
+  pkill -KILL -P "$pid" 2>/dev/null || true
+  kill -KILL "$pid" 2>/dev/null || true
+  return 0
+}
+cleanup() {
+  local pid root
+  for pid in "${CLEANUP_PIDS[@]:-}"; do stop_pid "$pid"; done
+  # task-78：临时目录删前留证据 last（可查）；随后删除运行目录并断言
+  if [ -d "${OUT_BASE:-}" ]; then
+    rm -rf "$ACCEPT_EVIDENCE_LAST"
+    cp -R "$OUT_BASE" "$ACCEPT_EVIDENCE_LAST" 2>/dev/null || true
+  fi
+  for root in "${CLEANUP_ROOTS[@]:-}"; do rm -rf "$root"; done
+  rm -rf "${OUT_BASE:-}"
+}
+trap 'cleanup' EXIT INT TERM
+# 跑前残留检测（同款 E2E 夹具 daemon，防前次泄漏影响）
+leftover="$(pgrep -f 'typefix-e2e2' || true)"
+if [ -n "$leftover" ]; then
+  echo "WARN[task-76]: 残留 typefix E2E daemon pid=$(echo "$leftover" | tr '\n' ' ') → 清理" >&2
+  echo "$leftover" | while read -r pid; do [ -n "$pid" ] && stop_pid "$pid" || true; done
+  pgrep -f 'typefix-e2e2' >/dev/null 2>&1 && { echo "FAIL: 残留无法清理" >&2; exit 1; }
+fi
 rm -rf "$OUT_BASE"
 mkdir -p "$OUT_BASE"
 PASS=0
 for MODE in observe enforce; do
-  ROOT="$OUT_BASE/$MODE"; mkdir -p "$ROOT/var" "$ROOT/platform"
+  ROOT="$OUT_BASE/$MODE"; mkdir -p "$ROOT/var" "$ROOT/platform"; CLEANUP_ROOTS+=("$ROOT")
   cat > "$ROOT/worker.mjs" <<'WORKER'
 #!/usr/bin/env node
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -77,7 +109,8 @@ apiPort: 0
 """
 open(root+'/daemon.yaml','w').write(cfg)
 PY
-  ( cd "$ROOT_REPO" && node apps/boot/src/main.ts "$ROOT/daemon.yaml" > "$ROOT/daemon.log" 2>&1 & echo $! > "$ROOT/pid" )
+  ( cd "$ROOT_REPO" && exec node apps/boot/src/main.ts "$ROOT/daemon.yaml" ) > "$ROOT/daemon.log" 2>&1 &
+  real_pid=$!; echo "$real_pid" > "$ROOT/pid"; CLEANUP_PIDS+=("$real_pid")
   # 等待 scheduled 单闭环与功能单预期；最多 40s
   for _ in $(seq 1 80); do
     sleep 0.5
@@ -87,7 +120,7 @@ PY
     if [ "$MODE" = enforce ] && [ "$SQL_SCHED" -ge 1 ] && [ "$SQL_FUNC_BLOCK" -ge 1 ]; then break; fi
     if [ "$MODE" = observe ] && [ "$SQL_SCHED" -ge 1 ] && [ "$SQL_FUNC_BLOCK" -ge 1 ] && [ "$SQL_FUNC_CLOSE" -ge 1 ]; then break; fi
   done
-  pid="$(cat "$ROOT/pid")"; kill "$pid" 2>/dev/null || true; sleep 0.5
+  pid="$(cat "$ROOT/pid")"; stop_pid "$pid"
   DB="$ROOT/var/ledger.sqlite"
   {
     echo "mode=$MODE sched=$SCHED func=$FUNC"
@@ -122,4 +155,7 @@ PY
   echo "PASS[$MODE]"
   PASS=$((PASS+1))
 done
-echo "ALL PASS ($PASS/2)；证据：$OUT_BASE/{observe,enforce}/"
+cleanup; trap - EXIT INT TERM
+if pgrep -f 'typefix-e2e2' >/dev/null 2>&1; then echo "FAIL[task-76]: typefix E2E 残留：$(pgrep -f 'typefix-e2e2' | tr '\n' ' ')" >&2; exit 1; fi
+if [ -e "$OUT_BASE" ]; then echo "FAIL[task-78]: 临时目录未清理：$OUT_BASE" >&2; exit 1; fi
+echo "ALL PASS ($PASS/2)；残留进程=0；运行目录已清理；证据快照=$ACCEPT_EVIDENCE_LAST"

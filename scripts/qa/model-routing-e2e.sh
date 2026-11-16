@@ -15,7 +15,42 @@ export PATH
 command -v bun >/dev/null || { echo "FAIL bun missing（请把 bun 所在目录加入 PATH）" >&2; exit 2; }
 command -v sqlite3 >/dev/null || { echo "FAIL sqlite3 missing" >&2; exit 2; }
 export STUDIO_GATEWAY_SECRET="${STUDIO_GATEWAY_SECRET:-$(openssl rand -hex 24)}"
-rm -rf "$OUT"; mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd -P)" # realpath：seatbelt subpath 必须与真实路径一致（task-59 根因）
+
+# task-76：跑前清残留；按真实 pid 记录 + 进程组/子进程清理；EXIT/INT/TERM trap。
+CLEANUP_PIDS=(); CLEANUP_ROOTS=()
+stop_pid() {
+  local pid="$1"
+  kill -0 "$pid" 2>/dev/null || return 0
+  pkill -TERM -P "$pid" 2>/dev/null || true
+  kill -TERM "$pid" 2>/dev/null || true
+  for _ in $(seq 1 30); do kill -0 "$pid" 2>/dev/null || return 0; sleep 0.1; done
+  pkill -KILL -P "$pid" 2>/dev/null || true
+  kill -KILL "$pid" 2>/dev/null || true
+  for _ in $(seq 1 10); do kill -0 "$pid" 2>/dev/null || return 0; sleep 0.1; done
+  echo "FAIL cleanup: pid $pid 仍存活" >&2
+  return 1
+}
+cleanup() {
+  local pid root
+  for pid in "${CLEANUP_PIDS[@]:-}"; do stop_pid "$pid" || true; done
+  # task-78 证据保留口径：临时目录删前留一份 last（可查）；清理后不留运行目录
+  if [ -d "${OUT:-}" ]; then
+    rm -rf "${ROUTING_EVIDENCE_LAST:-/private/tmp/routing-e2e-evidence-last}"
+    cp -R "${OUT}" "${ROUTING_EVIDENCE_LAST:-/private/tmp/routing-e2e-evidence-last}" 2>/dev/null || true
+  fi
+  for root in "${CLEANUP_ROOTS[@]:-}"; do rm -rf "$root"; done
+  rm -rf "${OUT:-}"
+}
+trap 'cleanup' EXIT INT TERM
+# 残留检测/清理（前次 E2E 夹具 daemon 不得在跑）
+leftover="$(pgrep -f 'routing-e2e-host' || true)"
+if [ -n "$leftover" ]; then
+  echo "WARN[task-76]: 发现残留 E2E daemon pid=$(echo "$leftover" | tr '\n' ' ') → 先清理" >&2
+  echo "$leftover" | while read -r pid; do [ -n "$pid" ] && stop_pid "$pid" || true; done
+  sleep 0.5
+  if pgrep -f 'routing-e2e-host' >/dev/null 2>&1; then echo "FAIL: 残留进程无法清理" >&2; exit 1; fi
+fi
+rm -rf "$OUT"; mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd -P)"
 PASS=0
 make_fixture() { # $1 mode, $2 worker behavior: fail-primary|fail-all|budget|single
   local mode="$1" behavior="$2" root="$OUT/$1"
@@ -117,7 +152,8 @@ PY
 run_case() { # $1 mode, $2 behavior, $3 expected predicate
   local mode="$1" behavior="$2" root="$OUT/$1"
   make_fixture "$mode" "$behavior" >/dev/null
-  ( cd "$REPO" && node apps/boot/src/main.ts "$root/daemon.yaml" > "$root/daemon.log" 2>&1 & echo $! > "$root/pid" )
+  ( cd "$REPO" && exec node apps/boot/src/main.ts "$root/daemon.yaml" ) > "$root/daemon.log" 2>&1 &
+  local real_pid=$!; echo "$real_pid" > "$root/pid"; CLEANUP_PIDS+=("$real_pid"); CLEANUP_ROOTS+=("$root")
   # 启动探活：daemon 配置错误会立即退出；不能继续用空库跑 sqlite（否则只看到 no such table）
   sleep 0.5
   if ! kill -0 "$(cat "$root/pid")" 2>/dev/null; then
@@ -151,7 +187,7 @@ run_case() { # $1 mode, $2 behavior, $3 expected predicate
       budget) [ "$budget_note" -ge 1 ] && break ;;
     esac
   done
-  local pid; pid="$(cat "$root/pid")"; kill "$pid" 2>/dev/null || true; sleep 0.4
+  local pid; pid="$(cat "$root/pid")"; stop_pid "$pid" || exit 1
   local db="$root/var/ledger.sqlite"
   {
     echo "mode=${mode}（B: 路由本体断言；四要件/CLOSE 不在本 E2E 冒充）"; echo "ticket=$ticket"
@@ -179,4 +215,10 @@ run_case failover fail-primary
 run_case fail-all fail-all
 run_case budget budget
 run_case single single
-echo "ALL PASS ($PASS/4)；证据 $OUT/{failover,fail-all,budget,single}/"
+cleanup
+trap - EXIT INT TERM
+if pgrep -f 'routing-e2e-host' >/dev/null 2>&1; then
+  echo "FAIL[task-76]: E2E 结束后仍有 routing-e2e-host 残留：$(pgrep -f 'routing-e2e-host' | tr '\n' ' ')" >&2
+  exit 1
+fi
+echo "ALL PASS ($PASS/4)；残留进程=0；运行目录已清理（${OUT:-}）；证据快照=${ROUTING_EVIDENCE_LAST:-/private/tmp/routing-e2e-evidence-last}"
