@@ -221,4 +221,5 @@ if pgrep -f 'routing-e2e-host' >/dev/null 2>&1; then
   echo "FAIL[task-76]: E2E 结束后仍有 routing-e2e-host 残留：$(pgrep -f 'routing-e2e-host' | tr '\n' ' ')" >&2
   exit 1
 fi
+if [ -e "${OUT:-}" ]; then echo "FAIL[task-81 T2]: 运行目录未清理：${OUT:-}" >&2; exit 1; fi
 echo "ALL PASS ($PASS/4)；残留进程=0；运行目录已清理（${OUT:-}）；证据快照=${ROUTING_EVIDENCE_LAST:-/private/tmp/routing-e2e-evidence-last}"
