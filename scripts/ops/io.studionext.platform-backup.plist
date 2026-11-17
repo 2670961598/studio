@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  io.studionext.platform-backup.plist —— Taiga/Matrix 每日 04:30 备份（草案，2026-11-17 制作人批）
+  安装（由 Lead/ops 执行；不随本文件自动安装）：
+    sed -e "s#__REPO__#<部署树>#g" -e "s#__BACKUP_DIR__#<备份目录>#g" \
+      io.studionext.platform-backup.plist > ~/Library/LaunchAgents/io.studionext.platform-backup.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.studionext.platform-backup.plist
+  卸载：launchctl bootout gui/$(id -u)/io.studionext.platform-backup
+  备份目录缺省 <backupDir>（安装时替换 __BACKUP_DIR__）；日志同时落 <backupDir>/backup.log 与下面的 launchd 日志。
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>io.studionext.platform-backup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__REPO__/scripts/ops/platform-backup.sh</string>
+    <string>--backup-dir</string>
+    <string>__BACKUP_DIR__</string>
+  </array>
+  <key>WorkingDirectory</key><string>__REPO__</string>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>4</integer>
+    <key>Minute</key><integer>30</integer>
+  </dict>
+  <key>RunAtLoad</key><false/>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>__BACKUP_DIR__/backup.launchd.log</string>
+  <key>StandardErrorPath</key><string>__BACKUP_DIR__/backup.launchd.err</string>
+</dict>
+</plist>
