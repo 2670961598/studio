@@ -1,15 +1,9 @@
 /**
- * kimi 适配器全链测试 —— 对 fake CLI harness（docs/18-§1.3 独立测试套件）
  *
  * 覆盖（任务口径：对 fake 全绿，真 CLI 行为留探针单）：
- *   - 全链：launch→stream 逐事件消费→会话结束 wire 合流→resultStats（**tokens=wire 逐轮
  *     求和总账**——1500+3300 / 220+910 / 0+1200；cost 恒 {usd:0} 待价目表折算、turns 取
  *     turn_end 计数、duration 自持墙钟）
- *   - wire 合流三面明示（对齐 streams.parseKimi 冻结行为：不静默降级）：wire 缺失（缺省
- *     resolver 拟稿路径进 log）/ wire 无 usage 记录 / wire 有 usage 但 stdout 无 turn_end 可挂
- *   - 缺 wire 不影响完成判定：isCompleted 只认 stdout 终态 + 输出非空（wire 只影响账目）
  *   - kill 无终态面（对齐 dsh/claude/codex 先例）：FAKE_HANG 半程被杀 → result 未到 =
- *     无 turn_end、wire 不落（fake 只在正常退出写）→ 明示 log + tokens 零值、isCompleted=false
  *   - kill 宽限升级：无视 SIGTERM 的子进程在 graceMs 后被 SIGKILL 强杀；kill 幂等
  *   - detect 三态（kimi 无版本门槛坑——gaps 空为常态）：可解析 ok:true 无 gaps /
  *     解析失败 ok:false / 未安装 ok:false
@@ -30,7 +24,7 @@
  * env 注入说明：适配器 spawn 用 {...process.env} 打底——FAKE_* 旋钮经 process.env
  * 临时注入、finally 还原（withFakeEnv），不污染其他用例。
  */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -63,10 +57,12 @@ interface BriefOverrides {
 }
 
 function makeBrief(o: BriefOverrides = {}): TaskBrief {
+  const briefPath = o.briefPath ?? join(workdir, 'brief.md')
+  try { writeFileSync(briefPath, 'kimi task brief', { flag: 'wx' }) } catch { /* exists */ }
   return {
     ticket: 'TEST-4',
     attempt: 1,
-    briefPath: o.briefPath ?? join(workdir, 'brief.md'),
+    briefPath,
     workspace: workdir,
     AGENTS_MD: o.AGENTS_MD ?? { channel: 'native', target: join(workdir, 'AGENTS.md') },
     ...(o.budgetCap !== undefined ? { budgetCap: o.budgetCap } : {}),
@@ -509,7 +505,8 @@ describe('launch 参数注入（FAKE_ECHO_ARGS 回显 argv）', () => {
     async () => {
       await withFakeEnv({ FAKE_ECHO_ARGS: '1' }, async () => {
         const echo = await echoArgv(fakeAdapter(), makeBrief())
-        expect(echo).toContain('-p --output-format stream-json')
+        expect(echo).toContain('-p kimi task brief')
+        expect(echo).toContain('--output-format stream-json')
         expect(echo).not.toContain('-S')
         // `-p` 与 yolo/auto/plan 互斥（17-§6）：框架侧冻结——适配器构造的 argv 永不含模式旗标
         expect(echo).not.toContain('yolo')
@@ -526,9 +523,9 @@ describe('launch 参数注入（FAKE_ECHO_ARGS 回显 argv）', () => {
       await withFakeEnv({ FAKE_ECHO_ARGS: '1' }, async () => {
         const echo = await echoArgv(
           fakeAdapter(),
-          makeBrief({ resume: { sessionId: 'sess_9f2e', summaryPath: join(workdir, 'summary.json') } }),
+          makeBrief({ resume: { sessionId: 'session_9f2e', summaryPath: join(workdir, 'summary.json') } }),
         )
-        expect(echo).toContain('-S sess_9f2e')
+        expect(echo).toContain('-S session_9f2e')
       })
     },
     10_000,
@@ -539,7 +536,8 @@ describe('launch 参数注入（FAKE_ECHO_ARGS 回显 argv）', () => {
     async () => {
       await withFakeEnv({ FAKE_ECHO_ARGS: '1' }, async () => {
         const echo = await echoArgv(fakeAdapter(), makeBrief({ budgetCap: { usd: 5 } }))
-        expect(echo).toContain('-p --output-format stream-json') // 基座照常
+        expect(echo).toContain('-p kimi task brief')
+        expect(echo).toContain('--output-format stream-json') // 基座照常
         expect(echo).not.toContain('budget') // 无旗标可落地——能力声明即契约，调度侧不应传帽
       })
     },
@@ -581,7 +579,7 @@ describe('AGENTS.md 通道（env 映射——kimi.ts 头注；user_level 变量�
   }, 10_000)
 
   it(
-    'append_system_prompt 通道 → KIMI_APPEND_SYSTEM_PROMPT_FILE=target（变量自拟，镜像 dsh 同通道做法）',
+    'append_system_prompt 通道 → 真实 CLI 无此 env 通道（P2 unsupported，不注入假变量）',
     async () => {
       const target = join(workdir, 'agents-append.md')
       const adapter = envEchoAdapter('KIMI_APPEND_SYSTEM_PROMPT_FILE')
@@ -590,7 +588,7 @@ describe('AGENTS.md 通道（env 映射——kimi.ts 头注；user_level 变量�
       )
       const collected: StreamEvent[] = []
       for await (const ev of adapter.stream(h)) collected.push(ev)
-      expect(collected[0]).toStrictEqual({ type: 'log', text: target })
+      expect(collected[0]).toStrictEqual({ type: 'log', text: '<unset>' })
     },
     10_000,
   )

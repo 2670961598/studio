@@ -52,7 +52,7 @@ export function parseStream(
     case 'codex':
       return parseCodex(text)
     case 'kimi':
-      return parseKimi(text, wireJsonlText)
+      return parseKimiFull(text, wireJsonlText)
   }
 }
 
@@ -78,8 +78,7 @@ export function parseLine(line: string, family: ExecutorFamily): StreamEvent[] {
     case 'codex':
       return parseCodex(first)
     case 'kimi':
-      // 单行入口不做 wire 合并（全文级职责）——行为即 claude 同构 stdout 行
-      return parseClaude(first)
+      return parseKimiLine(first)
   }
 }
 
@@ -210,6 +209,57 @@ export function extractDshSessionId(line: string): string | undefined {
   return sessionId === undefined || sessionId === '' ? undefined : sessionId
 }
 
+/** kimi 真实 stream-json 单行：role=meta/assistant/tool；旧 claude 同构 fixture 兼容。 */
+function parseKimiLine(line: string): StreamEvent[] {
+  const v = parseJson(line)
+  if (!isRecord(v)) return [logEvent(line)]
+  const role = asString(v['role'])
+  if (role === undefined) return parseClaude(line) // 旧 fixture（type=result/assistant）兼容
+  if (role === 'meta') {
+    const type = asString(v['type']) ?? 'meta'
+    if (type === 'session.resume_hint') {
+      const sid = asString(v['session_id'])
+      return [logEvent(sid !== undefined ? `kimi:session=${sid}` : line)]
+    }
+    return [logEvent(`kimi:meta:${type}`)]
+  }
+  if (role === 'assistant') {
+    const text = extractKimiContent(v['content'])
+    return text !== '' ? [logEvent(text)] : []
+  }
+  if (role === 'tool') return [logEvent(`kimi:tool:${asString(v['name']) ?? 'unknown'}`)]
+  return [logEvent(line)]
+}
+
+/** kimi 全量：role 形态 + wire 旧口径合流（适配器流尾另有真实 usage.record 合流）。 */
+function parseKimiFull(text: string, wireJsonlText?: string): StreamEvent[] {
+  const out: StreamEvent[] = []
+  for (const line of lines(text)) out.push(...parseKimiLine(line))
+  if (wireJsonlText !== undefined) {
+    const usage = sumWireUsage(wireJsonlText)
+    if (usage !== undefined) {
+      for (let i = out.length - 1; i >= 0; i--) {
+        const ev = out[i]
+        if (ev !== undefined && ev.type === 'turn_end') { out[i] = { ...ev, usage }; break }
+      }
+    }
+  }
+  return out
+}
+
+function extractKimiContent(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  const parts: string[] = []
+  for (const block of content) {
+    const b = asRecord(block)
+    if (b === undefined) continue
+    const t = asString(b['text'])
+    if (t !== undefined && t !== '') parts.push(t)
+  }
+  return parts.join('\n')
+}
+
 /** claude：`claude -p --output-format stream-json`——终态只认 result 事件（17-§6） */
 function parseClaude(text: string): StreamEvent[] {
   const out: StreamEvent[] = []
@@ -286,33 +336,6 @@ function parseCodex(text: string): StreamEvent[] {
     }
     out.push(logEvent(line))
   }
-  return out
-}
-
-/**
- * kimi：`kimi -p --output-format stream-json`——stdout 形态与 claude 同构但无 usage，
- * usage 在 session wire.jsonl（17-§6 已知坑）。wire 中全部 usage 记录逐轮求和挂到
- * 最后一个 turn_end；stdout 没有 turn_end 可挂时明示一条 log。
- */
-function parseKimi(text: string, wireJsonlText: string | undefined): StreamEvent[] {
-  const out = parseClaude(text)
-  if (wireJsonlText === undefined) {
-    out.push(logEvent('[kimi] wire.jsonl not provided; usage unavailable（17-§6 已知坑）'))
-    return out
-  }
-  const summed = sumWireUsage(wireJsonlText)
-  if (summed === undefined) {
-    out.push(logEvent('[kimi] no usage record in wire.jsonl; usage unavailable'))
-    return out
-  }
-  for (let i = out.length - 1; i >= 0; i--) {
-    const ev = out[i]
-    if (ev !== undefined && ev.type === 'turn_end') {
-      out[i] = { ...ev, usage: summed }
-      return out
-    }
-  }
-  out.push(logEvent('[kimi] wire usage found but stdout has no turn_end to attach'))
   return out
 }
 
@@ -394,12 +417,26 @@ export function sumWireUsage(wireJsonlText: string): TokenCounts | undefined {
   let input = 0
   let output = 0
   let cacheRead = 0
+  let cacheCreation = 0
   let seen = false
   let seenRead = false
+  let seenCreation = false
   for (const line of lines(wireJsonlText)) {
     const v = parseJson(line)
-    if (!isRecord(v) || v['type'] !== 'usage') continue
-    const u = toUsage(v)
+    if (!isRecord(v)) continue
+    let u: TokenCounts | undefined
+    if (v['type'] === 'usage') u = toUsage(v)
+    else if (v['type'] === 'usage.record') {
+      if ((v['agentId'] ?? 'main') !== 'main' || (v['usageScope'] ?? 'turn') !== 'turn') continue
+      const ur = asRecord(v['usage'])
+      if (ur === undefined) continue
+      const input = asFiniteNumber(ur['inputOther'])
+      const output = asFiniteNumber(ur['output'])
+      if (input === undefined || output === undefined) continue
+      const cr = asFiniteNumber(ur['inputCacheRead'])
+      const cc = asFiniteNumber(ur['inputCacheCreation'])
+      u = { input, output, ...(cr !== undefined ? { cache_read: cr } : {}), ...(cc !== undefined ? { cache_creation: cc } : {}) }
+    }
     if (u === undefined) continue
     seen = true
     input += u.input
@@ -408,9 +445,13 @@ export function sumWireUsage(wireJsonlText: string): TokenCounts | undefined {
       seenRead = true
       cacheRead += u.cache_read
     }
+    if (u.cache_creation !== undefined) {
+      seenCreation = true
+      cacheCreation += u.cache_creation
+    }
   }
   if (!seen) return undefined
-  return { input, output, ...(seenRead ? { cache_read: cacheRead } : {}) }
+  return { input, output, ...(seenRead ? { cache_read: cacheRead } : {}), ...(seenCreation ? { cache_creation: cacheCreation } : {}) }
 }
 
 /** 从 claude/kimi 的 assistant message 里拼接 text 块（tool_use 等非文本块忽略） */

@@ -56,8 +56,9 @@
  *   - stream() 一会话只许消费一次（一单一命、一流一收）；resultStats() 只汇总已消费的事件
  */
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { readFile, readdir } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { execa } from 'execa'
 import type { Subprocess } from 'execa'
 import type {
@@ -72,6 +73,7 @@ import type {
   TokenCounts,
 } from '@studio-next/contract'
 import { parseLine, sumWireUsage } from './streams.ts'
+import { readTaskText } from './dsh/helpers.ts'
 
 /** 缺省命令（docs/17-§6 kimi 行）：launch 时追加 `-p --output-format stream-json` 与动态旗标 */
 export const KIMI_DEFAULT_CMD: readonly string[] = ['kimi']
@@ -96,8 +98,14 @@ interface SessionState {
   readonly events: StreamEvent[]
   /** 逐行 stdout 原文缓冲（证据留痕，未解析；台账落盘归 daemon） */
   readonly rawLines: string[]
-  /** 会话结束后要读的 wire.jsonl 路径（launch 时解析，拟稿约定见文件头注） */
-  readonly wirePath: string
+  /** 会话结束后要读的 wire.jsonl 路径（launch 时解析；收到 resume_hint 后按真实 CLI id 纠正） */
+  wirePath: string
+  /** 从 stdout session.resume_hint 捕获的 CLI session id（session_<uuid>） */
+  detectedSessionId?: string
+  /** 是否见到 assistant 正文（流尾合成 turn_end 的完成判据之一） */
+  sawAssistant: boolean
+  /** 是否见到真实 kimi role 形态（旧 claude fixture/env echo 不合成终态） */
+  sawKimiRole: boolean
   streamConsumed: boolean
   killed: boolean
   /** 子进程 promise 已落定（退出或 spawn 失败）——由 launch 的派生观察器置位（dsh 头注 10.x 项） */
@@ -215,10 +223,12 @@ export class KimiAdapter implements ExecutorAdapter {
    */
   async launch(task: TaskBrief): Promise<Handle> {
     const [binary = KIMI_DEFAULT_CMD[0] ?? 'kimi', ...base] = this.cmd
-    const args = [...base, '-p', '--output-format', 'stream-json']
-    if (task.resume !== undefined) {
-      args.push('-S', task.resume.sessionId)
-    }
+    // P0：真实 CLI `-p, --prompt <prompt>` 必须带任务书正文；不得裸 `-p`。
+    const taskText = await readTaskText(task.briefPath)
+    const args = [...base, '-p', taskText, '--output-format', 'stream-json']
+    // P1：只传真实 CLI session id（session_<uuid>）；禁止裸 -S / 框架 UUID
+    const resumeId = task.resume?.sessionId
+    if (resumeId !== undefined && resumeId.startsWith('session_')) args.push('-S', resumeId)
     const subprocess = execa(binary, args, {
       cwd: task.workspace,
       env: { ...process.env, ...agentsMdEnv(task.AGENTS_MD), ...(task.credentials ?? {}) },
@@ -238,6 +248,8 @@ export class KimiAdapter implements ExecutorAdapter {
       events: [],
       rawLines: [],
       wirePath: this.wirePathResolver(sessionId, task.workspace),
+      sawAssistant: false,
+      sawKimiRole: false,
       streamConsumed: false,
       killed: false,
       settled: false,
@@ -286,6 +298,18 @@ export class KimiAdapter implements ExecutorAdapter {
     }
     const consume = (line: string): StreamEvent[] => {
       state.rawLines.push(line)
+      // 真实流：role=assistant 内容 → 合成完成判据；role=meta/type=session.resume_hint → 捕获 CLI id
+      if (line.includes('"role":"assistant"')) state.sawAssistant = true
+      if (line.includes('"role":')) state.sawKimiRole = true
+      if (line.includes('resume_hint')) {
+        try {
+          const v = JSON.parse(line) as { type?: unknown; session_id?: unknown }
+          if (v.type === 'session.resume_hint' && typeof v.session_id === 'string' && v.session_id.startsWith('session_')) {
+            state.detectedSessionId = v.session_id
+            ;(h as { executorSessionId?: string }).executorSessionId = v.session_id
+          }
+        } catch { /* 非法行由 parseLine 降级 log */ }
+      }
       const events = parseLine(line, 'kimi')
       state.events.push(...events)
       return events
@@ -313,6 +337,18 @@ export class KimiAdapter implements ExecutorAdapter {
     const result = await state.subprocess // reject:false：退出码/信号不抛错
     state.exitCode = result.exitCode ?? null // 被信号杀死时 undefined → null
     state.endedAt = Date.now()
+    // P0：真实 stdout 无 type=result/turn_end——按退出码+assistant 内容合成终态（不伪造成功）
+    if (state.sawKimiRole && !state.events.some((e) => e.type === 'turn_end')) {
+      const completed = state.exitCode === 0 && state.sawAssistant
+      const synthesized: StreamEvent = { type: 'turn_end', completed, ...(completed ? {} : { error: state.exitCode === 0 ? 'kimi: empty assistant output' : `kimi: exit=${String(state.exitCode)}` }) }
+      state.events.push(synthesized)
+      yield synthesized
+    }
+    // P1：收到 resume_hint 后按真实 CLI id 定位 wire（KIMI_CODE_HOME 或 ~/.kimi-code）
+    if (state.detectedSessionId !== undefined) {
+      const real = await resolveRealWirePath(state.detectedSessionId)
+      if (real !== undefined) state.wirePath = real
+    }
     // wire 合流（会话结束后）：usage 求和挂 turn_end / 缺件明示 log——详见文件头注
     for (const event of await mergeWireUsage(state)) yield event
   }
@@ -385,7 +421,22 @@ export class KimiAdapter implements ExecutorAdapter {
 // 内部工具（纯函数 + wire 合流）
 // ---------------------------------------------------------------------------
 
-/** 缺省 wire 路径拟稿：<workspace>/.kimi/sessions/<sessionId>/wire.jsonl（待探针，头注） */
+/** 真实 wire 路径：KIMI_CODE_HOME 或 ~/.kimi-code 下 sessions/星号/CLI session id/agents/main/wire.jsonl */
+async function resolveRealWirePath(sessionId: string): Promise<string | undefined> {
+  const root = process.env['KIMI_CODE_HOME'] ?? join(homedir(), '.kimi-code')
+  try {
+    const dirs = await readdir(join(root, 'sessions'), { withFileTypes: true })
+    for (const d of dirs) {
+      if (!d.isDirectory()) continue
+      const candidate = join(root, 'sessions', d.name, sessionId, 'agents', 'main', 'wire.jsonl')
+      try { await readFile(candidate, 'utf8'); return candidate } catch { /* next */ }
+    }
+  } catch { /* root absent */ }
+  return undefined
+}
+
+/** 缺省 wire 路径（真实根扫描失败时兜底；测试可注入 resolver） */
+
 function defaultWirePath(sessionId: string, workspace: string): string {
   return join(workspace, '.kimi', 'sessions', sessionId, 'wire.jsonl')
 }
@@ -404,9 +455,11 @@ function agentsMdEnv(a: TaskBrief['AGENTS_MD']): Record<string, string> {
     case 'native':
       return {}
     case 'user_level':
-      return { KIMI_CODE_HOME: a.target }
+      // P2：KIMI_CODE_HOME 是数据根目录；target 若是 AGENTS.md 文件，传其所在目录
+      return { KIMI_CODE_HOME: a.target.endsWith('/AGENTS.md') ? dirname(a.target) : a.target }
     case 'append_system_prompt':
-      return { KIMI_APPEND_SYSTEM_PROMPT_FILE: a.target }
+      // P2：真实 CLI 无 KIMI_APPEND_SYSTEM_PROMPT_FILE 通道（grep 0 命中）——明确 unsupported，不注入假变量
+      return {}
   }
 }
 
