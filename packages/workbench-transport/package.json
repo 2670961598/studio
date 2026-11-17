@@ -1,0 +1,13 @@
+{
+  "name": "@studio-next/workbench-transport",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "WorkbenchTransport v1 client (Unix socket, NDJSON): health/rooms/messages/read/inbox/wakes claim+ack. Zero runtime deps.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": { "types": "./src/index.ts", "import": "./src/index.ts" }
+  },
+  "files": ["src"]
+}
