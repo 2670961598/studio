@@ -413,6 +413,18 @@ function toUsage(v: unknown): TokenCounts | undefined {
  * 仅产出键随 132-§6.1 单A 升新键 cache_read（写侧一律新键，治 G7）。注意 docs/25-§3.1
  * 裁决#4：「逐轮求和=turn 总账」是假设，真实 wire 验证待办仍在（探针前不改本口径）。
  */
+/** 从真实 wire usage.record/main 提取模型名（Kimi 模型归属；未捕获=undefined）。 */
+export function extractWireUsageModel(wireJsonlText: string): string | undefined {
+  for (const line of lines(wireJsonlText)) {
+    const v = parseJson(line)
+    if (!isRecord(v) || v['type'] !== 'usage.record') continue
+    if ((v['agentId'] ?? 'main') !== 'main') continue
+    const model = asString(v['model'])
+    if (model !== undefined && model !== '') return model
+  }
+  return undefined
+}
+
 export function sumWireUsage(wireJsonlText: string): TokenCounts | undefined {
   let input = 0
   let output = 0

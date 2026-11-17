@@ -239,6 +239,8 @@ export interface EngineConfig {
    */
   modelTierByRole?: Readonly<Record<string, TierId>>
   modelTierTickets?: Readonly<Record<string, TierId>>
+  /** task-100：档位→执行器名配置（如 high:kimi；缺省/未注册回退现 <family>-<tier> 逻辑） */
+  tierExecutors?: Readonly<Partial<Record<TierId, string>>>
   /**
    * 制作人置顶单集（129-§6.2-R4：pinned=+∞ 恒首）。daemon.yaml `pinnedTickets:`
    * 逗号清单（平面字段写通道归刀B，登记在案）；现算不入携带态——改配置即刻生效。

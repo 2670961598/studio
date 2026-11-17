@@ -31,6 +31,8 @@ export interface ServeConfig extends HrServeConfig, RestartServeConfig, Signatur
   company: string
   /** 主绑定执行器（v2/07 §一 默认=dsh；可选 kimi 等 ENU-88 值；缺省 dsh——零漂移） */
   primaryExecutor?: string
+  /** task-100：档位→执行器名（high/mid/low；缺省/未注册回退现逻辑） */
+  tierExecutors?: Readonly<Partial<Record<'high' | 'mid' | 'low', string>>>
   /**
    * daemon 工位根（tmp/instructions、platform、控制面等 daemon 自管面落此）。
    * 派发 workspace 归 .AIWS 员工家（DEV-28，docs/43-§五）——根推导见 aiwsRoot。

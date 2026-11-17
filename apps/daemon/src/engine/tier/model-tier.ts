@@ -107,7 +107,12 @@ export function modelTierDispatchFace(
   },
   tier: TierId,
   fallback: ExecutorAdapter,
+  configuredExecutor?: string,
 ): ModelTierDispatchFace {
+  // task-100：配置档位执行器优先（需在注册表且非 judge 位）；未配/未注册回退现逻辑（零漂移）
+  if (configuredExecutor !== undefined && !configuredExecutor.endsWith('-judge') && registry.list().some((e) => e.name === configuredExecutor)) {
+    return { adapter: registry.resolve(configuredExecutor), noteAnchor: `;tier=${tier}@${configuredExecutor}（tierExecutors 配置）` }
+  }
   const family = tierOfExecutorName(fallback.name)?.family ?? fallback.name
   const tierName = tierExecutorName(family, tier)
   const registered = registry.list().some((e) => e.name === tierName)

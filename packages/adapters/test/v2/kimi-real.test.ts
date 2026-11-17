@@ -41,6 +41,7 @@ describe('真实 kimi 2.1.1 形态（P0/P1 离线 fixture）', () => {
       const stats = await adapter.resultStats(h)
       // live wire 3 条 usage.record 合计；token_counting.turn_recorded 不双计
       expect(stats.tokens).toStrictEqual({ input: 23587, output: 120, cache_read: 54784, cache_creation: 0 })
+      expect(stats.model).toBe('kimi-code/kimi-for-coding')
       expect(adapter.exitCode(h)).toBe(0)
     })
   }, 10_000)

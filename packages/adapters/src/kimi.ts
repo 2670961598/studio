@@ -73,7 +73,7 @@ import type {
   TaskBrief,
   TokenCounts,
 } from '@studio-next/contract'
-import { parseLine, sumWireUsage } from './streams.ts'
+import { extractWireUsageModel, parseLine, sumWireUsage } from './streams.ts'
 import { readTaskText } from './dsh/helpers.ts'
 import { buildWorkerSeatbeltProfile, seatbeltArgv, seatbeltProfileFileName, type SeatbeltPlan } from './seatbelt.ts'
 import { detectSeatbeltBackend } from './dsh/basics.ts'
@@ -105,6 +105,8 @@ interface SessionState {
   wirePath: string
   /** seatbelt profile（workspace-write 时随单落盘；流尾/ kill 清理） */
   profilePath?: string | undefined
+  /** wire usage.record.model 捕获（ResultStats.model；未捕获保持 undefined） */
+  model?: string | undefined
   /** 从 stdout session.resume_hint 捕获的 CLI session id（session_<uuid>） */
   detectedSessionId?: string
   /** 是否见到 assistant 正文（流尾合成 turn_end 的完成判据之一） */
@@ -390,6 +392,7 @@ export class KimiAdapter implements ExecutorAdapter {
       tokens: lastTurnEndUsage(state.events) ?? { input: 0, output: 0 },
       duration: (state.endedAt ?? Date.now()) - state.startedAt,
       turns: state.events.filter((e) => e.type === 'turn_end').length,
+      ...(state.model !== undefined ? { model: state.model } : {}),
     }
   }
 
@@ -534,6 +537,8 @@ async function mergeWireUsage(state: SessionState): Promise<StreamEvent[]> {
     return appendLog(state, `[kimi] ${detail}; usage unavailable（17-§6 已知坑）`)
   }
   const summed = sumWireUsage(text)
+  const wireModel = extractWireUsageModel(text)
+  if (wireModel !== undefined) state.model = wireModel
   if (summed === undefined) {
     return appendLog(state, '[kimi] no usage record in wire.jsonl; usage unavailable')
   }

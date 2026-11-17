@@ -155,7 +155,7 @@ export async function executeDispatch(
     const tierFallback = registry.pick()
     const tierFace =
       tierResolve !== undefined && tierFallback !== undefined
-        ? modelTierDispatchFace(registry, tierResolve.tier, tierFallback)
+        ? modelTierDispatchFace(registry, tierResolve.tier, tierFallback, rt.config.tierExecutors?.[tierResolve.tier])
         : undefined
     // resume 面（129-E 单E）：指名解析优先（同一家原生续跑），不可续=明报降级走 pick 新派
     //（resumeDispatchFace 一次取齐适配器/观测锚/装配入参——faces 件，语义源 relay-resume.ts；

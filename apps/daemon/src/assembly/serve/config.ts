@@ -286,6 +286,21 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         break
       }
       case 'company': cfg.company = str(value, key); break
+      case 'tierExecutors': {
+        const EXECUTOR_NAMES = ['dsh', 'claude', 'codex', 'kimi'] as const
+        const rawText = str(value, key)
+        let parsed: unknown
+        try { parsed = JSON.parse(rawText) } catch { throw new Error(`daemon.yaml：tierExecutors 须为 JSON 对象（如 '{"high":"kimi","mid":"dsh"}'；实得 ${rawText}）`) }
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('daemon.yaml：tierExecutors 须为 JSON 对象')
+        const out: Partial<Record<'high' | 'mid' | 'low', string>> = {}
+        for (const [tier, exec] of Object.entries(parsed as Record<string, unknown>)) {
+          if (!['high', 'mid', 'low'].includes(tier)) throw new Error(`daemon.yaml：tierExecutors 档位仅 high|mid|low（实得 ${tier}）`)
+          if (typeof exec !== 'string' || !EXECUTOR_NAMES.includes(exec as (typeof EXECUTOR_NAMES)[number])) throw new Error(`daemon.yaml：tierExecutors.${tier} 须为 ENU-88 执行器（实得 ${String(exec)}）`)
+          out[tier as 'high' | 'mid' | 'low'] = exec
+        }
+        cfg.tierExecutors = out
+        break
+      }
       case 'primaryExecutor': {
         const v = str(value, key)
         if (!['dsh', 'claude', 'codex', 'kimi'].includes(v)) throw new Error(`daemon.yaml：primaryExecutor 须为 ENU-88 执行器（dsh|claude|codex|kimi；实得 ${v}）`)
