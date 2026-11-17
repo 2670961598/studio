@@ -3,7 +3,7 @@
  * 只允许本公司 <CROOT>/.AIWS|workspaces + 基础设施白名单；禁全局 <WORKROOT>/.AIWS/跨公司/任意绝对路径。
  */
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { checkCompanySeatbeltWriteRoots, detectCompanyLayout, parseDaemonConfig, validateCompanySeatbeltWriteRoots } from '../../../src/assembly/serve/config.ts'
@@ -177,5 +177,38 @@ describe('787：每公司 seatbeltWriteRoots 校验', () => {
     expect(checkCompanySeatbeltWriteRoots({ ...base, writeRoots: ['/srv/787-work/profit/.AIWS'] }, '/srv/787-work/profit', 'flat')).toEqual([])
     expect(checkCompanySeatbeltWriteRoots({ ...base, writeRoots: ['/srv/787-work/.AIWS'] }, '/srv/787-work/profit', 'flat').map((v) => v.reason)).toEqual(['cross-company'])
     expect(checkCompanySeatbeltWriteRoots({ ...base, writeRoots: ['/srv/787-work/other/.AIWS'] }, '/srv/787-work/profit', 'flat').map((v) => v.reason)).toEqual(['cross-company'])
+  })
+})
+
+describe('task-102：worker 数据根白名单（~/.dsh、KimiCode KIMI_CODE_HOME/~/.kimi-code）', () => {
+  const base = { tier: 'workspace-write' as const, authorization: '制作人批准（测试夹具）' }
+  it('允许 ~/.dsh 与 ~/.kimi-code；拒绝任意 ~ 路径', () => {
+    expect(checkCompanySeatbeltWriteRoots({ ...base, writeRoots: [path.join(homedir(), '.dsh')] }, COMPANY_DIR, 'nested')).toEqual([])
+    const prev = process.env['KIMI_CODE_HOME']; delete process.env['KIMI_CODE_HOME']
+    try {
+      expect(checkCompanySeatbeltWriteRoots({ ...base, writeRoots: [path.join(homedir(), '.kimi-code')] }, COMPANY_DIR, 'nested')).toEqual([])
+      expect(checkCompanySeatbeltWriteRoots({ ...base, writeRoots: [path.join(homedir(), '.ssh')] }, COMPANY_DIR, 'nested').map((v) => v.reason)).toEqual(['not-whitelisted'])
+    } finally { if (prev !== undefined) process.env['KIMI_CODE_HOME'] = prev }
+  })
+
+  it('KIMI_CODE_HOME 可解析时优先；其符号链接逃逸拒绝', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'sn-102-kimi-'))
+    try {
+      const prev = process.env['KIMI_CODE_HOME']; process.env['KIMI_CODE_HOME'] = root
+      try {
+        expect(checkCompanySeatbeltWriteRoots({ ...base, writeRoots: [root] }, COMPANY_DIR, 'nested')).toEqual([])
+        symlinkSync('/etc', path.join(root, 'escape'))
+        expect(checkCompanySeatbeltWriteRoots({ ...base, writeRoots: [path.join(root, 'escape')] }, COMPANY_DIR, 'nested').map((v) => v.reason)).toEqual(['not-whitelisted'])
+      } finally { if (prev === undefined) delete process.env['KIMI_CODE_HOME']; else process.env['KIMI_CODE_HOME'] = prev }
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
+  it('缺 authorization 仍拒启（workspace-write 必填，不放宽）', () => {
+    const yaml = [
+      'db: /tmp/787-demo/var/ledger.sqlite', 'platform: localfile', 'company: demo', `companyDir: ${COMPANY_DIR}`,
+      'rootDir: /tmp/787-demo/var', 'maxInflight: 4', 'jobs: false', 'seatbeltTier: workspace-write',
+      `seatbeltWriteRoots: '${JSON.stringify([`${WORKROOT}/demo/.AIWS`])}'`,
+    ].join('\n')
+    expect(() => parseDaemonConfig(yaml)).toThrow(/authorization|授权|seatbelt/)
   })
 })

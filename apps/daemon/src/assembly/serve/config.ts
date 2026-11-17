@@ -167,12 +167,22 @@ export function detectCompanyLayout(companyDir: string, layoutOverride?: Company
   const companyRoot = layout === 'flat' ? companyDirCanonical : path.dirname(companyDirCanonical)
   return { layout, companyRoot, workRoot: path.dirname(companyRoot) }
 }
+/** worker 数据根白名单：~/.dsh（dsh 会话/配置）与 KimiCode 数据根（KIMI_CODE_HOME 优先，否则 ~/.kimi-code）。 */
+function workerDataRoots(): string[] {
+  const roots = [canonicalizeSeatbeltWriteRoot(path.join(homedir(), '.dsh'))]
+  const kimiHome = process.env['KIMI_CODE_HOME']
+  const kimiRoot = kimiHome !== undefined && kimiHome.trim() !== '' && path.isAbsolute(kimiHome)
+    ? kimiHome
+    : path.join(homedir(), '.kimi-code')
+  roots.push(canonicalizeSeatbeltWriteRoot(kimiRoot))
+  return roots
+}
 function seatbeltAllowedRoots(companyDir: string, companyRoot: string): string[] {
   const companyDirCanonical = canonicalizeSeatbeltWriteRoot(companyDir)
   return [
     path.join(companyRoot, '.AIWS'),
     path.join(companyDirCanonical, 'workspaces'),
-    canonicalizeSeatbeltWriteRoot(path.join(homedir(), '.dsh')),
+    ...workerDataRoots(),
     canonicalizeSeatbeltWriteRoot('/private/tmp'),
     canonicalizeSeatbeltWriteRoot('/tmp'),
     canonicalizeSeatbeltWriteRoot('/private/var/folders'),
@@ -216,7 +226,7 @@ function seatbeltViolationMessage(v: SeatbeltWriteRootViolation): string {
   if (v.reason === 'cross-company') {
     return `daemon.yaml：seatbeltWriteRoots「${v.raw}」（realpath=${v.canonical}）越出本公司根（787 P0：禁止写全局 <WORKROOT>/.AIWS/兄弟公司；嵌套布局改为 <CROOT>/.AIWS，扁平布局改为 <companyDir>/.AIWS）`
   }
-  return `daemon.yaml：seatbeltWriteRoots「${v.raw}」（realpath=${v.canonical}）不在允许根白名单（787：只允许嵌套布局 <CROOT>/.AIWS 或扁平布局 <companyDir>/.AIWS 的子树、<companyDir>/workspaces，及 ~/.dsh、/private/tmp、/private/var/folders）`
+  return `daemon.yaml：seatbeltWriteRoots「${v.raw}」（realpath=${v.canonical}）不在允许根白名单（787：只允许嵌套布局 <CROOT>/.AIWS 或扁平布局 <companyDir>/.AIWS 的子树、<companyDir>/workspaces，及 worker 数据根 ~/.dsh、~/.kimi-code（KIMI_CODE_HOME 优先）、/private/tmp、/private/var/folders）`
 }
 /** 兼容旧调用面：失败抛第一条（含 raw/realpath）；校验**唯一实现**=checkCompanySeatbeltWriteRoots */
 export function validateCompanySeatbeltWriteRoots(seatbelt: SeatbeltGrant | undefined, companyDir: string | undefined): void {
