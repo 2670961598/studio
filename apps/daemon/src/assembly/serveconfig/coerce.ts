@@ -60,6 +60,7 @@ export interface SeatbeltConfigRaw {
   writeRoots?: string | number | boolean
   authorization?: string | number | boolean
   outboundTcp?: string | number | boolean
+  dshHomeIsolation?: string | number | boolean
 }
 
 /**
@@ -78,7 +79,8 @@ export function coerceSeatbeltGrant(raw: SeatbeltConfigRaw): SeatbeltGrant | und
     raw.tier === undefined &&
     raw.writeRoots === undefined &&
     raw.authorization === undefined &&
-    raw.outboundTcp === undefined
+    raw.outboundTcp === undefined &&
+    raw.dshHomeIsolation === undefined
   )
     return undefined
   const tier = raw.tier === undefined ? DEFAULT_SEATBELT_TIER : str(raw.tier, 'seatbeltTier')
@@ -103,7 +105,7 @@ export function coerceSeatbeltGrant(raw: SeatbeltConfigRaw): SeatbeltGrant | und
         'daemon.yaml：read-only 档（含未声明 seatbeltTier 的缺省档）不得给 seatbeltOutboundTcp（read-only 无放宽面）',
       )
     }
-    return { tier: 'read-only' }
+    return { tier: 'read-only', ...(raw.dshHomeIsolation !== undefined ? { dshHomeIsolation: bool(raw.dshHomeIsolation, 'dshHomeIsolation') } : {}) }
   }
   if (raw.writeRoots === undefined) {
     throw new Error('daemon.yaml：seatbeltTier: workspace-write 须配 seatbeltWriteRoots（JSON 数组字符串，绝对路径）')
@@ -126,6 +128,7 @@ export function coerceSeatbeltGrant(raw: SeatbeltConfigRaw): SeatbeltGrant | und
     writeRoots,
     authorization,
     ...(outboundTcp !== undefined ? { outboundTcp } : {}),
+    ...(raw.dshHomeIsolation !== undefined ? { dshHomeIsolation: bool(raw.dshHomeIsolation, 'dshHomeIsolation') } : {}),
   }
 }
 

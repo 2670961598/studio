@@ -146,6 +146,7 @@ export interface SeatbeltGrant {
   readonly profileDir?: string
   readonly rpcEndpoints?: readonly SeatbeltEndpoint[]
   readonly outboundTcp?: readonly SeatbeltEndpoint[]
+  readonly dshHomeIsolation?: boolean
 }
 
 /**
@@ -161,6 +162,7 @@ export interface SeatbeltPlan {
   readonly profileDir: string | undefined
   readonly rpcEndpoints: readonly SeatbeltEndpoint[] | undefined
   readonly outboundTcp: readonly SeatbeltEndpoint[] | undefined
+  readonly dshHomeIsolation: boolean | undefined
 }
 
 /**
@@ -175,6 +177,7 @@ export const DEFAULT_SEATBELT_PLAN: SeatbeltPlan = Object.freeze({
   profileDir: undefined,
   rpcEndpoints: undefined,
   outboundTcp: undefined,
+  dshHomeIsolation: undefined,
 })
 
 /**
@@ -202,6 +205,7 @@ export function resolveSeatbeltGrant(grant?: SeatbeltGrant): SeatbeltPlan {
     profileDir: grant.profileDir,
     rpcEndpoints: grant.rpcEndpoints,
     outboundTcp: grant.outboundTcp,
+    dshHomeIsolation: grant.dshHomeIsolation,
   }
   if (tier === 'read-only') {
     if (writeRoots.length > 0) {

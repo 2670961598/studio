@@ -537,6 +537,7 @@ function dshAdapterOptions(plan: SeatbeltPlan, model: string | undefined): DshAd
   const seatbelt: DshSeatbeltOptions = {
     mode: 'auto',
     writeRootsOverride: [...plan.writeRoots],
+    dshHomeIsolation: plan.dshHomeIsolation ?? true,
     ...(plan.dshHomeRedirect !== undefined ? { dshHomeRedirect: plan.dshHomeRedirect } : {}),
     ...(plan.profileDir !== undefined ? { profileDir: plan.profileDir } : {}),
     ...(plan.rpcEndpoints !== undefined ? { rpcEndpoints: plan.rpcEndpoints } : {}),

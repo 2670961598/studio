@@ -311,13 +311,22 @@ export class DshAdapter implements ExecutorAdapter {
       ? [...baseArgs.slice(0, insertAt), ...additions, ...baseArgs.slice(insertAt)]
       : baseArgs
     const taskText = await readTaskText(task.briefPath)
+    // task-112/118：per-worker DSH_HOME 隔离独立于 seatbelt（无 seatbelt 也隔离）——工位内 .dsh-home
+    const isolationOpts = this.seatbelt
+    const isolationHome = isolationOpts?.dshHomeIsolation === false
+      ? isolationOpts.dshHomeRedirect
+      : (isolationOpts?.dshHomeRedirect ?? join(task.workspace, '.dsh-home'))
+    let dshHomeEnv: Record<string, string> = {}
+    if (isolationHome !== undefined) {
+      dshHomeEnv = { DSH_HOME: isolationHome }
+      mkdirSync(isolationHome, { recursive: true })
+    }
     // seatbelt 写域圈定（DEV-29 原型 attempt3，docs/43-§五②）：profile 随派发参数化生成
     // ——写域缺省=task.workspace+dshHomeRedirect+extraWriteRoots（judge 派发面走
     // writeRootsOverride 覆写=仅一次性 DSH_HOME，studio-dev-164 红队 2）；profile 缺省落
     // workspace/.seatbelt/（证据随单走，17-§6；judge 面 profileDir 移工作区外）；argv 以
     // sandbox-exec 包装（应用点=未沙箱派发方，嵌套 apply 被拒——detect 前置已闸）。
     let wrappedArgv: string[] = [binary, ...args, '--', taskText]
-    let dshHomeEnv: Record<string, string> = {}
     // 外层 seatbelt 是否**实际包装了 argv**（=圈定生效的唯一判据：mode='auto' 且 profile 已
     // 生成/落盘/包装；env 的内层沙箱透传（见下）只以本标志为条件，不以「配了 mode='auto'」为
     // 条件——profile 生成抛错时 launch 根本不起进程，不存在「未圈定却注入」的窗口）
@@ -334,10 +343,6 @@ export class DshAdapter implements ExecutorAdapter {
         if (opts.writeRootsOverride === undefined && opts.dshHomeRedirect !== undefined) {
           writeRoots.push(opts.dshHomeRedirect)
         }
-        if (opts.dshHomeRedirect !== undefined) {
-          dshHomeEnv = { DSH_HOME: opts.dshHomeRedirect }
-          mkdirSync(opts.dshHomeRedirect, { recursive: true })
-        }
         const profileText = buildWorkerSeatbeltProfile({
           writeRoots,
           ...(opts.rpcEndpoints !== undefined ? { localRpcEndpoints: opts.rpcEndpoints } : {}),
@@ -352,6 +357,16 @@ export class DshAdapter implements ExecutorAdapter {
         outerSeatbeltApplied = true
       }
     }
+    // task-112：spawn 前 fail-closed 断言——worker env 绝不携带 DeepSeek 官方 key（不打印值）
+    const workerEnv: Record<string, string> = {
+      ...filterWorkerEnv(process.env),
+      ...agentsMdEnv(task.AGENTS_MD),
+      ...checkedCredentials(task.credentials),
+      ...dshHomeEnv,
+      ...(outerSeatbeltApplied ? { DSH_PERMISSION_MODE: 'danger-full-access' } : {}),
+      DSH_TELEMETRY_MODE: 'DISABLED',
+    }
+    assertNoOfficialProviderKeys(workerEnv)
     const subprocess = execa(wrappedArgv[0] ?? binary, wrappedArgv.slice(1), {
       cwd: task.workspace,
       // env 白名单（docs/43-附录A-1，deny-by-default）：白名单允许集（PATH/HOME/LANG/
@@ -360,10 +375,7 @@ export class DshAdapter implements ExecutorAdapter {
       // （DEV-29：DSH_ 前缀在允许集内，此处显式覆盖为写域内 per-attempt 落点）+ 遥测
       // 红线覆盖（置末，优先级最高）
       env: {
-        ...filterWorkerEnv(process.env),
-        ...agentsMdEnv(task.AGENTS_MD),
-        ...checkedCredentials(task.credentials),
-        ...dshHomeEnv,
+        ...workerEnv,
         // 内层 dsh 沙箱透传（11-01 轨7 装备令「隔离责任归外层工位 seatbelt 全权圈禁」）：
         // 外层 seatbelt 已圈住整棵 worker 进程树时，dsh 的 bash 工具再申请内层沙箱＝内核拒
         // 嵌套 sandbox_apply（EPERM——与 seatbelt.ts 头注同源事实），worker 全部 bash 死亡
@@ -556,3 +568,13 @@ export class DshAdapter implements ExecutorAdapter {
 // ---------------------------------------------------------------------------
 // 内部工具（纯函数）
 // ---------------------------------------------------------------------------
+
+
+/** task-118 F2：spawn 前官方 key 断言（纯函数；不打印值）。 */
+export function assertNoOfficialProviderKeys(env: Readonly<Record<string, string>>): void {
+  for (const key of Object.keys(env)) {
+    if (key === 'DEEPSEEK_API_KEY' || key.startsWith('DEEPSEEK_')) {
+      throw new Error(`dispatch/credential-forbidden：worker env 含 DeepSeek 官方 key（键名 ${key}）——框架/公司/worker 禁用，拒派（provider-key-policy）`)
+    }
+  }
+}

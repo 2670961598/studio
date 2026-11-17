@@ -73,3 +73,9 @@
 - 每次部署/换 provider/改 DSH 配置后：§4 全项；
 - 每周一：daemon env 键名 + launchd + 公司 live 配置 + 近 7 日 model 前缀；
 - 每季度：密钥轮换与恢复演练（与 `docs/quality/backup-restore.md` 的季度演练同窗）。
+
+## 5. 机制保证（task-112）
+
+- **worker DSH_HOME 隔离**：`DshAdapter` 在 seatbelt 圈定启用时把 `DSH_HOME` 重定向到工位内 `<workspace>/.dsh-home`（绝对路径，加入 seatbelt 写根）；不读制作人 `~/.dsh` 的 `.env`/credentials。`daemon.yaml` 可 `dshHomeIsolation: false` 显式回退（缺省 true）。
+- **凭据键域移除官方 key**：`TaskBrief.credentials` 封闭枚举仅保留 `STUDIO_TOOLS_WKEY`；`DEEPSEEK_API_KEY`/`DEEPSEEK_*` 结构拒收（不打印值）。
+- **spawn 前断言**：worker env 组装后检查键名，命中 `DEEPSEEK_API_KEY`/`DEEPSEEK_*` 立即抛 `dispatch/credential-forbidden` 拒派（fail-closed）；env 不打印值。

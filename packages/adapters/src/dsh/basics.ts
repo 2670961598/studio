@@ -55,6 +55,7 @@ export interface DshSeatbeltOptions {
   profileDir?: string
   rpcEndpoints?: readonly SeatbeltEndpoint[]
   outboundTcp?: readonly SeatbeltEndpoint[]
+  dshHomeIsolation?: boolean
 }
 
 /** DshAdapter 构造选项（v0 仅 seatbelt 面；cmd 仍第一位保持既有调用点零改动） */
@@ -119,7 +120,7 @@ const ENV_PREFIX_ALLOWLIST: readonly string[] = ['LC_', 'DSH_']
  * 白名单外的键——尤其 PATH / NODE_OPTIONS / LD_* / DYLD_* / SHELL / HOME 类注入键——
  * 结构拒收（CONFIG_INVALID），绝不静默剔除后放行其余。
  */
-const CREDENTIAL_KEY_ENUM: readonly string[] = ['DEEPSEEK_API_KEY', 'STUDIO_TOOLS_WKEY']
+const CREDENTIAL_KEY_ENUM: readonly string[] = ['STUDIO_TOOLS_WKEY']
 
 /** 注入高危键点名表（报错信息用——命中即明说这是注入面拒收，不是普通未知键） */
 const INJECTION_KEY_PATTERNS: readonly (readonly [RegExp, string])[] = [
