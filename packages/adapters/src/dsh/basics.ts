@@ -109,7 +109,7 @@ function spawnSyncProbe(bin: string, argv: readonly string[]): { status: number 
  * 框架注入键（STUDIO_NEXT_INSTRUCTIONS、TaskBrief.credentials、DSH_TELEMETRY_MODE 覆盖）
  * 不经此集——它们在白名单之后按固定顺序追加（见 spawnHeadless）。
  */
-const ENV_KEY_ALLOWLIST: readonly string[] = ['PATH', 'HOME', 'LANG', 'TZ', 'TMPDIR']
+const ENV_KEY_ALLOWLIST: readonly string[] = ['PATH', 'HOME', 'LANG', 'TZ', 'TMPDIR', 'GLM_ZCODE_KEY', 'OPENCODE_GO_API_KEY']
 const ENV_PREFIX_ALLOWLIST: readonly string[] = ['LC_', 'DSH_']
 
 /**

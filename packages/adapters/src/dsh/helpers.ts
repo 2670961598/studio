@@ -8,6 +8,9 @@
  *
  * 边界：本件只放纯函数（无 spawn/无状态）；launch/stream/kill 生命周期仍在 dsh.ts。
  */
+import { cpSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import type { StreamEvent, TaskBrief, TokenCounts } from '@studio-next/contract'
 import { assertCredentialKeys } from './basics.ts'
@@ -103,4 +106,75 @@ export function asError(e: unknown): Error {
 export function errMsg(e: unknown): string {
   const msg = asError(e).message
   return msg === '' ? String(e) : msg
+}/**
+ * task-120：隔离 DSH_HOME 的只读 profile 种子。
+ * 从宿主 DSH 配置面（DSH_HOME 或 ~/.dsh）复制 profiles/headless 的配置/插件清单，
+ * **排除** .env/.credentials.yaml/sessions/cache/attachments/.pnpm-store；node_modules 只读符号链接。
+ * 源缺失/复制失败=fail-closed 明报，**绝不回退读宿主 ~/.dsh**。
+ */
+export function seedIsolatedDshHome(isolationHome: string): void {
+  if (process.env['DSH_HOME'] === isolationHome) return
+  const sourceRoot = process.env['DSH_HOME'] ?? join(homedir(), '.dsh')
+  const sourceProfile = join(sourceRoot, 'profiles', 'headless')
+  if (!existsSync(sourceProfile)) {
+    throw new Error(`dsh: 隔离 DSH_HOME 种子源缺失（${sourceProfile}；$DSH_HOME 或 ~/.dsh）——fail-closed，不回退读宿主 ~/.dsh`)
+  }
+  const targetProfile = join(isolationHome, 'profiles', 'headless')
+  mkdirSync(targetProfile, { recursive: true })
+  const excluded = new Set(['.env', '.credentials.yaml', 'sessions', 'cache', 'attachments', '.pnpm-store', 'node_modules'])
+  try {
+    cpSync(sourceProfile, targetProfile, {
+      recursive: true,
+      filter: (src) => {
+        const base = src.slice(src.lastIndexOf('/') + 1)
+        return !excluded.has(base)
+      },
+    })
+    const sourceModules = join(sourceProfile, 'node_modules')
+    const targetModules = join(targetProfile, 'node_modules')
+    if (existsSync(sourceModules) && !existsSync(targetModules)) symlinkSync(sourceModules, targetModules)
+    // task-122：白名单凭据播种（从宿主 .env 读，仅写白名单键；排除 DEEPSEEK_*；0600）
+    seedIsolatedDshEnv(sourceRoot, isolationHome)
+    // 标记种子完成（幂等；配置只读）
+    writeFileSync(join(isolationHome, '.seed-ok'), new Date().toISOString(), 'utf8')
+  } catch (e) {
+    throw new Error(`dsh: 隔离 DSH_HOME profile 种子失败（${sourceProfile} → ${targetProfile}）：${e instanceof Error ? e.message : String(e)}——fail-closed，不回退读宿主 ~/.dsh`)
+  }
+}
+
+
+
+
+const CREDENTIAL_ENV_ALLOW = new Set(['GLM_ZCODE_KEY', 'GLM_AUTH_TOKEN', 'OPENCODE_GO_API_KEY', 'KIMI_API_KEY'])
+function isAllowedCredentialKey(key: string): boolean {
+  if (CREDENTIAL_ENV_ALLOW.has(key)) return true
+  // 必要 BASE_URL（排除官方 DeepSeek）
+  return (key === 'BASE_URL' || key.endsWith('_BASE_URL')) && !key.startsWith('DEEPSEEK_')
+}
+/** task-122：从宿主 .env 白名单播种隔离 home .env（0600）；源缺失/无白名单键=不写（可观测跳过） */
+function seedIsolatedDshEnv(sourceRoot: string, isolationHome: string): void {
+  const sourceEnv = join(sourceRoot, '.env')
+  if (!existsSync(sourceEnv)) {
+    try { writeFileSync(join(isolationHome, '.seed-env-skipped'), 'source .env missing', 'utf8') } catch { /* 可观测性非主面 */ }
+    return
+  }
+  let text: string
+  try { text = readFileSync(sourceEnv, 'utf8') } catch {
+    try { writeFileSync(join(isolationHome, '.seed-env-skipped'), 'source .env unreadable', 'utf8') } catch { /* ignore */ }
+    return
+  }
+  const lines: string[] = []
+  for (const raw of text.split(/\r?\n/)) {
+    const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(raw)
+    if (m === null) continue
+    const key = m[1] ?? ''
+    if (key.startsWith('DEEPSEEK_')) continue // 官方 key 绝不播种
+    if (!isAllowedCredentialKey(key)) continue
+    lines.push(`${key}=${m[2] ?? ''}`)
+  }
+  if (lines.length === 0) {
+    try { writeFileSync(join(isolationHome, '.seed-env-skipped'), 'no allowed credential keys', 'utf8') } catch { /* ignore */ }
+    return
+  }
+  writeFileSync(join(isolationHome, '.env'), `${lines.join('\n')}\n`, { encoding: 'utf8', mode: 0o600 })
 }

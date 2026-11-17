@@ -122,6 +122,7 @@ import {
   errMsg,
   isENOENT,
   readTaskText,
+  seedIsolatedDshHome,
 } from './dsh/helpers.ts'
 
 // 基座/纯函数面拆至 dsh/{basics,helpers}.ts（docs/20-§十五.三）；此处再出口保持既有导入面零改行。
@@ -318,8 +319,9 @@ export class DshAdapter implements ExecutorAdapter {
       : (isolationOpts?.dshHomeRedirect ?? join(task.workspace, '.dsh-home'))
     let dshHomeEnv: Record<string, string> = {}
     if (isolationHome !== undefined) {
-      dshHomeEnv = { DSH_HOME: isolationHome }
       mkdirSync(isolationHome, { recursive: true })
+      seedIsolatedDshHome(isolationHome)
+      dshHomeEnv = { DSH_HOME: isolationHome }
     }
     // seatbelt 写域圈定（DEV-29 原型 attempt3，docs/43-§五②）：profile 随派发参数化生成
     // ——写域缺省=task.workspace+dshHomeRedirect+extraWriteRoots（judge 派发面走
@@ -578,3 +580,5 @@ export function assertNoOfficialProviderKeys(env: Readonly<Record<string, string
     }
   }
 }
+
+

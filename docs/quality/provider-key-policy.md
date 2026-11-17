@@ -79,3 +79,10 @@
 - **worker DSH_HOME 隔离**：`DshAdapter` 在 seatbelt 圈定启用时把 `DSH_HOME` 重定向到工位内 `<workspace>/.dsh-home`（绝对路径，加入 seatbelt 写根）；不读制作人 `~/.dsh` 的 `.env`/credentials。`daemon.yaml` 可 `dshHomeIsolation: false` 显式回退（缺省 true）。
 - **凭据键域移除官方 key**：`TaskBrief.credentials` 封闭枚举仅保留 `STUDIO_TOOLS_WKEY`；`DEEPSEEK_API_KEY`/`DEEPSEEK_*` 结构拒收（不打印值）。
 - **spawn 前断言**：worker env 组装后检查键名，命中 `DEEPSEEK_API_KEY`/`DEEPSEEK_*` 立即抛 `dispatch/credential-forbidden` 拒派（fail-closed）；env 不打印值。
+
+## 6. 隔离 home profile 种子（task-120）
+
+- 建 `<workspace>/.dsh-home` 时从宿主 `$DSH_HOME`（缺省 `~/.dsh`）复制 `profiles/headless` 的**只读配置/插件清单**（`cordis*.yml`、`package.json`、pnpm 清单、`.plugin-manager` 等），`node_modules` 以只读符号链接提供 provider adapter；**排除** `.env`、`.credentials.yaml`、`sessions/`、`cache/`、`attachments/`、`.pnpm-store/`。
+- 源 profile 缺失/复制失败=fail-closed 明报，**不回退读宿主 `~/.dsh`**；`dshHomeIsolation:false` 显式回退旧共享 home。
+- 模型凭据：隔离 home 的 `.env`（0600）由种子从宿主 `$DSH_HOME|~/.dsh/.env` **白名单**播种：`GLM_ZCODE_KEY`/`GLM_AUTH_TOKEN`/`OPENCODE_GO_API_KEY`/`KIMI_API_KEY` + 必要 `*_BASE_URL`；**排除所有 `DEEPSEEK_*`**。源缺失/无白名单键→不写 `.env`（`.seed-env-skipped` 可观测），不回退读宿主 home。
+- 证据：fake CLI+profile fixture 真实 launch 断言 DSH_HOME/种子文件/无 DEEPSEEK（本地嵌套环境无法真机 dsh sandbox；真机最小 launch 需宿主非嵌套+模型凭据，见报告差距）。
