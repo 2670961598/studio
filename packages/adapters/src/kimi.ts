@@ -56,6 +56,7 @@
  *   - stream() 一会话只许消费一次（一单一命、一流一收）；resultStats() 只汇总已消费的事件
  */
 import { randomUUID } from 'node:crypto'
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -74,6 +75,8 @@ import type {
 } from '@studio-next/contract'
 import { parseLine, sumWireUsage } from './streams.ts'
 import { readTaskText } from './dsh/helpers.ts'
+import { buildWorkerSeatbeltProfile, seatbeltArgv, seatbeltProfileFileName, type SeatbeltPlan } from './seatbelt.ts'
+import { detectSeatbeltBackend } from './dsh/basics.ts'
 
 /** 缺省命令（docs/17-§6 kimi 行）：launch 时追加 `-p --output-format stream-json` 与动态旗标 */
 export const KIMI_DEFAULT_CMD: readonly string[] = ['kimi']
@@ -100,6 +103,8 @@ interface SessionState {
   readonly rawLines: string[]
   /** 会话结束后要读的 wire.jsonl 路径（launch 时解析；收到 resume_hint 后按真实 CLI id 纠正） */
   wirePath: string
+  /** seatbelt profile（workspace-write 时随单落盘；流尾/ kill 清理） */
+  profilePath?: string | undefined
   /** 从 stdout session.resume_hint 捕获的 CLI session id（session_<uuid>） */
   detectedSessionId?: string
   /** 是否见到 assistant 正文（流尾合成 turn_end 的完成判据之一） */
@@ -150,6 +155,7 @@ export class KimiAdapter implements ExecutorAdapter {
 
   private readonly cmd: readonly string[]
   private readonly wirePathResolver: WirePathResolver
+  private readonly seatbelt: SeatbeltPlan | undefined
 
   /**
    * cmd 可注入（测试用假 CLI）；缺省 `kimi`（17-§6，launch 时追加流式旗标）。
@@ -158,9 +164,11 @@ export class KimiAdapter implements ExecutorAdapter {
   constructor(
     cmd: readonly string[] = KIMI_DEFAULT_CMD,
     wirePathResolver: WirePathResolver = defaultWirePath,
+    seatbelt?: SeatbeltPlan,
   ) {
     this.cmd = cmd.length > 0 ? cmd : KIMI_DEFAULT_CMD
     this.wirePathResolver = wirePathResolver
+    this.seatbelt = seatbelt
   }
 
   /**
@@ -185,6 +193,11 @@ export class KimiAdapter implements ExecutorAdapter {
         ? 'kimi-not-installed'
         : `kimi-detect-failed:${errMsg(result.cause)}`
       return { name: this.name, version: '', ok: false, gaps: [gap] }
+    }
+    // seatbelt 前置探测（照 dsh 现成机制）：profile apply 点必须在未沙箱派发方；嵌套会话 gap 明报
+    if (this.seatbelt !== undefined) {
+      const probe = detectSeatbeltBackend()
+      if (!probe.ok) return { name: this.name, version: '', ok: false, gaps: [...probe.gaps] }
     }
     // `kimi --version` 输出形态未知（拟稿按通用语义化版本串抓取，探针权实）
     const match = /v?(\d+(?:\.\d+)+(?:[-+][0-9A-Za-z.-]+)?)/.exec(result.stdout.trim())
@@ -229,7 +242,15 @@ export class KimiAdapter implements ExecutorAdapter {
     // P1：只传真实 CLI session id（session_<uuid>）；禁止裸 -S / 框架 UUID
     const resumeId = task.resume?.sessionId
     if (resumeId !== undefined && resumeId.startsWith('session_')) args.push('-S', resumeId)
-    const subprocess = execa(binary, args, {
+    // seatbelt 端子（task-104，照 dsh 机制）：写域根=plan.writeRoots；profile 随单落盘；argv 以 sandbox-exec 包装
+    let wrappedArgv: string[] = [binary, ...args]
+    let profilePath: string | undefined
+    if (this.seatbelt !== undefined) {
+      const invocation = kimiSeatbeltInvocation(this.seatbelt, [binary, ...args], task.workspace, task.ticket, task.attempt)
+      profilePath = invocation.profilePath
+      wrappedArgv = [...invocation.argv]
+    }
+    const subprocess = execa(wrappedArgv[0] ?? binary, wrappedArgv.slice(1), {
       cwd: task.workspace,
       env: { ...process.env, ...agentsMdEnv(task.AGENTS_MD), ...(task.credentials ?? {}) },
       stdin: 'ignore',
@@ -248,6 +269,7 @@ export class KimiAdapter implements ExecutorAdapter {
       events: [],
       rawLines: [],
       wirePath: this.wirePathResolver(sessionId, task.workspace),
+      profilePath,
       sawAssistant: false,
       sawKimiRole: false,
       streamConsumed: false,
@@ -351,6 +373,7 @@ export class KimiAdapter implements ExecutorAdapter {
     }
     // wire 合流（会话结束后）：usage 求和挂 turn_end / 缺件明示 log——详见文件头注
     for (const event of await mergeWireUsage(state)) yield event
+    cleanupProfile(state)
   }
 
   /**
@@ -396,6 +419,7 @@ export class KimiAdapter implements ExecutorAdapter {
       () => undefined,
       () => undefined,
     )
+    cleanupProfile(state)
   }
 
   /**
@@ -420,6 +444,33 @@ export class KimiAdapter implements ExecutorAdapter {
 // ---------------------------------------------------------------------------
 // 内部工具（纯函数 + wire 合流）
 // ---------------------------------------------------------------------------
+
+export interface KimiSeatbeltInvocation {
+  readonly argv: readonly string[]
+  readonly profilePath: string
+  readonly profileText: string
+}
+/** seatbelt 端子纯构造（含 profile 落盘）：launch 与测试共用，argv[0]=sandbox-exec。 */
+export function kimiSeatbeltInvocation(plan: SeatbeltPlan, childArgv: readonly string[], workspace: string, ticket: string, attempt: number): KimiSeatbeltInvocation {
+  const profileText = buildWorkerSeatbeltProfile({
+    writeRoots: plan.writeRoots,
+    ...(plan.rpcEndpoints !== undefined ? { localRpcEndpoints: plan.rpcEndpoints } : {}),
+    ...(plan.outboundTcp !== undefined ? { outboundTcp: plan.outboundTcp } : {}),
+    label: `${ticket}/att${String(attempt)}`,
+  })
+  const profileDir = plan.profileDir ?? join(workspace, '.seatbelt')
+  mkdirSync(profileDir, { recursive: true })
+  const profilePath = join(profileDir, seatbeltProfileFileName())
+  writeFileSync(profilePath, profileText, 'utf8')
+  return { argv: seatbeltArgv(profilePath, childArgv), profilePath, profileText }
+}
+
+function cleanupProfile(state: SessionState): void {
+  if (state.profilePath !== undefined) {
+    try { rmSync(state.profilePath, { force: true }) } catch { /* 清理失败不掩盖主面 */ }
+    state.profilePath = undefined
+  }
+}
 
 /** 真实 wire 路径：KIMI_CODE_HOME 或 ~/.kimi-code 下 sessions/星号/CLI session id/agents/main/wire.jsonl */
 async function resolveRealWirePath(sessionId: string): Promise<string | undefined> {

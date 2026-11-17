@@ -49,7 +49,7 @@
  *     tier:'workspace-write'＋绝对路径根＋authorization 留痕——缺一构造期 CONFIG_INVALID。
  *   - 运行时兜底同向：JS 调用方省略第三参=read-only，**不存在**「不传=全权」路径（档位
  *     守门唯一=seatbelt.ts resolveSeatbeltGrant；非法档/未授权放宽一律拒收）。
- *   - 接线面：dsh 家唯一有 seatbelt 端子；claude/codex/kimi 无端子——**显式放宽一律拒收**
+ *   - 接线面：dsh/kimi 有 seatbelt 端子；claude/codex 无端子——**显式放宽一律拒收**
  *     （不在无端子家族上盖「已放宽」章）；read-only 缺省的实际拦截缺失按 PRB-04 前置登记（未证）。
  *   - **接口耦合**：派发域调用方随动归 IMPL-07-09（串行 07-08→07-09）；daemon 现有
  *     `judgeAwareResolver(tierAwareResolver())` 零改动可编译，只是缺省圈定翻成 read-only。
@@ -300,8 +300,8 @@ const BUILTIN_FACTORIES: Readonly<Record<ExecutorFamily, BuiltinFactory>> = {
     return new CodexAdapter(cmd)
   },
   kimi: (cmd, _patches, seatbelt) => {
-    assertSeatbeltTerminal('kimi', seatbelt ?? DEFAULT_SEATBELT_PLAN)
-    return new KimiAdapter(cmd)
+    // task-104：KimiAdapter 补 seatbelt 端子（sandbox-exec 包线）；read-only 缺省照绑，workspace-write 由 plan 携带授权
+    return new KimiAdapter(cmd, undefined, seatbelt ?? DEFAULT_SEATBELT_PLAN)
   },
 }
 

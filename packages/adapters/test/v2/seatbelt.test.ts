@@ -219,17 +219,19 @@ describe('内置工厂 seatbelt 参数：显式放宽才放宽', () => {
     ).toThrow(/seatbelt\/widening-unauthorized/)
   })
 
-  it('无 seatbelt 端子的家族（claude/codex/kimi）：显式放宽拒收，read-only 缺省照过', () => {
-    for (const family of ['claude', 'codex', 'kimi'] as const) {
+  it('无 seatbelt 端子的家族（claude/codex）显式放宽拒收；kimi 已有端子（task-104）放宽可构造', () => {
+    for (const family of ['claude', 'codex'] as const) {
       const widened = builtinResolver(family, {
         tier: 'workspace-write',
         writeRoots: ['/w'],
         authorization: 'IMPL-07-08',
       })!
       expect(() => widened(['x'])).toThrow(/agentconfig\/seatbelt-unenforceable/)
-      // 缺省 read-only 不盖「已放宽」章也不拒构造（实际圈定缺失按 PRB-04 前置登记）
       expect(builtinResolver(family)!(['x']).name).toBe(family)
     }
+    const kimi = builtinResolver('kimi', { tier: 'workspace-write', writeRoots: ['/w'], authorization: 'task-104' })!
+    expect(kimi(['x']).name).toBe('kimi')
+    expect(builtinResolver('kimi')!(['x']).name).toBe('kimi')
   })
 
   it('registerBuiltins 的 seatbelt 覆盖同走构造期守门（per-family 覆盖面）', () => {
