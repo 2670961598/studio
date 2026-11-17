@@ -11,3 +11,8 @@
 - `KimiAdapter` 第三参 `SeatbeltPlan`（照 dsh 机制）：launch 用 `buildWorkerSeatbeltProfile` 生成 profile（写根=plan.writeRoots），以 `sandbox-exec -f <profile> -- kimi ...` 包装；profile 落 `workspace/.seatbelt/`（plan.profileDir 可覆盖），流尾/kill 清理。
 - `agentconfig.BUILTIN_FACTORIES.kimi` 接收并传递 plan；移除 kimi 的 `seatbelt-unenforceable` 拒收；claude/codex 仍无端子拒收。read-only 缺省最严/workspace-write 需 authorization 由 `resolveSeatbeltGrant` 不变。
 - detect 前置：计划存在时跑 `detectSeatbeltBackend`，嵌套环境 gap 明报。
+
+## task-123 wire 异步落盘重试
+
+- 真实 Kimi 会话结束后 wire 可能异步出现；`KimiAdapter` 在 resume_hint 捕获 session id 后以 **50ms 起、~2s 上限** 有界重扫 `$KIMI_CODE_HOME|~/.kimi-code/sessions/*/session_*/agents/main/wire.jsonl`，仅当文件存在且**非空**才合流 usage/model。
+- 超时仍缺失：保留 `wire.jsonl not found at …; usage unavailable` 明示 log，model 保持 undefined、tokens 0（不伪造）；测试覆盖延迟 ~500ms 落盘与始终缺失两态。

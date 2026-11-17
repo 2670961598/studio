@@ -57,8 +57,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
-import { readFile, readdir } from 'node:fs/promises'
-import { homedir } from 'node:os'
+import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { execa } from 'execa'
 import type { Subprocess } from 'execa'
@@ -74,6 +73,7 @@ import type {
   TokenCounts,
 } from '@studio-next/contract'
 import { extractWireUsageModel, parseLine, sumWireUsage } from './streams.ts'
+import { resolveRealWirePath, waitForRealWireFile } from './kimi-wire.ts'
 import { readTaskText } from './dsh/helpers.ts'
 import { buildWorkerSeatbeltProfile, seatbeltArgv, seatbeltProfileFileName, type SeatbeltPlan } from './seatbelt.ts'
 import { detectSeatbeltBackend } from './dsh/basics.ts'
@@ -157,6 +157,7 @@ export class KimiAdapter implements ExecutorAdapter {
 
   private readonly cmd: readonly string[]
   private readonly wirePathResolver: WirePathResolver
+  private readonly usesDefaultWireResolver: boolean
   private readonly seatbelt: SeatbeltPlan | undefined
 
   /**
@@ -170,6 +171,7 @@ export class KimiAdapter implements ExecutorAdapter {
   ) {
     this.cmd = cmd.length > 0 ? cmd : KIMI_DEFAULT_CMD
     this.wirePathResolver = wirePathResolver
+    this.usesDefaultWireResolver = wirePathResolver === defaultWirePath
     this.seatbelt = seatbelt
   }
 
@@ -370,7 +372,10 @@ export class KimiAdapter implements ExecutorAdapter {
     }
     // P1：收到 resume_hint 后按真实 CLI id 定位 wire（KIMI_CODE_HOME 或 ~/.kimi-code）
     if (state.detectedSessionId !== undefined) {
-      const real = await resolveRealWirePath(state.detectedSessionId)
+      // task-123：真实 Kimi wire 可能异步落盘——有界重试（50ms 起、~2s 上限），超时保留明示 log
+      const real = this.usesDefaultWireResolver
+        ? await waitForRealWireFile(state.detectedSessionId)
+        : await resolveRealWirePath(state.detectedSessionId)
       if (real !== undefined) state.wirePath = real
     }
     // wire 合流（会话结束后）：usage 求和挂 turn_end / 缺件明示 log——详见文件头注
@@ -475,19 +480,6 @@ function cleanupProfile(state: SessionState): void {
   }
 }
 
-/** 真实 wire 路径：KIMI_CODE_HOME 或 ~/.kimi-code 下 sessions/星号/CLI session id/agents/main/wire.jsonl */
-async function resolveRealWirePath(sessionId: string): Promise<string | undefined> {
-  const root = process.env['KIMI_CODE_HOME'] ?? join(homedir(), '.kimi-code')
-  try {
-    const dirs = await readdir(join(root, 'sessions'), { withFileTypes: true })
-    for (const d of dirs) {
-      if (!d.isDirectory()) continue
-      const candidate = join(root, 'sessions', d.name, sessionId, 'agents', 'main', 'wire.jsonl')
-      try { await readFile(candidate, 'utf8'); return candidate } catch { /* next */ }
-    }
-  } catch { /* root absent */ }
-  return undefined
-}
 
 /** 缺省 wire 路径（真实根扫描失败时兜底；测试可注入 resolver） */
 

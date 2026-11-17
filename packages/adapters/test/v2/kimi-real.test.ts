@@ -1,5 +1,5 @@
 /** Kimi 真实 2.1.1 形态离线 fixture（task-98 P0/P1；真实探针 /tmp/kimi-live-probe 脱敏副本）。 */
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -60,5 +60,64 @@ describe('真实 kimi 2.1.1 形态（P0/P1 离线 fixture）', () => {
       expect(text).toContain('-p kimi real task brief')
       expect(adapter.isCompleted(h)).toBe(true)
     })
+  }, 10_000)
+})
+
+describe('task-123 wire 异步落盘重试', () => {
+  it('wire 在进程退出后 ~500ms 才写 → 有界重试读到 model/usage 并挂 turn_end', async () => {
+    const root = mkdtempSync(join(workdir, 'wire-late-'))
+    const sid = 'session_54478d6b-3d9e-49b3-84b1-12bdde186354'
+    const wireDir = join(root, 'sessions', 'wd_late_abc', sid, 'agents', 'main')
+    const worker = join(root, 'worker.mjs')
+    const out = fixture('live-out7.jsonl')
+    const wire = fixture('live-wire-main.jsonl')
+    writeFileSync(worker, `#!/usr/bin/env node
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+if (process.argv.includes('--version')) { console.log('2.1.1'); process.exit(0) }
+console.log(readFileSync(${JSON.stringify(out)}, 'utf8'))
+setTimeout(() => { mkdirSync(${JSON.stringify(wireDir)}, { recursive: true }); writeFileSync(${JSON.stringify(join(wireDir, 'wire.jsonl'))}, readFileSync(${JSON.stringify(wire)})) }, 500)
+await new Promise((r) => setTimeout(r, 700))
+`, 'utf8')
+    // 上面模板含 import 后语句：写为真正的 mjs 模块（顶层 await）
+    writeFileSync(worker, `import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+if (process.argv.includes('--version')) { console.log('2.1.1'); process.exit(0) }
+console.log(readFileSync(${JSON.stringify(out)}, 'utf8'))
+setTimeout(() => { mkdirSync(${JSON.stringify(wireDir)}, { recursive: true }); writeFileSync(${JSON.stringify(join(wireDir, 'wire.jsonl'))}, readFileSync(${JSON.stringify(wire)})) }, 500)
+await new Promise((r) => setTimeout(r, 700))
+`, 'utf8')
+    chmodSync(worker, 0o755)
+    const savedHome = process.env['KIMI_CODE_HOME']; process.env['KIMI_CODE_HOME'] = root
+    try {
+      const adapter = new KimiAdapter([process.execPath, worker])
+      const h = await adapter.launch(makeBrief())
+      const collected: StreamEvent[] = []
+      for await (const ev of adapter.stream(h)) collected.push(ev)
+      const stats = await adapter.resultStats(h)
+      expect(stats.model).toBe('kimi-code/kimi-for-coding')
+      expect(stats.tokens).toStrictEqual({ input: 23587, output: 120, cache_read: 54784, cache_creation: 0 })
+      expect(collected.some((e) => e.type === 'log' && e.text.includes('wire.jsonl not found'))).toBe(false)
+    } finally { if (savedHome === undefined) delete process.env['KIMI_CODE_HOME']; else process.env['KIMI_CODE_HOME'] = savedHome }
+  }, 10_000)
+
+  it('wire 始终缺失：有界等待超时后明示 log，不伪造 model/usage', async () => {
+    const root = mkdtempSync(join(workdir, 'wire-timeout-'))
+    const worker = join(root, 'worker.mjs')
+    const out = fixture('live-out7.jsonl')
+    writeFileSync(worker, `import { readFileSync } from 'node:fs'
+if (process.argv.includes('--version')) { console.log('2.1.1'); process.exit(0) }
+console.log(readFileSync(${JSON.stringify(out)}, 'utf8'))
+`, 'utf8')
+    chmodSync(worker, 0o755)
+    const savedHome = process.env['KIMI_CODE_HOME']; process.env['KIMI_CODE_HOME'] = root
+    try {
+      const adapter = new KimiAdapter([process.execPath, worker])
+      const h = await adapter.launch(makeBrief())
+      const collected: StreamEvent[] = []
+      for await (const ev of adapter.stream(h)) collected.push(ev)
+      expect(collected.some((e) => e.type === 'log' && e.text.includes('wire.jsonl not found'))).toBe(true)
+      const stats = await adapter.resultStats(h)
+      expect(stats.model).toBeUndefined()
+      expect(stats.tokens).toEqual({ input: 0, output: 0 })
+    } finally { if (savedHome === undefined) delete process.env['KIMI_CODE_HOME']; else process.env['KIMI_CODE_HOME'] = savedHome }
   }, 10_000)
 })
