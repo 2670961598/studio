@@ -1,4 +1,4 @@
-# Studio Next 工具链锁定（docs/16-§二：Node 24 LTS + bun）
+# Studio Next 工具链锁定（docs/16-§二：Node 24.21.0 仅工具链复现 + bun；生产 daemon 以 guardian 实际 Node 为准，实测 v25.6.1）
 # 本文件随仓走：主仓与所有 worktree 泳道自动继承同一版本
 [tools]
 node = "24.21.0"

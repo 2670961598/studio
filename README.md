@@ -113,7 +113,8 @@ docs/               设计与施工文档（docs/v2、docs/plan 等）
 
 ## 快速开始
 
-环境要求：Node.js 24+、bun、Git。
+环境要求：Node.js **24+**（engines `>=24`，基线仍兼容 24）、bun、Git。
+生产/守护核实测运行 **Node v25.6.1**（guardian 使用 `/opt/homebrew/bin/node`）；仓 `.mise.toml` 钉 24.21.0 仅用于工具链复现，生产以 guardian 为准。升级 Node 26 前先在同版本验证 `verify:v2` + 部署冒烟，再改文档口径。
 
 ```bash
 # 安装依赖

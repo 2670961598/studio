@@ -20,7 +20,7 @@ Studio Next 把「一家公司」建模成代码外部的一个 git 目录（下
 ## 二、目录结构
 
 ```
-apps/daemon/          唯一常驻进程（Node 24 LTS）：主循环、调度、看护
+apps/daemon/          唯一常驻进程（Node 24+；生产实测 Node 25.6.1）：主循环、调度、看护
                       （src 四域分层：engine 引擎核 / control 控制面 / evolve 进化链 /
                         cli 命令面一命令一模块；serve.ts+index.ts 装配留 src 根；
                         test/ 目录按同分组镜像）
@@ -40,7 +40,8 @@ docs/                 设计文档库——施工依据，冲突以文档为准
 ## 三、怎么开发
 
 - 依赖：`bun install`（bun workspaces；`workspaces: ["apps/*","packages/*"]`）
-- 运行时：**daemon 跑 Node 24 LTS**（原生 type-stripping 直接执行 .ts，不引构建链）
+- 运行时：**基线 Node 24+（engines `>=24`，仍兼容 24）；生产实测跑 Node v25.6.1**（guardian 用 `/opt/homebrew/bin/node`；原生 type-stripping 直接执行 .ts，不引构建链）。
+  仓 `.mise.toml` 钉 Node 24.21.0 **仅用于工具链复现**，生产以 guardian 实际 node 为准；升级 Node 26 前须先在同版本跑 verify:v2 + 部署冒烟，再改文档/基线。
 - 类型门禁：`bun run typecheck`（等价 `tsc --noEmit`，根 `tsconfig.json` 覆盖全部包）
 - 类型纪律：`strict` + 全量严格开关；**只写可擦除语法**（禁 enum / namespace / 参数属性 / 装饰器）
 - 起进程：`bun run daemon`（骨架阶段只打印启动横幅就退出）
