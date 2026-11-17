@@ -42,6 +42,30 @@ describe('task-106 primaryExecutor', () => {
     if (rejected.kind === 'rejected') expect(rejected.error.subcause).toBe('dispatch/selection-unregistered')
   })
 
+  it('tierExecutors 配置=显式登记面：kimi+空链放行（source=tier-config）；未配仍拒；配 claude 请求 kimi 拒', () => {
+    const configured: DispatchSelectionDeps = { chain: EMPTY, personExecutors: {}, primaryExecutor: 'dsh', tierExecutors: new Set(['kimi']) }
+    const selected = resolveDispatchSelection({ deps: configured, ticket: 'T-1', personId: 'AGENT-1', candidateName: 'kimi' })
+    expect(selected.kind).toBe('selected')
+    if (selected.kind === 'selected') {
+      expect(selected.selection.executor).toBe('kimi')
+      expect(selected.selection.source).toBe('tier-config')
+      expect(selected.selection.chainId).toBe('tier-config:default')
+      expect(selected.selection.note).toContain('tierExecutors 配置=显式选择登记面')
+    }
+    const notConfigured: DispatchSelectionDeps = { chain: EMPTY, personExecutors: {}, primaryExecutor: 'dsh' }
+    const rejected = resolveDispatchSelection({ deps: notConfigured, ticket: 'T-1', personId: 'AGENT-1', candidateName: 'kimi' })
+    expect(rejected.kind).toBe('rejected')
+    if (rejected.kind === 'rejected') expect(rejected.error.subcause).toBe('dispatch/selection-unregistered')
+    const wrong: DispatchSelectionDeps = { chain: EMPTY, personExecutors: {}, primaryExecutor: 'dsh', tierExecutors: new Set(['claude']) }
+    expect(resolveDispatchSelection({ deps: wrong, ticket: 'T-1', personId: 'AGENT-1', candidateName: 'kimi' }).kind).toBe('rejected')
+  })
+
+  it('续跑同家规则不变（tier-config 不改变续跑 hard constraint）', () => {
+    const deps: DispatchSelectionDeps = { chain: EMPTY, personExecutors: {}, primaryExecutor: 'dsh', tierExecutors: new Set(['kimi']) }
+    const r = resolveDispatchSelection({ deps, ticket: 'T-1', personId: 'AGENT-1', candidateName: 'kimi', resumeActive: true })
+    expect(r.kind).toBe('selected')
+  })
+
   it('非法 primaryExecutor 拒启', () => {
     expect(() => parseDaemonConfig(`${BASE}\nprimaryExecutor: nope`)).toThrow(/ENU-88|primaryExecutor/)
     expect(() => parseDaemonConfig(`${BASE}\nprimaryExecutor: off`)).toThrow(/primaryExecutor/)

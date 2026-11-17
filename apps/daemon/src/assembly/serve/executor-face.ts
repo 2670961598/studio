@@ -238,6 +238,9 @@ export function wireExecutorFace(config: ServeConfig, deps: ExecutorFaceDeps): E
     chain: config.dispatchSelections ?? EMPTY_SELECTION_CHAIN,
     personExecutors: personExecutorsOf(config),
     ...(config.primaryExecutor !== undefined ? { primaryExecutor: config.primaryExecutor as import('@studio-next/contract').ExecutorFamily } : {}),
+    ...(config.tierExecutors !== undefined
+      ? { tierExecutors: new Set(Object.values(config.tierExecutors).filter((v): v is string => v !== undefined).map((v) => v as import('@studio-next/contract').ExecutorFamily)) }
+      : {}),
   }
   const primary = config.primaryExecutor ?? 'dsh'
   log(

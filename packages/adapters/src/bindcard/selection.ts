@@ -61,7 +61,7 @@ export const EMPTY_SELECTION_CHAIN: SelectionChain = Object.freeze({
 export interface DispatchSelection {
   readonly executor: ExecutorFamily
   readonly chainId: string
-  readonly source: 'ticket' | 'position' | 'default'
+  readonly source: 'ticket' | 'position' | 'default' | 'tier-config'
   /** 选择不是授权：恒 'not-granted-here'（授权只有 v2/03 四态） */
   readonly authorization: 'not-granted-here'
   readonly note: string
