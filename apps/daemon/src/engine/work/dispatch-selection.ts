@@ -42,7 +42,7 @@ import {
   type SelectionChain,
   type SelectionChainEntry,
 } from '@studio-next/adapters/bindcard'
-import type { ClassifiedError, ExecutorAdapter, Result, TicketId } from '@studio-next/contract'
+import type { ClassifiedError, ExecutorAdapter, ExecutorFamily, Result, TicketId } from '@studio-next/contract'
 
 // ---------------------------------------------------------------------------
 // 一、装配注入面（serve 装配期构造；缺省不注入=面关——仅测试直连引擎的兼容缝）
@@ -54,6 +54,8 @@ export interface DispatchSelectionDeps {
   readonly chain: SelectionChain
   /** 岗位绑定 executor 偏好（工号→executor 名；org-config people[].executor 的注入形） */
   readonly personExecutors: Readonly<Record<string, string>>
+  /** 主绑定执行器（daemon.yaml primaryExecutor；缺省 dsh——v2/07 默认） */
+  readonly primaryExecutor?: ExecutorFamily
 }
 
 /** 解析结果三态（selected=放行；not-applicable=选择链值域外；rejected=fail-closed 拒派） */
@@ -100,8 +102,8 @@ function reject(subcause: string, detail: string): DispatchSelectionOutcome {
 }
 
 /** 选择链规则唯一源在 adapters（resolveDispatchTarget）——本件只把失败包成三态 */
-function resolveFor(chain: SelectionChain, ticket: TicketId, executor: string): DispatchSelectionOutcome {
-  const resolved = resolveDispatchTarget(chain, { ticket, executor })
+function resolveFor(chain: SelectionChain, ticket: TicketId, executor: string, primaryExecutor?: ExecutorFamily): DispatchSelectionOutcome {
+  const resolved = resolveDispatchTarget(chain, { ticket, executor }, undefined, primaryExecutor)
   return resolved.kind === 'ok' ? { kind: 'selected', selection: resolved.value } : { kind: 'rejected', error: resolved.error }
 }
 
@@ -134,7 +136,7 @@ export function resolveDispatchSelection(input: DispatchSelectionInput): Dispatc
         `单据 ${JSON.stringify(input.ticket)} 选择链指定 ${ticketEntry.executor}，续跑指名 ${candidateFamily}——续跑须同一家（session id 为 executor 本地命名空间，v2/12 §2.1-③ 换宿主=新段），不得静默改派`,
       )
     }
-    return resolveFor(chain, input.ticket, candidateFamily)
+    return resolveFor(chain, input.ticket, candidateFamily, input.deps.primaryExecutor)
   }
 
   const requested = ticketEntry?.executor ?? (positionExecutor !== '' ? positionExecutor : undefined) ?? candidateFamily
@@ -144,7 +146,7 @@ export function resolveDispatchSelection(input: DispatchSelectionInput): Dispatc
       reason: `候选执行器 ${input.candidateName} 不在 ENU-88 值集（自定义/fake 名——选择链不覆盖）`,
     }
   }
-  return resolveFor(chain, input.ticket, requested)
+  return resolveFor(chain, input.ticket, requested, input.deps.primaryExecutor)
 }
 
 // ---------------------------------------------------------------------------

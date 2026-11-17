@@ -148,6 +148,7 @@ export function resolveDispatchTarget(
   chain: SelectionChain,
   request: DispatchRequest,
   derivationRevocation?: DerivationRevocationPort,
+  primaryBinding: ExecutorFamily = PRIMARY_BINDING_EXECUTOR,
 ): Result<DispatchSelection, ClassifiedError> {
   const parsed = ExecutorSchema.safeParse(request.executor)
   if (!parsed.success) {
@@ -163,14 +164,16 @@ export function resolveDispatchTarget(
       `单据 ${JSON.stringify(request.ticket)} 的执行体 ${executor} 落在已撤回派生树内——撤回后后代凭据/派生树同步失效，不得再派发（NEG-SEC-08/NEG-RUN-05）`,
     )
   }
-  if (executor === PRIMARY_BINDING_EXECUTOR) {
+  if (executor === primaryBinding) {
     return okResult(
       deepFreeze({
         executor,
         chainId: 'default:primary',
         source: 'default' as const,
         authorization: 'not-granted-here' as const,
-        note: '主绑定缺省链（v2/07 §一 默认＝DSH）：选择结果不是授权，权与禁配另判 v2/03/04',
+        note: primaryBinding === PRIMARY_BINDING_EXECUTOR
+          ? '主绑定缺省链（v2/07 §一 默认＝DSH）：选择结果不是授权，权与禁配另判 v2/03/04'
+          : `主绑定缺省链（v2/07 §一；primary=${primaryBinding}）：选择结果不是授权，权与禁配另判 v2/03/04`,
       }),
     )
   }

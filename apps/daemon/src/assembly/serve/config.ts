@@ -286,6 +286,12 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         break
       }
       case 'company': cfg.company = str(value, key); break
+      case 'primaryExecutor': {
+        const v = str(value, key)
+        if (!['dsh', 'claude', 'codex', 'kimi'].includes(v)) throw new Error(`daemon.yaml：primaryExecutor 须为 ENU-88 执行器（dsh|claude|codex|kimi；实得 ${v}）`)
+        cfg.primaryExecutor = v
+        break
+      }
       case 'rootDir': cfg.rootDir = str(value, key); break
       case 'apiPort': {
         // 对外 API 端口（MIG-06）：0=ephemeral；1..65535=显式端口——非整数/越界明报不猜

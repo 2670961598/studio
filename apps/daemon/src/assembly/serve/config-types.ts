@@ -29,6 +29,8 @@ export interface ServeConfig extends HrServeConfig, RestartServeConfig, Signatur
   platform: 'localfile' | 'taiga' | 'fake'
   /** 公司 slug（events/intents/mirror 的 company 维） */
   company: string
+  /** 主绑定执行器（v2/07 §一 默认=dsh；可选 kimi 等 ENU-88 值；缺省 dsh——零漂移） */
+  primaryExecutor?: string
   /**
    * daemon 工位根（tmp/instructions、platform、控制面等 daemon 自管面落此）。
    * 派发 workspace 归 .AIWS 员工家（DEV-28，docs/43-§五）——根推导见 aiwsRoot。

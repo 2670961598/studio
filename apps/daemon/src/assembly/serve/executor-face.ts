@@ -237,9 +237,11 @@ export function wireExecutorFace(config: ServeConfig, deps: ExecutorFaceDeps): E
   const dispatchSelection: DispatchSelectionDeps = {
     chain: config.dispatchSelections ?? EMPTY_SELECTION_CHAIN,
     personExecutors: personExecutorsOf(config),
+    ...(config.primaryExecutor !== undefined ? { primaryExecutor: config.primaryExecutor as import('@studio-next/contract').ExecutorFamily } : {}),
   }
+  const primary = config.primaryExecutor ?? 'dsh'
   log(
-    `[serve] 执行器选择链：登记 ${dispatchSelection.chain.entries.length} 条；岗位绑定偏好 ${Object.keys(dispatchSelection.personExecutors).length} 人；主绑定=dsh——非主绑定未登记=拒派（NEG-RUN-05；GAP-V2-04 代偿）`,
+    `[serve] 执行器选择链：登记 ${dispatchSelection.chain.entries.length} 条；岗位绑定偏好 ${Object.keys(dispatchSelection.personExecutors).length} 人；主绑定=${primary}——非主绑定未登记=拒派（NEG-RUN-05；GAP-V2-04 代偿）`,
   )
 
   // —— dsh bridge 插件 provisioning（v1.5#1 通道装载自动化）：注册表含 bridge 通道
