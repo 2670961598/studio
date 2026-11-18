@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  workbench-chatd launchd 模板（Phase1 模块 A / P1-1b）。
+  纪律：本文件只是占位符模板，不加载、不 bootout、不执行 launchctl——生产接入选 P1-2+ 另行批示。
+  依据：docs/sentinel-logs/Phase1实现拆解-2026-11-17.md 模块 A（launchd、KeepAlive/RunAtLoad、日志归档）；
+        docs/sentinel-logs/提案-Phase1聊天服务-2026-11-17.md §1.1（每公司一实例、socket/token 路径）。
+  安装（未来，另行批准后）：复制到 ~/Library/LaunchAgents/ 并替换全部 __占位符__，再 launchctl load。
+  占位符：__COMPANY__=公司 slug；__NODE_BIN__=command -v node；__DEPLOY_WORKSPACE__=已验证 commit 的部署树；
+        __COMPANY_VAR__=<companyDir>/var/workbench；__LOG_DIR__=~/Library/Logs/studio-next/<slug>；
+        __WORKBENCH_CHATD_TOKEN__=daemon 生成的 transport token（0600 保管，不入库/不入 git）。
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.studionext.workbench-chat.__COMPANY__</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE_BIN__</string>
+    <string>--experimental-strip-types</string>
+    <string>__DEPLOY_WORKSPACE__/apps/workbench-chatd/src/main.ts</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__DEPLOY_WORKSPACE__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>WORKBENCH_CHATD_SOCKET</key>
+    <string>__COMPANY_VAR__/chat.sock</string>
+    <key>WORKBENCH_CHATD_TOKEN</key>
+    <string>__WORKBENCH_CHATD_TOKEN__</string>
+    <key>WORKBENCH_CHATD_LOG</key>
+    <string>info</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>__LOG_DIR__/workbench-chat.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG_DIR__/workbench-chat.err.log</string>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

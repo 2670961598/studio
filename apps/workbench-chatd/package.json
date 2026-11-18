@@ -1,0 +1,14 @@
+{
+  "name": "@studio-next/workbench-chatd",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Phase1 聊天 sidecar 骨架（模块 A / P1-1b）：Unix socket 0700 + token 鉴权 + NDJSON + 内存 mock 端点（health/rooms/messages/read/inbox/wakes）；零第三方依赖，Node ≥24 原生 type-stripping 直跑",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node --experimental-strip-types src/main.ts",
+    "test": "node --experimental-strip-types --test test/*.nt.ts"
+  }
+}
