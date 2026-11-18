@@ -42,7 +42,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createLocalPlatform, formatActivityId, parseActivityId } from '../packages/localplatform/src/index.ts'
+import { createLocalPlatform, nextActivityId, parseActivityId } from '../packages/localplatform/src/index.ts'
 // 契约类型深引（import type 全擦除，不触发包桶的 zod 值依赖——scripts 直跑纪律）
 import type { FieldProvisionMap, FlowPlatform } from '../packages/contract/src/ports/platform.ts'
 import type { TicketId } from '../packages/contract/src/ports/kernel.ts'
@@ -653,28 +653,30 @@ function activityFilePath(root: string): string {
   return path.join(root, 'activity.jsonl')
 }
 
-/** 读活动流已有 id 集（文件不存在=空；坏行/坏 id 如实抛——不静默当空） */
-function existingActivityIds(root: string): { max: number; createdKeys: Set<string> } {
+/** 读活动流已有 created 单集（文件不存在=空；坏行/坏 id 如实抛——不静默当空） */
+function existingCreatedActivityIssues(root: string): Set<string> {
   const file = activityFilePath(root)
-  if (!existsSync(file)) return { max: 0, createdKeys: new Set() }
-  const lines = readFileSync(file, 'utf8').split('\n')
-  let max = 0
+  if (!existsSync(file)) return new Set()
   const createdKeys = new Set<string>()
-  for (const line of lines) {
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
     const text = line.trim()
     if (text === '') continue
     const parsed = JSON.parse(text) as { id?: unknown; issue?: unknown; kind?: unknown }
     if (typeof parsed.id !== 'string') throw new UsageError(`${file}: 活动行缺 id（平台树损坏，fail-closed）`)
-    const n = parseActivityId(parsed.id)
-    if (n > max) max = n
+    parseActivityId(parsed.id) // 坏 id 如实抛（fail-closed）
     if (parsed.kind === 'created' && typeof parsed.issue === 'string') createdKeys.add(parsed.issue)
   }
-  return { max, createdKeys }
+  return createdKeys
 }
 
-/** 追加 created 活动（与 localplatform appendActivity 同形：{id,ts,issue,kind}，无 actor） */
-function appendCreatedActivity(root: string, ts: string, issue: string, nextId: number): void {
-  appendFileSync(activityFilePath(root), `${JSON.stringify({ id: formatActivityId(nextId), ts, issue, kind: 'created' })}\n`, 'utf8')
+/** 追加 created 活动（与 localplatform appendActivity 同形：{id,ts,issue,kind}，无 actor）。
+ *  id 只从文件态取（nextActivityId=平台唯一计数权威——M2.5 修复：旧版迁移器自持 max 计数器
+ *  与平台 API 写（comments/field-set 各自 nextActivityId）双计数器交错，1554 单实跑产生 769 个
+ *  重复活动 id，违反 activity.ts 头注「单调递增 id」不变量，且游标语义=严格大于边界，同 id 后
+ *  行会被增量翻页永久跳过。预演 switch-localfile 树校验抓出（单子切换预演-2026-11-19 §二）。 */
+function appendCreatedActivity(root: string, ts: string, issue: string): void {
+  const id = nextActivityId(root)
+  appendFileSync(activityFilePath(root), `${JSON.stringify({ id, ts, issue, kind: 'created' })}\n`, 'utf8')
 }
 
 function sameTicketShape(actual: { title: string; state: string; type?: string; dept?: string; level?: number; assignee?: string; parent?: string; lane?: string }, planned: PlannedTicket): boolean {
@@ -748,7 +750,7 @@ export async function applyPlan(plan: WritablePlan, root: string): Promise<Migra
   }
 
   // 2) 单据写入（父先子后；已存在且形状一致=幂等跳过）；预检 blocking 时全拒写
-  const activity = existingActivityIds(root)
+  const createdActivityIssues = existingCreatedActivityIssues(root)
   const byId = new Map(plan.issues.map((t) => [t.id, t]))
   const linkable: PlannedTicket[] = []
   for (const id of plan.writeOrder) {
@@ -778,9 +780,8 @@ export async function applyPlan(plan: WritablePlan, root: string): Promise<Migra
       if (planned.assignee !== null) input.assignee = planned.assignee
       if (planned.parent !== null) input.parent = planned.parent
       appendFileSync(file, `${JSON.stringify({ type: 'created', ts: planned.createdIso, state: planned.state, input })}\n`, 'utf8')
-      if (!activity.createdKeys.has(id)) {
-        activity.max += 1
-        appendCreatedActivity(root, planned.createdIso, id, activity.max)
+      if (!createdActivityIssues.has(id)) {
+        appendCreatedActivity(root, planned.createdIso, id)
       }
       written += 1
       // 直写后经平台读回校验（事件流可派生=格式正确性的平台侧证明）

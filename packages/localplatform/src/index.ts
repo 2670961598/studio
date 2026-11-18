@@ -31,7 +31,7 @@ export { createLocalPlatform } from './platform.ts'
 export type { LocalPlatformOptions } from './platform.ts'
 export { LocalPlatformError } from './errors.ts'
 export { DEFAULT_INITIAL_STATE } from './issues.ts'
-export { DEFAULT_PAGE_SIZE, formatActivityId, parseActivityId } from './activity.ts'
+export { DEFAULT_PAGE_SIZE, formatActivityId, nextActivityId, parseActivityId } from './activity.ts'
 
 /** 包名常量 */
 export const PACKAGE_NAME = '@studio-next/localplatform'
