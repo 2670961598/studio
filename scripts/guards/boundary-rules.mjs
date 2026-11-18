@@ -3,6 +3,10 @@
 // 修订纪律：层位表/允许边/阈值/平面基线/行数基线值上调与新增 = 判据类资产修订 =
 // 提案流 + 制作人批（20-§九/§十五）；基线值下降与条目除名随任意提交顺带办理。
 // 本文件被 scripts/guards/boundaries.mjs（执行引擎）与 boundaries.test.mjs（测试面）共用。
+// 2026-11-19 M3 提案 A 已批（team task-133 接线；提案=team task-132：
+//   docs/plan/07-边界提案-workbench-transport与chatd入表-2026-11-19.md §2.1）——
+//   workbench-transport 入层位 1、workbench-chatd 入层位 5，加包间边两条
+//   （daemon→workbench-transport、workbench-chatd→workbench-transport，均 5→1）。
 
 /** 扫描范围：apps/* 与 packages/* 的 src/ 与 test/ 全目录树（templates/docs/scripts 不扫，§十五.七）。 */
 export const scopeDirs = ["apps", "packages"];
@@ -75,9 +79,10 @@ export const toolsPromotionFileCount = 10;
 // 二、横轴（包间方向表；层位数字越大越靠上，只准高层引低层）
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** 包目录名 → 层位。daemon=apps/daemon（应用顶）；其余为 packages/<目录名>。 */
+/** 包目录名 → 层位。daemon/workbench-chatd=apps/*（应用顶）；其余为 packages/<目录名>。 */
 export const packageLayers = {
   daemon: 5,
+  "workbench-chatd": 5, // apps 应用层（与 daemon 同层位）——M3 提案 A 已批（task-132，plan/07-…-2026-11-19 §2.1）
   panel: 4,
   api: 4,
   prompt: 4,
@@ -89,6 +94,7 @@ export const packageLayers = {
   gateway: 1,
   localplatform: 1,
   matrix: 1,
+  "workbench-transport": 1, // 内核机制层：冻结协议客户端（workbench-transport/v1），零运行时依赖——M3 提案 A 已批（task-132）
   yt: 1,
   taiga: 1,
   "dsh-bridge": 1, // 仓内零模块入边——daemon 以路径引用消费（BRIDGE_SRC_REL，§十五.七不扫）
@@ -97,7 +103,9 @@ export const packageLayers = {
 
 /**
  * 冻结的包间允许边（[源包, 目标包]）——与各包 package.json 声明依赖并集一致
- * （daemon→api/prompt/yt 为已声明休眠边，一并冻结为允许）。未列出的跨包依赖=违例。
+ * （daemon→api/prompt/yt 为已声明休眠边，一并冻结为允许；daemon→workbench-transport
+ * 为 M3 提案 A 已批的先行边——边先入表、package.json 声明随接线单落，同上灰度判例）。
+ * 未列出的跨包依赖=违例。
  */
 export const allowedPackageEdges = [
   // —— apps/boot（105-刀A Matrix 装配单元，studio-dev-123 宰相亲批入表 2026-10-21）——
@@ -117,6 +125,11 @@ export const allowedPackageEdges = [
   ["daemon", "taiga"],
   ["daemon", "yt"],
   ["daemon", "contract"],
+  // —— workbench-transport 入表（M3 提案 A 已批，team task-132/task-133，
+  //     docs/plan/07-边界提案-…-2026-11-19.md §2.1：层位 5→1 自上而下合法；
+  //     panel→workbench-transport 随面板 UI 实现单另行走批示）——
+  ["daemon", "workbench-transport"],
+  ["workbench-chatd", "workbench-transport"],
   ["panel", "company"],
   ["panel", "store"],
   ["panel", "contract"],
