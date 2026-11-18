@@ -415,6 +415,6 @@ export class SqliteChatStore implements ChatStore {
   }
 
   close(): void {
-    if (this.db.open) this.db.close()
+    if (this.db.isOpen) this.db.close()
   }
 }
