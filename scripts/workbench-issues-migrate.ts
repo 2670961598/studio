@@ -589,6 +589,7 @@ export function buildPlan(exported: TaigaExportFixture): ImportPlan {
         gaps.push({ kind: 'comment-reply-unknown', issue: nk, detail: `评论 ${comment.id} 的 replyTo=${replyTo} 不在同单评论集内；置空导入` })
         replyTo = null
       }
+      if (comment.body.length < 1) gaps.push({ kind: 'comment-body-empty', issue: nk, detail: `评论 ${comment.id} body 为空；vendor CHECK length(body) BETWEEN 1 AND 16384，空 body 不可导入（不伪造占位正文，127-B P2）` })
       if (comment.body.length > 16384) gaps.push({ kind: 'comment-body-too-long', issue: nk, detail: `评论 ${comment.id} body ${String(comment.body.length)}B > vendor 上限 16384B；导入将被拒，需先拆分` })
       comments.push({ id: comment.id, author: comment.author, body: comment.body, replyToCommentId: replyTo, createdAt: comment.createdAt })
     }

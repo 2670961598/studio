@@ -148,6 +148,8 @@ function diffIssue(source: FixtureIssue, entry: PlannedIssue, keyOf: (project: s
     const actual = actualComments[i]
     if (actual === undefined || expected === undefined) continue
     compareField(gaps, nk, 'comments:body', expected.body, actual.body)
+    // 独立下限校验（vendor CHECK length BETWEEN 1 AND 16384）：空 body 即使两侧一致也过不了 vendor 约束（127-B P2）
+    if (expected.body.length < 1) gaps.push({ kind: 'comment-body-empty', issue: nk, detail: `评论 ${expected.id} body 为空；vendor 下限 1B，不可导入` })
     if (actual.id !== expected.id || actual.author !== expected.author || actual.replyToCommentId !== expected.replyTo || actual.createdAt !== expected.createdAt) {
       gaps.push({
         kind: 'mismatch:comments',
