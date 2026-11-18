@@ -30,6 +30,7 @@ node --experimental-strip-types apps/workbench-chatd/src/main.ts [--memory]
 | `WORKBENCH_CHATD_TOKEN` | （空） | transport token；**生产必配**。未配置默认 **fail-closed**：`config_invalid` exit 1。形如 `__...__` 的占位符（模板未替换）同样拒启 |
 | `WORKBENCH_CHATD_ALLOW_NO_AUTH` | （空） | 免鉴权显式豁免：仅精确值 `1` 生效，允许未配 token 启动（**仅供 mock/dev/测试**，启动打 `auth_disabled` 告警）。未设/其他值=不豁免（fail-closed）；配了 token 时本开关不降低鉴权 |
 | `WORKBENCH_CHATD_DB` | （空） | SQLite 数据库**绝对路径**（C-mini）：设置即持久化模式（父目录按需 0700 创建，文件 0600；schema 见 `src/store/sqlite.ts`）；缺省/空=内存 mock。`--memory` 可强制覆盖回内存 |
+| `WORKBENCH_CHATD_WAKE_LEASE_MS` | `30000` | wake 租约 TTL ms（P1-2 wake lease）：claim 授予租约，过期后再 claim 即重投；投递次数上限 3（首投计 1），超限 dead-letter（`WB_WAKE_NOT_CLAIMABLE` 稳定错误，inbox 不再 pending）；状态迁移全量落 append-only 审计（`wake_events`）。测试旋钮；生产不设即缺省 |
 | `WORKBENCH_CHATD_DELAY_MS` | `0` | 每请求人工延迟（测试/观测旋钮；生产保持 0） |
 | `WORKBENCH_CHATD_DRAIN_TIMEOUT_MS` | `5000` | SIGTERM 后在途请求 drain 上限 |
 | `WORKBENCH_CHATD_LOG` | `info` | `debug|info|warn|error`；日志=stderr 单行 JSON |

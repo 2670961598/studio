@@ -1,6 +1,8 @@
 /**
- * 内存存储（Phase1 模块 A / P1-1b 原语义）：无持久化，全部钩子 no-op——重启即空。
+ * 内存存储（Phase1 模块 A / P1-1b 原语义 + P1-2 wake lease）：无持久化，全部钩子 no-op——重启即空。
  * 缺省模式（不设 WORKBENCH_CHATD_DB / 或 --memory 显式强制），完全向后兼容。
+ * wake 租约语义在 dispatch 层用 state.wakeLeases/wakeEvents 内存实现（租约/重投/dead-letter
+ * 照常生效，审计事件保留在进程内数组），仅「重启恢复」不可用——与既有内存 mock 语义一致。
  */
 import type { ChatStore } from './types.ts'
 
@@ -25,6 +27,10 @@ export class MemoryChatStore implements ChatStore {
 
   updateWake(): void {
     /* no-op */
+  }
+
+  recordWakeTransition(): void {
+    /* no-op：租约/审计只活在 state（进程内） */
   }
 
   recordIdempotency(): void {

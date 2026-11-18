@@ -1,12 +1,14 @@
 /**
- * workbench-chatd 服务端（Phase1 模块 A / P1-1b + 模块 C 最小刀）：Unix socket + NDJSON 帧 + token 鉴权。
- * 依据：docs/sentinel-logs/Phase1实现拆解-2026-11-17.md 模块 A/§五（端点）＋ 模块 C（内存→SQLite，C-mini 前半）；
- *       docs/quality/workbench-transport-v1.md（P1-1b 对接点：按 transport types 实现服务端）。
+ * workbench-chatd 服务端（Phase1 模块 A / P1-1b + 模块 C 最小刀 + P1-2 wake lease 最小刀）：
+ * Unix socket + NDJSON 帧 + token 鉴权。
+ * 依据：docs/sentinel-logs/Phase1实现拆解-2026-11-17.md 模块 A/§五（端点）＋ 模块 C（内存→SQLite；
+ *       wake_lease/wake_delivery TTL/重试≤3/dead-letter；append-only 审计）；
+ *       docs/sentinel-logs/提案-Phase1聊天服务-2026-11-17.md；docs/quality/workbench-transport-v1.md（DTO 冻结）。
  * 协议：workbench-transport/v1（冻结于 packages/workbench-transport/src/types.ts）。本包不 import 该包
  *       （分层宪法 20-§十五：新包间边=提案流），wire DTO/错误码以镜像对齐，由契约测试（真客户端）背书。
- * 存储：缺省内存 mock（P1-1b 原语义，重启即空）；WORKBENCH_CHATD_DB 设置即 SQLite 持久化
- *       （send/read/ack 落库、重启 hydrate 恢复；见 src/store/）。两种模式共用同一 dispatch，
- *       端点响应形状（Transport v1 冻结面）不因模式改变。
+ * 存储：缺省内存 mock（P1-1b 原语义，重启即空；wake 租约语义在内存态照常生效）；WORKBENCH_CHATD_DB
+ *       设置即 SQLite 持久化（send/read/ack/claim 落库、重启 hydrate 恢复；见 src/store/）。
+ *       两种模式共用同一 dispatch，端点响应形状（Transport v1 冻结面）不因模式改变。
  * 鉴权：token 经 env WORKBENCH_CHATD_TOKEN；请求 params.token 比对。v1 冻结错误码表无 UNAUTHENTICATED，
  *       无/错 token 以 WB_INVALID_ARGUMENT（retryable:false，message 前缀 unauthenticated:）承载——
  *       若后续协议版本引入专用鉴权码，须走 version 升级，不得静默改码。
@@ -19,8 +21,8 @@ import { buildHealth } from './health.ts'
 import type { ChatdConfig } from './config.ts'
 import type { Logger } from './log.ts'
 import { createChatStore } from './store/index.ts'
-import { createInitialState } from './store/types.ts'
-import type { ChatStore, MockMessage, MockRoom, MockState, MockWake } from './store/types.ts'
+import { createInitialState, WAKE_MAX_DELIVERY_ATTEMPTS } from './store/types.ts'
+import type { ChatStore, MockMessage, MockRoom, MockState, MockWake, WakeEvent, WakeLease } from './store/types.ts'
 
 // ─── wire 镜像（workbench-transport/v1 冻结面；只读对齐，不扩不改） ─────────────
 type WbErrorCode =
@@ -77,10 +79,47 @@ const strArray = (p: Record<string, unknown>, key: string): string[] | undefined
 
 const actorOf = (p: Record<string, unknown>): string => str(p, 'actorId') ?? str(p, 'senderId') ?? ''
 
+// ─── wake 租约（P1-2 wake lease 最小刀）───────────────────────────────────────
+// 语义（依据 模块 C：wake_lease/wake_delivery TTL/重试/dead-letter）：
+//  - claim 授予租约（claimedUntil = now + wakeLeaseMs）；同 actor 在租约有效期内重复
+//    claim 同一 wake = 幂等（alreadyClaimed，回同 lease，不延期不计数）。
+//  - 租约过期后再 claim = 重投（attempt+1，claimed 数组回包），租约重授。
+//  - 投递次数上限 WAKE_MAX_DELIVERY_ATTEMPTS（首投计 1）：超限 → dead-letter（租约终态），
+//    此后 claim 回稳定错误 WB_WAKE_NOT_CLAIMABLE（不重投、审计不再追加），inbox 不再计 pending。
+//  - ack 幂等（alreadyAcked）；ack 后租约终态 acked。
+//  - 每次状态迁移 append 一条审计事件（内存 push / SQLite 落 wake_events，只追加不物理删）。
+
+/** 取 wake 当前租约；无记录（含 v1 遗留/异常态）按「未投递」合成，安全回落首投语义。 */
+const leaseOf = (state: MockState, wakeId: string): WakeLease =>
+  state.wakeLeases.get(wakeId) ?? { wakeId, attempt: 0, state: 'pending', claimedBy: null, leaseExpiresAt: null, updatedAt: 0 }
+
+/** dispatch 所需租约参数（config 装配传入）。 */
+interface WakeDispatchOpts {
+  readonly leaseTtlMs: number
+}
+
+/** 内存态迁移 + store 落库（DB 先行，失败抛错 → WB_INTERNAL、内存不落地）+ 审计追加。 */
+function commitWakeTransition(state: MockState, store: ChatStore, wake: MockWake, lease: WakeLease, type: WakeEvent['type']): void {
+  const event: WakeEvent = {
+    eventId: state.wakeEventSeq + 1,
+    wakeId: wake.wakeId,
+    type,
+    attempt: lease.attempt,
+    actorId: wake.actorId,
+    claimedBy: lease.claimedBy,
+    leaseExpiresAt: lease.leaseExpiresAt,
+    at: lease.updatedAt,
+  }
+  store.recordWakeTransition(wake, lease, event)
+  state.wakeEventSeq += 1
+  state.wakeLeases.set(wake.wakeId, lease)
+  state.wakeEvents.push(event)
+}
+
 // ─── 端点实现（语义与 P1-1a 已验收的 mock-sidecar 一致；由契约测试背书） ────────
 // 落库纪律：分配型写入（rooms/messages/wakes）DB 先行——失败抛错 → WB_INTERNAL、内存不落地，
 // 保证 seq 计数器与库内 id 分配一致（无空洞）；覆盖型写入（read 游标/wake 状态）内存先行、DB 镜像。
-function dispatch(state: MockState, store: ChatStore, method: string, p: Record<string, unknown>): unknown {
+function dispatch(state: MockState, store: ChatStore, method: string, p: Record<string, unknown>, wakeOpts: WakeDispatchOpts): unknown {
   switch (method) {
     case 'health':
       return buildHealth(state.startedAt, store.mode === 'sqlite' ? 'sqlite' : 'mock')
@@ -123,9 +162,12 @@ function dispatch(state: MockState, store: ChatStore, method: string, p: Record<
           createdAt: Date.now(),
         }
         const wakes: MockWake[] = []
+        const wakeLeases: WakeLease[] = []
+        const wakeEvents: WakeEvent[] = []
         let wakeSeq = state.wakeSeq
         for (const m of new Set(mentions)) {
           wakeSeq += 1
+          const now = Date.now()
           wakes.push({
             wakeId: `wake-${String(wakeSeq)}`,
             actorId: m,
@@ -135,16 +177,21 @@ function dispatch(state: MockState, store: ChatStore, method: string, p: Record<
             status: 'pending',
             claimedBy: null,
             claimedUntil: null,
-            createdAt: Date.now(),
+            createdAt: now,
             ackedAt: null,
           })
+          wakeLeases.push({ wakeId: `wake-${String(wakeSeq)}`, attempt: 0, state: 'pending', claimedBy: null, leaseExpiresAt: null, updatedAt: now })
+          wakeEvents.push({ eventId: state.wakeEventSeq + wakeLeases.length, wakeId: `wake-${String(wakeSeq)}`, type: 'created', attempt: 0, actorId: m, claimedBy: null, leaseExpiresAt: null, at: now })
         }
-        store.appendMessage(message, wakes) // DB 事务先行（message+wakes 原子）；失败 → 内存不落地
+        store.appendMessage(message, wakes, wakeLeases, wakeEvents) // DB 事务先行（message+wakes+租约+审计原子）；失败 → 内存不落地
         state.msgSeq = seq
         state.wakeSeq = wakeSeq
         room.headRoomSeq = roomSeq
         state.messages.push(message)
         for (const w of wakes) state.wakes.push(w)
+        for (const l of wakeLeases) state.wakeLeases.set(l.wakeId, l)
+        for (const e of wakeEvents) state.wakeEvents.push(e)
+        state.wakeEventSeq += wakeEvents.length
         return { seq: message.seq, roomSeq: message.roomSeq, messageId: message.messageId, replayed: false }
       })
       return { ...(value as { seq: number; roomSeq: number; messageId: string; replayed: boolean }), replayed }
@@ -180,7 +227,8 @@ function dispatch(state: MockState, store: ChatStore, method: string, p: Record<
     case 'inbox': {
       const actor = str(p, 'actorId')
       if (actor === undefined || actor === '') throw new WbFailure('WB_INVALID_ARGUMENT', 'actorId required')
-      const pending = state.wakes.filter((w) => w.actorId === actor && w.status !== 'acked')
+      // pending = 未 ack 且未 dead-letter（dead 是投递终态：不再重投、不再计入待处理）。
+      const pending = state.wakes.filter((w) => w.actorId === actor && w.status !== 'acked' && leaseOf(state, w.wakeId).state !== 'dead')
       const roomIds = strArray(p, 'roomIds') ?? [...state.rooms.keys()]
       const rooms = roomIds.map((id) => {
         const r = state.rooms.get(id)
@@ -209,14 +257,31 @@ function dispatch(state: MockState, store: ChatStore, method: string, p: Record<
           if (w === undefined) throw new WbFailure('WB_WAKE_NOT_FOUND', 'wake not found')
           if (w.actorId !== actor) throw new WbFailure('WB_WAKE_NOT_FOUND', 'wake not owned by actor')
           if (w.status === 'acked') throw new WbFailure('WB_WAKE_NOT_CLAIMABLE', 'wake already acked')
-          if (w.status === 'claimed' && w.claimedBy === actor) alreadyClaimed.push(id)
-          else if (w.status === 'claimed') throw new WbFailure('WB_WAKE_NOT_CLAIMABLE', 'wake claimed by other')
-          else {
-            const updated: MockWake = { ...w, status: 'claimed', claimedBy: actor, claimedUntil: Date.now() + 30_000 }
-            store.updateWake(updated)
-            Object.assign(w, updated)
-            claimed.push(id)
+          const now = Date.now()
+          // 租约有效期内：同 actor 幂等（回同 lease，不延期不计数）；他人持有才拒。
+          if (w.status === 'claimed' && w.claimedUntil !== null && w.claimedUntil > now) {
+            if (w.claimedBy === actor) {
+              alreadyClaimed.push(id)
+              wakes.push({ ...w })
+              continue
+            }
+            throw new WbFailure('WB_WAKE_NOT_CLAIMABLE', 'wake claimed by other')
           }
+          const lease = leaseOf(state, id)
+          // 重试上限 → dead-letter（终态；只落一次迁移，重复 claim 回同一稳定错误、审计不再追加）。
+          if (lease.state === 'dead' || lease.attempt >= WAKE_MAX_DELIVERY_ATTEMPTS) {
+            if (lease.state !== 'dead') {
+              commitWakeTransition(state, store, w, { wakeId: id, attempt: lease.attempt, state: 'dead', claimedBy: null, leaseExpiresAt: null, updatedAt: now }, 'dead_lettered')
+            }
+            throw new WbFailure('WB_WAKE_NOT_CLAIMABLE', `wake dead-lettered after ${String(WAKE_MAX_DELIVERY_ATTEMPTS)} delivery attempts`)
+          }
+          // 首投或租约过期重投：attempt+1，租约重授（claimedUntil 重算）。
+          const attempt = lease.attempt + 1
+          const expiresAt = now + wakeOpts.leaseTtlMs
+          const updated: MockWake = { ...w, status: 'claimed', claimedBy: actor, claimedUntil: expiresAt }
+          commitWakeTransition(state, store, updated, { wakeId: id, attempt, state: 'leased', claimedBy: actor, leaseExpiresAt: expiresAt, updatedAt: now }, attempt === 1 ? 'claimed' : 'redelivered')
+          Object.assign(w, updated)
+          claimed.push(id)
           wakes.push({ ...w })
         }
         return { claimed, alreadyClaimed, wakes, replayed: false }
@@ -239,8 +304,10 @@ function dispatch(state: MockState, store: ChatStore, method: string, p: Record<
             continue
           }
           if (w.status === 'claimed' && w.claimedBy !== actor) throw new WbFailure('WB_WAKE_NOT_CLAIMABLE', 'wake not claimed by actor')
-          const updated: MockWake = { ...w, status: 'acked', ackedAt: Date.now(), claimedBy: null, claimedUntil: null }
-          store.updateWake(updated)
+          const now = Date.now()
+          const lease = leaseOf(state, id)
+          const updated: MockWake = { ...w, status: 'acked', ackedAt: now, claimedBy: null, claimedUntil: null }
+          commitWakeTransition(state, store, updated, { wakeId: id, attempt: lease.attempt, state: 'acked', claimedBy: null, leaseExpiresAt: null, updatedAt: now }, 'acked')
           Object.assign(w, updated)
           acked.push(id)
         }
@@ -322,7 +389,7 @@ export function createChatdServer(config: ChatdConfig, log: Logger): ChatdServer
     }
 
     try {
-      return { id: rid, ok: true, result: dispatch(state, store, method, p) }
+      return { id: rid, ok: true, result: dispatch(state, store, method, p, { leaseTtlMs: config.wakeLeaseMs }) }
     } catch (err) {
       if (err instanceof WbFailure) {
         log.warn('request_rejected', { method, code: err.code, message: err.message })
@@ -400,6 +467,7 @@ export function createChatdServer(config: ChatdConfig, log: Logger): ChatdServer
         delayMs: config.delayMs,
         mode: store.mode === 'sqlite' ? 'sqlite' : 'mock',
         dbPath: config.dbPath ?? null,
+        wakeLeaseMs: config.wakeLeaseMs,
       })
     },
     async stop(): Promise<void> {

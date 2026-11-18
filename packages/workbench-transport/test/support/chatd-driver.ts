@@ -5,7 +5,7 @@
  * 与 test/support/mock-sidecar.ts 对称：那是「假 sidecar 给客户端测」，本件是「真客户端给 sidecar 测」。
  * 放在本包内的原因：workbench-chatd 不得 import 本包（分层宪法 20-§十五：新包间边=提案流），
  * 子进程拉起不构成 import 边；驱动器只 import 本包自身 src（intra，无边界违例）。
- * 用法：node --experimental-strip-types chatd-driver.ts --socket <path> [--scenario happy|timeout|kill-reconnect]
+ * 用法：node --experimental-strip-types chatd-driver.ts --socket <path> [--scenario happy|timeout|kill-reconnect|wake]
  *        [--request-timeout-ms <n>]；kill-reconnect 场景在断连观测后等 stdin 一行任意文本再验重连。
  * 输出：stdout 每行一个 JSON 事件 {stage, ...}；exit 0=场景完成，1=意外失败（fatal 事件）。
  */
@@ -95,10 +95,49 @@ async function killReconnect(): Promise<void> {
   emit('reconnected', { ok: again.ok, server: again.server })
 }
 
+/** wake 租约契约场景（P1-2 wake lease 最小刀）：claim 幂等（同 lease）+ ack 幂等，走真客户端 DTO。 */
+async function wakeScenario(): Promise<void> {
+  const room = await client.createRoom({ kind: 'group', name: 'wake-lease', memberIds: ['pm', 'dev'] })
+  await client.sendMessage({ roomId: room.roomId, senderId: 'pm', body: '@dev ship it', mentions: ['dev'] })
+  const inbox = await client.inbox({ actorId: 'dev' })
+  const wakeId = inbox.pendingWakeIds[0]
+  if (wakeId === undefined) throw new Error('expected one pending wake after mention')
+  emit('inbox', { pendingWakeIds: inbox.pendingWakeIds })
+
+  const claim1 = await client.claimWakes({ actorId: 'dev', wakeIds: [wakeId] })
+  const snapshot1 = claim1.wakes[0]
+  if (snapshot1 === undefined) throw new Error('claim result must include wake snapshot')
+  emit('claim', { claimed: claim1.claimed, alreadyClaimed: claim1.alreadyClaimed, replayed: claim1.replayed, status: snapshot1.status, claimedBy: snapshot1.claimedBy, claimedUntil: snapshot1.claimedUntil })
+
+  // 同 actor 租约有效期内重复 claim：幂等回同 lease（alreadyClaimed，claimedUntil 不变不延期）。
+  const claim2 = await client.claimWakes({ actorId: 'dev', wakeIds: [wakeId] })
+  const snapshot2 = claim2.wakes[0]
+  if (snapshot2 === undefined) throw new Error('repeat claim must include wake snapshot')
+  if (snapshot2.claimedUntil !== snapshot1.claimedUntil) throw new Error('idempotent claim must return same lease (claimedUntil unchanged)')
+  emit('claim-again', { claimed: claim2.claimed, alreadyClaimed: claim2.alreadyClaimed, sameLease: snapshot2.claimedUntil === snapshot1.claimedUntil })
+
+  const ack1 = await client.ackWakes({ actorId: 'dev', wakeIds: [wakeId] })
+  emit('ack', { acked: ack1.acked, alreadyAcked: ack1.alreadyAcked, replayed: ack1.replayed })
+  const ack2 = await client.ackWakes({ actorId: 'dev', wakeIds: [wakeId] })
+  emit('ack-again', { acked: ack2.acked, alreadyAcked: ack2.alreadyAcked })
+
+  // ack 后 claim：稳定错误 WB_WAKE_NOT_CLAIMABLE。
+  try {
+    await client.claimWakes({ actorId: 'dev', wakeIds: [wakeId] })
+    emit('claim-after-ack', { code: 'NO_ERROR' })
+  } catch (err) {
+    if (err instanceof WorkbenchTransportError) emit('claim-after-ack', { code: err.code })
+    else throw err
+  }
+  const after = await client.inbox({ actorId: 'dev' })
+  emit('inbox-after', { pendingWakeIds: after.pendingWakeIds })
+}
+
 async function main(): Promise<void> {
   if (scenario === 'happy') await happy()
   else if (scenario === 'timeout') await timeoutScenario()
   else if (scenario === 'kill-reconnect') await killReconnect()
+  else if (scenario === 'wake') await wakeScenario()
   else throw new Error(`unknown scenario: ${scenario}`)
   client.close()
 }

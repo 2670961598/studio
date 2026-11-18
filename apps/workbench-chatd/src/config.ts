@@ -35,6 +35,12 @@ export interface ChatdConfig {
   readonly dbPath: string | undefined
   /** 存储模式派生值：dbPath===undefined → 'memory'，否则 'sqlite'。 */
   readonly storeMode: StoreMode
+  /**
+   * wake 租约 TTL（ms，P1-2 wake lease 最小刀）：claim 授予的租约在此时长内有效；
+   * 过期后再次 claim 即重投（attempt+1，≤WAKE_MAX_DELIVERY_ATTEMPTS，超限 dead-letter）。
+   * 缺省 30_000（与 P1-1b 硬编码口径一致）；测试旋钮经 env 注入，生产不设即缺省。
+   */
+  readonly wakeLeaseMs: number
 }
 
 export const ENV_KEYS = {
@@ -44,6 +50,8 @@ export const ENV_KEYS = {
   allowNoAuth: 'WORKBENCH_CHATD_ALLOW_NO_AUTH',
   /** SQLite 数据库绝对路径（C-mini）：设置即 sqlite 模式；缺省/空=内存 mock。 */
   db: 'WORKBENCH_CHATD_DB',
+  /** wake 租约 TTL ms（P1-2 wake lease）：非负整数；缺省 30000；0=即过期（测试旋钮）。 */
+  wakeLeaseMs: 'WORKBENCH_CHATD_WAKE_LEASE_MS',
   delayMs: 'WORKBENCH_CHATD_DELAY_MS',
   drainTimeoutMs: 'WORKBENCH_CHATD_DRAIN_TIMEOUT_MS',
   logLevel: 'WORKBENCH_CHATD_LOG',
@@ -90,6 +98,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, argv: readonly 
 
   const delayMs = parseNonNegativeInt(env[ENV_KEYS.delayMs], 0, ENV_KEYS.delayMs)
   const drainTimeoutMs = parseNonNegativeInt(env[ENV_KEYS.drainTimeoutMs], 5_000, ENV_KEYS.drainTimeoutMs)
+  const wakeLeaseMs = parseNonNegativeInt(env[ENV_KEYS.wakeLeaseMs], 30_000, ENV_KEYS.wakeLeaseMs)
 
   const levelRaw = env[ENV_KEYS.logLevel]?.trim()
   let logLevel: LogLevel = 'info'
@@ -98,5 +107,5 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, argv: readonly 
     if (parsed === undefined) throw new ChatdConfigError(`${ENV_KEYS.logLevel} 非法：${levelRaw}（debug|info|warn|error）`)
     logLevel = parsed
   }
-  return { socketPath, token, delayMs, drainTimeoutMs, logLevel, dbPath, storeMode }
+  return { socketPath, token, delayMs, drainTimeoutMs, logLevel, dbPath, storeMode, wakeLeaseMs }
 }
