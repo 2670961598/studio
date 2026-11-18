@@ -204,6 +204,12 @@ export interface EngineConfig {
    * 估算两态见 src/engine/budget-gate.ts 头注（态 B 估算=适配器自报，岗级比较基准无依据）。
    */
   budgetPersonCapUsd?: number
+  /**
+   * 路由预算预检显式降档开关（task-135；docs/quality/model-routing.md §5）：多源路由
+   * 预检超帽时 true=继续按序尝试更便宜源（HOLD/ESCALATE 审计事件仍落）；缺省/不注入=
+   * false=超帽即 HOLD 不降档（现状）。daemon.yaml `allowBudgetDowngrade`（布尔校验）。
+   */
+  allowBudgetDowngrade?: boolean
   /** 状态流表覆盖（公司目录 flows；缺省 DEFAULT_FLOW_TABLE，docs/18-§2.1） */
   flows?: FlowTable
   /**

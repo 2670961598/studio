@@ -96,6 +96,8 @@ export function buildServeEngineConfig(input: ServeEngineConfigInput): EngineCon
     ...(typeFlows !== undefined ? { flows: { ...DEFAULT_FLOW_TABLE, ...typeFlows } } : {}),
     ...(config.budgetTicketCapUsd !== undefined ? { budgetTicketCapUsd: config.budgetTicketCapUsd } : {}),
     ...(config.budgetPersonCapUsd !== undefined ? { budgetPersonCapUsd: config.budgetPersonCapUsd } : {}),
+    // 路由预算降档开关（task-135）：缺省不注入=引擎视 false（HOLD 不降档，现状）
+    ...(config.allowBudgetDowngrade !== undefined ? { allowBudgetDowngrade: config.allowBudgetDowngrade } : {}),
     // C2 声明态漂移哨输入（studio-dev-126）：taiga 且挂了字段映射文件才注入（同一份
     // 文件 loadTaigaFieldMap 单源重读——启动期一次，非每拍）；其余平台缺省=面关
     ...(config.platform === 'taiga' && config.taigaFieldsFile !== undefined

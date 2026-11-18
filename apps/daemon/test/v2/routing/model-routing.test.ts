@@ -6,7 +6,7 @@
  * 注：dispatch/executor 注入与真机 E2E 属本单后续切片（当前 patch 仅核心选择面）。
  */
 import { describe, expect, it } from 'vitest'
-import { parseModelsYaml, modelSourcesOf, type ModelSourceSpec } from '@studio-next/core'
+import { fingerprint, parseModelsYaml, modelSourcesOf, type ModelSourceSpec } from '@studio-next/core'
 import {
   COOLDOWN_DEFAULTS,
   classifyFailure,
@@ -14,6 +14,7 @@ import {
   emptyRoutingState,
   estimateSourceCost,
   isFailoverClass,
+  quotaRemainingOf,
   recordSourceFailure,
   recordSourceSuccess,
   selectModelSource,
@@ -92,6 +93,21 @@ describe('优先级/预算/冷却', () => {
     const downgrade = selectModelSource({ ...base, state: emptyRoutingState(), budget: { ticketRemainingUsd: 2.5, allowBudgetDowngrade: true } })
     expect(downgrade.ok).toBe(true)
   })
+  it('allowBudgetDowngrade=true 全源超帽 → 仍 BUDGET_EXCEEDED（HOLD 可达）；混合原因不冒认', () => {
+    const base = { tier: 'high' as const, sources: SOURCES, state: emptyRoutingState(), now: 1_000, tokens: TOKENS }
+    // 两源估算 1.2/3.0 均超剩余 1.0 → 收尾判 BUDGET_EXCEEDED（首源口径），不冒认 ALL_SOURCES_UNAVAILABLE
+    const allOver = selectModelSource({ ...base, budget: { ticketRemainingUsd: 1.0, allowBudgetDowngrade: true } })
+    expect(allOver).toMatchObject({ ok: false, reason: 'BUDGET_EXCEEDED', source: { id: 'a' }, estimatedUsd: 1.2 })
+    expect(!allOver.ok && allOver.detail).toContain('BUDGET_EXCEEDED;tier=high;source=a')
+    expect(!allOver.ok && allOver.skipped.join()).toBe('a:budget,b:budget')
+    // 混合原因（a 冷却 + b 超帽）→ 仍 ALL_SOURCES_UNAVAILABLE（非全源超帽）
+    const mixed = selectModelSource({
+      ...base,
+      state: { a: { consecutiveFailures: 1, cooldownUntil: 9_999_999, halfOpen: false } },
+      budget: { ticketRemainingUsd: 1.0, allowBudgetDowngrade: true },
+    })
+    expect(mixed).toMatchObject({ ok: false, reason: 'ALL_SOURCES_UNAVAILABLE' })
+  })
   it('429 冷却跳过、half-open 到期恢复；400 不冷却且不换源', () => {
     const now = 1_000
     const selected = selectModelSource({ tier: 'high', sources: SOURCES, state: emptyRoutingState(), now, tokens: TOKENS })
@@ -155,5 +171,85 @@ describe('优先级/预算/冷却', () => {
     expect(deserializeRoutingState('{bad')).toEqual({})
     expect(deserializeRoutingState(serializeRoutingState(state))).toMatchObject({ a: { cooldownUntil: 9_999_999 } })
     expect(estimateSourceCost(SOURCES[1]!, TOKENS)).toBeCloseTo(3)
+  })
+})
+
+// —— task-135：quota 池化（解析归一 + 组内打分 + 耗尽跳过 + fingerprint 覆盖）——
+const QUOTA_YAML = `
+tiers:
+  high:
+    sources:
+      - id: a
+        provider: glm
+        model: GLM-5.3
+        priority: 10
+        price: {inputPerM: 1, outputPerM: 2}
+        quota: {kind: monthly, limitUsd: 500, remainingUsd: 120.5, resetAt: 1799000000000, weight: 2}
+      - id: b
+        provider: opencode-go
+        model: kimi-k3.1-pro
+        priority: 10
+        price: {inputPerM: 2, outputPerM: 10}
+        quota: {kind: rolling, limitUsd: 300, remainingUsd: 260}
+      - id: c
+        provider: glm
+        model: GLM-5.4
+        priority: 10
+        price: {inputPerM: 1, outputPerM: 2}
+  mid: {provider: glm, model: GLM-5.3, price: {inputPerM: 1.1111, outputPerM: 3.8889}}
+  low: {provider: glm, model: GLM-5.3-Flash, price: {inputPerM: 0.1111, outputPerM: 0.3889}}
+roles: {main_worker: high}
+`
+describe('task-135 quota 池化', () => {
+  it('quota 解析归一（kind/limitUsd/remainingUsd/resetAt/weight 透传）；坏 kind 拒收', () => {
+    const parsed = parseModelsYaml(QUOTA_YAML)
+    const [a, b, c] = modelSourcesOf(parsed, 'high')
+    expect(a?.quota).toEqual({ kind: 'monthly', limitUsd: 500, remainingUsd: 120.5, resetAt: 1799000000000, weight: 2 })
+    expect(b?.quota?.kind).toBe('rolling')
+    expect(c?.quota).toBeUndefined()
+    expect(() => parseModelsYaml(QUOTA_YAML.replace('kind: monthly', 'kind: weekly'))).toThrow(/quota|weekly|Unrecognized/)
+    // remainingUsd 可为负（超用申报=耗尽），weight 须为正
+    expect(() => parseModelsYaml(QUOTA_YAML.replace('remainingUsd: 120.5', 'remainingUsd: -3'))).not.toThrow()
+    expect(() => parseModelsYaml(QUOTA_YAML.replace('weight: 2', 'weight: 0'))).toThrow(/weight|positive/)
+  })
+  it('同 priority 组内按 剩余额度×weight 降序；quota 缺省=0 分维持 id 稳定序（严格兼容）', () => {
+    const parsed = parseModelsYaml(QUOTA_YAML)
+    const sources = modelSourcesOf(parsed, 'high')
+    // a=120.5×2=241 分、b=260×1=260 分 → b 先于 a；c 无 quota=0 分居末
+    const out = selectModelSource({ tier: 'high', sources, state: emptyRoutingState(), now: 1_000, tokens: TOKENS })
+    expect(out.ok && out.source.id).toBe('b')
+    const noQuota = selectModelSource({ tier: 'high', sources: sources.map((s) => ({ ...s, quota: undefined })), state: emptyRoutingState(), now: 1_000, tokens: TOKENS })
+    expect(noQuota.ok && noQuota.source.id).toBe('a') // 全 0 分 → id 稳定序=现状
+  })
+  it('额度耗尽（剩余≤0）跳过并记因；全耗尽 → ALL_SOURCES_UNAVAILABLE 可读 fail-closed', () => {
+    const exhausted = SOURCES.map((s, i) => ({ ...s, priority: 10, quota: { kind: 'monthly' as const, limitUsd: 100, remainingUsd: i === 0 ? 0 : -5 } }))
+    const partial = selectModelSource({ tier: 'high', sources: [...exhausted.slice(0, 1), SOURCES[1]!], state: emptyRoutingState(), now: 1_000, tokens: TOKENS })
+    expect(partial.ok && partial.source.id).toBe('b')
+    expect(partial.ok && partial.skipped.join()).toContain('a:quota-exhausted')
+    const all = selectModelSource({ tier: 'high', sources: exhausted, state: emptyRoutingState(), now: 1_000, tokens: TOKENS })
+    expect(all).toMatchObject({ ok: false, reason: 'ALL_SOURCES_UNAVAILABLE' })
+    expect(!all.ok && all.detail).toContain('额度耗尽')
+    expect(!all.ok && all.detail).toContain('quota-exhausted')
+    // remainingUsd 未申报 → 回退 limitUsd；limitUsd:0（仅登记）=不参与打分也从不跳过
+    const declared = quotaRemainingOf({ ...SOURCES[0]!, quota: { kind: 'monthly', limitUsd: 88 } }, 1_000)
+    expect(declared).toBe(88)
+    const registryOnly = quotaRemainingOf({ ...SOURCES[0]!, quota: { kind: 'monthly', limitUsd: 0 } }, 1_000)
+    expect(registryOnly).toBeUndefined()
+  })
+  it('resetAt 到期=滚动重置回 limitUsd；未到期仍用申报剩余', () => {
+    const resetAt = 2_000
+    const src = { ...SOURCES[0]!, quota: { kind: 'rolling' as const, limitUsd: 500, remainingUsd: 3, resetAt } }
+    expect(quotaRemainingOf(src, 1_999)).toBe(3)
+    expect(quotaRemainingOf(src, 2_000)).toBe(500)
+    const sel = selectModelSource({ tier: 'high', sources: [src], state: emptyRoutingState(), now: 2_000, tokens: TOKENS })
+    expect(sel.ok).toBe(true) // 重置后不因旧剩余 3 被预算预检误杀
+    expect(quotaRemainingOf({ ...SOURCES[0]!, quota: { kind: 'unbounded' } }, 1_000)).toBeUndefined()
+  })
+  it('quota 字段进入 models.yaml fingerprint（配置漂移可检）', () => {
+    const base = parseModelsYaml(QUOTA_YAML)
+    const drift = parseModelsYaml(QUOTA_YAML.replace('remainingUsd: 120.5', 'remainingUsd: 99'))
+    const same = parseModelsYaml(QUOTA_YAML)
+    expect(fingerprint(base)).not.toBe(fingerprint(drift))
+    expect(fingerprint(base)).toBe(fingerprint(same))
   })
 })

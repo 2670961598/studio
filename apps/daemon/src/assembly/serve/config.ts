@@ -322,6 +322,7 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'models': cfg.models = str(value, key); break
       case 'budgetTicketCapUsd': cfg.budgetTicketCapUsd = num(value, key); break
       case 'budgetPersonCapUsd': cfg.budgetPersonCapUsd = num(value, key); break
+      case 'allowBudgetDowngrade': cfg.allowBudgetDowngrade = bool(value, key); break
       case 'maxInflightPerPerson': {
         // 人闸缺省帽（129-§6.2-R3）：正整数——0/负数在闸内 Math.max(1,·) 兜底，但配置
         // 面就明报（fail-closed 纪律：坏配置不猜意图）

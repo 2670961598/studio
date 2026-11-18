@@ -25,6 +25,7 @@ import type { ModelCatalog } from '@studio-next/contract'
 import { createModelCatalog, parseModelsYaml, type TierId } from '@studio-next/core'
 import type { Ledger } from '@studio-next/store'
 import { provisionModelTierOverlays } from '../../engine/tier/model-tier.ts'
+import { seedRoutingPriceSnapshots } from '../../engine/routing/seed.ts'
 
 /** models.yaml tier → executor 位名（与 executor-face TIER_EXECUTOR / 885 自动挂载同源） */
 const TIER_EXECUTORS: Readonly<Record<string, TierId>> = { dsh: 'mid', 'dsh-mid': 'mid', 'dsh-high': 'high', 'dsh-low': 'low' }
@@ -46,7 +47,8 @@ export interface ModelsHotSwapDeps {
   readonly rootDir: string
   readonly company: string
   readonly deptFallback: string
-  readonly ledger: Pick<Ledger, 'appendEvent'>
+  /** 台账（appendEvent=热切事件；append/listPriceSnapshots=task-135 新源价目即时补种） */
+  readonly ledger: Pick<Ledger, 'appendEvent' | 'appendPriceSnapshot' | 'listPriceSnapshots'>
   readonly clock: () => number
   readonly makeId: (ts: number) => string
   readonly log: (line: string) => void
@@ -198,7 +200,15 @@ export function createModelsHotSwap(deps: ModelsHotSwapDeps): ModelsHotSwap {
       pendingSince = null
       return { kind: 'apply-failed', models: modelList, detail, eventId }
     }
-    const eventId = emit('SCHEMA_EVOLVE', `MODELS_RELOAD;trigger=watch;models=${modelList.join(',')};overlays=${Object.values(overlays).map((p) => path.basename(p)).join('/')};零进程重启、在途单不打断（task-34）`, 1)
+    // task-135：apply 后对新源即时补种 price snapshot（同启动播种口径 engine/routing/seed.ts；
+    // 当日已播 provider/model 幂等跳过；异常只告警不回滚——价目缺行不破坏热切本体，不重启）
+    let sourcesSeeded = 0
+    try {
+      sourcesSeeded = seedRoutingPriceSnapshots({ ledger: deps.ledger, company: deps.company, clock: deps.clock, log: deps.log, origin: 'task-135 热切补种' }, parsed).appended
+    } catch (err) {
+      deps.log(`[models-hot-swap] 源价目补种异常（不回滚，价目缺行可查）：${err instanceof Error ? err.message : String(err)}`)
+    }
+    const eventId = emit('SCHEMA_EVOLVE', `MODELS_RELOAD;trigger=watch;models=${modelList.join(',')};overlays=${Object.values(overlays).map((p) => path.basename(p)).join('/')};sourcesSeeded=${String(sourcesSeeded)};零进程重启、在途单不打断（task-34）`, 1)
     stats.applies += 1
     lastHash = hash
     pendingSince = null

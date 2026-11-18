@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { openLedger } from '@studio-next/store'
+import { localDateKey } from '@studio-next/core'
 import { makeUlid } from '../../../src/engine/tools/id.ts'
 import { createModelsHotSwap, type ModelsHotSwapApplyInput } from '../../../src/assembly/serve/models-hot-swap.ts'
 
@@ -197,6 +198,77 @@ describe('models 动态热切（task-34）', () => {
       expect((await fx.hot.check())?.kind).toBe('applied')
       expect(await fx.hot.check()).toBeNull()
       expect(fx.applies).toHaveLength(1)
+    } finally {
+      fx.close()
+    }
+  })
+})
+
+// —— task-135 交付④：热切 apply 后对新源即时补种 price snapshot（同启动播种口径，不重启）——
+const SOURCES_V1 = `
+tiers:
+  high:
+    sources:
+      - id: glm-h
+        provider: glm
+        model: GLM-5.3
+        priority: 10
+        price: {inputPerM: 1.1111, outputPerM: 3.8889, cacheReadPerM: 0.2778, cacheCreationPerM: 0}
+  mid: {provider: glm, model: GLM-5.3, price: {inputPerM: 1.1111, outputPerM: 3.8889}}
+  low: {provider: glm, model: GLM-5.3-Flash, price: {inputPerM: 0.1111, outputPerM: 0.3889}}
+roles: {main_worker: high, patrol: low}
+`
+const SOURCES_V2 = `
+tiers:
+  high:
+    sources:
+      - id: glm-h
+        provider: glm
+        model: GLM-5.3
+        priority: 10
+        price: {inputPerM: 1.1111, outputPerM: 3.8889, cacheReadPerM: 0.2778, cacheCreationPerM: 0}
+      - id: kimi-h
+        provider: opencode-go
+        model: kimi-k3.1-pro
+        priority: 20
+        price: {inputPerM: 2, outputPerM: 10}
+  mid: {provider: glm, model: GLM-5.3, price: {inputPerM: 1.1111, outputPerM: 3.8889}}
+  low: {provider: glm, model: GLM-5.3-Flash, price: {inputPerM: 0.1111, outputPerM: 0.3889}}
+roles: {main_worker: high, patrol: low}
+`
+
+describe('models 热切价目补种（task-135）', () => {
+  it('apply 后即时补种新源快照；同日重复热切幂等（零重复行）；SCHEMA_EVOLVE note 留痕', async () => {
+    const fx = fixture('reseed', SOURCES_V1)
+    try {
+      const priceDate = localDateKey(1_000)
+      const rowsOf = () => fx.ledger.listPriceSnapshots({ company: COMPANY, price_date: priceDate })
+      // 首次热切（内容未变不 apply）：先切到 V2 才发生 apply
+      writeFileSync(fx.modelsPath, SOURCES_V2, 'utf8')
+      await fx.hot.check()
+      fx.setNow(2_000)
+      expect((await fx.hot.check())?.kind).toBe('applied')
+      // 新源 kimi-h 即时补种（glm/GLM-5.3、GLM-5.3-Flash 同批；无启动前置=本批全播）
+      const seeded = rowsOf()
+      expect(seeded.filter((r) => r.provider === 'opencode-go' && r.model === 'kimi-k3.1-pro')).toHaveLength(1)
+      expect(seeded.filter((r) => r.source_ticket === `seed-routing:${priceDate}:high:kimi-h`)).toHaveLength(1)
+      expect(seeded.length).toBe(3) // glm/GLM-5.3 + GLM-5.3-Flash + kimi（跨档同模型去重）
+      const evolve = fx.ledger.queryEvents({ company: COMPANY }).filter((e) => e.event === 'SCHEMA_EVOLVE')
+      expect(evolve[evolve.length - 1]?.note).toContain('sourcesSeeded=3')
+      // 切回 V1 再切 V2：同日已播 provider/model 幂等跳过（零重复行、零新增）
+      writeFileSync(fx.modelsPath, SOURCES_V1, 'utf8')
+      await fx.hot.check()
+      fx.setNow(3_000)
+      expect((await fx.hot.check())?.kind).toBe('applied')
+      writeFileSync(fx.modelsPath, SOURCES_V2, 'utf8')
+      await fx.hot.check()
+      fx.setNow(4_000)
+      expect((await fx.hot.check())?.kind).toBe('applied')
+      const again = rowsOf()
+      expect(again.length).toBe(3)
+      expect(again.filter((r) => r.provider === 'opencode-go').length).toBe(1)
+      const evolve2 = fx.ledger.queryEvents({ company: COMPANY }).filter((e) => e.event === 'SCHEMA_EVOLVE')
+      expect(evolve2[evolve2.length - 1]?.note).toContain('sourcesSeeded=0')
     } finally {
       fx.close()
     }

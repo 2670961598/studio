@@ -219,6 +219,12 @@ export interface ServeConfig extends HrServeConfig, RestartServeConfig, Signatur
   /** 岗级预算帽缺省（USD；04-§四；仅价目表态 A 生效） */
   budgetPersonCapUsd?: number
   /**
+   * 路由预算预检显式降档开关（task-135；docs/quality/model-routing.md §5）：true=候选源
+   * 超帽后继续按序尝试更便宜源（HOLD/ESCALATE 审计仍留）；缺省/false=超帽即 HOLD 不降档
+   * （现状）。布尔面（bool() 校验，非布尔启动拒）。
+   */
+  allowBudgetDowngrade?: boolean
+  /**
    * 人闸每人并发缺省帽（129-§6.2-R3 第四闸，studio-dev-167 单B）：人同时在工上限，
    * 缺省 1（串行）；批量执行岗走 personInflightOverrides 单独放宽。
    */

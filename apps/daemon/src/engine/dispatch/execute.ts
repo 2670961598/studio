@@ -57,7 +57,7 @@ import type { IssueRecord } from '@studio-next/contract'
 import { releaseWithEpoch } from '../lanes/release.ts'
 import { CONVERSATION_ACCEPTANCE } from '../conversation/protocol.ts'
 import { evaluateDispatchAcceptance } from '../acceptance/index.ts'
-import { selectModelSource } from '../routing/router.ts'
+import { selectModelSource, classifyFailure, isFailoverClass, recordSourceFailure, serializeRoutingState, type SelectOutcome } from '../routing/router.ts'
 import { provisionSourceOverlay } from '../routing/overlay.ts'
 import { budgetView, createModelCatalog, foldBudgets, type ModelsConfig, type ModelSourceSpec } from '@studio-next/core'
 
@@ -292,61 +292,86 @@ export async function executeDispatch(
       // 判定 → 过闸=双行落账（issue 先 person 后；落账与 launch 之间失败=不派，异常
       // 上抛本 catch→DISPATCH_FAIL）；超帽=refusal 行落账+不派；duplicate=沿用未结预留
       // （失败保留重派语义）。拟稿待批点清单见 src/engine/budget-gate.ts 头注。
-      // —— task-56 多源路由：选源（优先级+可用性+预算预检）→ per-source overlay → 源价目预算闸 ——
+      // —— task-56 多源路由：选源（优先级+quota 池化打分+可用性+预算预检）→ per-source
+      //    overlay → 源价目预算闸 ——
+      //    task-135 收尾：① allowBudgetDowngrade 读引擎配置（daemon.yaml；缺省 false=现状
+      //    HOLD 不降档）；② 同 dispatch 内一次换源（launch 失败且无首段输出→冷却+留痕→
+      //    对下一源重试一次；见下方 launch 段 routeFailoverOn）。
       let routedSource: ModelSourceSpec | undefined
       let routedCatalog: ReturnType<typeof createModelCatalog> | undefined
       let routingNote = ''
       let routedBinding: { dsh: { setSourceOverlay?: (p: string | undefined) => void; setModel?: (m: string | undefined) => void; getSourceOverlay?: () => string | undefined; getModel?: () => string | undefined }; overlay: string | undefined; model: string | undefined } | undefined
-      if (rt.modelRouting !== undefined && tierResolve !== undefined && rt.catalog !== undefined && adapter.name === 'dsh') {
+      const routingActive = rt.modelRouting !== undefined && tierResolve !== undefined && rt.catalog !== undefined && adapter.name === 'dsh'
+      // 最近一次选源的预算上下文（HOLD 事件 note 复用；每次选源（含换源重选）刷新）
+      let heldTicketCap: number | undefined
+      let heldTicketRemaining: number | undefined
+      let heldCompanyRemaining: number | undefined
+      /** 选源（预算按当前台账折叠重算——launch 失败换源重选时已含本次 reserve）；非路由面=undefined */
+      const selectRouted = (): SelectOutcome | undefined => {
+        if (!routingActive || rt.modelRouting === undefined || tierResolve === undefined || rt.catalog === undefined) return undefined
         const sources = rt.modelRouting.sources[tierResolve.tier]
-        if (sources !== undefined && sources.length > 0) {
-          const briefChars = assembled.brief.text.length
-          const inputTokens = Math.ceil(briefChars / 4)
-          const tokens = { input: inputTokens, output: Math.ceil(inputTokens * 0.5) }
-          const ticketCap = taskBrief.budgetCap?.usd ?? config.budgetTicketCapUsd
-          // task-66 F3：remaining = cap − settled − reserved（沿用 budget-gate 的 issue/person/company 行折叠口径）
-          const budgetState = foldBudgets([
-            ...ledger.queryBudgets({ scope_kind: 'issue', scope_id: ticket }),
-            ...ledger.queryBudgets({ scope_kind: 'person', scope_id: person.id }),
-            ...ledger.queryBudgets({ scope_kind: 'company', scope_id: config.company }),
-          ])
-          const ticketView = budgetView(budgetState, 'issue', ticket)
-          const ticketRemaining = ticketCap !== undefined ? Math.max(0, ticketCap - ticketView.settled - ticketView.reserved) : undefined
-          const companyView = budgetView(budgetState, 'company', config.company)
-          const companyRemaining = costGuard !== undefined
-            ? Math.max(0, costGuard.dailyBudgetUsd.company - companyView.settled - companyView.reserved)
-            : undefined
-          // allowBudgetDowngrade 暂无配置来源：显式默认 false（MVP 限制，接配置另立提案）
-          const outcome = selectModelSource({
-            tier: tierResolve.tier,
-            sources,
-            state: rt.modelRouting.state,
-            now: at,
-            tokens,
-            ...(ticketRemaining !== undefined || companyRemaining !== undefined
-              ? { budget: { ...(ticketRemaining !== undefined ? { ticketRemainingUsd: ticketRemaining } : {}), ...(companyRemaining !== undefined ? { companyRemainingUsd: companyRemaining } : {}), allowBudgetDowngrade: false } }
-              : { budget: { allowBudgetDowngrade: false } }),
-          })
-          if (!outcome.ok) {
-            if (outcome.reason === 'BUDGET_EXCEEDED') {
-              // task-66 F4 去重：同 ticket+source 只留一条 HOLD（连续 tick 重试不刷屏）
-              const warnKey = `${ticket}|${outcome.source?.id ?? 'none'}|budget-hold`
-              if (!rt.routingWarnings.has(warnKey)) {
-                rt.routingWarnings.add(warnKey)
-                makeEvent('ESCALATE', fresh, index.attemptOf(ticket), tickEvents, {
-                  note: `MODEL_ROUTING_BUDGET_HOLD;tier=${tierResolve.tier};cap=${ticketCap !== undefined ? `ticket=$${String(ticketCap)}` : 'ticket=none'};remaining=ticket=$${ticketRemaining !== undefined ? ticketRemaining.toFixed(4) : 'n/a'};company=$${companyRemaining !== undefined ? companyRemaining.toFixed(4) : 'n/a'};estimated=$${outcome.estimatedUsd?.toFixed(4) ?? 'n/a'};source=${outcome.source?.id ?? 'n/a'}（task-66 budget HOLD；不降档）`,
-                })
-              }
-            }
-            const note = `MODEL_ROUTING_FAIL;tier=${tierResolve.tier};reason=${outcome.reason};${outcome.detail}（task-56 fail-closed 不降档）`
-            return fail(note)
-          }
-          routedSource = outcome.source
-          const tiers = Object.fromEntries(rt.catalog.tiers().map((t) => [t.tier, { provider: t.provider, model: t.model, price: t.price }])) as ModelsConfig['tiers']
-          tiers[tierResolve.tier] = { provider: routedSource.provider, model: routedSource.model, price: routedSource.price }
-          routedCatalog = createModelCatalog({ tiers, roles: rt.config.modelTierByRole ?? { main_worker: 'mid' } })
-          routingNote = `;routing=${routedSource.id};routing-price=in$${String(routedSource.price.inputPerM)}/out$${String(routedSource.price.outputPerM)}${outcome.skipped.length > 0 ? `;routing-skipped=${outcome.skipped.join('|')}` : ''}`
-        }
+        if (sources === undefined || sources.length === 0) return undefined
+        const briefChars = assembled.brief.text.length
+        const inputTokens = Math.ceil(briefChars / 4)
+        const tokens = { input: inputTokens, output: Math.ceil(inputTokens * 0.5) }
+        const ticketCap = taskBrief.budgetCap?.usd ?? config.budgetTicketCapUsd
+        // task-66 F3：remaining = cap − settled − reserved（沿用 budget-gate 的 issue/person/company 行折叠口径）
+        const budgetState = foldBudgets([
+          ...ledger.queryBudgets({ scope_kind: 'issue', scope_id: ticket }),
+          ...ledger.queryBudgets({ scope_kind: 'person', scope_id: person.id }),
+          ...ledger.queryBudgets({ scope_kind: 'company', scope_id: config.company }),
+        ])
+        const ticketView = budgetView(budgetState, 'issue', ticket)
+        const ticketRemaining = ticketCap !== undefined ? Math.max(0, ticketCap - ticketView.settled - ticketView.reserved) : undefined
+        const companyView = budgetView(budgetState, 'company', config.company)
+        const companyRemaining = costGuard !== undefined
+          ? Math.max(0, costGuard.dailyBudgetUsd.company - companyView.settled - companyView.reserved)
+          : undefined
+        heldTicketCap = ticketCap
+        heldTicketRemaining = ticketRemaining
+        heldCompanyRemaining = companyRemaining
+        // task-135：allowBudgetDowngrade 接配置（daemon.yaml 布尔；缺省 false=现状 HOLD 不降档）
+        const allowDowngrade = config.allowBudgetDowngrade === true
+        return selectModelSource({
+          tier: tierResolve.tier,
+          sources,
+          state: rt.modelRouting.state,
+          now: at,
+          tokens,
+          budget: {
+            ...(ticketRemaining !== undefined ? { ticketRemainingUsd: ticketRemaining } : {}),
+            ...(companyRemaining !== undefined ? { companyRemainingUsd: companyRemaining } : {}),
+            allowBudgetDowngrade: allowDowngrade,
+          },
+        })
+      }
+      /** 预算 HOLD 事件（task-66 F4 去重：同 ticket+source 一次；连续 tick 重试不刷屏） */
+      const emitBudgetHold = (outcome: Extract<SelectOutcome, { ok: false }>): void => {
+        if (outcome.reason !== 'BUDGET_EXCEEDED') return
+        const warnKey = `${ticket}|${outcome.source?.id ?? 'none'}|budget-hold`
+        if (rt.routingWarnings.has(warnKey)) return
+        rt.routingWarnings.add(warnKey)
+        makeEvent('ESCALATE', fresh, index.attemptOf(ticket), tickEvents, {
+          note: `MODEL_ROUTING_BUDGET_HOLD;tier=${tierResolve?.tier ?? 'n/a'};cap=${heldTicketCap !== undefined ? `ticket=$${String(heldTicketCap)}` : 'ticket=none'};remaining=ticket=$${heldTicketRemaining !== undefined ? heldTicketRemaining.toFixed(4) : 'n/a'};company=$${heldCompanyRemaining !== undefined ? heldCompanyRemaining.toFixed(4) : 'n/a'};estimated=$${outcome.estimatedUsd?.toFixed(4) ?? 'n/a'};source=${outcome.source?.id ?? 'n/a'}${config.allowBudgetDowngrade === true ? '（task-135 budget HOLD；allowBudgetDowngrade=true 全源超帽）' : '（task-66 budget HOLD；不降档）'}`,
+        })
+      }
+      /** 选中源 → per-source 价目目录 + DISPATCH note 段（换源时 fallbackFrom 留痕） */
+      const applyRoutedSource = (source: ModelSourceSpec, skipped: readonly string[], fallbackFrom?: string): void => {
+        if (rt.catalog === undefined || tierResolve === undefined) return
+        const tiers = Object.fromEntries(rt.catalog.tiers().map((t) => [t.tier, { provider: t.provider, model: t.model, price: t.price }])) as ModelsConfig['tiers']
+        tiers[tierResolve.tier] = { provider: source.provider, model: source.model, price: source.price }
+        routedCatalog = createModelCatalog({ tiers, roles: rt.config.modelTierByRole ?? { main_worker: 'mid' } })
+        routingNote = `;routing=${source.id}${fallbackFrom !== undefined ? `;routing-fallbackFrom=${fallbackFrom}` : ''};routing-price=in$${String(source.price.inputPerM)}/out$${String(source.price.outputPerM)}${skipped.length > 0 ? `;routing-skipped=${skipped.join('|')}` : ''}`
+      }
+      const routingOutcome = selectRouted()
+      if (routingOutcome !== undefined && !routingOutcome.ok) {
+        emitBudgetHold(routingOutcome)
+        const note = `MODEL_ROUTING_FAIL;tier=${tierResolve?.tier};reason=${routingOutcome.reason};${routingOutcome.detail}（task-56 fail-closed 不降档）`
+        return fail(note)
+      }
+      if (routingOutcome !== undefined) {
+        routedSource = routingOutcome.source
+        applyRoutedSource(routedSource, routingOutcome.skipped)
       }
       const personDay = personDayGateInput(costGuard, person, ledger, at) // 闸四·人日 hard 线（R6）：段声明且有 gate 档才带
       const gateDeps = routedCatalog !== undefined ? { ...budgetDeps, catalog: routedCatalog } : budgetDeps
@@ -395,8 +420,59 @@ export async function executeDispatch(
         ...taskBrief,
         ...(minted !== undefined ? { credentials: workerKeyCredentials(minted.token) } : {}),
       }
+      // task-135 同 dispatch 内一次换源：launch 抛错=未产生首段输出，且失败类可换源
+      //（400/拒答不换——设计 §3）→ 冷却当前源+留痕 MODEL_ROUTING_FAILOVER → 重选下一源
+      // → 重绑 overlay/model → 重试 launch 一次（每 dispatch 至多 1 次换源、每源至多 1 次）。
+      // 预算闸不重跑：本次 reserve 未结，gateDispatch adopt 语义「一笔预留服务 N 次尝试」
+      // 覆盖重试；重选预检按落账后折叠（已含 reserve）判新源是否超帽。
+      let failoverUsed = false
+      let failoverNote = ''
+      const routeFailoverOn = (err: unknown): boolean => {
+        if (!routingActive || rt.modelRouting === undefined || tierResolve === undefined || routedSource === undefined || failoverUsed) return false
+        if (!isFailoverClass(classifyFailure(err))) return false
+        failoverUsed = true
+        // 失败登记：冷却+持久化（daemon_kv 与 harvest 回填同键同口径）
+        const rec = recordSourceFailure(rt.modelRouting.state, routedSource, err, at)
+        rt.modelRouting.state = rec.state
+        ledger.kvSet('model-routing.state', serializeRoutingState(rt.modelRouting.state))
+        // 留痕（task-66 F4 同口径去重：同票同源一次）
+        const warnKey = `${ticket}|${routedSource.id}|launch-failover`
+        if (!rt.routingWarnings.has(warnKey)) {
+          rt.routingWarnings.add(warnKey)
+          makeEvent('ESCALATE', fresh, index.attemptOf(ticket), tickEvents, {
+            note: `MODEL_ROUTING_FAILOVER;tier=${tierResolve.tier};source=${routedSource.id};class=${rec.class};cooldownMs=${String(rec.cooldownMs)}（task-135 同dispatch换源）`,
+          })
+        }
+        // 重选（状态已含冷却→当前源自然跳过；预算按落账后折叠重算）
+        const outcome = selectRouted()
+        if (outcome === undefined || !outcome.ok) {
+          if (outcome !== undefined) emitBudgetHold(outcome)
+          failoverNote = outcome !== undefined && !outcome.ok ? `换源不可用（${outcome.reason};${outcome.detail}）` : '换源不可用（无路由源）'
+          return false
+        }
+        const from = routedSource
+        routedSource = outcome.source
+        applyRoutedSource(routedSource, outcome.skipped, from.id)
+        const overlayPath = provisionSourceOverlay(rt.modelRouting.rootDir, tierResolve.tier, routedSource)
+        const dsh = routedBinding !== undefined ? routedBinding.dsh : (adapter as NonNullable<typeof routedBinding>['dsh'])
+        dsh.setSourceOverlay?.(overlayPath)
+        dsh.setModel?.(`${routedSource.provider}/${routedSource.model}`)
+        return true
+      }
       try {
         launched = await adapter.launch(launchBrief)
+      } catch (launchErr) {
+        const firstMsg = launchErr instanceof Error ? launchErr.message : String(launchErr)
+        if (!routeFailoverOn(launchErr)) {
+          if (failoverNote !== '') throw new Error(`${firstMsg}；${failoverNote}`)
+          throw launchErr
+        }
+        try {
+          launched = await adapter.launch(launchBrief)
+        } catch (retryErr) {
+          const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr)
+          throw new Error(`launch 失败且同 dispatch 换源重试仍失败（${routedSource?.id ?? 'n/a'}；首源错误：${firstMsg}）：${retryMsg}`)
+        }
       } finally {
         // task-66 F2：launch 后清回；argv 已在 spawn 时快照，在途子进程不受影响；失败也清
         if (routedBinding !== undefined) {

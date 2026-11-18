@@ -54,8 +54,21 @@ export interface ModelSourceSpec {
   /** 越小越优先（同档内；缺省按书写序 0/1/2…） */
   priority: number
   price: PriceEntry
-  /** 额度口径（MVP 仅登记/审计，不主动探测；缺省 unbounded） */
-  quota?: { kind?: 'monthly' | 'five_hour' | 'unbounded' | undefined; limitUsd?: number | undefined; resetAt?: number | null | undefined } | undefined
+  /**
+   * 额度口径（task-135 池化：登记+选择打分；缺省/不配=不参与池化，行为与现状一致）。
+   * kind=monthly|rolling（窗口口径，仅审计呈现）|five_hour|unbounded（不参与池化）；
+   * remainingUsd=运营者申报剩余（缺省回退 limitUsd）；weight=同 priority 组内打分权重
+   * （缺省 1）；resetAt=窗口重置时刻（epoch ms；到期视为满额 limitUsd，rolling 语义）。
+   */
+  quota?:
+    | {
+        kind?: 'monthly' | 'rolling' | 'five_hour' | 'unbounded' | undefined
+        limitUsd?: number | undefined
+        remainingUsd?: number | undefined
+        resetAt?: number | null | undefined
+        weight?: number | undefined
+      }
+    | undefined
   /** 冷却参数（缺省 base 60s / max 8h / circuitAfter 3） */
   cooldown?: { baseMs?: number | undefined; maxMs?: number | undefined; circuitAfter?: number | undefined } | undefined
   /** 是否启用（缺省 true） */
@@ -108,9 +121,13 @@ const ModelSourceSchema = z.strictObject({
   priority: z.number().int().nonnegative().optional(),
   price: PriceSchema,
   quota: z.strictObject({
-    kind: z.enum(['monthly', 'five_hour', 'unbounded']).optional(),
+    kind: z.enum(['monthly', 'rolling', 'five_hour', 'unbounded']).optional(),
     limitUsd: z.number().nonnegative().optional(),
+    // 申报剩余（task-135 池化）：可为负（超用申报=耗尽）；缺省回退 limitUsd
+    remainingUsd: z.number().optional(),
     resetAt: z.number().nonnegative().nullable().optional(),
+    // 池化打分权重（同 priority 组内；缺省 1）
+    weight: z.number().positive().optional(),
   }).optional(),
   cooldown: z.strictObject({
     baseMs: z.number().int().nonnegative().optional(),

@@ -25,7 +25,7 @@ import {
 } from '@studio-next/adapters'
 import { EMPTY_SELECTION_CHAIN } from '@studio-next/adapters/bindcard'
 import { extractPersonAttrs } from '@studio-next/company'
-import { assertJudgeRoleLow, createModelCatalog, fingerprint, localDateKey, modelSourcesOf, parseModelsYaml, type ModelSourceSpec, type ModelsConfig, type TierId } from '@studio-next/core'
+import { assertJudgeRoleLow, createModelCatalog, fingerprint, parseModelsYaml, type ModelSourceSpec, type ModelsConfig, type TierId } from '@studio-next/core'
 import { configInvalid } from '@studio-next/contract'
 import type { ModelCatalog, TicketId } from '@studio-next/contract'
 import type { Ledger } from '@studio-next/store'
@@ -36,12 +36,12 @@ import { createQueueJudge, parseJudgeSites, type QueueJudgeHook } from '../../en
 import { checkTierPositionDeclarations, parseModelTierTickets, provisionModelTierOverlays } from '../../engine/tier/model-tier.ts'
 import { createFakeAdapter } from '../../engine/fakes.ts'
 import { provisionDshBridgeOverlay } from '../../engine/instructions-store.ts'
+import { seedRoutingPriceSnapshots } from '../../engine/routing/seed.ts'
 import { dispatchAdapterResolver } from '../../engine/work/dispatch-seatbelt.ts'
 import type { DispatchSelectionDeps } from '../../engine/work/dispatch-selection.ts'
 import { wireCapabilitySupply } from './capability-face.ts'
 import type { CapabilitySupplyFace } from '../../engine/capability/index.ts'
 import type { ServeConfig } from './config.ts'
-import { makeUlid } from '../../engine/tools/id.ts'
 
 /**
  * demo 冻结验收命令（单一常量双消费：装配器 L4 acceptance + Blind 读面验收面——
@@ -283,35 +283,9 @@ export function wireExecutorFace(config: ServeConfig, deps: ExecutorFaceDeps): E
     modelRoles = parsed.roles
     modelSourcesEarly = parsed.sources
     // task-56：per-source price snapshot 播种（实际源价目归属；同日幂等；异常只告警不拒启）
-    const priceDate = localDateKey(clock())
-    const seeded = new Set<string>()
-    for (const tier of ['high', 'mid', 'low'] as const) {
-      for (const source of modelSourcesOf(parsed, tier)) {
-        const key = `${source.provider}/${source.model}`
-        if (seeded.has(key)) continue
-        seeded.add(key)
-        try {
-          ledger.appendPriceSnapshot({
-            id: `ps-${makeUlid(clock())}`,
-            company: config.company,
-            provider: source.provider,
-            model: source.model,
-            price_date: priceDate,
-            slot: 'peak',
-            input_per_m: source.price.inputPerM,
-            output_per_m: source.price.outputPerM,
-            ...(source.price.cacheReadPerM !== undefined ? { cache_read_per_m: source.price.cacheReadPerM } : {}),
-            ...(source.price.cacheCreationPerM !== undefined ? { cache_creation_per_m: source.price.cacheCreationPerM } : {}),
-            source_note: `models.yaml sources[] 路由源价目（tier=${tier};source=${source.id}；task-56）`,
-            source_ticket: `seed-routing:${priceDate}:${tier}:${source.id}`,
-            published_by: 'serve-routing',
-          })
-        } catch (err) {
-          log(`[serve] 路由源价目播种警告（${tier}/${source.id}）：${err instanceof Error ? err.message : String(err)}（不拒启；预算归属可能缺价）`)
-        }
-      }
-    }
-    log(`[serve] 价目表装载：${config.models}（fingerprint=${fingerprint(parsed)}；估算态 A：estimateCost 校准+双帽；sources price snapshots seeded=${String(seeded.size)}）`)
+    //    ——口径收口 engine/routing/seed.ts（task-135 热切即时补种共用同一件，不双源漂移）
+    const seededCount = seedRoutingPriceSnapshots({ ledger, company: config.company, clock, log, origin: 'task-56' }, parsed).candidates
+    log(`[serve] 价目表装载：${config.models}（fingerprint=${fingerprint(parsed)}；估算态 A：estimateCost 校准+双帽；sources price snapshots seeded=${String(seededCount)}）`)
     // —— 模型档执行面（studio-dev-196，制作人 2026-10-22 三档定调）：低/高档 dsh overlay
     //    生成（mid=现役缺省不生成）+ 档位声明一致性闸（agent.yaml 档位镜像 vs tiers 漂移
     //    =启动拒——三面同源纪律，见 src/engine/model-tier.ts 头注）。

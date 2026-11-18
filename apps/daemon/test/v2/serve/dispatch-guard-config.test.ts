@@ -33,3 +33,17 @@ describe('派工排除/执行监控配置面（775/C2/C3）', () => {
     expect(() => parseDaemonConfig(`${BASE_YAML}\nexecutionGuardRoles: ,`)).toThrow(/executionGuardRoles/)
   })
 })
+
+describe('allowBudgetDowngrade 配置面（task-135）', () => {
+  it('缺省 undefined（=false 语义：HOLD 不降档，行为零变）', () => {
+    expect(parseDaemonConfig(BASE_YAML).allowBudgetDowngrade).toBeUndefined()
+  })
+  it('true/false 布尔解析', () => {
+    expect(parseDaemonConfig(`${BASE_YAML}\nallowBudgetDowngrade: true`).allowBudgetDowngrade).toBe(true)
+    expect(parseDaemonConfig(`${BASE_YAML}\nallowBudgetDowngrade: false`).allowBudgetDowngrade).toBe(false)
+  })
+  it('非布尔 → 拒（fail-closed，不静默取真）', () => {
+    expect(() => parseDaemonConfig(`${BASE_YAML}\nallowBudgetDowngrade: 1`)).toThrow(/allowBudgetDowngrade/)
+    expect(() => parseDaemonConfig(`${BASE_YAML}\nallowBudgetDowngrade: maybe`)).toThrow(/allowBudgetDowngrade/)
+  })
+})
