@@ -1,14 +1,16 @@
 /**
- * workbench-chatd 入口（Phase1 模块 A / P1-1b）。
- * 启动：node --experimental-strip-types apps/workbench-chatd/src/main.ts
- * env：见 src/config.ts（WORKBENCH_CHATD_SOCKET / _TOKEN / _ALLOW_NO_AUTH / _DELAY_MS / _DRAIN_TIMEOUT_MS / _LOG）。
+ * workbench-chatd 入口（Phase1 模块 A / P1-1b + 模块 C 最小刀）。
+ * 启动：node --experimental-strip-types apps/workbench-chatd/src/main.ts [--memory]
+ * env：见 src/config.ts（WORKBENCH_CHATD_SOCKET / _TOKEN / _ALLOW_NO_AUTH / _DB / _DELAY_MS / _DRAIN_TIMEOUT_MS / _LOG）。
+ * 存储：缺省内存 mock（向后兼容）；WORKBENCH_CHATD_DB=<绝对路径> 即 SQLite 持久化（send/read/ack 落库、
+ *       重启恢复）；--memory 显式强制内存（优先于 env）。数据库文件 0600。
  * 日志：stderr 单行 JSON；ready 事件（event:"ready"）= socket 可用信号（测试/看护消费）。
  */
 import { loadConfig, ChatdConfigError, type ChatdConfig } from './config.ts'
 import { createChatdServer } from './server.ts'
 import { installSignalHandlers } from './lifecycle.ts'
 import { createLogger } from './log.ts'
-import { SERVER_MODE, SERVER_NAME, SERVER_VERSION, WORKBENCH_CHATD_PROTOCOL } from './health.ts'
+import { SERVER_NAME, SERVER_VERSION, WORKBENCH_CHATD_PROTOCOL } from './health.ts'
 
 function main(): void {
   let config: ChatdConfig
@@ -34,9 +36,10 @@ function main(): void {
       log.info('ready', {
         server: SERVER_NAME,
         version: SERVER_VERSION,
-        mode: SERVER_MODE,
+        store: config.storeMode,
         protocol: WORKBENCH_CHATD_PROTOCOL,
         socketPath: config.socketPath,
+        dbPath: config.dbPath ?? null,
         auth: config.token !== undefined ? 'token' : 'off',
         delayMs: config.delayMs,
         pid: process.pid,

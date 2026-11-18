@@ -47,6 +47,8 @@ export interface StartOptions {
   readonly socketPath?: string
   /** 显式工作目录（复用场景）；默认新 mkdtemp。 */
   readonly dir?: string
+  /** 追加传给 main.ts 的 CLI 参数（如 '--memory'；store 模式选择用）。 */
+  readonly args?: readonly string[]
 }
 
 const READY_TIMEOUT_MS = 8_000
@@ -62,7 +64,7 @@ export async function startChatd(options: StartOptions = {}): Promise<ChatdHandl
   env.WORKBENCH_CHATD_ALLOW_NO_AUTH = '1' // 见 StartOptions.env 注：非鉴权用例的显式 mock/dev 通道
   Object.assign(env, options.env ?? {})
   env.WORKBENCH_CHATD_SOCKET = socketPath // 测试一律显式指定 socket，避免实例间串台
-  const proc = spawn(process.execPath, ['--experimental-strip-types', CHATD_MAIN], { env, stdio: ['ignore', 'pipe', 'pipe'] })
+  const proc = spawn(process.execPath, ['--experimental-strip-types', CHATD_MAIN, ...(options.args ?? [])], { env, stdio: ['ignore', 'pipe', 'pipe'] })
   let output = ''
   const append = (chunk: Buffer | string): void => {
     output += typeof chunk === 'string' ? chunk : chunk.toString('utf8')

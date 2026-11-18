@@ -1,13 +1,16 @@
 /**
- * workbench-chatd 服务端（Phase1 模块 A / P1-1b）：Unix socket + NDJSON 帧 + token 鉴权 + 内存 mock 端点。
- * 依据：docs/sentinel-logs/Phase1实现拆解-2026-11-17.md 模块 A/§五（mock 端点：health/rooms/messages/read/inbox）；
+ * workbench-chatd 服务端（Phase1 模块 A / P1-1b + 模块 C 最小刀）：Unix socket + NDJSON 帧 + token 鉴权。
+ * 依据：docs/sentinel-logs/Phase1实现拆解-2026-11-17.md 模块 A/§五（端点）＋ 模块 C（内存→SQLite，C-mini 前半）；
  *       docs/quality/workbench-transport-v1.md（P1-1b 对接点：按 transport types 实现服务端）。
  * 协议：workbench-transport/v1（冻结于 packages/workbench-transport/src/types.ts）。本包不 import 该包
  *       （分层宪法 20-§十五：新包间边=提案流），wire DTO/错误码以镜像对齐，由契约测试（真客户端）背书。
+ * 存储：缺省内存 mock（P1-1b 原语义，重启即空）；WORKBENCH_CHATD_DB 设置即 SQLite 持久化
+ *       （send/read/ack 落库、重启 hydrate 恢复；见 src/store/）。两种模式共用同一 dispatch，
+ *       端点响应形状（Transport v1 冻结面）不因模式改变。
  * 鉴权：token 经 env WORKBENCH_CHATD_TOKEN；请求 params.token 比对。v1 冻结错误码表无 UNAUTHENTICATED，
  *       无/错 token 以 WB_INVALID_ARGUMENT（retryable:false，message 前缀 unauthenticated:）承载——
  *       若后续协议版本引入专用鉴权码，须走 version 升级，不得静默改码。
- * 边界：内存 mock、不建 chat.db、不写公司目录；P1-2（模块 C）以 vendor collab + SQLite 替换本存储。
+ * 边界：不接 vendor collab、不写公司目录、不迁 Matrix 数据、无网络。
  */
 import { createHash, timingSafeEqual } from 'node:crypto'
 import type { Server, Socket } from 'node:net'
@@ -15,6 +18,9 @@ import { removeSocketFile, bindUnixSocket } from './socket.ts'
 import { buildHealth } from './health.ts'
 import type { ChatdConfig } from './config.ts'
 import type { Logger } from './log.ts'
+import { createChatStore } from './store/index.ts'
+import { createInitialState } from './store/types.ts'
+import type { ChatStore, MockMessage, MockRoom, MockState, MockWake } from './store/types.ts'
 
 // ─── wire 镜像（workbench-transport/v1 冻结面；只读对齐，不扩不改） ─────────────
 type WbErrorCode =
@@ -47,48 +53,8 @@ class WbFailure extends Error {
   }
 }
 
-// ─── 内存 mock 状态（P1-2 换 SQLite；进程内生命周期，重启即空——骨架预期） ──────
-interface MockRoom {
-  roomId: string
-  kind: 'broadcast' | 'group' | 'dm'
-  name: string
-  memberIds: string[]
-  headRoomSeq: number
-}
-/** 冻结 Message 镜像（seq/roomSeq/roomId/senderId/body/mentions/createdAt）；messageId 仅内部幂等用。 */
-interface MockMessage {
-  messageId: string
-  seq: number
-  roomSeq: number
-  roomId: string
-  senderId: string
-  body: string
-  mentions: string[]
-  createdAt: number
-}
-interface MockWake {
-  wakeId: string
-  actorId: string
-  roomId: string
-  sourceSeq: number
-  cause: 'mention' | 'mention_all' | 'dm' | 'room'
-  status: 'pending' | 'claimed' | 'acked'
-  claimedBy: string | null
-  claimedUntil: number | null
-  createdAt: number
-  ackedAt: number | null
-}
-interface MockState {
-  readonly rooms: Map<string, MockRoom>
-  readonly messages: MockMessage[]
-  readonly wakes: MockWake[]
-  readonly reads: Map<string, number> // `${actorId}|${roomId}` -> lastReadRoomSeq
-  readonly idempotency: Map<string, unknown> // scope|key -> 首次结果（replay 用）
-  readonly startedAt: number
-  roomSeq: number
-  msgSeq: number
-  wakeSeq: number
-}
+// ─── 运行时状态（内存 mock 即时态；SQLite 模式启动时 hydrate 回填、写路径 write-through 落库） ──
+// 域类型唯一源在 src/store/types.ts（memory/sqlite 两后端与 dispatch 共用）。
 
 const failFrame = (id: string, code: WbErrorCode, message: string, retryable?: boolean): WbFrame => ({
   id,
@@ -112,10 +78,12 @@ const strArray = (p: Record<string, unknown>, key: string): string[] | undefined
 const actorOf = (p: Record<string, unknown>): string => str(p, 'actorId') ?? str(p, 'senderId') ?? ''
 
 // ─── 端点实现（语义与 P1-1a 已验收的 mock-sidecar 一致；由契约测试背书） ────────
-function dispatch(state: MockState, method: string, p: Record<string, unknown>): unknown {
+// 落库纪律：分配型写入（rooms/messages/wakes）DB 先行——失败抛错 → WB_INTERNAL、内存不落地，
+// 保证 seq 计数器与库内 id 分配一致（无空洞）；覆盖型写入（read 游标/wake 状态）内存先行、DB 镜像。
+function dispatch(state: MockState, store: ChatStore, method: string, p: Record<string, unknown>): unknown {
   switch (method) {
     case 'health':
-      return buildHealth(state.startedAt)
+      return buildHealth(state.startedAt, store.mode === 'sqlite' ? 'sqlite' : 'mock')
     case 'rooms.list':
       return [...state.rooms.values()]
     case 'rooms.create': {
@@ -125,8 +93,9 @@ function dispatch(state: MockState, method: string, p: Record<string, unknown>):
       if ((kind !== 'broadcast' && kind !== 'group' && kind !== 'dm') || name === undefined || name === '' || memberIds === undefined) {
         throw new WbFailure('WB_INVALID_ARGUMENT', 'kind/name/memberIds invalid')
       }
+      const room: MockRoom = { roomId: `room-${String(state.roomSeq + 1)}`, kind, name, memberIds: [...new Set(memberIds)], headRoomSeq: 0 }
+      store.insertRoom(room)
       state.roomSeq += 1
-      const room: MockRoom = { roomId: `room-${String(state.roomSeq)}`, kind, name, memberIds: [...new Set(memberIds)], headRoomSeq: 0 }
       state.rooms.set(room.roomId, room)
       return room
     }
@@ -140,36 +109,42 @@ function dispatch(state: MockState, method: string, p: Record<string, unknown>):
       const mentions = strArray(p, 'mentions') ?? []
       if (!mentions.every((m) => room.memberIds.includes(m))) throw new WbFailure('WB_INVALID_ARGUMENT', 'mention not a room member')
       const scope = `send:${sender}|${room.roomId}`
-      const { value, replayed } = idempotent(state, scope, str(p, 'idempotencyKey'), () => {
-        state.msgSeq += 1
-        room.headRoomSeq += 1
+      const { value, replayed } = idempotent(state, store, scope, str(p, 'idempotencyKey'), () => {
+        const seq = state.msgSeq + 1
+        const roomSeq = room.headRoomSeq + 1
         const message: MockMessage = {
-          messageId: `msg-${String(state.msgSeq)}`,
-          seq: state.msgSeq,
-          roomSeq: room.headRoomSeq,
+          messageId: `msg-${String(seq)}`,
+          seq,
+          roomSeq,
           roomId: room.roomId,
           senderId: sender,
           body,
           mentions,
           createdAt: Date.now(),
         }
-        state.messages.push(message)
+        const wakes: MockWake[] = []
+        let wakeSeq = state.wakeSeq
         for (const m of new Set(mentions)) {
-          state.wakeSeq += 1
-          const wake: MockWake = {
-            wakeId: `wake-${String(state.wakeSeq)}`,
+          wakeSeq += 1
+          wakes.push({
+            wakeId: `wake-${String(wakeSeq)}`,
             actorId: m,
             roomId: room.roomId,
-            sourceSeq: message.seq,
+            sourceSeq: seq,
             cause: mentions.length > 1 ? 'room' : 'mention',
             status: 'pending',
             claimedBy: null,
             claimedUntil: null,
             createdAt: Date.now(),
             ackedAt: null,
-          }
-          state.wakes.push(wake)
+          })
         }
+        store.appendMessage(message, wakes) // DB 事务先行（message+wakes 原子）；失败 → 内存不落地
+        state.msgSeq = seq
+        state.wakeSeq = wakeSeq
+        room.headRoomSeq = roomSeq
+        state.messages.push(message)
+        for (const w of wakes) state.wakes.push(w)
         return { seq: message.seq, roomSeq: message.roomSeq, messageId: message.messageId, replayed: false }
       })
       return { ...(value as { seq: number; roomSeq: number; messageId: string; replayed: boolean }), replayed }
@@ -192,11 +167,12 @@ function dispatch(state: MockState, method: string, p: Record<string, unknown>):
       if (actor === undefined || actor === '') throw new WbFailure('WB_INVALID_ARGUMENT', 'actorId required')
       const upTo = p['upToRoomSeq']
       if (typeof upTo !== 'number' || !Number.isInteger(upTo) || upTo <= 0) throw new WbFailure('WB_INVALID_ARGUMENT', 'upToRoomSeq invalid')
-      const { value, replayed } = idempotent(state, `read:${actor}|${room.roomId}`, str(p, 'idempotencyKey'), () => {
+      const { value, replayed } = idempotent(state, store, `read:${actor}|${room.roomId}`, str(p, 'idempotencyKey'), () => {
         const key = `${actor}|${room.roomId}`
         const prev = state.reads.get(key) ?? 0
         const next = Math.min(room.headRoomSeq, Math.max(prev, upTo))
         state.reads.set(key, next)
+        store.setRead(actor, room.roomId, next) // 覆盖写（upsert 同键）；值语义与内存一致：单调不回退
         return { roomId: room.roomId, actorId: actor, lastReadRoomSeq: next, unread: Math.max(0, room.headRoomSeq - next), replayed: false }
       })
       return { ...(value as { roomId: string; actorId: string; lastReadRoomSeq: number; unread: number; replayed: boolean }), replayed }
@@ -224,7 +200,7 @@ function dispatch(state: MockState, method: string, p: Record<string, unknown>):
       if (actor === undefined || actor === '') throw new WbFailure('WB_INVALID_ARGUMENT', 'actorId required')
       const ids = strArray(p, 'wakeIds')
       if (ids === undefined) throw new WbFailure('WB_INVALID_ARGUMENT', 'wakeIds required')
-      const { value, replayed } = idempotent(state, `claim:${actor}`, str(p, 'idempotencyKey'), () => {
+      const { value, replayed } = idempotent(state, store, `claim:${actor}`, str(p, 'idempotencyKey'), () => {
         const claimed: string[] = []
         const alreadyClaimed: string[] = []
         const wakes: unknown[] = []
@@ -236,9 +212,9 @@ function dispatch(state: MockState, method: string, p: Record<string, unknown>):
           if (w.status === 'claimed' && w.claimedBy === actor) alreadyClaimed.push(id)
           else if (w.status === 'claimed') throw new WbFailure('WB_WAKE_NOT_CLAIMABLE', 'wake claimed by other')
           else {
-            w.status = 'claimed'
-            w.claimedBy = actor
-            w.claimedUntil = Date.now() + 30_000
+            const updated: MockWake = { ...w, status: 'claimed', claimedBy: actor, claimedUntil: Date.now() + 30_000 }
+            store.updateWake(updated)
+            Object.assign(w, updated)
             claimed.push(id)
           }
           wakes.push({ ...w })
@@ -252,7 +228,7 @@ function dispatch(state: MockState, method: string, p: Record<string, unknown>):
       if (actor === undefined || actor === '') throw new WbFailure('WB_INVALID_ARGUMENT', 'actorId required')
       const ids = strArray(p, 'wakeIds')
       if (ids === undefined) throw new WbFailure('WB_INVALID_ARGUMENT', 'wakeIds required')
-      const { value, replayed } = idempotent(state, `ack:${actor}`, str(p, 'idempotencyKey'), () => {
+      const { value, replayed } = idempotent(state, store, `ack:${actor}`, str(p, 'idempotencyKey'), () => {
         const acked: string[] = []
         const alreadyAcked: string[] = []
         for (const id of ids) {
@@ -263,10 +239,9 @@ function dispatch(state: MockState, method: string, p: Record<string, unknown>):
             continue
           }
           if (w.status === 'claimed' && w.claimedBy !== actor) throw new WbFailure('WB_WAKE_NOT_CLAIMABLE', 'wake not claimed by actor')
-          w.status = 'acked'
-          w.ackedAt = Date.now()
-          w.claimedBy = null
-          w.claimedUntil = null
+          const updated: MockWake = { ...w, status: 'acked', ackedAt: Date.now(), claimedBy: null, claimedUntil: null }
+          store.updateWake(updated)
+          Object.assign(w, updated)
           acked.push(id)
         }
         return { acked, alreadyAcked, replayed: false }
@@ -278,13 +253,14 @@ function dispatch(state: MockState, method: string, p: Record<string, unknown>):
   }
 }
 
-/** 幂等助手：key 存在则回放首次结果（replayed=true），否则执行 run 并记录。 */
-function idempotent(state: MockState, scope: string, key: string | undefined, run: () => unknown): { value: unknown; replayed: boolean } {
+/** 幂等助手：key 存在则回放首次结果（replayed=true），否则执行 run 并记录（SQLite 模式随记落库，重启可 replay）。 */
+function idempotent(state: MockState, store: ChatStore, scope: string, key: string | undefined, run: () => unknown): { value: unknown; replayed: boolean } {
   if (key === undefined) return { value: run(), replayed: false }
   const k = `${scope}|${key}`
   if (state.idempotency.has(k)) return { value: state.idempotency.get(k), replayed: true }
   const value = run()
   state.idempotency.set(k, value)
+  store.recordIdempotency(k, value)
   return { value, replayed: false }
 }
 
@@ -305,17 +281,10 @@ export interface ChatdServer {
 }
 
 export function createChatdServer(config: ChatdConfig, log: Logger): ChatdServer {
-  const state: MockState = {
-    rooms: new Map(),
-    messages: [],
-    wakes: [],
-    reads: new Map(),
-    idempotency: new Map(),
-    startedAt: Date.now(),
-    roomSeq: 0,
-    msgSeq: 0,
-    wakeSeq: 0,
-  }
+  const store = createChatStore(config, log)
+  const state: MockState = createInitialState()
+  store.hydrate(state) // SQLite 模式：重启恢复（rooms/messages/wakes/reads/idempotency + seq 计数器）
+  if (store.mode === 'sqlite') log.info('store_hydrated', { rooms: state.rooms.size, messages: state.messages.length, wakes: state.wakes.length, reads: state.reads.size })
   const sockets = new Set<Socket>()
   let server: Server | undefined
   let draining = false
@@ -353,7 +322,7 @@ export function createChatdServer(config: ChatdConfig, log: Logger): ChatdServer
     }
 
     try {
-      return { id: rid, ok: true, result: dispatch(state, method, p) }
+      return { id: rid, ok: true, result: dispatch(state, store, method, p) }
     } catch (err) {
       if (err instanceof WbFailure) {
         log.warn('request_rejected', { method, code: err.code, message: err.message })
@@ -425,7 +394,13 @@ export function createChatdServer(config: ChatdConfig, log: Logger): ChatdServer
       server = await bindUnixSocket(config.socketPath, onConnection)
       server.on('error', (err: Error) => { log.error('server_error', { message: err.message }) })
       started = true
-      log.info('listening', { socketPath: config.socketPath, auth: config.token !== undefined, delayMs: config.delayMs, mode: 'mock' })
+      log.info('listening', {
+        socketPath: config.socketPath,
+        auth: config.token !== undefined,
+        delayMs: config.delayMs,
+        mode: store.mode === 'sqlite' ? 'sqlite' : 'mock',
+        dbPath: config.dbPath ?? null,
+      })
     },
     async stop(): Promise<void> {
       if (!started) return
@@ -440,7 +415,8 @@ export function createChatdServer(config: ChatdConfig, log: Logger): ChatdServer
       sockets.clear()
       await closed
       removeSocketFile(config.socketPath)
-      log.info('stopped', { socketPath: config.socketPath, drained: inFlight === 0 })
+      store.close() // SQLite 模式：关库落定（内存模式 no-op）
+      log.info('stopped', { socketPath: config.socketPath, drained: inFlight === 0, store: store.mode })
     },
     inFlight: () => inFlight,
     isStarted: () => started,
