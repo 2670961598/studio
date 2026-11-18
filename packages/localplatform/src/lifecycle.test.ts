@@ -230,9 +230,14 @@ describe('issues.list 过滤维', () => {
     expect((await p.issues.list({ assignee: 'emp-1' })).map((r) => r.id)).toEqual(['LOCAL-1', 'LOCAL-3'])
     expect((await p.issues.list({ lane: 'platform' })).map((r) => r.id)).toEqual(['LOCAL-1'])
 
-    // updatedSince：严格大于（ISO-8601 字典序）
-    expect((await p.issues.list({ updatedSince: a.updated })).map((r) => r.id)).toEqual(['LOCAL-2', 'LOCAL-3'])
-    expect(await p.issues.list({ updatedSince: c.updated })).toEqual([])
+    // updatedSince：严格大于（ISO-8601 字典序）。updated=末事件 ts（issues.ts 头注冻结
+    // 口径；M2 修正：transition/field-set 后 updated 前进——取「当前记录的 updated」当
+    // 游标，甲（末事件=transition t3）不计入，乙/丙计入；口径与 yt/taiga 适配器一致）
+    const aNow = await p.issues.get(a.id)
+    expect(aNow.updated > a.updated).toBe(true) // transition 后 updated 前进（旧版漏前进）
+    expect((await p.issues.list({ updatedSince: aNow.updated })).map((r) => r.id)).toEqual(['LOCAL-2', 'LOCAL-3'])
+    const cNow = await p.issues.get(c.id)
+    expect(await p.issues.list({ updatedSince: cNow.updated })).toEqual([])
 
     // 组合维
     expect((await p.issues.list({ stateIn: ['已交付'], assignee: 'emp-1' })).map((r) => r.id)).toEqual(['LOCAL-3'])

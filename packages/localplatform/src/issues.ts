@@ -17,6 +17,19 @@
  *   - 建单落位（docs/25-§3.2 IssueCreate.initialState）：显式入参 > provision
  *     states[0]（流程初态）> 默认 open；provision 存在时显式入参必须在 states 声明集内
  *     （否则显式报错，不静默落错态）
+ *
+ * M2 修正（单子自研切换 task-134；runbook 2026-11-19 §七.1 在案）：
+ *   - scanIssueIds 旧版只认 `LOCAL-N` 前缀（ticketNo gate），迁移保留的外源 ID
+ *     （`studio-dev-N`）对 list() 不可见=前缀盲区。现放宽为「票形 id」——
+ *     `[A-Za-z0-9][A-Za-z0-9._-]*`（点/下划线/连字符合法，禁空/禁前导分隔符）。
+ *     get/comments/links/activity 面原本就吃任意 id，本修只扩 list()/建单扫的可见集。
+ *   - createIssue 自增号=全树 LOCAL-N 最大号+1（旧版取排序末位 id 的号——混 id 树上
+ *     末位可能是外源 id（ticketNo=null→0+1=1），会与既有 LOCAL-1 撞号；纯 LOCAL 树
+ *     行为逐位不变）。
+ *   - deriveIssue 旧版 updated 只定格 created 事件 ts（transition/field-set 不前进），
+ *     与本头注「updated = 末事件 ts」的冻结口径矛盾——M2 真实数据（185 张 lane 单）
+ *     对账时暴露。现对齐口径：每事件 ts 即 updated。既有测试（M1 fixture 无 lane、
+ *     created==updated；lifecycle 步进时钟断言）在两口径下均绿，行为无回退。
  */
 import { readdirSync } from 'node:fs'
 import type { IssueCreate, IssueQuery, IssueRecord, TicketId } from '@studio-next/contract'
@@ -87,6 +100,11 @@ function ticketNo(id: TicketId): number | null {
   return Number.isSafeInteger(n) ? n : null
 }
 
+/** 票形 id 判定（M2 修：list()/建单扫的可见集口径——外源保留 id 如 studio-dev-N 亦票形） */
+function isTicketStem(stem: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(stem)
+}
+
 export function compareTicketIds(a: TicketId, b: TicketId): number {
   const na = ticketNo(a)
   const nb = ticketNo(b)
@@ -94,7 +112,7 @@ export function compareTicketIds(a: TicketId, b: TicketId): number {
   return a < b ? -1 : a > b ? 1 : 0
 }
 
-/** 扫描 issues/ 下本前缀的单据 id（升序） */
+/** 扫描 issues/ 下全部票形单据 id（升序；不问前缀——M2 修，见头注） */
 function scanIssueIds(root: string): TicketId[] {
   const dir = issuesDir(root)
   const out: TicketId[] = []
@@ -102,7 +120,7 @@ function scanIssueIds(root: string): TicketId[] {
     for (const name of readdirSync(dir)) {
       if (!name.endsWith('.jsonl')) continue
       const stem = name.slice(0, -'.jsonl'.length)
-      if (ticketNo(stem) !== null) out.push(stem)
+      if (isTicketStem(stem)) out.push(stem)
     }
   }
   return out.sort(compareTicketIds)
@@ -175,9 +193,11 @@ export function deriveIssue(id: TicketId, events: IssueEvent[]): IssueRecord {
     } else if (ev.type === 'transitioned') {
       if (rec === null) throw new LocalPlatformError('CONFIG_INVALID', 'corrupt-issue-log', `单据 ${id} 首事件不是 created`)
       rec.state = ev.to
+      rec.updated = ev.ts // updated=末事件 ts（冻结口径；M2 修——旧版漏前进，见头注）
     } else {
       if (rec === null) throw new LocalPlatformError('CONFIG_INVALID', 'corrupt-issue-log', `单据 ${id} 首事件不是 created`)
       applySetField(rec, ev.field, ev.value)
+      rec.updated = ev.ts
     }
   }
   if (rec === null) {
@@ -237,9 +257,14 @@ export function createIssue(root: string, now: () => string, input: IssueCreate)
     ?? (input.type !== undefined ? prov?.typeInbox?.[input.type] : undefined)
     ?? prov?.states[0]
     ?? DEFAULT_INITIAL_STATE
+  // 自增号=全树 LOCAL-N 最大号+1（混 id 树上排序末位可能是外源 id，取 max 才不撞号；
+  // 纯 LOCAL 树=旧版行为逐位不变——M2 修，见头注）
   const ids = scanIssueIds(root)
-  const last = ids[ids.length - 1]
-  const nextNo = last === undefined ? 1 : (ticketNo(last) ?? 0) + 1
+  let nextNo = 1
+  for (const existing of ids) {
+    const n = ticketNo(existing)
+    if (n !== null && n >= nextNo) nextNo = n + 1
+  }
   const id = `${ISSUE_PREFIX}${nextNo}`
   appendJsonl(issuePath(root, id), { type: 'created', ts: now(), state: firstState, input })
   appendActivity(root, now, { issue: id, kind: 'created' })

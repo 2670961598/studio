@@ -28,14 +28,18 @@
  * 边界（铁律）：只读 fixture 与既有平台树；不接网络；零第三方依赖；默认根
  * /tmp/lp-migrate-sandbox（task-131 指定，保留供检查——`--cleanup` 跑完即清）。
  *
- * 用法：node scripts/taiga-localplatform-migrate.ts [--export <ticket-export.json>]
- *        [--expectations <ticket-diff.json> | --skip-expectations] [--root <platform root>]
- *        [--dry-run] [--out <plan.json>] [--cleanup]
+ * 用法：node scripts/taiga-localplatform-migrate.ts [--snapshot <taiga-export.json> |
+ *          --export <ticket-export.json>] [--expectations <ticket-diff.json> |
+ *          --skip-expectations] [--root <platform root>] [--dry-run] [--out <plan.json>] [--cleanup]
+ *   --snapshot 走 M2 真实快照路径（taiga-export/v1，scripts/taiga-snapshot.ts 适配+完整性
+ *     自证）：description 逐字（不嵌溯源 JSON）；severity/priority 缺失=null 登记；history
+ *     只进 root/migration-audit/ 审计旁注（绝不伪造为端口事件/活动流——runbook §七.3）；
+ *     type/dept/level/lane=自定义属性映射（缺位=null 不造默认）
  *   --dry-run 只打印计划摘要/planHash，不写任何文件（--out 被忽略）
- * 退出码：0=迁移成功（数据面 gap 显式记录于计划内不拦停）；1=blocking gap（树漂移/期望表失败）；
- *        2=用法/文件结构错误。
+ * 退出码：0=迁移成功（数据面 gap 显式记录于计划内不拦停）；1=blocking gap（树漂移/期望表失败/
+ *        审计旁注漂移）；2=用法/文件结构错误（含快照 contentSha256 不符）。
  */
-import { appendFileSync, existsSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createLocalPlatform, formatActivityId, parseActivityId } from '../packages/localplatform/src/index.ts'
@@ -45,6 +49,7 @@ import type { TicketId } from '../packages/contract/src/ports/kernel.ts'
 import { DEFAULT_EXPORT, DEFAULT_EXPECTATIONS, loadExpectations, loadPhase0Export, splitIssueRef } from './workbench-issues-rehearse.ts'
 import { STATE_MAP, UsageError, canonicalJson, sha256Hex, stateRowOf, type PlanGap } from './workbench-issues-migrate.ts'
 import type { Expectations, Phase0Export, Phase0Row } from './workbench-issues-rehearse.ts'
+import { loadTaigaSnapshot, type TaigaSnapshot } from './taiga-snapshot.ts'
 
 export const PLAN_SCHEMA = 'taiga-localplatform-migrate/v1'
 export const REPORT_SCHEMA = 'taiga-localplatform-migrate-report/v1'
@@ -69,16 +74,17 @@ export interface PlannedTicket {
   readonly id: string
   readonly project: string
   readonly title: string
-  /** 溯源载荷：源行 canonical JSON（description 承载，平台 get() 可读回） */
+  /** 溯源载荷：M1=源行 canonical JSON；M2 真实快照=源 description 逐字（溯源移审计旁注） */
   readonly description: string
   /** 平台态字符串逐字（binding.ts 口径：不翻译成工作十态） */
   readonly state: string
   /** 对账用状态码（STATE_MAP 冻结表；null=源态不在表内→显式 gap，仍逐字迁移） */
   readonly stateCode: number | null
   readonly stateName: string | null
-  readonly type: string
-  readonly dept: string
-  readonly level: number
+  /** type=自定义属性「类型」的值（真实快照可缺位→null，不造默认——M1 fixture 恒 string） */
+  readonly type: string | null
+  readonly dept: string | null
+  readonly level: number | null
   readonly assignee: string | null
   readonly parent: string | null
   readonly lane: string | null
@@ -133,6 +139,9 @@ export interface MigrateOutcome {
   readonly gaps: readonly PlanGap[]
   readonly driftDisclosed: number
   readonly provisionStates: number
+  /** M2 真实快照路径：审计旁注落点（相对 root）与 history 摘要条数；M1 路径不出现 */
+  readonly auditFile?: string
+  readonly auditHistoryNotes?: number
 }
 
 /* ------------------------------------------------------------------ */
@@ -358,6 +367,281 @@ export function buildMigrationPlan(exported: Phase0Export, expectations: Expecta
 }
 
 /* ------------------------------------------------------------------ */
+/* M2 真实快照路径（taiga-export/v1 → 平台树；plan/06 §二 M2）           */
+/* ------------------------------------------------------------------ */
+
+export const REAL_PLAN_SCHEMA = 'taiga-localplatform-migrate-real/v1'
+export const AUDIT_SCHEMA = 'taiga-localplatform-migration-audit/v1'
+/** 审计旁注落点（平台树内非端口路径：不进活动流、不被 issues/comments 读取面消费） */
+export const AUDIT_DIR = 'migration-audit'
+export const AUDIT_FILE = 'taiga-localplatform-migration.json'
+
+/** 审计旁注：history 逐条摘要（不伪造端口事件——runbook §七.3 口径） */
+export interface AuditHistoryNote {
+  readonly id: string
+  readonly user: string
+  readonly createdAtIso: string
+  readonly type: number
+  readonly key: string
+}
+
+export interface AuditIssue {
+  readonly id: string
+  readonly ref: number
+  readonly statusName: string
+  readonly statusClosed: boolean | null
+  readonly stateCode: number | null
+  readonly severity: string | null
+  readonly priority: string | null
+  readonly owner: string | null
+  readonly tags: readonly string[]
+  readonly isBlocked: boolean
+  readonly createdIso: string
+  readonly modifiedIso: string
+  readonly customAttributes: Readonly<Record<string, string>>
+  readonly epicCount: number
+  readonly childTaskCount: number
+  readonly historyCount: number
+  readonly history: readonly AuditHistoryNote[]
+}
+
+/** 迁移审计旁注（history/owner/severity/priority/自定义属性原值的唯一仓内落点） */
+export interface MigrationAuditSidecar {
+  readonly schema: typeof AUDIT_SCHEMA
+  readonly source: {
+    readonly snapshot: string
+    readonly exportedAt: string
+    readonly contentSha256: string
+    readonly project: string
+  }
+  readonly planHash: string
+  readonly counts: {
+    readonly issues: number
+    readonly comments: number
+    readonly historyNotes: number
+    readonly parentChildPairs: number
+  }
+  readonly mappings: {
+    readonly id: string
+    readonly state: string
+    readonly type: string
+    readonly dept: string
+    readonly level: string
+    readonly lane: string
+    readonly severity: string
+    readonly priority: string
+    readonly owner: string
+    readonly history: string
+    readonly parent: string
+  }
+  readonly disclosures: readonly string[]
+  readonly issues: readonly AuditIssue[]
+}
+
+export interface RealMigrationPlan {
+  readonly schema: typeof REAL_PLAN_SCHEMA
+  readonly source: {
+    readonly snapshot: string
+    readonly exportedAt: string
+    readonly contentSha256: string
+    readonly project: string
+    readonly rows: number
+    readonly rowsDropped: number
+  }
+  readonly provision: FieldProvisionMap
+  readonly writeOrder: readonly string[]
+  readonly issues: readonly PlannedTicket[]
+  readonly gaps: readonly PlanGap[]
+  readonly drift: readonly DriftDisclosure[]
+  readonly audit: MigrationAuditSidecar
+  readonly meta: {
+    readonly planHash: string
+    readonly note: string
+  }
+}
+
+/** applyPlan 可写计划（M1 Phase0 计划 ∪ M2 真实快照计划） */
+export type WritablePlan = MigrationPlan | RealMigrationPlan
+
+/** 真实快照 provision：states=STATE_MAP 表序 ∪ 源外延态（排序稳定；首元素=流程初态） */
+function realProvisionOf(usedStates: ReadonlySet<string>): FieldProvisionMap {
+  const states: string[] = []
+  for (const row of STATE_MAP) {
+    if (usedStates.has(row.from) && !states.includes(row.from)) states.push(row.from)
+  }
+  for (const extra of [...usedStates].filter((s) => stateRowOf(s) === undefined).sort()) states.push(extra)
+  return {
+    fields: {
+      type: 'type',
+      dept: 'dept',
+      level: 'level',
+      lane: 'lane',
+      assignee: 'assignee',
+      parent: 'parent',
+    },
+    states,
+    stateFlow: {},
+  }
+}
+
+export function buildRealSnapshotPlan(snapshot: TaigaSnapshot, snapshotPath: string): RealMigrationPlan {
+  const gaps: PlanGap[] = []
+  const tickets: PlannedTicket[] = []
+  const auditIssues: AuditIssue[] = []
+  let updatedAfterCreated = 0
+  let subjectEmpty = 0
+
+  for (const row of snapshot.rows) {
+    const mapped = stateRowOf(row.statusName)
+    if (mapped === undefined) {
+      gaps.push({
+        kind: 'state-unmapped',
+        issue: row.id,
+        detail: `状态 "${row.statusName}" 不在 STATE_MAP 冻结表——平台态逐字迁移（binding.ts：未映射=Ok(unverified)+observe-unmapped，观察事实不是错误），对账码=null、对账侧按披露处理`,
+      })
+    }
+    if (row.subject.trim() === '') {
+      subjectEmpty += 1
+      gaps.push({ kind: 'subject-empty', issue: row.id, detail: 'subject 为空——标题回退 [<id>]（源数据如实登记，不伪造标题）' })
+    }
+    if (row.modifiedIso > row.createdIso) updatedAfterCreated += 1
+    tickets.push({
+      id: row.id,
+      project: row.project,
+      title: row.subject.trim() === '' ? `[${row.id}]` : row.subject,
+      description: row.description,
+      state: row.statusName,
+      stateCode: mapped?.to ?? null,
+      stateName: mapped?.toName ?? null,
+      type: row.type,
+      dept: row.dept,
+      level: row.level,
+      assignee: row.assignee,
+      parent: row.parent,
+      lane: row.lane,
+      createdIso: row.createdIso,
+      updatedIso: row.modifiedIso,
+      comments: [...row.comments]
+        .sort((a, b) => (a.createdAtIso !== b.createdAtIso ? (a.createdAtIso < b.createdAtIso ? -1 : 1) : a.id < b.id ? -1 : 1))
+        .map((c) => ({ author: c.author, body: c.body, signature: `— ${c.author}（taiga 迁移）`, createdAtIso: c.createdAtIso, sourceId: c.id })),
+    })
+    auditIssues.push({
+      id: row.id,
+      ref: row.ref,
+      statusName: row.statusName,
+      statusClosed: row.statusClosed,
+      stateCode: mapped?.to ?? null,
+      severity: row.severity,
+      priority: row.priority,
+      owner: row.owner,
+      tags: row.tags,
+      isBlocked: row.isBlocked,
+      createdIso: row.createdIso,
+      modifiedIso: row.modifiedIso,
+      customAttributes: row.customAttributes,
+      epicCount: row.epicCount,
+      childTaskCount: row.childTaskCount,
+      historyCount: row.history.length,
+      history: [...row.history]
+        .sort((a, b) => (a.createdAtIso !== b.createdAtIso ? (a.createdAtIso < b.createdAtIso ? -1 : 1) : a.id < b.id ? -1 : 1))
+        .map((h) => ({ id: h.id, user: h.user, createdAtIso: h.createdAtIso, type: h.type, key: h.key })),
+    })
+  }
+
+  // severity/priority 缺失登记（本实例 US 无原生字段、亦无自定义属性——null 如实）
+  const severityMissing = snapshot.rows.filter((r) => r.severity === null).length
+  const priorityMissing = snapshot.rows.filter((r) => r.priority === null).length
+  if (severityMissing > 0) {
+    gaps.push({ kind: 'field-absent-severity', issue: null, detail: `severity 缺失 ${String(severityMissing)}/${String(snapshot.rows.length)}（Taiga US 无原生 severity、实例无该自定义属性）→ null 如实登记，不伪造` })
+  }
+  if (priorityMissing > 0) {
+    gaps.push({ kind: 'field-absent-priority', issue: null, detail: `priority 缺失 ${String(priorityMissing)}/${String(snapshot.rows.length)}（Taiga US 无原生 priority、实例无该自定义属性）→ null 如实登记，不伪造` })
+  }
+  gaps.push({
+    kind: 'history-audit-only',
+    issue: null,
+    detail: `history ${String(snapshot.manifest.historyTotal)} 条不伪造为平台端口事件/活动流——审计旁注落 ${AUDIT_DIR}/${AUDIT_FILE}（id/user/createdAt/type/key 摘要），完整 valuesDiff 留冻结快照`,
+  })
+  gaps.push({
+    kind: 'parent-child-as-is',
+    issue: null,
+    detail: `父子对=${String(snapshot.manifest.parentChildPairs.total)}（epic ${String(snapshot.manifest.parentChildPairs.epic)} / childTask ${String(snapshot.manifest.parentChildPairs.childTask)}）如实——Taiga US↔US 无父子模型（快照 fieldNotes.parent），不伪造链接`,
+  })
+  gaps.push({ kind: 'dispatcher-audit-only', issue: null, detail: 'owner（建单人）无平台字段位——审计旁注保留，不塞 description' })
+  gaps.push({ kind: 'stateflow-edges-not-declared', issue: null, detail: 'provision.stateFlow 置空表：快照无流边数据，不伪造（guard 接线日按部署工件补）' })
+  if (updatedAfterCreated > 0) {
+    gaps.push({
+      kind: 'updated-not-forged',
+      issue: null,
+      detail: `modified 晚于 created 的 ${String(updatedAfterCreated)} 单：平台 updated=created 事件 ts（带 lane 的单=lane setField 的 modified ts）——事件流不伪造中间流转，差值以审计旁注 modifiedIso 可回溯`,
+    })
+  }
+  if (subjectEmpty > 0) {
+    gaps.push({ kind: 'subject-empty-total', issue: null, detail: `subject 为空共 ${String(subjectEmpty)} 单（标题回退 [<id>]）` })
+  }
+
+  const order = writeOrderOf(tickets, gaps)
+  const usedStates = new Set(snapshot.rows.map((r) => r.statusName))
+  const provision = realProvisionOf(usedStates)
+  const commentTotal = tickets.reduce((sum, t) => sum + t.comments.length, 0)
+
+  const audit: MigrationAuditSidecar = {
+    schema: AUDIT_SCHEMA,
+    source: {
+      snapshot: path.basename(snapshotPath),
+      exportedAt: snapshot.exportedAt,
+      contentSha256: snapshot.manifest.contentSha256,
+      project: snapshot.project.slug,
+    },
+    planHash: '', // 落盘时由 applyPlan 回填 plan.meta.planHash（哈希体自引用豁免——同 M1 meta 不入哈希口径）
+    counts: {
+      issues: tickets.length,
+      comments: commentTotal,
+      historyNotes: auditIssues.reduce((sum, a) => sum + a.history.length, 0),
+      parentChildPairs: snapshot.manifest.parentChildPairs.total,
+    },
+    mappings: {
+      id: 'idDisplay（studio-dev-<ref>）→ 平台单 ID 逐字保留（plan/06 §三.2）',
+      state: 'status.name → 平台态字符串逐字（binding.ts：observe-unmapped；对账码另走 STATE_MAP 冻结表）',
+      type: '自定义属性「类型」的值 → issues.type（缺位=null 不造默认；值集 task/patrol/devtask/bug/hr 逐字）',
+      dept: '自定义属性「部门」的值 → issues.dept 逐字（含 departments/ 前缀形态）',
+      level: '自定义属性「等级」（数字串）→ issues.level（number；缺位=null）',
+      lane: '自定义属性「泳道」的值 → issues.lane（平台侧经 setField 端口补写；缺位=null）',
+      severity: '缺失 → null（本实例 US 无 severity，登记于本审计与计划 gap）',
+      priority: '缺失 → null（本实例 US 无 priority，登记于本审计与计划 gap）',
+      owner: 'owner.fullName → 审计旁注（平台无 dispatcher 字段位）',
+      history: 'history → 审计旁注摘要（id/user/createdAt/type/key）；不伪造端口事件/活动流',
+      parent: '恒 null（Taiga US↔US 无父子模型）——如实，不伪造',
+    },
+    disclosures: gaps.filter((g) => g.issue === null).map((g) => `${g.kind}: ${g.detail}`),
+    issues: auditIssues,
+  }
+
+  const planBody: Omit<RealMigrationPlan, 'meta'> = {
+    schema: REAL_PLAN_SCHEMA,
+    source: {
+      snapshot: path.basename(snapshotPath),
+      exportedAt: snapshot.exportedAt,
+      contentSha256: snapshot.manifest.contentSha256,
+      project: snapshot.project.slug,
+      rows: tickets.length,
+      rowsDropped: snapshot.rowsDropped,
+    },
+    provision,
+    writeOrder: order,
+    issues: tickets,
+    gaps,
+    drift: [],
+    audit,
+  }
+  const planHash = `sha256:${sha256Hex(canonicalJson(planBody))}`
+  return {
+    ...planBody,
+    meta: { planHash, note: '真实快照路径：时间戳全部取自源数据（created/modified/评论 createdAt）；planHash 覆盖含审计旁注的整个数据体（重跑/异机同哈希）' },
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* 平台树写入（幂等）                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -397,15 +681,37 @@ function sameTicketShape(actual: { title: string; state: string; type?: string; 
   return (
     actual.title === planned.title &&
     actual.state === planned.state &&
-    actual.type === planned.type &&
-    actual.dept === planned.dept &&
-    actual.level === planned.level &&
+    (actual.type ?? null) === planned.type && // M2：type 可缺位（null 如实）；M1 恒非空→行为不变
+    (actual.dept ?? null) === planned.dept &&
+    (actual.level ?? null) === planned.level &&
     (actual.assignee ?? null) === planned.assignee &&
     (actual.parent ?? null) === planned.parent
   )
 }
 
-export async function applyPlan(plan: MigrationPlan, root: string): Promise<MigrateOutcome> {
+/** 审计旁注落盘体（applyPlan 注入 planHash 后写出；确定性=同计划同文件） */
+function auditFileBody(plan: RealMigrationPlan): string {
+  return `${JSON.stringify({ ...plan.audit, planHash: plan.meta.planHash }, null, 2)}\n`
+}
+
+/** meta/links.jsonl 显式 parent-child 对（缺文件=空集——链接幂等判据，见 applyPlan 步骤3） */
+function explicitParentChildPairs(root: string): Set<string> {
+  const file = path.join(root, 'meta', 'links.jsonl')
+  if (!existsSync(file)) return new Set()
+  const out = new Set<string>()
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
+    if (line.trim() === '') continue
+    const rec = JSON.parse(line) as { a?: unknown; b?: unknown; type?: unknown }
+    if (rec.type === 'parent-child' && typeof rec.a === 'string' && typeof rec.b === 'string') out.add(parentChildKey(rec.a, rec.b))
+  }
+  return out
+}
+
+function parentChildKey(parent: string, child: string): string {
+  return `${parent} ${child}`
+}
+
+export async function applyPlan(plan: WritablePlan, root: string): Promise<MigrateOutcome> {
   const gaps = [...plan.gaps]
   let commentsWritten = 0
   let linksWritten = 0
@@ -460,14 +766,15 @@ export async function applyPlan(plan: MigrationPlan, root: string): Promise<Migr
       skipped += 1
     } else {
       // created 事件直写（ID 保留唯一路径——issues.create() 只能分配 LOCAL-N；头注端口缺口）
+      // M2：type/dept/level 可缺位（null 不写入事件——平台派生 undefined≡null 归一口径）
       const input: Record<string, unknown> = {
         title: planned.title,
         description: planned.description,
-        type: planned.type,
-        dept: planned.dept,
-        level: planned.level,
-        initialState: planned.state,
       }
+      if (planned.type !== null) input.type = planned.type
+      if (planned.dept !== null) input.dept = planned.dept
+      if (planned.level !== null) input.level = planned.level
+      input.initialState = planned.state
       if (planned.assignee !== null) input.assignee = planned.assignee
       if (planned.parent !== null) input.parent = planned.parent
       appendFileSync(file, `${JSON.stringify({ type: 'created', ts: planned.createdIso, state: planned.state, input })}\n`, 'utf8')
@@ -524,21 +831,46 @@ export async function applyPlan(plan: MigrationPlan, root: string): Promise<Migr
     }
   }
 
-  // 3) 父子链接（links.link 平台 API；幂等=children 已含则跳过）
+  // 3) 父子链接（links.link 平台 API；幂等=meta/links.jsonl 显式链已含则跳过）
+  //    幂等判据读显式链文件本身，不用 links.children()——children=显式链∪parent 字段，
+  //    前缀盲区修复后 list() 可见外源 id，parent 字段派生已覆盖 children 视图，但显式链
+  //    落盘是 M1 冻结口径（两视图独立维护），此处按文件判重（links.ts 头注）
+  const explicitPairs = explicitParentChildPairs(root)
   for (const child of linkable) {
     const parent = child.parent
     if (parent === null) continue
-    const existingChildren = await platform.links.children(parent)
-    if (!existingChildren.includes(child.id as TicketId)) {
-      clockNow = child.updatedIso
-      await platform.links.link(parent, child.id, 'parent-child')
-      linksWritten += 1
+    if (explicitPairs.has(parentChildKey(parent, child.id))) continue
+    clockNow = child.updatedIso
+    await platform.links.link(parent, child.id, 'parent-child')
+    explicitPairs.add(parentChildKey(parent, child.id))
+    linksWritten += 1
+  }
+
+  // 4) 审计旁注（M2 真实快照路径）：history/owner/severity/priority/自定义属性原值落
+  //    root/migration-audit/——非端口路径（issues/activity/meta/kb 读面之外），不进活动流。
+  //    幂等口径：文件存在且逐字节一致=跳过；存在但不同=audit-diverged（blocking，拒改）
+  let auditFile: string | undefined
+  let auditHistoryNotes: number | undefined
+  if (plan.schema === REAL_PLAN_SCHEMA) {
+    auditFile = path.join(root, AUDIT_DIR, AUDIT_FILE)
+    auditHistoryNotes = plan.audit.counts.historyNotes
+    if (!preBlocked) {
+      const body = auditFileBody(plan)
+      if (existsSync(auditFile)) {
+        if (readFileSync(auditFile, 'utf8') !== body) {
+          gaps.push({ kind: 'audit-diverged', issue: null, detail: `${AUDIT_DIR}/${AUDIT_FILE} 已存在且内容与计划审计体不一致——旁注树漂移，拒覆盖（对账以冻结快照为准重建或人工核）` })
+        }
+      } else {
+        mkdirSync(path.dirname(auditFile), { recursive: true })
+        writeFileSync(auditFile, body, 'utf8')
+      }
     }
   }
 
   const blocking = gaps.some((g) =>
     g.kind === 'extra-ticket' || g.kind === 'provision-diverged' || g.kind === 'ticket-diverged' ||
-    g.kind === 'created-event-rejected' || g.kind === 'comments-diverged' || g.kind.startsWith('expectation:'),
+    g.kind === 'created-event-rejected' || g.kind === 'comments-diverged' || g.kind === 'audit-diverged' ||
+    g.kind.startsWith('expectation:'),
   )
   const commentTotal = plan.issues.reduce((sum, t) => sum + t.comments.length, 0)
   const outcome: MigrateOutcome = {
@@ -556,6 +888,8 @@ export async function applyPlan(plan: MigrationPlan, root: string): Promise<Migr
     gaps,
     driftDisclosed: plan.drift.length,
     provisionStates: plan.provision.states.length,
+    ...(auditFile !== undefined ? { auditFile } : {}),
+    ...(auditHistoryNotes !== undefined ? { auditHistoryNotes } : {}),
   }
   return outcome
 }
@@ -574,7 +908,7 @@ function isDirectRun(): boolean {
   }
 }
 
-const USAGE = '用法：node scripts/taiga-localplatform-migrate.ts [--export <ticket-export.json>] [--expectations <ticket-diff.json> | --skip-expectations] [--root <platform root>] [--dry-run] [--out <plan.json>] [--cleanup]'
+const USAGE = '用法：node scripts/taiga-localplatform-migrate.ts [--snapshot <taiga-export.json> | --export <ticket-export.json>] [--expectations <ticket-diff.json> | --skip-expectations] [--root <platform root>] [--dry-run] [--out <plan.json>] [--cleanup]'
 
 export async function migrateCli(argv: readonly string[]): Promise<{ code: number; stdout: string }> {
   const args = [...argv]
@@ -592,8 +926,9 @@ export async function migrateCli(argv: readonly string[]): Promise<{ code: numbe
     args.splice(i, 1)
     return true
   }
-  const exportPath = take('--export') ?? DEFAULT_EXPORT
-  const expectationsPath = take('--expectations') ?? DEFAULT_EXPECTATIONS
+  const snapshotArg = take('--snapshot')
+  const exportArg = take('--export')
+  const expectationsArg = take('--expectations')
   const rootArg = take('--root') ?? DEFAULT_ROOT
   const outPath = take('--out')
   const skipExpectations = has('--skip-expectations')
@@ -601,7 +936,74 @@ export async function migrateCli(argv: readonly string[]): Promise<{ code: numbe
   const cleanup = has('--cleanup')
   if (args.some((a) => a === '--help' || a === '-h')) return { code: 0, stdout: `${USAGE}\n` }
   if (args.length > 0) throw new UsageError(`未知参数：${args.join(' ')}；${USAGE}`)
+  if (snapshotArg !== undefined && (exportArg !== undefined || expectationsArg !== undefined || skipExpectations)) {
+    throw new UsageError(`--snapshot 与 --export/--expectations/--skip-expectations 互斥；${USAGE}`)
+  }
 
+  // ---- M2 真实快照路径（taiga-export/v1 → 平台树）----
+  if (snapshotArg !== undefined) {
+    const t0 = performance.now()
+    const snapshot = loadTaigaSnapshot(snapshotArg)
+    const tLoad = performance.now()
+    const plan = buildRealSnapshotPlan(snapshot, snapshotArg)
+    const tPlan = performance.now()
+    if (dryRun) {
+      // dry-run=零写盘：计划与审计旁注只算不写（root 不得被创建——演练断言点）
+      const summary = {
+        schema: REPORT_SCHEMA,
+        root: rootArg,
+        dryRun: true,
+        planHash: plan.meta.planHash,
+        issues: plan.issues.length,
+        comments: plan.issues.reduce((s, t) => s + t.comments.length, 0),
+        links: plan.issues.filter((t) => t.parent !== null).length,
+        gapCount: plan.gaps.length,
+        gapKinds: plan.gaps.map((g) => g.kind),
+        driftDisclosed: plan.drift.length,
+        provisionStates: plan.provision.states.length,
+        provisionStateList: plan.provision.states,
+        unmappedStates: [...new Set(plan.issues.filter((t) => t.stateCode === null).map((t) => t.state))],
+        auditHistoryNotes: plan.audit.counts.historyNotes,
+        timingMs: { load: Math.round(tLoad - t0), plan: Math.round(tPlan - tLoad) },
+      }
+      return { code: 0, stdout: `${JSON.stringify(summary)}\n` }
+    }
+    const outcome = await applyPlan(plan, rootArg)
+    const tApply = performance.now()
+    if (outPath !== undefined) {
+      writeFileSync(outPath, `${JSON.stringify(plan, null, 2)}\n`, 'utf8')
+    }
+    const summary = {
+      schema: outcome.schema,
+      root: outcome.root,
+      dryRun: false,
+      planHash: outcome.planHash,
+      issues: outcome.issues,
+      comments: outcome.comments,
+      links: outcome.links,
+      written: outcome.written,
+      skipped: outcome.skipped,
+      gapCount: outcome.gapCount,
+      gaps: outcome.gaps,
+      blocking: outcome.blocking,
+      driftDisclosed: outcome.driftDisclosed,
+      provisionStates: outcome.provisionStates,
+      auditFile: outcome.auditFile,
+      auditHistoryNotes: outcome.auditHistoryNotes,
+      timingMs: { load: Math.round(tLoad - t0), plan: Math.round(tPlan - tLoad), apply: Math.round(tApply - tPlan), total: Math.round(tApply - t0) },
+      ...(outPath !== undefined ? { out: outPath } : {}),
+    }
+    if (cleanup && !outcome.blocking) {
+      const resolved = path.resolve(rootArg)
+      if (statSync(resolved, { throwIfNoEntry: false })?.isDirectory() === true) rmSync(resolved, { recursive: true, force: true })
+      return { code: 0, stdout: `${JSON.stringify({ ...summary, cleanup: true })}\n` }
+    }
+    return { code: outcome.blocking ? 1 : 0, stdout: `${JSON.stringify(summary)}\n` }
+  }
+
+  // ---- M1 Phase0 fixture 路径（原行为逐字节保持）----
+  const exportPath = exportArg ?? DEFAULT_EXPORT
+  const expectationsPath = expectationsArg ?? DEFAULT_EXPECTATIONS
   const exported = loadPhase0Export(exportPath)
   const expectations = skipExpectations ? null : loadExpectations(expectationsPath)
   const plan = buildMigrationPlan(exported, expectations, exportPath, skipExpectations ? null : expectationsPath)
