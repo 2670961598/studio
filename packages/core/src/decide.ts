@@ -203,6 +203,8 @@ export interface StallAlarmAction extends ActionBase {
   livenessSource?: LivenessSource
   /** 判定所用阈值 ms（按 executor 分级后的生效值；缺省=入参 stallAfterMs） */
   stallThresholdMs?: number
+  /** attempt 开始时刻（task-125 审计） */
+  attemptStartedAt?: number | undefined
   /** 工人确定性消亡（无在途句柄＋work_record 终态）——引擎 B 面即时收口 */
   workerGone?: boolean
 }
@@ -350,6 +352,8 @@ export interface DecisionInput {
    * now−issue.updated（旧世界字节不变）。workerGone=true 时不受阈值约束即时告警。
    */
   liveness?: WorkerLiveness
+  /** task-125：本次 attempt 开始时刻；提供时 stall 锚点下界=attempt 开始 */
+  attemptStartedAt?: number | undefined
 }
 
 /** decide 输出（拟升 contract） */
@@ -427,9 +431,13 @@ export function decide(input: DecisionInput): DecisionOutput {
       ? liveness.lastActivityAt
       : Date.parse(issue.updated)
     if (!Number.isNaN(anchor)) {
-      const silentMs = Math.max(0, input.now - anchor)
+      // task-125：新 attempt 锚点下界——旧 attempt/issue.updated 陈旧锚不得让刚派发的 attempt 立即 STALL
+      const attemptStart = input.attemptStartedAt !== undefined && Number.isFinite(input.attemptStartedAt) ? input.attemptStartedAt : undefined
+      const effectiveAnchor = attemptStart !== undefined ? Math.max(anchor, attemptStart) : anchor
+      const silentMs = Math.max(0, input.now - effectiveAnchor)
       const workerGone = liveness?.workerGone === true
-      if (workerGone || silentMs > input.stallAfterMs) {
+      const attemptMature = attemptStart === undefined || input.now - attemptStart >= input.stallAfterMs
+      if (workerGone || (silentMs > input.stallAfterMs && attemptMature)) {
         return {
           intentKey,
           action: {
@@ -437,8 +445,9 @@ export function decide(input: DecisionInput): DecisionOutput {
             code: 'STALL_SILENT',
             ticket: issue.id,
             silentMs,
-            ...(liveness !== undefined ? { livenessAnchorAt: anchor, livenessSource: liveness.source } : {}),
+            ...(liveness !== undefined ? { livenessAnchorAt: effectiveAnchor, livenessSource: liveness.source } : {}),
             stallThresholdMs: input.stallAfterMs,
+            ...(attemptStart !== undefined ? { attemptStartedAt: attemptStart } : {}),
             ...(workerGone ? { workerGone: true } : {}),
           },
         }

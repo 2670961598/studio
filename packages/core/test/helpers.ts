@@ -65,5 +65,6 @@ export function makeInput(o: InputOverrides = {}): DecisionInput {
     stallAfterMs: o.stallAfterMs ?? 3_600_000,
     // 工人活性锚（studio-dev-505）：缺省不装配=回退 issue.updated（旧迹字节不变）
     ...(o.liveness !== undefined ? { liveness: o.liveness } : {}),
+    ...(o.attemptStartedAt !== undefined ? { attemptStartedAt: o.attemptStartedAt } : {}),
   }
 }

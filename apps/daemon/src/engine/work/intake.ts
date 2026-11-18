@@ -102,6 +102,8 @@ export interface WorkCandidateHost {
   readonly livenessOf?: (ticket: TicketId, issue: IssueRecord) => WorkerLiveness | undefined
   /** 该单生效静默阈值（按 executor 分级；缺省回退 stallAfterMs） */
   readonly stallAfterMsOf?: (ticket: TicketId, issue: IssueRecord) => number
+  /** task-125：本次 attempt 开始时刻（inflight 新派记录；缺省不传=旧行为） */
+  readonly attemptStartedAtOf?: (ticket: TicketId) => number | undefined
   /**
    * 任职闸门事实快照（v2/02 §3.4；studio-dev-550）：派发对象 → 在岗事实。判定面在 core
    * `decide`（HOLD_NOT_IN_SERVICE），本件只把事实装进 decide 入参（判定零复制）。
@@ -173,6 +175,7 @@ export async function decideWorkCandidate(
     ...(host.flows !== undefined ? { flows: host.flows } : {}),
     now: host.now(),
     stallAfterMs: host.stallAfterMsOf?.(ticket, issue) ?? host.stallAfterMs,
+    ...(host.attemptStartedAtOf?.(ticket) !== undefined ? { attemptStartedAt: host.attemptStartedAtOf(ticket) } : {}),
     ...(host.livenessOf !== undefined
       ? (() => {
           const liveness = host.livenessOf(ticket, issue)

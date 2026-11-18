@@ -432,6 +432,7 @@ export async function executeDispatch(
         laneEpoch: liveLaneEpoch,
         personId: person.id,
         ...(routedSource !== undefined && tierResolve !== undefined ? { routedSourceId: routedSource.id, routedTier: tierResolve.tier } : {}),
+        startedAt: at,
         dispatchedAtSeq: seq,
         ...(instructionsPath !== undefined ? { instructionsPath } : {}),
       })

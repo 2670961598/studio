@@ -102,9 +102,10 @@ export async function executeStallResponse(
     : `在工静默 ${action.silentMs}ms 超阈值 ${effective}ms`
   // 活性锚观测面（可审计；回退锚 issue.updated 也明写，不静默）
   const anchorFace =
-    action.livenessSource !== undefined
+    (action.livenessSource !== undefined
       ? `；活性锚=${action.livenessSource}@${new Date(action.livenessAnchorAt ?? 0).toISOString()}`
-      : ''
+      : '') +
+    (action.attemptStartedAt !== undefined ? `；attemptStartedAt=${new Date(action.attemptStartedAt).toISOString()}` : '')
   if (!immediateGone && (threshold <= 0 || nth < threshold || (entry !== undefined && entry.dispatchedAtSeq === host.currentSeq()))) {
     // 只叫：告警事件照落（观测面不变——decide 4 号判定的台账留痕）
     host.makeEvent('STALL', fresh, workAttempt, tickEvents, {

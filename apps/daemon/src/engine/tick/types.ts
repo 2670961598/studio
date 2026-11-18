@@ -351,6 +351,8 @@ export interface Inflight {
   routedTier?: import('@studio-next/core').TierId
   /** 派发拍序：本拍派发的下一拍才可收割（同拍单至多一动作的收割侧落点） */
   dispatchedAtSeq: number
+  /** task-125：本次 attempt 开始墙钟（stall 静默锚下界；新 attempt 重置） */
+  startedAt?: number
   /**
    * bridge 通道（agents_md≠native）的每任务指令临时文件（docs/25-§3.1 v1.5#1）：
    * 保留至收割完成（worker 全程可读、抗 compact 重注入）→ GATE_PASS/GATE_FAIL 删；

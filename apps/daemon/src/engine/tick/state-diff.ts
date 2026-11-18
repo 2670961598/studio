@@ -275,6 +275,7 @@ export async function stateDiffPhase(
       },
       stallAfterMsOf: (ticket) =>
         effectiveStallAfterMs(config.stallAfterMs, config.stallAfterMsByExecutor, inflight.get(ticket)?.executor ?? latestRecordOf(ticket)?.executor),
+      attemptStartedAtOf: (ticket) => inflight.get(ticket)?.startedAt,
     }
     for (const cand of orderedCandidates) {
       const decision = await decideWorkCandidate(workCandidateHost, cand)
