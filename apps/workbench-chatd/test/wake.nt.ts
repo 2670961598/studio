@@ -4,8 +4,10 @@
  *       TTL/重试≤3/dead-letter；append-only 审计）＋ §三验收点（lease 过期/重试/dead-letter/
  *       ack 幂等/审计追加/重启状态/并发唯一）；docs/sentinel-logs/提案-Phase1聊天服务-2026-11-17.md。
  * 覆盖：v1→v2 迁移回填、审计 append-only 触发器、claim 幂等（同 lease）、TTL 过期重投、
- *       重试上限→dead-letter（稳定错误+审计封口）、ack 幂等、审计只追加、重启租约恢复（含 dead 跨重启）、
+ *       重试上限→dead-letter（稳定错误+审计封口；C2.1 加固：dead 后 ack 拒绝、审计零新增）、
+ *       ack 幂等、审计只追加、重启租约恢复（含 dead 跨重启）、
  *       并发 claim 唯一、内存模式租约语义（向后兼容）、真客户端（WorkbenchTransport）wake 契约。
+ *       （时钟注入/手动推进的零 sleep 覆盖见 test/wake-hardening.nt.ts。）
  * 边界：无网络/无密钥/无 host；不接生产、不写公司目录、不迁数据。
  * 运行：node --experimental-strip-types --test apps/workbench-chatd/test/wake.nt.ts
  */
@@ -320,6 +322,12 @@ test('e2e：重试上限→dead-letter——第 3 次租约过期后 claim 回�
           const err = await expectErr(await c.call('wakes.claim', { actorId: 'dev', wakeIds: [wakeId] }))
           assert.equal(err.code, 'WB_WAKE_NOT_CLAIMABLE', 'dead-letter 后 claim 回冻结错误码')
           assert.match(err.message, /dead-lettered/, '稳定错误信息（dead-letter）')
+        }
+        // C2.1 加固：dead 终态不可再 ack（同 actor=最后持租人也拒；复用 WB_WAKE_NOT_CLAIMABLE，message 注明 dead）
+        for (let i = 0; i < 2; i += 1) {
+          const ackErr = await expectErr(await c.call('wakes.ack', { actorId: 'dev', wakeIds: [wakeId] }))
+          assert.equal(ackErr.code, 'WB_WAKE_NOT_CLAIMABLE', 'dead-letter 后 ack 回冻结错误码')
+          assert.match(ackErr.message, /dead-lettered/, 'ack 拒绝信息同样注明 dead（终态不可翻案）')
         }
         const inbox = await expectOk<{ pendingWakeIds: string[]; mentions: number }>(await c.call('inbox', { actorId: 'dev' }))
         assert.deepEqual(inbox.pendingWakeIds, [], 'dead-letter 是投递终态：inbox 不再 pending')

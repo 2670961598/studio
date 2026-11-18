@@ -86,15 +86,20 @@ const actorOf = (p: Record<string, unknown>): string => str(p, 'actorId') ?? str
 //  - 租约过期后再 claim = 重投（attempt+1，claimed 数组回包），租约重授。
 //  - 投递次数上限 WAKE_MAX_DELIVERY_ATTEMPTS（首投计 1）：超限 → dead-letter（租约终态），
 //    此后 claim 回稳定错误 WB_WAKE_NOT_CLAIMABLE（不重投、审计不再追加），inbox 不再计 pending。
+//  - dead 是投递终态：dead-letter 后 ack 同样回稳定错误 WB_WAKE_NOT_CLAIMABLE（message 注明
+//    dead；C2.1 加固——终态不可经 ack 翻案，拒绝不追加审计），正常 ack 语义（pending/自持租约可
+//    确认、alreadyAcked 幂等）不变。
 //  - ack 幂等（alreadyAcked）；ack 后租约终态 acked。
 //  - 每次状态迁移 append 一条审计事件（内存 push / SQLite 落 wake_events，只追加不物理删）。
+//  - 时钟可注入（C2.1 加固）：TTL/时间戳唯一源 = store.now（构造参数注入，缺省 Date.now，
+//    生产行为不变）；测试手动推进/跳变钟，不再依赖真实 sleep。
 
 /** 取 wake 当前租约；无记录（含 v1 遗留/异常态）按「未投递」合成，安全回落首投语义。 */
 const leaseOf = (state: MockState, wakeId: string): WakeLease =>
   state.wakeLeases.get(wakeId) ?? { wakeId, attempt: 0, state: 'pending', claimedBy: null, leaseExpiresAt: null, updatedAt: 0 }
 
-/** dispatch 所需租约参数（config 装配传入）。 */
-interface WakeDispatchOpts {
+/** dispatch 所需租约参数（config 装配传入；导出仅供测试直接驱动 dispatch，协议面不变）。 */
+export interface WakeDispatchOpts {
   readonly leaseTtlMs: number
 }
 
@@ -119,7 +124,9 @@ function commitWakeTransition(state: MockState, store: ChatStore, wake: MockWake
 // ─── 端点实现（语义与 P1-1a 已验收的 mock-sidecar 一致；由契约测试背书） ────────
 // 落库纪律：分配型写入（rooms/messages/wakes）DB 先行——失败抛错 → WB_INTERNAL、内存不落地，
 // 保证 seq 计数器与库内 id 分配一致（无空洞）；覆盖型写入（read 游标/wake 状态）内存先行、DB 镜像。
-function dispatch(state: MockState, store: ChatStore, method: string, p: Record<string, unknown>, wakeOpts: WakeDispatchOpts): unknown {
+// 导出 dispatch 供 store 级测试直驱（可注入时钟覆盖 TTL 语义，零子进程零真实 sleep）；
+// 时间唯一源 = store.now（见 ChatStore.now），dispatch 不再直呼 Date.now。
+export function dispatch(state: MockState, store: ChatStore, method: string, p: Record<string, unknown>, wakeOpts: WakeDispatchOpts): unknown {
   switch (method) {
     case 'health':
       return buildHealth(state.startedAt, store.mode === 'sqlite' ? 'sqlite' : 'mock')
@@ -151,6 +158,7 @@ function dispatch(state: MockState, store: ChatStore, method: string, p: Record<
       const { value, replayed } = idempotent(state, store, scope, str(p, 'idempotencyKey'), () => {
         const seq = state.msgSeq + 1
         const roomSeq = room.headRoomSeq + 1
+        const now = store.now() // 时钟唯一源（可注入；message/wake 时间戳同刻，便于审计对齐）
         const message: MockMessage = {
           messageId: `msg-${String(seq)}`,
           seq,
@@ -159,7 +167,7 @@ function dispatch(state: MockState, store: ChatStore, method: string, p: Record<
           senderId: sender,
           body,
           mentions,
-          createdAt: Date.now(),
+          createdAt: now,
         }
         const wakes: MockWake[] = []
         const wakeLeases: WakeLease[] = []
@@ -167,7 +175,6 @@ function dispatch(state: MockState, store: ChatStore, method: string, p: Record<
         let wakeSeq = state.wakeSeq
         for (const m of new Set(mentions)) {
           wakeSeq += 1
-          const now = Date.now()
           wakes.push({
             wakeId: `wake-${String(wakeSeq)}`,
             actorId: m,
@@ -257,7 +264,7 @@ function dispatch(state: MockState, store: ChatStore, method: string, p: Record<
           if (w === undefined) throw new WbFailure('WB_WAKE_NOT_FOUND', 'wake not found')
           if (w.actorId !== actor) throw new WbFailure('WB_WAKE_NOT_FOUND', 'wake not owned by actor')
           if (w.status === 'acked') throw new WbFailure('WB_WAKE_NOT_CLAIMABLE', 'wake already acked')
-          const now = Date.now()
+          const now = store.now()
           // 租约有效期内：同 actor 幂等（回同 lease，不延期不计数）；他人持有才拒。
           if (w.status === 'claimed' && w.claimedUntil !== null && w.claimedUntil > now) {
             if (w.claimedBy === actor) {
@@ -303,8 +310,14 @@ function dispatch(state: MockState, store: ChatStore, method: string, p: Record<
             alreadyAcked.push(id)
             continue
           }
+          // dead 终态不可再 ack（C2.1 加固）：dead-letter 是投递终态，ack 不得翻案——
+          // 回与 claim 侧同口径的稳定错误（复用 WB_WAKE_NOT_CLAIMABLE，message 注明 dead），
+          // 拒绝路径不 commitWakeTransition（审计无新增）。
+          if (leaseOf(state, id).state === 'dead') {
+            throw new WbFailure('WB_WAKE_NOT_CLAIMABLE', `wake dead-lettered after ${String(WAKE_MAX_DELIVERY_ATTEMPTS)} delivery attempts`)
+          }
           if (w.status === 'claimed' && w.claimedBy !== actor) throw new WbFailure('WB_WAKE_NOT_CLAIMABLE', 'wake not claimed by actor')
-          const now = Date.now()
+          const now = store.now()
           const lease = leaseOf(state, id)
           const updated: MockWake = { ...w, status: 'acked', ackedAt: now, claimedBy: null, claimedUntil: null }
           commitWakeTransition(state, store, updated, { wakeId: id, attempt: lease.attempt, state: 'acked', claimedBy: null, leaseExpiresAt: null, updatedAt: now }, 'acked')

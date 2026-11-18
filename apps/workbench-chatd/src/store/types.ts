@@ -135,6 +135,12 @@ export type StoreMode = 'memory' | 'sqlite'
  */
 export interface ChatStore {
   readonly mode: StoreMode
+  /**
+   * 可注入时钟（C2.1 wake lease 加固）：wake 租约 TTL 判定与 send/claim/ack 时间戳的唯一时间源
+   * （dispatch 不再直呼 Date.now）。构造参数注入，缺省 Date.now——生产行为不变；
+   * 测试注入手动推进/跳变钟后，TTL 过期/重投/dead-letter 语义可零真实 sleep 覆盖。
+   */
+  readonly now: () => number
   /** 启动时从持久层回填状态与 seq 计数器（memory 模式 no-op）。 */
   hydrate(target: MockState): void
   insertRoom(room: MockRoom): void

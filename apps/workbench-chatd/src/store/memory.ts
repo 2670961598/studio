@@ -8,6 +8,12 @@ import type { ChatStore } from './types.ts'
 
 export class MemoryChatStore implements ChatStore {
   readonly mode = 'memory' as const
+  /** 可注入时钟（与 SqliteChatStore 同口径；缺省 Date.now，生产行为不变）。 */
+  readonly now: () => number
+
+  constructor(now: () => number = Date.now) {
+    this.now = now
+  }
 
   hydrate(): void {
     /* 内存模式无可恢复状态 */

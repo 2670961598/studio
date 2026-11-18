@@ -10,7 +10,9 @@
 
 - **存储**：内存 mock（缺省，向后兼容）或 node:sqlite（`src/store/`：schema 版本表 `chatd_meta`+顺序迁移、
   init 幂等、DB 文件 0600、messages append-only 由 schema 触发器 ABORT 保证）。send/read/ack 写路径落库、
-  重启 hydrate 恢复；read 游标覆盖写（单调不回退）。**不接 vendor collab**（P1-2 后半）、不建 wake 租约/dead-letter。
+  重启 hydrate 恢复；read 游标覆盖写（单调不回退）。wake 租约/dead-letter 已落地（`wake_leases` 投影 +
+  `wake_events` append-only 审计，见 `WORKBENCH_CHATD_WAKE_LEASE_MS`）；**不接 vendor collab**（P1-2 后半）。
+  store 时钟可注入（构造参数 `now: () => number`，缺省 `Date.now`——生产行为不变；测试手动推进/跳变用）。
 - **不接生产**：launchd 仅模板（`launchd/`，不加载）；不写公司目录、不迁 Matrix 数据。
 - **协议冻结**：`workbench-transport/v1`（唯一冻结源 `packages/workbench-transport/src/types.ts`）。本包**不 import**
   该包（分层宪法 20-§十五：新包间边=提案流），wire DTO/错误码以镜像对齐，由契约测试（真客户端）背书。
@@ -30,7 +32,7 @@ node --experimental-strip-types apps/workbench-chatd/src/main.ts [--memory]
 | `WORKBENCH_CHATD_TOKEN` | （空） | transport token；**生产必配**。未配置默认 **fail-closed**：`config_invalid` exit 1。形如 `__...__` 的占位符（模板未替换）同样拒启 |
 | `WORKBENCH_CHATD_ALLOW_NO_AUTH` | （空） | 免鉴权显式豁免：仅精确值 `1` 生效，允许未配 token 启动（**仅供 mock/dev/测试**，启动打 `auth_disabled` 告警）。未设/其他值=不豁免（fail-closed）；配了 token 时本开关不降低鉴权 |
 | `WORKBENCH_CHATD_DB` | （空） | SQLite 数据库**绝对路径**（C-mini）：设置即持久化模式（父目录按需 0700 创建，文件 0600；schema 见 `src/store/sqlite.ts`）；缺省/空=内存 mock。`--memory` 可强制覆盖回内存 |
-| `WORKBENCH_CHATD_WAKE_LEASE_MS` | `30000` | wake 租约 TTL ms（P1-2 wake lease）：claim 授予租约，过期后再 claim 即重投；投递次数上限 3（首投计 1），超限 dead-letter（`WB_WAKE_NOT_CLAIMABLE` 稳定错误，inbox 不再 pending）；状态迁移全量落 append-only 审计（`wake_events`）。测试旋钮；生产不设即缺省 |
+| `WORKBENCH_CHATD_WAKE_LEASE_MS` | `30000` | wake 租约 TTL ms（P1-2 wake lease）：claim 授予租约，过期后再 claim 即重投；投递次数上限 3（首投计 1），超限 dead-letter（`WB_WAKE_NOT_CLAIMABLE` 稳定错误，inbox 不再 pending；**dead 终态不可再 ack**——C2.1 加固，ack 同码拒绝且审计零新增）；状态迁移全量落 append-only 审计（`wake_events`）。测试旋钮；生产不设即缺省 |
 | `WORKBENCH_CHATD_DELAY_MS` | `0` | 每请求人工延迟（测试/观测旋钮；生产保持 0） |
 | `WORKBENCH_CHATD_DRAIN_TIMEOUT_MS` | `5000` | SIGTERM 后在途请求 drain 上限 |
 | `WORKBENCH_CHATD_LOG` | `info` | `debug|info|warn|error`；日志=stderr 单行 JSON |
@@ -77,6 +79,19 @@ node --experimental-strip-types --test apps/workbench-chatd/test/lifecycle.nt.ts
 契约测试经子进程驱动器 `packages/workbench-transport/test/support/chatd-driver.ts`（真
 `WorkbenchTransport` 客户端打真 socket；两包文件互不 import，不构成 import 边），覆盖
 happy 全端点、`WB_TIMEOUT` 超时、SIGKILL 断连 `WB_UNAVAILABLE` + 自动重连。
+
+## 风险与后续单（C2.1 wake lease 加固登记口径）
+
+- **wake_events 无归档/保留策略（保留为后续单）**：投递审计 append-only 由 schema 触发器
+  ABORT 机制保证，本轮**不实现任何物理清理/归档**——append-only 审计宪法不动摇（状态变更的
+  唯一真相在 `wake_events`，物理删除会破坏可审计性）。代价是长跑增长无界；归档/快照投影等
+  保留策略属重大改动，按顺序铁律先文档提案过审再立单（文档先行，不默许代码漂移）。
+- ~~dead 终态可被最后持租人 ack 翻案~~（已修，C2.1）：dead-letter 后 `wakes.ack` 回稳定
+  `WB_WAKE_NOT_CLAIMABLE`（message 注明 dead-lettered，与 claim 侧同口径），拒绝不追加审计；
+  正常 ack 语义（pending/自持租约可确认、alreadyAcked 幂等）不变。
+- **时钟口径**：TTL 判定是纯 `claimedUntil > now` 比较，时钟已可注入（store 构造参数 `now`，
+  缺省 `Date.now`，生产行为不变）。已文档化的已知口径：时钟**回跳**会使临期/已过期租约复见
+  有效（claim 幂等不重投、attempt 不回退，无计数回滚风险）；生产时钟源单调性由宿主保证。
 
 ## launchd 模板
 

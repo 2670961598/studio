@@ -215,6 +215,8 @@ const parseJsonArray = (raw: string, column: string): string[] => {
 
 export class SqliteChatStore implements ChatStore {
   readonly mode = 'sqlite' as const
+  /** 可注入时钟（TTL/时间戳唯一源；缺省 Date.now，生产行为不变；测试手动推进/跳变用）。 */
+  readonly now: () => number
   private readonly db: DatabaseSync
   private readonly insertRoomStmt: StatementSync
   private readonly insertMessageStmt: StatementSync
@@ -225,7 +227,8 @@ export class SqliteChatStore implements ChatStore {
   private readonly upsertReadStmt: StatementSync
   private readonly insertIdempotencyStmt: StatementSync
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, now: () => number = Date.now) {
+    this.now = now
     mkdirSync(dirname(dbPath), { recursive: true, mode: 0o700 })
     this.db = new DatabaseSync(dbPath)
     chmodSync(dbPath, 0o600) // SQLite 默认 0644&umask；每次打开收紧到 0600（治愈漂移）
