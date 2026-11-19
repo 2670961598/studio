@@ -207,3 +207,33 @@ export type {
   Parsed,
   SendMessageBody,
 } from './conversation/index.ts'
+
+// 自研聊天室视图层（chat/——M4-3 最小刀；独立入口同包 ./chat）：env 开关（缺省关闭）→
+// @studio-next/workbench-transport 连本地 chatd；页面+最小 API，WB_* 错误码透传。
+export {
+  DEFAULT_CHAT_ACTOR_ID,
+  DEFAULT_CHAT_LIMIT,
+  DEFAULT_CHAT_POLL_MS,
+  MAX_CHAT_BODY_CHARS,
+  MAX_CHAT_LIMIT,
+  WB_HTTP_STATUS,
+  clampChatLimit,
+  classifyChatFailure,
+  createChatApp,
+  createChatPanelOptions,
+  createChatPanelTransport,
+  loadChatPanelEnv,
+  parseReadBody,
+  parseSendBody,
+  renderChatPage,
+} from './chat/index.ts'
+export type {
+  ChatAppOptions,
+  ChatPageOptions,
+  ChatPanelEnv,
+  ChatPanelErrorBody,
+  ChatPanelErrorCode,
+  ChatPanelTransport,
+  ParsedReadBody,
+  ParsedSendBody,
+} from './chat/index.ts'

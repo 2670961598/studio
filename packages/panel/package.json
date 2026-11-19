@@ -25,6 +25,10 @@
     "./conversation": {
       "import": "./src/conversation/index.ts",
       "require": "./require-reject.cjs"
+    },
+    "./chat": {
+      "import": "./src/chat/index.ts",
+      "require": "./require-reject.cjs"
     }
   },
   "scripts": {
@@ -34,6 +38,7 @@
   "dependencies": {
     "@studio-next/contract": "workspace:*",
     "@studio-next/store": "workspace:*",
+    "@studio-next/workbench-transport": "workspace:*",
     "hono": "^4.6.0"
   },
   "devDependencies": {

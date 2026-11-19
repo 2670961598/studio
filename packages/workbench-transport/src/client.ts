@@ -60,7 +60,10 @@ export class WorkbenchTransport {
   }
 
   async health(): Promise<HealthResult> { return (await this.request('health', {})) as HealthResult }
-  async listRooms(): Promise<readonly Room[]> { return (await this.request('rooms.list', {})) as readonly Room[] }
+  // rooms.list 参面（M4-3 面板聊天室接线带出）：可选 input 原样上帧（token 附加形参——其余方法同款
+  // 判例；缺省 {} 与 v1 既有 wire 完全一致）。此前无参面导致 chatd 配 token 时 rooms.list 无法携凭据
+  // （调用方传参被静默丢弃——daemon chatd-mention-source.roomNames 同款假设，现补齐）。
+  async listRooms(input: { token?: string } = {}): Promise<readonly Room[]> { return (await this.request('rooms.list', input)) as readonly Room[] }
   async createRoom(input: { kind: Room['kind']; name: string; memberIds?: readonly string[] }): Promise<Room> {
     return (await this.request('rooms.create', input)) as Room
   }

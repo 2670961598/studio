@@ -130,6 +130,9 @@ export const allowedPackageEdges = [
   //     panel→workbench-transport 随面板 UI 实现单另行走批示）——
   ["daemon", "workbench-transport"],
   ["workbench-chatd", "workbench-transport"],
+  // —— panel→workbench-transport（M4-3 面板聊天室 UI 实现单，4→1 自上而下合法；
+  //     判例同上「边先入表、package.json 声明随接线单落」——本单两者同时落）——
+  ["panel", "workbench-transport"],
   ["panel", "company"],
   ["panel", "store"],
   ["panel", "contract"],

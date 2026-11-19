@@ -32,6 +32,12 @@
  *   GET /api/judge?days=&company=
  *                            判断调用卡（160 §6.5 单D）：JUDGE_* 事件按址聚合只读投影——
  *                            调用量/费用/降级率（窗口内）+熔断态（全量史重放，见 judge.ts）
+ *   GET /chat               自研聊天室页（M4-3 最小刀：房间/消息流/输入/未读；env 开关
+ *                            WORKBENCH_CHATD_SOCKET/TOKEN，缺省关闭=「未启用」降级页）
+ *   GET /api/chat/rooms[?actor=]、GET /api/chat/messages?roomId=&limit=
+ *   POST /api/chat/send、POST /api/chat/read
+ *                            聊天室 API（经 @studio-next/workbench-transport 连本地 chatd；
+ *                            WB_* 稳定码透传，错误体 {ok:false,error:{code,…}}）
  *
  * 只读纪律：panel 对 SQLite **零写**。台账 WAL（单写多读）使 panel 与 daemon 写进程同库并存
  * 天然安全（store/driver.ts journal_mode=WAL）。注意 openLedger 对不存在的路径会建库迁移
@@ -64,6 +70,8 @@ import {
 import { VENDOR_FILES, mountPanelStatic } from './static.ts'
 import { createConversationApp, type ConversationAppOptions } from './conversation/server.ts'
 import { loadConversationWritePolicy } from './conversation/api.ts'
+import { createChatApp, type ChatAppOptions } from './chat/server.ts'
+import { createChatPanelOptions } from './chat/wiring.ts'
 import {
   DEFAULT_BREAKER_DAYS,
   DEFAULT_COSTS_DAYS,
@@ -100,6 +108,11 @@ export interface PanelAppOptions {
    * 写策略缺省从进程环境读取（STUDIO_PANEL_PRODUCER_TOKEN/PRODUCER_ID）。
    */
   conversation?: ConversationAppOptions
+  /**
+   * 聊天室视图注入（M4-3 最小刀）：缺省从进程环境读取（WORKBENCH_CHATD_SOCKET/TOKEN
+   * ——socket 未配=未启用：页面降级「未启用」、/api/chat/* 503，不拒启）。
+   */
+  chat?: ChatAppOptions
 }
 
 function clampLimit(raw: string | undefined, fallback: number): number {
@@ -181,6 +194,9 @@ export function createPanelApp(opts: PanelAppOptions): PanelApp {
       opts.conversation ?? { store: null, policy: loadConversationWritePolicy(process.env) },
     ),
   )
+
+  // 自研聊天室视图（M4-3 最小刀）：满路径子应用，缺省 env 开关（socket 未配=未启用降级）。
+  app.route('/', createChatApp(opts.chat ?? createChatPanelOptions(process.env)))
 
   // 静态面（/vendor/:file、/ui/*）先挂：与 /api/* 无路径交叠，位置只表达「业务路由之前」
   mountPanelStatic(app)
