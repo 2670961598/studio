@@ -19,16 +19,18 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { InvokeIntent, InvokeSource } from '@studio-next/contract'
-import { parseDaemonConfig } from '@studio-next/daemon/serve'
 import {
-  assembleChatdSource,
-  bootServe,
-  WORKBENCH_CHATD_TOKEN_ENV,
+  parseDaemonConfig,
   type ChatdSourceFactory,
   type ChatdTransportPort,
-} from '../../src/boot.ts'
+} from '@studio-next/daemon/serve'
+import { assembleChatdSource, bootServe, WORKBENCH_CHATD_TOKEN_ENV } from '../../src/boot.ts'
 
 // ————————————————————————— mock transport（内存态；单 actor 最小链） —————————————————————————
+
+/** 端口结果元素形（经 daemon/serve 再出口的端口面推导——不直连 workbench-transport、不另立第二形） */
+type ChatdMessage = Awaited<ReturnType<ChatdTransportPort['listMessages']>>['items'][number]
+type ChatdClaimedWake = Awaited<ReturnType<ChatdTransportPort['claimWakes']>>['wakes'][number]
 
 interface FakeWake {
   wakeId: string
@@ -44,9 +46,7 @@ class FakeChatd implements ChatdTransportPort {
   readonly wakes: FakeWake[] = []
   closed = false
   private seq = 0
-  private readonly messages: {
-    seq: number; roomSeq: number; roomId: string; senderId: string; body: string; mentions: string[]; createdAt: number
-  }[] = []
+  private readonly messages: ChatdMessage[] = []
 
   send(body: string, mentions: readonly string[]): void {
     this.seq += 1
@@ -62,9 +62,9 @@ class FakeChatd implements ChatdTransportPort {
     return { actorId: input.actorId, unread: 0, mentions: pending.length, pendingWakeIds: pending.map((w) => w.wakeId), rooms: [] }
   }
 
-  async claimWakes(input: { actorId: string; wakeIds: readonly string[]; idempotencyKey?: string; token?: string }): Promise<{ claimed: string[]; alreadyClaimed: string[]; wakes: unknown[]; replayed: boolean }> {
+  async claimWakes(input: { actorId: string; wakeIds: readonly string[]; idempotencyKey?: string; token?: string }): Promise<{ claimed: string[]; alreadyClaimed: string[]; wakes: ChatdClaimedWake[]; replayed: boolean }> {
     this.calls.push({ method: 'claimWakes', input })
-    const wakes: unknown[] = []
+    const wakes: ChatdClaimedWake[] = []
     for (const id of input.wakeIds) {
       const w = this.wakes.find((x) => x.wakeId === id)
       if (w !== undefined && w.status === 'pending') {
@@ -88,12 +88,12 @@ class FakeChatd implements ChatdTransportPort {
     return { acked, alreadyAcked: [], replayed: false }
   }
 
-  async listMessages(input: { roomId: string; limit?: number }): Promise<{ items: typeof this.messages; nextCursor: null; hasMore: boolean }> {
+  async listMessages(input: { roomId: string; limit?: number }): Promise<{ items: ChatdMessage[]; nextCursor: null; hasMore: boolean }> {
     this.calls.push({ method: 'listMessages', input })
     return { items: this.messages.filter((m) => m.roomId === input.roomId), nextCursor: null, hasMore: false }
   }
 
-  async listRooms(): Promise<readonly { roomId: string; kind: string; name: string; memberIds: string[]; headRoomSeq: number }[]> {
+  async listRooms(): Promise<readonly { roomId: string; kind: 'broadcast'; name: string; memberIds: string[]; headRoomSeq: number }[]> {
     this.calls.push({ method: 'listRooms', input: {} })
     return [{ roomId: 'room-1', kind: 'broadcast', name: '大厅', memberIds: ['PRIME-0', 'AGENT-1'], headRoomSeq: this.seq }]
   }
