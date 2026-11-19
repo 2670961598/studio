@@ -1,0 +1,53 @@
+{
+  "schema": "matrix-export/v1",
+  "exportedAt": 1795043456571,
+  "homeserver": "http://127.0.0.1:8008",
+  "rooms": {
+    "!roomOps:localhost": {
+      "name": "ops-值班",
+      "topic": "值班与告警同步",
+      "canonicalAlias": null,
+      "members": [
+        "@dev1:localhost",
+        "@lead:localhost",
+        "@mapped.bot:localhost",
+        "@weird#user:localhost"
+      ],
+      "messages": [
+        { "eventId": "$ev1", "type": "m.room.message", "ts": 1793729277199, "sender": "@lead:localhost", "body": "早会开始，同步昨日告警", "msgtype": "m.text", "mentions": [] },
+        { "eventId": "$ev2", "type": "m.room.message", "ts": 1793729400000, "sender": "@dev1:localhost", "body": "@lead 汇报：夜间批处理正常", "msgtype": "m.text", "mentions": ["@lead:localhost"] },
+        { "eventId": "$ev3", "type": "m.room.message", "ts": 1793729500000, "sender": "@weird#user:localhost", "body": "odd localpart sender stays verbatim", "msgtype": "m.text", "mentions": [] },
+        { "eventId": "$ev4", "type": "m.room.message", "ts": 1793729600000, "sender": "@mapped.bot:localhost", "body": "chief 账号由显式映射注入", "msgtype": "m.text", "mentions": ["@weird#user:localhost"] },
+        { "eventId": "$ev5", "type": "m.room.encrypted", "ts": 1793729700000, "sender": "@dev1:localhost", "body": null, "msgtype": null, "mentions": [] },
+        { "eventId": "$ev6", "type": "m.room.message", "ts": 1793729800000, "sender": "@lead:localhost", "body": "截图.png", "msgtype": "m.image", "mentions": [] },
+        { "eventId": "$ev7", "type": "m.room.message", "ts": 1793729900000, "sender": "@dev1:localhost", "body": "更正：昨夜批处理实际为 3 单", "msgtype": "m.replace", "mentions": [] },
+        { "eventId": "$ev8", "type": "m.room.message", "ts": 1793730000000, "sender": "@lead:localhost", "body": "", "msgtype": "m.text", "mentions": [] }
+      ]
+    },
+    "!roomNoName:localhost": {
+      "name": null,
+      "topic": null,
+      "canonicalAlias": null,
+      "members": ["@lead:localhost"],
+      "messages": [
+        { "eventId": "$n1", "type": "m.room.message", "ts": 1794000000000, "sender": "@lead:localhost", "body": "无名房回落 roomId 作 chatd 房名", "msgtype": "m.text", "mentions": [] }
+      ]
+    },
+    "!roomDupName:localhost": {
+      "name": "ops-值班",
+      "topic": null,
+      "canonicalAlias": "#dup:localhost",
+      "members": ["@dev1:localhost"],
+      "messages": [
+        { "eventId": "$d1", "type": "m.room.message", "ts": 1794100000000, "sender": "@dev1:localhost", "body": "同名房以 #hash8 消歧", "msgtype": "m.text", "mentions": [] }
+      ]
+    },
+    "!roomEmpty:localhost": {
+      "name": "空房-哨兵",
+      "topic": null,
+      "canonicalAlias": null,
+      "members": null,
+      "messages": []
+    }
+  }
+}

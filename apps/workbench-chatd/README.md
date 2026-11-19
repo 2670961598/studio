@@ -13,7 +13,9 @@
   重启 hydrate 恢复；read 游标覆盖写（单调不回退）。wake 租约/dead-letter 已落地（`wake_leases` 投影 +
   `wake_events` append-only 审计，见 `WORKBENCH_CHATD_WAKE_LEASE_MS`）；**不接 vendor collab**（P1-2 后半）。
   store 时钟可注入（构造参数 `now: () => number`，缺省 `Date.now`——生产行为不变；测试手动推进/跳变用）。
-- **不接生产**：launchd 仅模板（`launchd/`，不加载）；不写公司目录、不迁 Matrix 数据。
+- **不接生产**：launchd 仅模板（`launchd/`，不加载）；不写公司目录、不迁 Matrix 数据（Matrix 历史
+  迁移由仓内工具 `scripts/matrix-to-chatd-migrate.ts` 承担，只读源+落 /tmp，见
+  `docs/sentinel-logs/聊天自研切换-runbook-2026-11-19.md`——chatd 本体不实现迁移逻辑）。
 - **协议冻结**：`workbench-transport/v1`（唯一冻结源 `packages/workbench-transport/src/types.ts`）。本包**不 import**
   该包（分层宪法 20-§十五：新包间边=提案流），wire DTO/错误码以镜像对齐，由契约测试（真客户端）背书。
   两种存储模式的端点响应形状完全一致（health 的 `server` 后缀标模式：`+mock`/`+sqlite`）。
@@ -79,6 +81,25 @@ node --experimental-strip-types --test apps/workbench-chatd/test/lifecycle.nt.ts
 契约测试经子进程驱动器 `packages/workbench-transport/test/support/chatd-driver.ts`（真
 `WorkbenchTransport` 客户端打真 socket；两包文件互不 import，不构成 import 边），覆盖
 happy 全端点、`WB_TIMEOUT` 超时、SIGKILL 断连 `WB_UNAVAILABLE` + 自动重连。
+
+## Matrix 历史迁移与幂等口径（M4，task-137；工具在 scripts/，chatd 本体零迁移逻辑）
+
+迁移工具 `scripts/matrix-to-chatd-migrate.ts`（只读 Matrix 导出→临时 chatd→Transport v1
+`rooms.create`/`messages.send`）的去重权衡，**结论：chatd 协议已有自定义字段，无需 body 前缀去重**：
+
+- **主去重（协议原生）**：`messages.send` 的 `idempotencyKey`（发送方传源 `mx:<eventId>`）——
+  服务端 `send:<senderId>|<roomId>|<key>` 作用域落 SQLite idempotency 表，跨重启 replay 不新增
+  （`SendResult.replayed`）。比 body 前缀方案强：不污染正文、不受显示层截断影响。
+  代价：作用域含 sender——**迁移窗口内 actor 映射必须冻结**，换映射=重放失效。
+- **辅标记（审计+对账真值，非去重依赖）**：正文前缀 `[mx:<eventId>@<originTs>] `。
+  存在理由是三个协议缺口而非去重：① createdAt 无回填位（v1 落地时刻≠源时刻），首末时间对账
+  只能靠标签内嵌 ts；② `messages.list` 每房仅最旧 200 条可见，标签让迁移器 L3 预检在窗口内
+  自证已迁集；③ 对账器 `scripts/matrix-to-chatd-diff.ts` 以标签为事件级 diff 真值
+  （漏/重复/漂移分类）。若 v1 完全没有 idempotencyKey，前缀本可独立扛去重，但**会**引入
+  正文污染+超窗房间不可判重两个新代价——不选。
+- **已知残余风险**：服务端 idempotency 落键在消息事务之后（两事务毫秒级窗口），窗口内崩溃
+  会重发一条；对账器 `duplicate` gap 检出，处置=回滚重迁（append-only 不可原位修）。
+  全流程见 `docs/sentinel-logs/聊天自研切换-runbook-2026-11-19.md`。
 
 ## 风险与后续单（C2.1 wake lease 加固登记口径）
 
