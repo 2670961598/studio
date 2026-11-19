@@ -177,13 +177,14 @@ describe('NEG-ENG-01 CJS 拒绝面（15 包）', () => {
       }
     }
 
-    // 子路径完整枚举：panel 5 条、studio-tools 2 条（不以 "./*" 通配）。
+    // 子路径完整枚举：panel 6 条、studio-tools 2 条（不以 "./*" 通配）。
     expect(Object.keys(readManifest('panel').exports)).toEqual([
       '.',
       './overview',
       './inbox',
       './judge',
       './conversation',
+      './chat',
     ])
     expect(Object.keys(readManifest('studio-tools').exports)).toEqual(['.', './stdio'])
   })
