@@ -39,6 +39,19 @@ export { buildServeRuntime, type ServeRuntime } from './serve/runtime.ts'
 export { wireSecretTrust, readSecretDeclarations, type SecretDeclarationInput } from './trust/wire.ts'
 export type { SecretTrust } from '@studio-next/gateway'
 export { runServe, type RunServeOpts, type ServeResult } from './serve/run.ts'
+// chatd 唤起源面再出（M4-1 task-136）：boot 组合根从 '@studio-next/daemon/serve' 消费工厂与
+// 类型——boot 不直接 import @studio-next/workbench-transport（边界图无该边；transport 由源内自建）
+export {
+  CHATD_MENTION_SOURCE_NAME,
+  CHATD_SOURCE_MANIFEST,
+  createChatdMentionSource,
+  mentionSourceKindOf,
+  wireChatdMentionSource,
+  type ChatdMentionSourceOptions,
+  type ChatdSourceFactory,
+  type ChatdTransportPort,
+  type MentionSourceKind,
+} from './serve/chatd-mention-source.ts'
 
 // —— 既有公共面再出口（路径/名字冻结；实现件按 20-§十五「先拆再增」早已拆出）——
 export { DEMO_SNAPSHOT } from './demo/demo-snapshot.ts'

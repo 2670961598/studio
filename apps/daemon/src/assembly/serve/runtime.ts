@@ -64,6 +64,7 @@ import {
 import { startChannelSupply, wireRoomFace } from '../channels/channels.ts'
 import { seedJobs } from '../jobs-seed/jobs-seed.ts'
 import { daemonIdentity, type ServeConfig } from './config.ts'
+import { wireChatdMentionSource, type ChatdSourceFactory } from './chatd-mention-source.ts'
 import { authorityEvidenceGateOptions } from '../serveconfig/authority.ts'
 import { wireAiwsFace } from './aiws-face.ts'
 import { wireWorkspaceFace } from './workspace-face.ts'
@@ -111,6 +112,8 @@ export function buildServeRuntime(
     quarantineMs?: number
     /** matrix 源工厂（matrix: true 时调用；不注入=CONFIG_INVALID——daemon 不强依赖 matrix 包） */
     matrixSource?: () => InvokeSource
+    /** chatd 源工厂（M4-1 task-136）：mentionSource: chatd 时以 roster 在册工号回调（不注入=CONFIG_INVALID——boot 组合根注入 createChatdMentionSource 产物） */
+    chatdSource?: ChatdSourceFactory
     /**
      * Matrix 人事执行面工厂（DEV-48，docs/52-§七；hrSync+hrMatrix: true 时调用）：
      * 装配单元注入 createMatrixHrFace 产物（结构同形 engine/hrsync MatrixHrFace——
@@ -430,6 +433,10 @@ export function buildServeRuntime(
     scheduler = schedulerSource.scheduler
     sources.register(schedulerSource, SCHEDULER_SOURCE_MANIFEST)
   }
+
+  // —— chatd @唤醒源（M4-1 task-136）：mentionSource: chatd 时注入工厂装配（体在 chatd-mention-source.ts；
+  //    与 matrix 块互斥由配置面保证——validateChatdMentionCross，二者不同时为开）——
+  if (config.mentionSource === 'chatd') wireChatdMentionSource(sources, opts?.chatdSource, snapshot.people.map((p) => p.id))
 
   if (config.matrix) {
     if (opts?.matrixSource === undefined) {

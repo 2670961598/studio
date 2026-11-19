@@ -123,6 +123,21 @@ export interface ServeConfig extends HrServeConfig, RestartServeConfig, Signatur
   /** 增量 sync 长轮询超时 ms（缺省 25000——空闲期挂连接，A-4；基线拉取恒 0） */
   matrixSyncTimeoutMs?: number
   /**
+   * @唤醒源选型（M4-1 接线收口，team task-136；docs/plan/07-…-2026-11-19.md §5.4）：
+   * 'matrix'（缺省——生产现状零漂移，仍由 matrix: true 门控）| 'chatd'（workbench-chatd
+   * 唤起源，自身即门控，socket 见 chatdSocket）。非法值解析即拒（CONFIG_INVALID）；
+   * 'chatd' 与 matrix: true 互斥（双唤起源=双写拒启——M4 双跑走影子工具不走配置双开）。
+   */
+  mentionSource: 'matrix' | 'chatd'
+  /**
+   * chatd Unix socket 路径（mentionSource: chatd 时生效）：显式配置须绝对路径（相对=拒启）；
+   * 缺省推导 `<companyDir>/var/workbench/chat.sock`（无 companyDir 又未配=拒启，不猜 cwd）。
+   * token **不落本配置面**——仅经 env WORKBENCH_CHATD_TOKEN 由组合根 apps/boot 读取注入。
+   */
+  chatdSocket?: string
+  /** chatd 唤起源轮询间隔 ms（缺省沿用 3000——chatd-mention-source.ts 源内缺省单一源） */
+  mentionPollMs?: number
+  /**
    * 公司频道供给开关（130-P3，130 提案 §6.7.3-③；缺省关）：true=注入工厂装配（opts.
    * matrixRoomFace）——启动+热重载 ensure 八类地图＋派发/CLOSE 生命周期钩（EngineDeps.
    * rooms）。开而未注入=CONFIG_INVALID；供给失败不阻主循环（执行体 assembly/channels/）。
@@ -332,6 +347,8 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   jobPollMs: 15_000,
   matrix: false,
   matrixChannels: false,
+  // @唤醒源选型缺省 matrix（M4-1 task-136；chatd 默认关闭——生产现状不动）
+  mentionSource: 'matrix',
   // 制作人-岗位持久对话缺省关（docs/21-§七）：关=零装配零注入
   conversation: false,
   conversationDefaultPerson: 'PRIME-0',

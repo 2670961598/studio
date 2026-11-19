@@ -35,18 +35,22 @@
  *
  * 配置开关（提案 §5.4，**默认 matrix 不动生产现状**）：mentionSourceKindOf(raw) 把
  * daemon.yaml 的 mentionSource 值解析为 'matrix'|'chatd'，缺省='matrix'（chatd 默认
- * 关闭）；非法值 CONFIG_INVALID 明报。本刀不接 boot/run.ts 装配、不改 daemon.yaml——
- * 模块 inert，供组装时注入（mentionSource:'chatd' 时的注册面归 M3 后续实现单）。
+ * 关闭）；非法值 CONFIG_INVALID 明报。M4-1（team task-136）已接装配：本文件同时持有
+ * 配置收口（coerceChatdServeKey/validateChatdMentionCross——config.ts switch/尾段收口到此）
+ * 与注册面（wireChatdMentionSource——runtime.ts 在 mentionSource: chatd 时装配注入工厂；
+ * 组合根 apps/boot 构造本源产物经 opts.chatdSource 注入，不启动 chatd 进程——独立 ops/launchd）。
  */
-import type { CompanySlug, InvokeIntent, InvokeSource, PersonId } from '@studio-next/contract'
+import type { CompanySlug, InvokeIntent, InvokeSource, PersonId, SourceManifest } from '@studio-next/contract'
 import { WB_ERROR_CODES, WorkbenchTransport } from '@studio-next/workbench-transport'
 import type { AckResult, ClaimResult, InboxResult, MessagePage, Room } from '@studio-next/workbench-transport'
+import { isAbsolute, join, resolve } from 'node:path'
 import { checkMentionPayload } from '../../engine/intents/taxonomy.ts'
+import type { ServeConfig } from './config-types.ts'
 
 /** 唤醒源名（InvokeIntent.source 的固定值；与 matrix 源 'matrix' 命名判例同构） */
 export const CHATD_MENTION_SOURCE_NAME = 'chatd'
 
-// ————————————————————————— 配置开关（默认 matrix；本刀 inert） —————————————————————————
+// ————————————————————————— 配置开关（默认 matrix；M4-1 起接线） —————————————————————————
 
 /** daemon.yaml `mentionSource` 取值域（提案 §5.4：缺省 matrix——chatd 默认关闭） */
 export type MentionSourceKind = 'matrix' | 'chatd'
@@ -307,4 +311,93 @@ export function createChatdMentionSource(options: ChatdMentionSourceOptions): In
       log('[chatd] 唤起源已停（定时器已清、transport 已关，在途 poll 丢弃结果）')
     },
   }
+}
+
+// ————————————————————————— 配置收口 + 注册面（M4-1 接线，team task-136） —————————————————————————
+
+/** serveconfig 值收口助手（config.ts 扁平解析面的 str/num 同形——保持本件与解析件解耦的单孔） */
+export interface ChatdServeKeyHelpers {
+  readonly str: (value: unknown, key: string) => string
+  readonly num: (value: unknown, key: string) => number
+}
+
+/**
+ * chatd 唤起源键解析（config.ts switch 显式 case 收口到此；缺省/交叉校验分离——缺省推导
+ * 要看 companyDir，属尾段交叉面）：
+ *   - mentionSource：mentionSourceKindOf 值域校验（缺省 matrix、非法 CONFIG_INVALID）；
+ *   - chatdSocket：显式配置须绝对路径（相对=CONFIG_INVALID——socket 定位不许含糊）；
+ *   - mentionPollMs：正整数毫秒（0/负=CONFIG_INVALID——busy-loop 面直接拒启不兜底）。
+ */
+export function coerceChatdServeKey(cfg: ServeConfig, key: string, value: unknown, helpers: ChatdServeKeyHelpers): void {
+  if (key === 'mentionSource') {
+    cfg.mentionSource = mentionSourceKindOf(helpers.str(value, key))
+    return
+  }
+  if (key === 'chatdSocket') {
+    const v = helpers.str(value, key)
+    if (!isAbsolute(v)) {
+      throw new Error(`daemon.yaml：chatdSocket 须为绝对路径（生产约定 <companyDir>/var/workbench/chat.sock；实得 ${v}）`)
+    }
+    cfg.chatdSocket = v
+    return
+  }
+  const v = helpers.num(value, key)
+  if (!Number.isInteger(v) || v < 1) throw new Error(`daemon.yaml：mentionPollMs 须为正整数毫秒（实得 ${v}）`)
+  cfg.mentionPollMs = v
+}
+
+/**
+ * chatd 唤起源交叉校验（parseDaemonConfig 尾段调用；matrix 必配键交叉之后的收口位）：
+ *   - 与 matrix: true 互斥——双唤起源=双写（mention 幂等键第一槽 source 不同，引擎折叠
+ *     不了；M4 双跑走影子工具不走配置双开，docs/plan/06-…-2026-11-19.md §M4）；
+ *   - chatdSocket 缺省推导 `<companyDir>/var/workbench/chat.sock`（提案 §5.1 生产约定）；
+ *     无 companyDir 又未显式配=CONFIG_INVALID（不猜 cwd 相对路径）。
+ * mentionSource: matrix（缺省）零交叉零推导——既有路径行为零漂移。
+ */
+export function validateChatdMentionCross(cfg: ServeConfig): void {
+  if (cfg.mentionSource !== 'chatd') return
+  if (cfg.matrix) {
+    throw new Error('CONFIG_INVALID：mentionSource: chatd 与 matrix: true 互斥（双唤起源=双写；M4 双跑走影子工具不走配置双开）')
+  }
+  if (cfg.chatdSocket === undefined) {
+    if (cfg.companyDir === undefined) {
+      throw new Error('CONFIG_INVALID：mentionSource: chatd 缺 chatdSocket 且无 companyDir 可推导缺省（<companyDir>/var/workbench/chat.sock）——显式配绝对路径')
+    }
+    cfg.chatdSocket = join(resolve(cfg.companyDir), 'var/workbench/chat.sock')
+  }
+}
+
+/** chatd 源注册面所需的最小注册表形状（SourceRegistry 结构满足——同结构同形注入纪律） */
+export interface ChatdSourceRegistry {
+  register(source: InvokeSource, manifest?: SourceManifest): void
+}
+
+/**
+ * chatd 源工厂（组合根注入面，M4-1 task-136）：ctx.actors=roster 在册工号——由
+ * buildServeRuntime 在公司快照在场处回调供给（boot 不持快照；matrixRoomFace ctx 判例）。
+ */
+export type ChatdSourceFactory = (ctx: { actors: readonly PersonId[] }) => InvokeSource
+
+/** chatd 源 manifest（mentionSource: chatd 时注册；configSchema=配置面锚点单一描述位） */
+export const CHATD_SOURCE_MANIFEST: SourceManifest = {
+  name: CHATD_MENTION_SOURCE_NAME,
+  kind: 'mention',
+  configSchema: 'daemon.yaml mentionSource/chatdSocket/mentionPollMs（扁平子集）＋env WORKBENCH_CHATD_TOKEN（值不入 yaml）',
+}
+
+/**
+ * chatd 源注册（buildServeRuntime 装配段调用，M4-1 task-136）：mentionSource: chatd 时由
+ * 组合根注入工厂装配——开而未注入=CONFIG_INVALID 拒启（matrix 判例 runtime.ts 同纪律）；
+ * actors=公司快照在册工号。daemon **不启动 chatd 进程**（独立 ops/launchd 运维）——
+ * socket 不在=源软失败退避（WB_NOT_CONNECTED 分类=transport），不拒启不炸主循环。
+ */
+export function wireChatdMentionSource(sources: ChatdSourceRegistry, factory: ChatdSourceFactory | undefined, actors: readonly PersonId[]): void {
+  if (factory === undefined) {
+    throw new Error(
+      'CONFIG_INVALID：mentionSource: chatd 需注入 chatd 源工厂（runServe/buildServeRuntime opts.chatdSource）——' +
+        'daemon 不启动 chatd 进程（独立 ops/launchd 运维）；装配单元 apps/boot 组合根注入 ' +
+        'createChatdMentionSource 产物（M4-1 task-136；docs/plan/07-…-2026-11-19.md §5.1）',
+    )
+  }
+  sources.register(factory({ actors }), CHATD_SOURCE_MANIFEST)
 }

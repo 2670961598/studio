@@ -56,6 +56,8 @@ export interface HealthzInput {
   readonly routing?: { readonly sources: readonly { readonly tier: string; readonly id: string; readonly available: boolean; readonly cooldownUntil: number; readonly lastFailureClass?: string; readonly lastSuccessAt?: number }[] } | undefined
   /** 事件循环延迟观测（studio-dev-785 加法字段；缺省不出现于 body） */
   readonly loop?: { readonly lagMs: number; readonly windowMs: number }
+  /** @唤醒源选型（M4-1 task-136 加法观测；缺省不出现于 body——旧探针忽略未知字段） */
+  readonly mentionSource?: 'matrix' | 'chatd'
 }
 
 /** 一面对照结果（body 明细） */
@@ -98,6 +100,8 @@ export interface HealthzReport {
     readonly chain: HealthzChainDetail
     /** 事件循环延迟（785 加法字段；无观测时不出现） */
     readonly loop?: HealthzLoopDetail
+    /** @唤醒源选型（M4-1 task-136 加法；未注入时不出现） */
+    readonly mentionSource?: 'matrix' | 'chatd'
     readonly reasons: readonly string[]
   }
 }
@@ -157,6 +161,7 @@ export function buildHealthz(input: HealthzInput): HealthzReport {
       },
       ...(input.loop !== undefined ? { loop: { lagMs: Math.max(0, input.loop.lagMs), windowMs: Math.max(0, input.loop.windowMs) } } : {}),
       ...(input.routing !== undefined ? { routing: input.routing } : {}),
+      ...(input.mentionSource !== undefined ? { mentionSource: input.mentionSource } : {}),
       reasons,
     },
   }

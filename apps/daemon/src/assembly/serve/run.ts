@@ -33,6 +33,7 @@ import type { NotifyBroadcastFace } from '../../engine/notify/broadcast.ts'
 import type { MatrixRoomFace, MatrixRoomFaceContext } from '../../engine/rooms/room-duty.ts'
 import { parseDaemonConfig, type ServeConfig } from './config.ts'
 import { buildServeRuntime } from './runtime.ts'
+import type { ChatdSourceFactory } from './chatd-mention-source.ts'
 import type { SecretDeclarationInput } from '../trust/wire.ts'
 import { RestartOrchestrator, readRestartStartupFace } from './restart/orchestrator.ts'
 import { buildHealthz } from '../api/healthz.ts'
@@ -64,6 +65,10 @@ export interface RunServeOpts {
    * createMentionSource 产物——daemon 不强依赖 @studio-next/matrix）；缺省不注入
    * （matrix: true 且未注入=CONFIG_INVALID 拒启动）。 */
   matrixSource?: () => InvokeSource
+  /** chatd 唤起源工厂（M4-1 team task-136）：mentionSource: chatd 时注入（apps/boot 构造
+   * createChatdMentionSource 产物——daemon 不启动 chatd 进程，独立 ops/launchd 运维）；
+   * 缺省不注入（mentionSource: chatd 且未注入=CONFIG_INVALID 拒启动）。 */
+  chatdSource?: ChatdSourceFactory
   /** matrix 频道供给面工厂（130-P3 §6.7.3）：matrixChannels: true 时注入（apps/boot
    * 构造 createMatrixProvisionFace 产物）；缺省不注入（开而未注入=CONFIG_INVALID）。 */
   matrixRoomFace?: (ctx: MatrixRoomFaceContext) => MatrixRoomFace
@@ -172,6 +177,7 @@ export async function runServe(
   if (injection.skippedReason !== undefined) console.log(`[records][anchor-grant] ${injection.skippedReason}`)
   const { engine, sources, stop, hotReload, modelsHotSwap, notifyRelay, conversationRelay, api, ops, restartProbe } = buildServeRuntime(config, ledger, snapshot, {
     ...(opts?.matrixSource !== undefined ? { matrixSource: opts.matrixSource } : {}),
+    ...(opts?.chatdSource !== undefined ? { chatdSource: opts.chatdSource } : {}),
     ...(opts?.matrixRoomFace !== undefined ? { matrixRoomFace: opts.matrixRoomFace } : {}),
     ...(opts?.notifyBroadcast !== undefined ? { notifyBroadcast: opts.notifyBroadcast } : {}),
     ...(opts?.hrMatrixFace !== undefined ? { hrMatrixFace: opts.hrMatrixFace } : {}),
@@ -354,6 +360,7 @@ export async function runServe(
             chainMaxAgeMs,
             loop: { lagMs: loopLagMaxMs, windowMs: Math.max(1, Date.now() - loopLagWindowStart) },
             ...(engine.modelRoutingHealth?.() !== undefined ? { routing: engine.modelRoutingHealth() } : {}),
+            mentionSource: config.mentionSource, // M4-1 task-136：加法观测（body 新字段，旧探针忽略）
           }),
       })
     }

@@ -42,6 +42,7 @@ import { bool, coerceDispatchSelectionChain, coerceSeatbeltGrant, num, rejectRem
 import { coerceHrServeKey, validateHrServeCross } from '../hrsync/config.ts'
 import { crossValidateMatrixChannels } from '../channels/channels.ts'
 import { coerceRestartServeKey, isRestartKey, validateRestartCross } from '../serveconfig/restart.ts'
+import { coerceChatdServeKey, validateChatdMentionCross } from './chatd-mention-source.ts'
 import { coerceAnchorAbsenceDeclaration, type AnchorAbsenceRaw } from './anchor-absence.ts'
 import { coerceRootGrantAbsenceDeclaration, type RootGrantAbsenceRaw } from './root-grant-absence.ts'
 import { coerceSignatureServeKey } from '../serveconfig/signature.ts'
@@ -409,6 +410,12 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'matrixChannels': cfg.matrixChannels = bool(value, key); break
       case 'matrixDeptMap': cfg.matrixDeptMap = str(value, key); break
       case 'matrixProducerMxid': cfg.matrixProducerMxid = str(value, key); break
+      // —— chatd 唤起源键组（M4-1 task-136）：解析收口 assembly/serve/chatd-mention-source.ts ——
+      case 'mentionSource':
+      case 'chatdSocket':
+      case 'mentionPollMs':
+        coerceChatdServeKey(cfg, key, value, { str, num })
+        break
       // —— 制作人-岗位持久对话（docs/21-§七，studio-dev-646 Phase 1）：五键解析即验 ——
       case 'conversation': cfg.conversation = bool(value, key); break
       case 'conversationDir': cfg.conversationDir = str(value, key); break
@@ -541,6 +548,8 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       )
     }
   }
+  // —— chatd 唤起源交叉校验（M4-1 task-136）：与 matrix:true 互斥＋chatdSocket 缺省推导 ——
+  validateChatdMentionCross(cfg)
   // —— 频道供给交叉校验（130-P3，130 提案 §6.7.3-③；fail-fast 同 matrix 先例）
   crossValidateMatrixChannels(cfg)
   // —— 持久对话交叉校验（docs/21-§七.6，studio-dev-646 Phase 1；fail-fast 同 matrix 先例）：

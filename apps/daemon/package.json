@@ -29,6 +29,7 @@
     "@studio-next/prompt": "workspace:*",
     "@studio-next/store": "workspace:*",
     "@studio-next/taiga": "workspace:*",
+    "@studio-next/workbench-transport": "workspace:*",
     "@studio-next/yt": "workspace:*",
     "croner": "^9.0.0",
     "execa": "^9.4.0",
