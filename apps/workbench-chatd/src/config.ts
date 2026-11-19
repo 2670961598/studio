@@ -5,7 +5,10 @@
  * 边界：P1-1b 是 mock 骨架——不读公司目录、不建 chat.db、不接生产 daemon。
  * 鉴权默认 fail-closed：未配 token 即拒启（config_invalid）；仅显式
  * WORKBENCH_CHATD_ALLOW_NO_AUTH=1（mock/dev/test）允许免鉴权（启动仍告警 auth_disabled）。
+ * token 供给两条（值优先，M4.5 运维件补文件面）：WORKBENCH_CHATD_TOKEN（值）；
+ * WORKBENCH_CHATD_TOKEN_FILE（绝对路径，文件内容首尾空白修剪）——launchd 面零密钥入 plist。
  */
+import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { parseLogLevel, type LogLevel } from './log.ts'
@@ -46,6 +49,9 @@ export interface ChatdConfig {
 export const ENV_KEYS = {
   socket: 'WORKBENCH_CHATD_SOCKET',
   token: 'WORKBENCH_CHATD_TOKEN',
+  /** token 文件绝对路径（M4.5 ops/chatd-setup 生成的 launchd 面）：值 env 未设时从此文件读；
+   *  读取失败/空文件=fail-closed 拒启。文件本身 0600 由安装脚本保证。 */
+  tokenFile: 'WORKBENCH_CHATD_TOKEN_FILE',
   /** 免鉴权显式豁免开关：仅精确值 `1` 生效（mock/dev/test 专用；生产不得设置）。 */
   allowNoAuth: 'WORKBENCH_CHATD_ALLOW_NO_AUTH',
   /** SQLite 数据库绝对路径（C-mini）：设置即 sqlite 模式；缺省/空=内存 mock。 */
@@ -82,7 +88,24 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, argv: readonly 
   const storeMode: StoreMode = dbPath === undefined ? 'memory' : 'sqlite'
 
   const tokenRaw = env[ENV_KEYS.token]?.trim()
-  const token = tokenRaw !== undefined && tokenRaw !== '' ? tokenRaw : undefined
+  let token: string | undefined = tokenRaw !== undefined && tokenRaw !== '' ? tokenRaw : undefined
+  // 文件供给面（M4.5）：值 env 优先；无值 env 且给了文件路径 → 读文件（fail-closed：
+  // 路径非绝对/不可读/空内容一律拒启——绝不静默降级为免鉴权）。
+  if (token === undefined) {
+    const tokenFileRaw = env[ENV_KEYS.tokenFile]?.trim()
+    if (tokenFileRaw !== undefined && tokenFileRaw !== '') {
+      if (!path.isAbsolute(tokenFileRaw)) throw new ChatdConfigError(`${ENV_KEYS.tokenFile} 必须是绝对路径：${tokenFileRaw}`)
+      let content: string
+      try {
+        content = readFileSync(tokenFileRaw, 'utf8')
+      } catch (cause) {
+        throw new ChatdConfigError(`${ENV_KEYS.tokenFile} 不可读：${tokenFileRaw}（${cause instanceof Error ? cause.message : String(cause)}）`)
+      }
+      const fromFile = content.trim()
+      if (fromFile === '') throw new ChatdConfigError(`${ENV_KEYS.tokenFile} 内容为空：${tokenFileRaw}`)
+      token = fromFile
+    }
+  }
 
   // 鉴权 fail-closed：未配 token 默认拒启；仅显式 ALLOW_NO_AUTH=1（精确值）豁免（mock/dev/test）。
   const allowNoAuth = env[ENV_KEYS.allowNoAuth]?.trim() === '1'

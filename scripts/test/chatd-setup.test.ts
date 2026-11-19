@@ -1,0 +1,452 @@
+/**
+ * chatd-setup.test —— task M4.5 chatd 生产 sidecar 运维件测试
+ *（node:test；全部沙箱在 mkdtemp——零生产写入、零 host 路径断言、token 值永不比对打印）
+ *
+ * 覆盖（docs/plan/06-自研单子与聊天室切换-2026-11-19.md §二 M5 前置运维面；
+ *       runbook 聊天自研切换-2026-11-19.md §十一–§十四）：
+ *   A) dry-run 零副作用：exit 0、不建 var/LaunchAgents、打印计划与 launchctl 命令、无 token
+ *   B) apply 需显式确认：--apply 无 --i-understand → exit 2 且零副作用（remove 同判例）
+ *   C) apply 落盘：var 0700、token 0600（64-hex）、plist 0600 且键值/env/KeepAlive 齐全，
+ *      ProgramArguments=node main.ts；输出明示「不执行 launchctl」
+ *   D) token 不覆盖：二次 apply token 逐字节不变；输出「已存在，不覆盖」
+ *   E) remove：删 plist、token/var 保留、打印 bootout；remove 无确认 → exit 2
+ *   F) 纯函数面：buildPlan 约定路径/label；renderPlist 占位符全替换（残留即抛）
+ *   G) chatd TOKEN_FILE 供给（config M4.5 增量）：值 env 优先 / 文件读取修剪 /
+ *      相对路径拒 / 文件缺失拒 / 空文件拒 / 占位符 token 拒
+ *   H) health mock：NDJSON 假服务端 ok→exit 0；错 token→exit 1；socket 缺失→exit 1；
+ *      应答挂起→超时 exit 1（--json 单行可解析）
+ *   I) health 真实 chatd：spawn --memory + TOKEN_FILE env → health --token-file exit 0
+ *      （M4.5 安装面 env 闭环：plist 四 env 之 TOKEN_FILE 实证可用）
+ *   J) platform-backup.sh：bash -n 语法等价检查（无 shellcheck 环境的机械兜底）；
+ *      --dry-run --chatd-db 计划行（缺失库标注 SKIP）；fake-docker 真跑（docker CLI shim
+ *      仅喂 Taiga/Matrix 四调用形状）：chatd .backup→integrity→gzip 600→manifest→
+ *      保留策略删过期 chatd-*；恢复副本可读出数据；缺库 SKIP 不报错。
+ *      sqlite3 CLI 不在时 J 真跑分支 skip（dry-run/语法分支仍跑）。
+ *
+ * 运行：node --experimental-strip-types --test scripts/test/chatd-setup.test.ts
+ */
+import assert from 'node:assert/strict'
+import { execFile, execFileSync, spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
+import { DatabaseSync } from 'node:sqlite'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { createServer, type Socket } from 'node:net'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import test from 'node:test'
+import { buildPlan, CONVENTIONS, parseArgs, renderPlist, SetupUsageError } from '../ops/chatd-setup.mjs'
+import { loadConfig, ChatdConfigError, ENV_KEYS } from '../../apps/workbench-chatd/src/config.ts'
+
+const HERE = import.meta.dirname
+const REPO = path.join(HERE, '..', '..')
+const SETUP = path.join(HERE, '..', 'ops', 'chatd-setup.mjs')
+const HEALTH = path.join(HERE, '..', 'ops', 'chatd-health.mjs')
+const BACKUP = path.join(HERE, '..', 'ops', 'platform-backup.sh')
+const CHATD_MAIN = path.join(REPO, 'apps', 'workbench-chatd', 'src', 'main.ts')
+
+const workdirs: string[] = []
+test.after(() => {
+  for (const dir of workdirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+})
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(path.join(tmpdir(), prefix))
+  workdirs.push(dir)
+  return dir
+}
+
+interface RunResult { status: number; stdout: string; stderr: string }
+function runCli(cli: string, args: readonly string[], env: NodeJS.ProcessEnv = {}): Promise<RunResult> {
+  return new Promise((resolve) => {
+    execFile(process.execPath, [cli, ...args], { encoding: 'utf8', env: { ...process.env, ...env } }, (err, stdout, stderr) => {
+      const status = err !== null && typeof err.code === 'number' ? err.code : err === null ? 0 : 1
+      resolve({ status, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') })
+    })
+  })
+}
+function runSh(script: string, args: readonly string[], env: NodeJS.ProcessEnv = {}): RunResult {
+  try {
+    const stdout = execFileSync('/bin/bash', [script, ...args], { encoding: 'utf8', env: { ...process.env, ...env } })
+    return { status: 0, stdout, stderr: '' }
+  } catch (err) {
+    const e = err as { status?: number; stdout?: string; stderr?: string }
+    return { status: typeof e.status === 'number' ? e.status : 1, stdout: String(e.stdout ?? ''), stderr: String(e.stderr ?? '') }
+  }
+}
+const mode = (p: string): number => statSync(p).mode & 0o777
+
+/** 沙箱环境：公司目录 + 隔离 HOME（LaunchAgents/Logs 全落 mkdtemp） */
+function sandbox(company = 'acme'): { root: string; companyDir: string; home: string } {
+  const root = tempDir('m45-setup-')
+  const companyDir = path.join(root, company)
+  const home = path.join(root, 'home')
+  mkdirSync(companyDir, { recursive: true })
+  return { root, companyDir, home }
+}
+
+/* ------------------------------------------------------------------ */
+/* A/B/C/D/E 安装器 CLI                                                */
+/* ------------------------------------------------------------------ */
+
+test('A) dry-run 零副作用：打印计划/launchctl 命令，不落任何文件', async () => {
+  const { companyDir, home, root } = sandbox()
+  const r = await runCli(SETUP, ['--company-dir', companyDir, '--home', home])
+  assert.equal(r.status, 0, `dry-run 应 exit 0：${r.stderr}`)
+  assert.match(r.stdout, /dry-run（零副作用）/)
+  assert.match(r.stdout, new RegExp(`${CONVENTIONS.labelPrefix}\\.acme\\.plist`))
+  assert.match(r.stdout, /launchctl bootstrap gui\/\$\(id -u\)/)
+  assert.match(r.stdout, /本脚本不执行 launchctl/)
+  assert.match(r.stdout, /chatd-health\.mjs --socket/)
+  // 零副作用：var/launchagents/log 全不存在
+  assert.ok(!existsSync(path.join(companyDir, 'var')), 'dry-run 不得创建 var/')
+  assert.ok(!existsSync(path.join(home, 'Library')), 'dry-run 不得创建 HOME/Library')
+  assert.equal(existsSync(root), true)
+})
+
+test('B) apply/remove 无 --i-understand → exit 2 零副作用', async () => {
+  const { companyDir, home } = sandbox()
+  for (const modeFlag of ['--apply', '--remove']) {
+    const r = await runCli(SETUP, ['--company-dir', companyDir, '--home', home, modeFlag])
+    assert.equal(r.status, 2, `${modeFlag} 无确认应 exit 2`)
+    assert.match(r.stderr, /--i-understand/)
+    assert.ok(!existsSync(path.join(companyDir, 'var')), `${modeFlag} 无确认不得有副作用`)
+    assert.ok(!existsSync(path.join(home, 'Library')), `${modeFlag} 无确认不得碰 HOME`)
+  }
+})
+
+test('C) apply：var 0700 / token 0600 64-hex / plist 0600 键值齐全', async () => {
+  const { companyDir, home } = sandbox()
+  const r = await runCli(SETUP, ['--company-dir', companyDir, '--home', home, '--apply', '--i-understand'])
+  assert.equal(r.status, 0, `apply 应 exit 0：${r.stderr}\n${r.stdout.slice(-500)}`)
+  assert.match(r.stdout, /未 load、未启动/)
+
+  const varDir = path.join(companyDir, 'var', 'workbench')
+  assert.equal(mode(varDir), 0o700, 'var/workbench 应 0700')
+  const tokenFile = path.join(varDir, CONVENTIONS.tokenFile)
+  assert.equal(mode(tokenFile), 0o600, 'token 应 0600')
+  assert.match(readFileSync(tokenFile, 'utf8').trim(), /^[0-9a-f]{64}$/, 'token=64 hex')
+  assert.ok(!existsSync(path.join(varDir, CONVENTIONS.dbFile)), '本脚本不得创建 chat.db（chatd 首启自建）')
+  assert.ok(!existsSync(path.join(varDir, CONVENTIONS.socketFile)), '本脚本不得创建 socket')
+
+  const plistPath = path.join(home, 'Library', 'LaunchAgents', 'io.studionext.chatd.acme.plist')
+  assert.equal(mode(plistPath), 0o600, 'plist 应 0600')
+  const plist = readFileSync(plistPath, 'utf8')
+  assert.match(plist, new RegExp(`<string>${CONVENTIONS.labelPrefix}\\.acme</string>`))
+  assert.match(plist, /<string>--experimental-strip-types<\/string>/)
+  assert.match(plist, new RegExp(`<string>${CHATD_MAIN.replace(/\//g, '\\/')}<\/string>`), 'ProgramArguments 指向 chatd main.ts')
+  for (const [key, value] of [
+    ['WORKBENCH_CHATD_SOCKET', path.join(varDir, 'chat.sock')],
+    ['WORKBENCH_CHATD_DB', path.join(varDir, 'chat.db')],
+    ['WORKBENCH_CHATD_TOKEN_FILE', tokenFile],
+    ['WORKBENCH_CHATD_LOG', 'info'],
+  ] as const) {
+    assert.match(plist, new RegExp(`<key>${key}<\\/key>\\s*<string>${value.replace(/\//g, '\\/')}<\\/string>`), `env ${key} 应带约定值`)
+  }
+  assert.match(plist, /<key>KeepAlive<\/key>\s*<true\/>/)
+  assert.match(plist, /<key>RunAtLoad<\/key>\s*<true\/>/)
+  assert.ok(!/__([A-Z_]+)__/.test(plist), 'plist 不得残留占位符')
+  assert.ok(!readFileSync(tokenFile, 'utf8').includes('\n\n'), 'token 文件单值')
+})
+
+test('D) token 不覆盖：二次 apply 逐字节不变并明示', async () => {
+  const { companyDir, home } = sandbox()
+  const args = ['--company-dir', companyDir, '--home', home, '--apply', '--i-understand']
+  assert.equal((await runCli(SETUP, args)).status, 0)
+  const tokenFile = path.join(companyDir, 'var', 'workbench', CONVENTIONS.tokenFile)
+  const first = readFileSync(tokenFile, 'utf8')
+  const r = await runCli(SETUP, args)
+  assert.equal(r.status, 0)
+  assert.equal(readFileSync(tokenFile, 'utf8'), first, '二次 apply 不得覆盖 token')
+  assert.match(r.stdout, /已存在，不覆盖/)
+})
+
+test('E) remove：删 plist/保留数据/打印 bootout；权限漂移修正为 0600', async () => {
+  const { companyDir, home } = sandbox()
+  const args = ['--company-dir', companyDir, '--home', home, '--apply', '--i-understand']
+  await runCli(SETUP, args)
+  const varDir = path.join(companyDir, 'var', 'workbench')
+  const tokenFile = path.join(varDir, CONVENTIONS.tokenFile)
+  const dbFile = path.join(varDir, 'chat.db')
+  writeFileSync(dbFile, 'fake-sqlite-bytes') // 模拟 chatd 已初始化
+  chmodSync(tokenFile, 0o644) // 模拟历史权限漂移
+  const fix = await runCli(SETUP, args)
+  assert.match(fix.stdout, /权限已修正为 0600/)
+  assert.equal(mode(tokenFile), 0o600)
+
+  const r = await runCli(SETUP, ['--company-dir', companyDir, '--home', home, '--remove', '--i-understand'])
+  assert.equal(r.status, 0, r.stderr)
+  assert.match(r.stdout, /launchctl bootout gui\/\$\(id -u\)/)
+  assert.ok(!existsSync(path.join(home, 'Library', 'LaunchAgents', 'io.studionext.chatd.acme.plist')), 'remove 应删 plist')
+  assert.ok(existsSync(tokenFile) && existsSync(dbFile) && existsSync(varDir), 'remove 必须保留 token/db/var（卸载不销毁证据）')
+})
+
+test('F) 纯函数：parseArgs/buildPlan/renderPlist 约定与防呆', () => {
+  assert.throws(() => parseArgs([]), SetupUsageError)
+  assert.throws(() => parseArgs(['--company-dir', 'relative/x']), SetupUsageError)
+  // home is assembled at runtime from os.tmpdir()（不落主机路径字面量）；buildPlan 只做纯路径推导
+  const home = path.join(tempDir('m45-plan-'), 'home')
+  const plan = buildPlan({ companyDir: '/Companies/AcmeCorp', repo: '/deploy/tree', nodeBin: '/usr/bin/node', home })
+  assert.equal(plan.slug, 'acmecorp', 'slug 兜底=公司目录名（小写化）')
+  assert.equal(plan.label, 'io.studionext.chatd.acmecorp')
+  assert.deepEqual(
+    [plan.varDir, plan.dbPath, plan.socketPath, plan.tokenFile, plan.plistPath, plan.logOut],
+    [
+      '/Companies/AcmeCorp/var/workbench',
+      '/Companies/AcmeCorp/var/workbench/chat.db',
+      '/Companies/AcmeCorp/var/workbench/chat.sock',
+      '/Companies/AcmeCorp/var/workbench/chatd.token',
+      path.join(home, 'Library', 'LaunchAgents', 'io.studionext.chatd.acmecorp.plist'),
+      path.join(home, 'Library', 'Logs', 'studio-next', 'acmecorp', 'chatd.out.log'),
+    ],
+  )
+  // 显式 slug 覆盖 + 空 launchAgents/logDir 不得落到 cwd（空串≠未设）
+  const plan2 = buildPlan({ companyDir: '/c/x', company: 'X-Corp', repo: '/r', nodeBin: '/n', home: '/h', launchAgents: '', logDir: '' })
+  assert.equal(plan2.label, 'io.studionext.chatd.x-corp')
+  assert.equal(plan2.plistPath, '/h/Library/LaunchAgents/io.studionext.chatd.x-corp.plist')
+  assert.equal(plan2.logOut, '/h/Library/Logs/studio-next/x-corp/chatd.out.log')
+  assert.throws(() => buildPlan({ companyDir: '/c/非法 名', repo: '/r', nodeBin: '/n', home: '/h' }), SetupUsageError, 'slug 非法须显式 --company')
+  const plist = renderPlist(plan)
+  assert.ok(!/__([A-Z_]+)__/.test(plist), 'renderPlist 不得残留占位符')
+  assert.match(plist, /<string>\/deploy\/tree\/apps\/workbench-chatd\/src\/main\.ts<\/string>/)
+})
+
+/* ------------------------------------------------------------------ */
+/* G) chatd config TOKEN_FILE 供给（M4.5 增量）                         */
+/* ------------------------------------------------------------------ */
+
+test('G) loadConfig TOKEN_FILE：值 env 优先/文件修剪/三项 fail-closed', () => {
+  const root = tempDir('m45-tokf-')
+  const tokenFile = path.join(root, 'chatd.token')
+  writeFileSync(tokenFile, '  toks-from-file-64-hex-0000000000000000000000000000000000  \n')
+  const base = { WORKBENCH_CHATD_SOCKET: '/tmp/s.sock', WORKBENCH_CHATD_DB: '/tmp/s.db' }
+  // 文件供给：内容修剪；sqlite 模式
+  const cfg = loadConfig({ ...base, [ENV_KEYS.tokenFile]: tokenFile })
+  assert.equal(cfg.token, 'toks-from-file-64-hex-0000000000000000000000000000000000')
+  assert.equal(cfg.storeMode, 'sqlite')
+  // 值 env 优先
+  const cfg2 = loadConfig({ ...base, [ENV_KEYS.tokenFile]: tokenFile, [ENV_KEYS.token]: 'env-wins' })
+  assert.equal(cfg2.token, 'env-wins')
+  // 相对路径拒
+  assert.throws(() => loadConfig({ ...base, [ENV_KEYS.tokenFile]: 'rel/token' }), ChatdConfigError)
+  // 文件缺失拒
+  assert.throws(() => loadConfig({ ...base, [ENV_KEYS.tokenFile]: path.join(root, 'nope') }), ChatdConfigError)
+  // 空文件拒
+  const empty = path.join(root, 'empty.token')
+  writeFileSync(empty, '   \n')
+  assert.throws(() => loadConfig({ ...base, [ENV_KEYS.tokenFile]: empty }), ChatdConfigError)
+  // 占位符值拒（模板未替换防呆延伸到文件面）
+  const ph = path.join(root, 'ph.token')
+  writeFileSync(ph, '__WORKBENCH_CHATD_TOKEN__')
+  assert.throws(() => loadConfig({ ...base, [ENV_KEYS.tokenFile]: ph }), ChatdConfigError)
+})
+
+/* ------------------------------------------------------------------ */
+/* H) health：mock NDJSON 服务端四路径                                  */
+/* ------------------------------------------------------------------ */
+
+interface MockServer { socketPath: string; token: string; close(): Promise<void>; behavior: 'ok' | 'bad-token' | 'silent' }
+
+function startMock(behavior: MockServer['behavior']): Promise<MockServer> {
+  const root = tempDir('m45-health-')
+  const socketPath = path.join(root, 'chat.sock')
+  const token = `mock-${randomBytes(8).toString('hex')}` // 运行时随机（值形不落字面量；仅 H 用例内比对）
+  return new Promise((resolve) => {
+    const server = createServer((socket: Socket) => {
+      socket.on('data', (chunk) => {
+        if (behavior === 'silent') return // 收帧不答（超时路径）
+        for (const raw of chunk.toString('utf8').split('\n')) {
+          if (raw.trim() === '') continue
+          const req = JSON.parse(raw) as { id: string; method: string; params: { token?: string } }
+          if (behavior === 'bad-token' || req.params.token !== token) {
+            socket.write(`${JSON.stringify({ id: req.id, ok: false, error: { code: 'WB_INVALID_ARGUMENT', message: 'unauthenticated: token invalid', retryable: false } })}\n`)
+            continue
+          }
+          const result = req.method === 'health'
+            ? { ok: true, protocol: 'workbench-transport/v1', server: 'workbench-chatd/0.1.0+mock', startedAt: 1 }
+            : [{ roomId: 'r1', kind: 'broadcast', name: 'general', memberIds: ['a'], headRoomSeq: 0 }]
+          socket.write(`${JSON.stringify({ id: req.id, ok: true, result })}\n`)
+        }
+      })
+    })
+    server.listen(socketPath, () => resolve({ socketPath, token, behavior, close: () => new Promise<void>((res) => server.close(() => res())) }))
+  })
+}
+
+test('H) health：ok→0 / 错 token→1 / socket 缺失→1 / 挂起→超时 1 / json 可解析', async () => {
+  const mock = await startMock('ok')
+  try {
+    const ok = await runCli(HEALTH, ['--socket', mock.socketPath, '--token', mock.token])
+    assert.equal(ok.status, 0, ok.stderr)
+    assert.match(ok.stdout, /HEALTHY/)
+    const js = await runCli(HEALTH, ['--socket', mock.socketPath, '--token', mock.token, '--json'])
+    assert.equal(js.status, 0)
+    const parsed = JSON.parse(js.stdout.trim().split('\n').pop() as string) as Record<string, unknown>
+    assert.equal(parsed['ok'], true)
+    assert.equal(parsed['rooms'], 1)
+    assert.equal(parsed['protocol'], 'workbench-transport/v1')
+
+    const bad = await runCli(HEALTH, ['--socket', mock.socketPath, '--token', 'wrong'])
+    assert.equal(bad.status, 1)
+    assert.match(bad.stdout, /UNHEALTHY/)
+
+    const noSock = await runCli(HEALTH, ['--socket', path.join(path.dirname(mock.socketPath), 'nope.sock'), '--token', mock.token])
+    assert.equal(noSock.status, 1)
+    assert.match(noSock.stdout, /socket 文件不存在|ENOENT/)
+    assert.equal((await runCli(HEALTH, ['--socket', mock.socketPath])).status, 2, '缺 token 面应 exit 2')
+    assert.equal((await runCli(HEALTH, ['--company-dir', '/x', '--socket', '/y'])).status, 2, '互斥参数 exit 2')
+  } finally {
+    await mock.close()
+  }
+  const silent = await startMock('silent')
+  try {
+    const t0 = Date.now()
+    const r = await runCli(HEALTH, ['--socket', silent.socketPath, '--token', silent.token, '--timeout-ms', '600'])
+    const elapsed = Date.now() - t0
+    assert.equal(r.status, 1, '挂起服务端应超时 exit 1')
+    assert.match(r.stdout, /超时/)
+    assert.ok(elapsed < 2500, `超时应受预算约束（实测 ${String(elapsed)}ms）`)
+  } finally {
+    await silent.close()
+  }
+})
+
+/* ------------------------------------------------------------------ */
+/* I) health × 真实 chatd（TOKEN_FILE env 闭环）                        */
+/* ------------------------------------------------------------------ */
+
+test('I) 真实 chatd --memory + TOKEN_FILE：health --token-file exit 0', async () => {
+  const root = tempDir('m45-real-')
+  const tokenFile = path.join(root, 'chatd.token')
+  writeFileSync(tokenFile, 'real-42'.padEnd(64, '0'))
+  const socketPath = path.join(root, 'chat.sock')
+  const child = spawn(process.execPath, ['--experimental-strip-types', CHATD_MAIN, '--memory'], {
+    env: {
+      ...process.env,
+      WORKBENCH_CHATD_SOCKET: socketPath,
+      WORKBENCH_CHATD_TOKEN_FILE: tokenFile, // 不设 WORKBENCH_CHATD_TOKEN——实证文件供给面
+      WORKBENCH_CHATD_LOG: 'info', // ready 事件在 info 级（stderr 单行 JSON，看护消费）
+    },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  })
+  let stderr = ''
+  child.stderr.on('data', (c) => { stderr += String(c) })
+  try {
+    let ready = false
+    for (let i = 0; i < 100 && !ready; i += 1) {
+      ready = stderr.includes('"event":"ready"')
+      if (!ready) await new Promise((res) => setTimeout(res, 100))
+    }
+    assert.ok(ready, `chatd 应就绪（stderr 尾部：${stderr.slice(-300)}）`)
+    const r = await runCli(HEALTH, ['--socket', socketPath, '--token-file', tokenFile])
+    assert.equal(r.status, 0, `health 对真实 chatd 应 exit 0：${r.stdout}\n${stderr.slice(-300)}`)
+    assert.match(r.stdout, /HEALTHY/)
+  } finally {
+    child.kill('SIGTERM')
+    await new Promise((res) => { child.on('exit', res); setTimeout(res, 3000).unref?.() })
+  }
+})
+
+/* ------------------------------------------------------------------ */
+/* J) platform-backup.sh：语法 + dry-run + fake-docker 真跑             */
+/* ------------------------------------------------------------------ */
+
+function makeFakeDocker(root: string): { binDir: string; dataDir: string } {
+  const binDir = path.join(root, 'shim')
+  const dataDir = path.join(root, 'fakedata')
+  mkdirSync(binDir, { recursive: true })
+  mkdirSync(dataDir, { recursive: true })
+  for (const f of ['homeserver.yaml', 'localhost.signing.key', 'localhost.log.config']) writeFileSync(path.join(dataDir, f), 'fake\n')
+  writeFileSync(path.join(binDir, 'docker'), `#!/bin/bash
+# fake docker（测试 shim）：仅 platform-backup.sh 用到的调用形状
+case "\${1:-}" in
+  inspect) echo true ;;
+  exec)
+    case "\$*" in
+      *pg_dumpall*) echo "-- fake taiga pg_dumpall (test)" ;;
+      *"rm -f"*) exit 0 ;;
+      *python3*)
+        out=""; prev=""
+        for a in "\$@"; do
+          if [ "\$prev" = "-" ]; then out="\$a"; fi
+          prev="\$a"
+        done
+        if [ -n "\$out" ]; then : > "\$out"; fi
+        ;;
+      *"tar -czf"*) tar -czf - -C "\$FAKE_DOCKER_DATA" homeserver.yaml localhost.signing.key localhost.log.config ;;
+      *) echo "fake-docker: unhandled exec: \$*" >&2; exit 9 ;;
+    esac ;;
+  cp) cp "\${2#*:}" "\$3" ;;
+  *) echo "fake-docker: unhandled: \$*" >&2; exit 9 ;;
+esac
+`)
+  chmodSync(path.join(binDir, 'docker'), 0o755)
+  return { binDir, dataDir }
+}
+
+/** bash -n 语法等价检查（环境无 shellcheck 的机械兜底）；返回 bash 退出码 */
+function shSyntax(script: string): number {
+  try {
+    execFileSync('/bin/bash', ['-n', script], { stdio: 'pipe' })
+    return 0
+  } catch (err) {
+    const status = (err as { status?: number }).status
+    return typeof status === 'number' ? status : 1
+  }
+}
+
+test('J) platform-backup：bash -n + dry-run 计划 + fake-docker 真跑（chatd .backup/SKIP/保留策略）', async (t) => {
+  assert.equal(shSyntax(BACKUP), 0, 'bash -n 语法等价检查')
+  const badSh = path.join(tempDir('m45-badsh-'), 'bad.sh')
+  writeFileSync(badSh, 'if [ -eq 1\n') // 故意语法错——哨兵：-n 面必须真能红
+  assert.notEqual(shSyntax(badSh), 0, 'bash -n 对坏脚本必须非零（检查面有效）')
+
+  const root = tempDir('m45-bk-')
+  const companyDir = path.join(root, 'acme')
+  const dbPath = path.join(companyDir, 'var', 'workbench', 'chat.db')
+  mkdirSync(path.dirname(dbPath), { recursive: true })
+  new DatabaseSync(dbPath).exec('CREATE TABLE t(x); INSERT INTO t VALUES (42);')
+  const missing = path.join(root, 'beta', 'var', 'workbench', 'chat.db')
+  const backupDir = path.join(root, 'backups')
+
+  // dry-run：计划行 + 缺失标注；零落盘
+  const dry = runSh(BACKUP, ['--dry-run', '--backup-dir', backupDir, '--chatd-db', dbPath, '--chatd-db', missing])
+  assert.equal(dry.status, 0, dry.stderr)
+  assert.match(dry.stdout, /chatd db=.*acme.*var\/workbench\/chat\.db slug=acme/)
+  assert.match(dry.stdout, /chatd-acme-\d{8}-\d{6}\.db\.gz/)
+  assert.match(dry.stdout, /缺失→SKIP/)
+  assert.ok(!existsSync(backupDir), 'dry-run 不得创建备份目录')
+  // 用法面：相对路径拒（exit 2）
+  assert.equal(runSh(BACKUP, ['--dry-run', '--chatd-db', 'rel/chat.db']).status, 2)
+
+  const hasSqlite3 = (() => {
+    try {
+      execFileSync('/bin/bash', ['-c', 'command -v sqlite3'], { stdio: 'ignore' })
+      return true
+    } catch {
+      return false
+    }
+  })()
+  if (!hasSqlite3) return t.skip('sqlite3 CLI 不在 PATH——真跑分支 skip（dry-run/语法分支已过）')
+
+  // 真跑（fake docker 只喂 Taiga/Matrix 形状；chatd 面走真 sqlite3）
+  const { binDir, dataDir } = makeFakeDocker(root)
+  mkdirSync(backupDir, { recursive: true })
+  writeFileSync(path.join(backupDir, 'chatd-oldco-20260101-000000.db.gz'), 'old\n')
+  writeFileSync(path.join(backupDir, '.platform-backup-manifest'), '0|chatd-oldco-20260101-000000.db.gz\n')
+  const r = runSh(BACKUP, ['--backup-dir', backupDir, '--chatd-db', dbPath, '--chatd-db', dbPath, '--chatd-db', missing], {
+    PATH: `${binDir}:${process.env['PATH'] ?? ''}`,
+    FAKE_DOCKER_DATA: dataDir,
+  })
+  assert.equal(r.status, 0, `真跑应 exit 0：${r.stderr}\n${r.stdout}`)
+  const summary = JSON.parse(r.stdout.trim().split('\n').pop() as string) as { chatd?: { backed: number; skipped: number }; retentionDeleted: number }
+  assert.deepEqual(summary['chatd'], { backed: 1, skipped: 1 }, '去重后 1 备 1 skip（重复 --chatd-db 不双备）')
+  assert.ok(!existsSync(path.join(backupDir, 'chatd-oldco-20260101-000000.db.gz')), '过期 chatd-* 应被保留策略删除')
+  const gz = (r.stdout.match(/chatd-acme-\d{8}-\d{6}\.db\.gz/g) as string[])[0] ?? ''
+  assert.notEqual(gz, '', `应有 chatd 产物：${r.stdout}`)
+  const gzPath = path.join(backupDir, gz)
+  assert.equal(mode(gzPath), 0o600, 'chatd 备份应 600')
+  const restored = path.join(root, 'restore.db')
+  execFileSync('/bin/bash', ['-c', `gzip -dc ${JSON.stringify(gzPath)} > ${JSON.stringify(restored)} && sqlite3 ${JSON.stringify(restored)} "SELECT x FROM t;" > ${JSON.stringify(path.join(root, 'out.txt'))}`])
+  assert.equal(readFileSync(path.join(root, 'out.txt'), 'utf8').trim(), '42', '恢复副本可读出原数据（在线 .backup 语义有效）')
+  const manifest = readFileSync(path.join(backupDir, '.platform-backup-manifest'), 'utf8')
+  assert.match(manifest, new RegExp(`\\|${gz}`), 'manifest 应记 chatd 产物（同保留策略面）')
+})

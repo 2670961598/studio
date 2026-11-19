@@ -32,6 +32,7 @@ node --experimental-strip-types apps/workbench-chatd/src/main.ts [--memory]
 |---|---|---|
 | `WORKBENCH_CHATD_SOCKET` | `$TMPDIR/workbench-chatd.sock` | Unix socket 绝对路径；生产约定 `<companyDir>/var/workbench/chat.sock` |
 | `WORKBENCH_CHATD_TOKEN` | （空） | transport token；**生产必配**。未配置默认 **fail-closed**：`config_invalid` exit 1。形如 `__...__` 的占位符（模板未替换）同样拒启 |
+| `WORKBENCH_CHATD_TOKEN_FILE` | （空） | token 文件**绝对路径**（M4.5 运维件）：值 env 未设时从此文件读（内容首尾空白修剪）；`scripts/ops/chatd-setup.mjs` 生成的 launchd 面用它——密钥零入 plist。非绝对/不可读/空内容=fail-closed 拒启；值 env 优先 |
 | `WORKBENCH_CHATD_ALLOW_NO_AUTH` | （空） | 免鉴权显式豁免：仅精确值 `1` 生效，允许未配 token 启动（**仅供 mock/dev/测试**，启动打 `auth_disabled` 告警）。未设/其他值=不豁免（fail-closed）；配了 token 时本开关不降低鉴权 |
 | `WORKBENCH_CHATD_DB` | （空） | SQLite 数据库**绝对路径**（C-mini）：设置即持久化模式（父目录按需 0700 创建，文件 0600；schema 见 `src/store/sqlite.ts`）；缺省/空=内存 mock。`--memory` 可强制覆盖回内存 |
 | `WORKBENCH_CHATD_WAKE_LEASE_MS` | `30000` | wake 租约 TTL ms（P1-2 wake lease）：claim 授予租约，过期后再 claim 即重投；投递次数上限 3（首投计 1），超限 dead-letter（`WB_WAKE_NOT_CLAIMABLE` 稳定错误，inbox 不再 pending；**dead 终态不可再 ack**——C2.1 加固，ack 同码拒绝且审计零新增）；状态迁移全量落 append-only 审计（`wake_events`）。测试旋钮；生产不设即缺省 |

@@ -8,6 +8,11 @@
     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.studionext.platform-backup.plist
   卸载：launchctl bootout gui/$(id -u)/io.studionext.platform-backup
   备份目录缺省 <backupDir>（安装时替换 __BACKUP_DIR__）；日志同时落 <backupDir>/backup.log 与下面的 launchd 日志。
+  chatd 备份（M4.5 增量，2026-11-19）：本 plist **只改说明不重装**——已装实例如需纳入公司 chatd SQLite，
+  在 ProgramArguments 的脚本参数后追加（每公司一条，可重复）：
+      <string>--chatd-db</string><string>&lt;companyDir&gt;/var/workbench/chat.db</string>
+  或给 launchd 环境 PLATFORM_BACKUP_CHATD_DBS（冒号分隔多库）。库缺失自动 SKIP 不报错；
+  产物 chatd-<slug>-<ts>.db.gz 与 Taiga/Matrix 同 manifest/同保留策略（详见脚本头注）。
 -->
 <plist version="1.0">
 <dict>
