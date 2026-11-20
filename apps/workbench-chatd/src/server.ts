@@ -179,7 +179,11 @@ export function dispatch(state: MockState, store: ChatStore, method: string, p: 
             wakeId: `wake-${String(wakeSeq)}`,
             actorId: m,
             roomId: room.roomId,
-            sourceSeq: seq,
+            // sourceSeq=源消息在同房间内的 roomSeq（非全局 seq），与 Transport v1 Message.roomSeq 对齐：
+            // 消费侧（chatd-mention-source）以 messages.list 返回的 Message.roomSeq 匹配 wake.sourceSeq
+            // 定位源消息——若写全局 seq，跨房消息推大两者差值后源消息会移出 limit 窗口（默认 200），
+            // 被永久判「源消息缺失」跳过，@→wake→派工链断（P1 语义修复）。
+            sourceSeq: roomSeq,
             cause: mentions.length > 1 ? 'room' : 'mention',
             status: 'pending',
             claimedBy: null,

@@ -225,6 +225,46 @@ test('config 单测：WORKBENCH_CHATD_WAKE_LEASE_MS 缺省 30000；合法解析�
 // ─── e2e（子进程 + 真 socket）：租约语义 ─────────────────────────────────────
 // 结构纪律：readDb/重启必须发生在 h.cleanup() 之前（cleanup 会删整个临时目录含 chat.db）。
 
+test('e2e：mention wake 的 source_seq=源消息 roomSeq（非全局 seq）——跨房消息错开两序，DB 可按 roomSeq 定位源消息', async () => {
+  const dir = tmpDir('sourceseq')
+  const dbPath = path.join(dir, 'chat.db')
+  const socketPath = path.join(dir, 'chat.sock')
+  try {
+    const h = await startChatd({ env: { WORKBENCH_CHATD_DB: dbPath }, dir, socketPath })
+    try {
+      await withClient(h, async (c) => {
+        const roomA = await expectOk<{ roomId: string }>(await c.call('rooms.create', { kind: 'group', name: 'a', memberIds: ['pm', 'dev'] }))
+        const roomB = await expectOk<{ roomId: string }>(await c.call('rooms.create', { kind: 'group', name: 'b', memberIds: ['pm', 'dev'] }))
+        // B 房 filler 先行：推大全局 seq 与 A 房 roomSeq 的差值
+        const filler = await expectOk<{ seq: number; roomSeq: number }>(await c.call('messages.send', { roomId: roomB.roomId, senderId: 'pm', body: 'filler' }))
+        assert.deepEqual([filler.seq, filler.roomSeq], [1, 1])
+        const sent = await expectOk<{ seq: number; roomSeq: number }>(await c.call('messages.send', { roomId: roomA.roomId, senderId: 'pm', body: '@dev hi', mentions: ['dev'] }))
+        assert.deepEqual([sent.seq, sent.roomSeq], [2, 1], '前置：全局 seq=2 与 A 房 roomSeq=1 错开')
+        const inbox = await expectOk<{ pendingWakeIds: string[] }>(await c.call('inbox', { actorId: 'dev' }))
+        const wakeId = inbox.pendingWakeIds[0]
+        assert.ok(wakeId !== undefined, 'mention 应产生 pending wake')
+        const claim = await expectOk<{ wakes: { sourceSeq: number }[] }>(await c.call('wakes.claim', { actorId: 'dev', wakeIds: [wakeId] }))
+        assert.equal(claim.wakes[0]?.sourceSeq, sent.roomSeq, 'claim 回包 sourceSeq=源消息 roomSeq')
+        assert.notEqual(claim.wakes[0]?.sourceSeq, sent.seq, 'claim 回包 sourceSeq 不得为全局 seq')
+      })
+      h.sigterm()
+      assert.equal((await h.waitExit()).code, 0)
+      readDb(dbPath, (db) => {
+        const wakeRow = db.prepare('SELECT room_id, source_seq FROM wakes').get() as unknown as { room_id: string; source_seq: number }
+        // 消费侧（chatd-mention-source）的定位路径：同房 room_seq=source_seq 必须命中源消息
+        const msgRow = db.prepare('SELECT seq, room_seq FROM messages WHERE room_id = ? AND room_seq = ?').get(wakeRow.room_id, wakeRow.source_seq) as unknown as { seq: number; room_seq: number } | undefined
+        assert.ok(msgRow !== undefined, '按 wake.source_seq=roomSeq 能定位源消息（旧全局 seq 语义在两序错开即 miss）')
+        assert.equal(wakeRow.source_seq, msgRow.room_seq, 'DB wakes.source_seq=源消息 room_seq')
+        assert.notEqual(wakeRow.source_seq, msgRow.seq, 'DB wakes.source_seq 不得为全局 seq')
+      })
+    } finally {
+      await h.cleanup()
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('e2e：claim 幂等——租约有效期内重复 claim 回同 lease（alreadyClaimed、claimedUntil 不变）；同幂等键 replay', async () => {
   const dir = tmpDir('idem')
   const dbPath = path.join(dir, 'chat.db')

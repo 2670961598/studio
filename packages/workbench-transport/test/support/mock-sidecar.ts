@@ -69,7 +69,8 @@ export async function startMockSidecar(options: MockSidecarOptions): Promise<Moc
           const message: MockMessage = { seq: msgSeq, roomSeq: room.headRoomSeq, roomId: room.roomId, senderId: actor, body, mentions, createdAt: Date.now(), messageId: `msg-${String(msgSeq)}` }
           messages.push(message)
           for (const m of new Set(mentions)) {
-            wakeSeq += 1; wakes.push({ wakeId: `wake-${String(wakeSeq)}`, actorId: m, roomId: room.roomId, sourceSeq: msgSeq, cause: mentions.length > 1 ? 'room' : 'mention', status: 'pending', claimedBy: null, claimedUntil: null, createdAt: Date.now(), ackedAt: null, seq: msgSeq })
+            // sourceSeq=源消息 roomSeq（与真实 chatd server 语义对齐；消费侧按 Message.roomSeq 匹配）
+            wakeSeq += 1; wakes.push({ wakeId: `wake-${String(wakeSeq)}`, actorId: m, roomId: room.roomId, sourceSeq: room.headRoomSeq, cause: mentions.length > 1 ? 'room' : 'mention', status: 'pending', claimedBy: null, claimedUntil: null, createdAt: Date.now(), ackedAt: null, seq: msgSeq })
           }
           const result: SendResult = { seq: message.seq, roomSeq: message.roomSeq, messageId: message.messageId, replayed: false }
           return result

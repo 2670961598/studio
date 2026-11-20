@@ -204,6 +204,33 @@ test('wakes claim/ack：错误码 + claimed/alreadyClaimed/acked/alreadyAcked �
   })
 })
 
+test('wakes.sourceSeq 语义：mention wake 的 sourceSeq=源消息 roomSeq（非全局 seq）——跨房消息错开两序', async () => {
+  await withChatd(async ({ c }) => {
+    const roomA = await expectOk<{ roomId: string }>(await c.call('rooms.create', { kind: 'group', name: 'a', memberIds: ['pm', 'dev'] }))
+    const roomB = await expectOk<{ roomId: string }>(await c.call('rooms.create', { kind: 'group', name: 'b', memberIds: ['pm', 'dev'] }))
+    // 先在 B 房发消息：推大全局 seq 与 A 房 roomSeq 的差值（消费侧按 messages.list 的 roomSeq 匹配）
+    const filler = await expectOk<{ seq: number; roomSeq: number }>(await c.call('messages.send', { roomId: roomB.roomId, senderId: 'pm', body: 'filler' }))
+    assert.equal(filler.seq, 1)
+    assert.equal(filler.roomSeq, 1)
+
+    const sent = await expectOk<{ seq: number; roomSeq: number }>(
+      await c.call('messages.send', { roomId: roomA.roomId, senderId: 'pm', body: '@dev hi', mentions: ['dev'] }),
+    )
+    assert.equal(sent.seq, 2, '全局 seq 跨房连续')
+    assert.equal(sent.roomSeq, 1, 'roomSeq 房内独立')
+    assert.notEqual(sent.seq, sent.roomSeq, '前置：两序已错开（本断言集的前提）')
+
+    const inbox = await expectOk<{ pendingWakeIds: string[] }>(await c.call('inbox', { actorId: 'dev' }))
+    const wakeId = inbox.pendingWakeIds[0]
+    assert.ok(wakeId !== undefined, 'mention 应产生 pending wake')
+    const claim = await expectOk<{ wakes: { sourceSeq: number }[] }>(
+      await c.call('wakes.claim', { actorId: 'dev', wakeIds: [wakeId] }),
+    )
+    assert.equal(claim.wakes[0]?.sourceSeq, sent.roomSeq, 'sourceSeq=源消息在同房间内的 roomSeq（消费侧据此定位源消息）')
+    assert.notEqual(claim.wakes[0]?.sourceSeq, sent.seq, 'sourceSeq 不得为全局 seq（跨房错开后源消息会移出 limit 窗口）')
+  })
+})
+
 test('协议错误：非法 JSON/非对象帧/缺 id/缺 method/params 非对象/未知方法 → WB_PROTOCOL', async () => {
   await withChatd(async ({ c }) => {
     const unknownMethod = await expectErr(await c.call('health.check', {}))

@@ -80,6 +80,7 @@ export interface MockWake {
   wakeId: string
   actorId: string
   roomId: string
+  /** 源消息定位序=目标消息在同房间内的 roomSeq（与 Transport v1 Message.roomSeq 对齐；非全局 seq）。 */
   sourceSeq: number
   cause: WakeCause
   status: WakeStatus
