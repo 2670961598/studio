@@ -1,6 +1,7 @@
 #!/bin/bash
 # platform-backup.sh —— Taiga/Matrix/chatd 每日备份（ops，2026-11-17 制作人批准计划任务；
-#                        2026-11-19 M4.5 增 chatd SQLite 面）
+#                        2026-11-19 M4.5 增 chatd SQLite 面；
+#                        2026-11-20 M5-2 第一刀 增「无 Docker 环境」支持：--skip-docker + 自动探测）
 #
 # 设计：
 #   - Taiga：docker exec taiga-docker-taiga-db-1 pg_dumpall -U taiga | gzip → taiga-pg-<ts>.sql.gz
@@ -13,8 +14,13 @@
 #   - 每个产物 gzip -t / size / 行数 sanity；失败非零退出、保留 .err 日志；
 #   - 保留最近 7 天**仅限本脚本清单**（manifest），绝不删除非本脚本产物；
 #   - mkdir 原子锁 + pid 存活检测（同一天重复/并发安全）；日志+摘要 JSON 落 <backupDir>/backup.log。
+#   - 无 Docker 环境（M5-2 第一刀）：`--skip-docker` 显式跳过；未传时**自动探测**——docker CLI
+#     缺失 或 `docker info` 失败 → 视为不可用。不可用时 Taiga/Matrix/Matrix-config 段 SKIP
+#     （日志明报 reason=docker-unavailable，计入 SUMMARY 的 docker.skipped；不算失败），
+#     chatd 段/manifest/保留策略照常；docker 可用且未显式跳过 → 行为与原版逐字节一致
+#     （docker preflight 失败仍 fail）。
 #
-# 用法：platform-backup.sh [--dry-run] [--backup-dir DIR] [--keep-days N] [--chatd-db <chat.db>]...
+# 用法：platform-backup.sh [--dry-run] [--skip-docker] [--backup-dir DIR] [--keep-days N] [--chatd-db <chat.db>]...
 #   环境：PLATFORM_BACKUP_DIR（缺省 $HOME/backups/studio-next；生产建议显式指向备份盘，如 <backupDir>）
 #         PLATFORM_BACKUP_CHATD_DBS（冒号分隔多个 chat.db；与 --chatd-db 合并去重）
 #   退出：0=成功；1=备份/校验/锁失败；2=用法错误。
@@ -24,13 +30,16 @@ umask 077
 BACKUP_DIR="${PLATFORM_BACKUP_DIR:-$HOME/backups/studio-next}"
 KEEP_DAYS=7
 DRY_RUN=0
+SKIP_DOCKER=0
 TAIGA_DB_CONTAINER="taiga-docker-taiga-db-1"
 MATRIX_CONTAINER="matrix-synapse"
 
 usage() {
   cat <<'USAGE'
-用法：platform-backup.sh [--dry-run] [--backup-dir DIR] [--keep-days N] [--chatd-db <chat.db>]...
+用法：platform-backup.sh [--dry-run] [--skip-docker] [--backup-dir DIR] [--keep-days N] [--chatd-db <chat.db>]...
   --dry-run        只打印将执行命令，不创建目录/不写备份/不取锁
+  --skip-docker    跳过 Taiga/Matrix/Matrix-config 段（不备份、不算失败；chatd 照常）。
+                   不传时自动探测：docker CLI 缺失 或 docker info 失败 → 视为不可用并同样 SKIP
   --backup-dir     备份目录（缺省 $PLATFORM_BACKUP_DIR 或 $HOME/backups/studio-next）
   --keep-days      保留天数（缺省 7；仅清理本脚本 manifest 记录的产物）
   --chatd-db       chatd SQLite 路径（可重复；缺省布局 <companyDir>/var/workbench/chat.db；
@@ -43,6 +52,7 @@ CHATD_DBS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
+    --skip-docker) SKIP_DOCKER=1; shift ;;
     --backup-dir) BACKUP_DIR="${2:-}"; shift 2 ;;
     --keep-days) KEEP_DAYS="${2:-}"; shift 2 ;;
     --chatd-db) CHATD_DBS+=("${2:-}"); shift 2 ;;
@@ -70,6 +80,27 @@ for d in ${CHATD_DBS[@]+"${CHATD_DBS[@]}"}; do
   CHATD_SEEN="$CHATD_SEEN$d$NL"
   CHATD_DB_LIST="$CHATD_DB_LIST$d$NL"
 done
+
+# —— Docker 可用性判定（M5-2 第一刀）：--skip-docker 显式跳过；否则自动探测 ——
+# 不可用 ＝ docker CLI 缺失 或 docker info 失败（daemon 未装/未运行/不可达）。
+# 不可用 → DOCKER_MODE=skip：Taiga/Matrix/Matrix-config 段 SKIP（reason 记日志/入 SUMMARY），
+#           不算失败（chatd 备份照常，退出码以 chatd/其余面为准）；
+# 可用且未显式跳过 → DOCKER_MODE=run：走原版 preflight（docker CLI/两容器不在即 fail）。
+DOCKER_MODE="run"
+DOCKER_SKIP_REASON=""
+DOCKER_SKIP_DETAIL=""
+docker_probe() {
+  command -v docker >/dev/null 2>&1 || { DOCKER_SKIP_DETAIL="docker CLI 不在 PATH"; return 1; }
+  docker info >/dev/null 2>&1 || { DOCKER_SKIP_DETAIL="docker info 失败（daemon 未运行/不可达）"; return 1; }
+  return 0
+}
+if [ "$SKIP_DOCKER" = 1 ]; then
+  DOCKER_MODE="skip"
+  DOCKER_SKIP_REASON="skip-docker-flag"
+  DOCKER_SKIP_DETAIL="显式 --skip-docker"
+else
+  docker_probe || { DOCKER_MODE="skip"; DOCKER_SKIP_REASON="docker-unavailable"; }
+fi
 
 TS="$(date +%Y%m%d-%H%M%S)"
 TAIGA_GZ="${BACKUP_DIR}/taiga-pg-${TS}.sql.gz"
@@ -135,8 +166,11 @@ cleanup() {
 trap cleanup EXIT
 
 if [ "$DRY_RUN" = 1 ]; then
-  cat <<EOF
-platform-backup dry-run：backupDir=${BACKUP_DIR} keepDays=${KEEP_DAYS} ts=${TS}
+  printf '%s\n' "platform-backup dry-run：backupDir=${BACKUP_DIR} keepDays=${KEEP_DAYS} ts=${TS}"
+  if [ "$DOCKER_MODE" = skip ]; then
+    printf '  docker=SKIP reason=%s（%s）→ Taiga/Matrix/Matrix-config 段跳过：不备份、不算失败；chatd 照常\n' "$DOCKER_SKIP_REASON" "$DOCKER_SKIP_DETAIL"
+  else
+    cat <<EOF
   docker exec ${TAIGA_DB_CONTAINER} pg_dumpall -U taiga | gzip > ${TAIGA_GZ} 2> ${TAIGA_ERR}
   gzip -t ${TAIGA_GZ}; gzip -dc ${TAIGA_GZ} | wc -l
   docker exec -i ${MATRIX_CONTAINER} python3 - ${MATRIX_TMP_DB} (sqlite3 backup API + integrity_check)
@@ -144,6 +178,9 @@ platform-backup dry-run：backupDir=${BACKUP_DIR} keepDays=${KEEP_DAYS} ts=${TS}
   gzip ${BACKUP_DIR}/matrix-hs-${TS}.db; gzip -t ${MATRIX_GZ}
   docker exec ${MATRIX_CONTAINER} tar -czf - -C /data homeserver.yaml localhost.signing.key localhost.log.config > ${MATRIX_CONFIG}
   chmod 600 ${MATRIX_CONFIG}; tar -tzf ${MATRIX_CONFIG}
+EOF
+  fi
+  cat <<EOF
   chatd(M4.5)：每库 sqlite3 <db> ".backup <tmp>" → integrity_check → gzip chatd-<slug>-${TS}.db.gz（600）；缺失=SKIP
   retention: 仅删 ${MANIFEST} 中记录且 mtime 超过 ${KEEP_DAYS} 天的本脚本产物
 EOF
@@ -155,9 +192,11 @@ EOF
 fi
 
 mkdir -p "$BACKUP_DIR"
-command -v docker >/dev/null 2>&1 || fail "docker CLI 不在 PATH"
-docker inspect -f '{{.State.Running}}' "$TAIGA_DB_CONTAINER" 2>/dev/null | grep -q true || fail "Taiga DB 容器未运行：${TAIGA_DB_CONTAINER}"
-docker inspect -f '{{.State.Running}}' "$MATRIX_CONTAINER" 2>/dev/null | grep -q true || fail "Matrix 容器未运行：${MATRIX_CONTAINER}"
+if [ "$DOCKER_MODE" = run ]; then
+  command -v docker >/dev/null 2>&1 || fail "docker CLI 不在 PATH"
+  docker inspect -f '{{.State.Running}}' "$TAIGA_DB_CONTAINER" 2>/dev/null | grep -q true || fail "Taiga DB 容器未运行：${TAIGA_DB_CONTAINER}"
+  docker inspect -f '{{.State.Running}}' "$MATRIX_CONTAINER" 2>/dev/null | grep -q true || fail "Matrix 容器未运行：${MATRIX_CONTAINER}"
+fi
 # 原子目录锁（macOS bash 3.2 无 flock）；死 pid/异常残留锁自动清理一次
 if ! mkdir "$LOCK_DIR" 2>/dev/null; then
   old_pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
@@ -173,6 +212,8 @@ touch "$MANIFEST"
 START_EPOCH="$(date +%s)"
 log_line "START ts=${TS} dir=${BACKUP_DIR} keepDays=${KEEP_DAYS}"
 
+# —— Taiga / Matrix（DOCKER_MODE=run 才执行；skip 时整段跳过、不算失败） ——
+if [ "$DOCKER_MODE" = run ]; then
 # —— Taiga ——
 if ! docker exec "$TAIGA_DB_CONTAINER" pg_dumpall -U taiga 2>"$TAIGA_ERR" | gzip > "$TAIGA_GZ"; then
   fail "Taiga pg_dumpall 失败（stderr=${TAIGA_ERR}）"
@@ -224,6 +265,14 @@ CONFIG_SIZE="$(stat -f%z "$MATRIX_CONFIG" 2>/dev/null || stat -c%s "$MATRIX_CONF
 [ "$CONFIG_SIZE" -gt 0 ] || fail "Matrix 配置备份为空"
 printf '%s|%s\n' "$START_EPOCH" "$(basename "$MATRIX_CONFIG")" >> "$MANIFEST"
 log_line "OK matrix-config file=$(basename "$MATRIX_CONFIG") size=${CONFIG_SIZE} mode=600"
+else
+  # 无 Docker（M5-2 第一刀）：三段 SKIP，明报 reason，计入 SUMMARY 的 docker.skipped；不算失败
+  log_line "NOTE docker-skip reason=${DOCKER_SKIP_REASON} detail=${DOCKER_SKIP_DETAIL}（Taiga/Matrix/Matrix-config 段跳过，chatd 照常）"
+  for sec in taiga matrix matrix-config; do
+    log_line "SKIP ${sec} reason=${DOCKER_SKIP_REASON}"
+    echo "platform-backup: SKIP ${sec} reason=${DOCKER_SKIP_REASON}"
+  done
+fi
 
 # —— chatd SQLite（M4.5；宿主机在线 .backup；缺失=SKIP 不报错） ——
 CHATD_BACKED=0
@@ -255,6 +304,10 @@ mv "$TMP_MANIFEST" "$MANIFEST"
 log_line "OK retention deleted=${DELETED} keepDays=${KEEP_DAYS}"
 
 END_EPOCH="$(date +%s)"
+if [ "$DOCKER_MODE" = run ]; then
 SUMMARY="{\"ok\":true,\"ts\":\"${TS}\",\"backupDir\":\"${BACKUP_DIR}\",\"taiga\":{\"file\":\"$(basename "$TAIGA_GZ")\",\"size\":${TAIGA_SIZE},\"lines\":${TAIGA_LINES}},\"matrix\":{\"file\":\"$(basename "$MATRIX_GZ")\",\"size\":${MATRIX_SIZE}},\"matrixConfig\":{\"file\":\"$(basename "$MATRIX_CONFIG")\",\"size\":${CONFIG_SIZE}},\"chatd\":{\"backed\":${CHATD_BACKED},\"skipped\":${CHATD_SKIPPED}},\"retentionDeleted\":${DELETED},\"durationMs\":$(((END_EPOCH - START_EPOCH) * 1000))}"
+else
+SUMMARY="{\"ok\":true,\"ts\":\"${TS}\",\"backupDir\":\"${BACKUP_DIR}\",\"docker\":{\"skipped\":true,\"reason\":\"${DOCKER_SKIP_REASON}\",\"sections\":[\"taiga\",\"matrix\",\"matrix-config\"]},\"chatd\":{\"backed\":${CHATD_BACKED},\"skipped\":${CHATD_SKIPPED}},\"retentionDeleted\":${DELETED},\"durationMs\":$(((END_EPOCH - START_EPOCH) * 1000))}"
+fi
 log_line "SUMMARY ${SUMMARY}"
 printf '%s\n' "$SUMMARY"

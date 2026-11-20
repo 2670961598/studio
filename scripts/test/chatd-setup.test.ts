@@ -22,6 +22,12 @@
  *      仅喂 Taiga/Matrix 四调用形状）：chatd .backup→integrity→gzip 600→manifest→
  *      保留策略删过期 chatd-*；恢复副本可读出数据；缺库 SKIP 不报错。
  *      sqlite3 CLI 不在时 J 真跑分支 skip（dry-run/语法分支仍跑）。
+ *   K) platform-backup.sh 无 Docker 环境（M5-2 第一刀，docs/plan/08 §一.1.B#7）：
+ *      docker CLI 缺失（剥光 PATH）→ Taiga/Matrix/Matrix-config 段 SKIP
+ *      （stdout/backup.log 明报 reason=docker-unavailable；SUMMARY docker.skipped）＋
+ *      chatd 照常 backed＋manifest＋exit 0；docker info 失败（shim exit 1）→ 同上；
+ *      --skip-docker 显式（docker 可用也跳过，reason=skip-docker-flag）；dry-run 明示
+ *      docker=SKIP 计划行；docker 可用＋未显式跳过 → 原行为（J 面加强：三段产物齐）。
  *
  * 运行：node --experimental-strip-types --test scripts/test/chatd-setup.test.ts
  */
@@ -29,7 +35,7 @@ import assert from 'node:assert/strict'
 import { execFile, execFileSync, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -356,8 +362,9 @@ function makeFakeDocker(root: string): { binDir: string; dataDir: string } {
   mkdirSync(dataDir, { recursive: true })
   for (const f of ['homeserver.yaml', 'localhost.signing.key', 'localhost.log.config']) writeFileSync(path.join(dataDir, f), 'fake\n')
   writeFileSync(path.join(binDir, 'docker'), `#!/bin/bash
-# fake docker（测试 shim）：仅 platform-backup.sh 用到的调用形状
+# fake docker（测试 shim）：仅 platform-backup.sh 用到的调用形状（M5-2 起含 info 探测）
 case "\${1:-}" in
+  info) exit 0 ;;
   inspect) echo true ;;
   exec)
     case "\$*" in
@@ -393,6 +400,16 @@ function shSyntax(script: string): number {
   }
 }
 
+/** chatd 真跑面需要宿主 sqlite3 CLI；不在时 J/K 真跑分支 skip */
+const sqlite3Available = (() => {
+  try {
+    execFileSync('/bin/bash', ['-c', 'command -v sqlite3'], { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+})()
+
 test('J) platform-backup：bash -n + dry-run 计划 + fake-docker 真跑（chatd .backup/SKIP/保留策略）', async (t) => {
   assert.equal(shSyntax(BACKUP), 0, 'bash -n 语法等价检查')
   const badSh = path.join(tempDir('m45-badsh-'), 'bad.sh')
@@ -417,14 +434,7 @@ test('J) platform-backup：bash -n + dry-run 计划 + fake-docker 真跑（chatd
   // 用法面：相对路径拒（exit 2）
   assert.equal(runSh(BACKUP, ['--dry-run', '--chatd-db', 'rel/chat.db']).status, 2)
 
-  const hasSqlite3 = (() => {
-    try {
-      execFileSync('/bin/bash', ['-c', 'command -v sqlite3'], { stdio: 'ignore' })
-      return true
-    } catch {
-      return false
-    }
-  })()
+  const hasSqlite3 = sqlite3Available
   if (!hasSqlite3) return t.skip('sqlite3 CLI 不在 PATH——真跑分支 skip（dry-run/语法分支已过）')
 
   // 真跑（fake docker 只喂 Taiga/Matrix 形状；chatd 面走真 sqlite3）
@@ -437,7 +447,17 @@ test('J) platform-backup：bash -n + dry-run 计划 + fake-docker 真跑（chatd
     FAKE_DOCKER_DATA: dataDir,
   })
   assert.equal(r.status, 0, `真跑应 exit 0：${r.stderr}\n${r.stdout}`)
-  const summary = JSON.parse(r.stdout.trim().split('\n').pop() as string) as { chatd?: { backed: number; skipped: number }; retentionDeleted: number }
+  const summary = JSON.parse(r.stdout.trim().split('\n').pop() as string) as {
+    taiga?: { file: string; size: number; lines: number }
+    matrix?: { file: string; size: number }
+    matrixConfig?: { file: string; size: number }
+    chatd?: { backed: number; skipped: number }
+    retentionDeleted: number
+  }
+  // docker 可用（fake info→0）→ 原行为：Taiga/Matrix/Matrix-config 三段照产（M5-2 判例）
+  assert.match(summary['taiga']?.['file'] ?? '', /^taiga-pg-\d{8}-\d{6}\.sql\.gz$/, 'docker 可用时 SUMMARY 应含 taiga 产物')
+  assert.match(summary['matrixConfig']?.['file'] ?? '', /^matrix-config-\d{8}-\d{6}\.tgz$/, 'docker 可用时 SUMMARY 应含 matrix-config 产物')
+  assert.ok(existsSync(path.join(backupDir, summary['taiga']?.['file'] ?? 'x')), 'taiga 产物应落盘')
   assert.deepEqual(summary['chatd'], { backed: 1, skipped: 1 }, '去重后 1 备 1 skip（重复 --chatd-db 不双备）')
   assert.ok(!existsSync(path.join(backupDir, 'chatd-oldco-20260101-000000.db.gz')), '过期 chatd-* 应被保留策略删除')
   const gz = (r.stdout.match(/chatd-acme-\d{8}-\d{6}\.db\.gz/g) as string[])[0] ?? ''
@@ -449,4 +469,118 @@ test('J) platform-backup：bash -n + dry-run 计划 + fake-docker 真跑（chatd
   assert.equal(readFileSync(path.join(root, 'out.txt'), 'utf8').trim(), '42', '恢复副本可读出原数据（在线 .backup 语义有效）')
   const manifest = readFileSync(path.join(backupDir, '.platform-backup-manifest'), 'utf8')
   assert.match(manifest, new RegExp(`\\|${gz}`), 'manifest 应记 chatd 产物（同保留策略面）')
+})
+
+/* ------------------------------------------------------------------ */
+/* K) platform-backup.sh：无 Docker 环境（M5-2 第一刀）                 */
+/* ------------------------------------------------------------------ */
+
+interface BackupSummary {
+  ok?: boolean
+  docker?: { skipped?: boolean; reason?: string; sections?: string[] }
+  chatd?: { backed?: number; skipped?: number }
+  retentionDeleted?: number
+}
+
+/** 取脚本 stdout 末行 SUMMARY JSON */
+const lastSummary = (stdout: string): BackupSummary =>
+  JSON.parse(stdout.trim().split('\n').pop() as string) as BackupSummary
+
+test('K) platform-backup 无 Docker：CLI 缺失/info 失败 → SKIP+chatd 照常；--skip-docker 显式；dry-run 计划', async (t) => {
+  if (!sqlite3Available) return t.skip('sqlite3 CLI 不在 PATH——真跑分支 skip')
+
+  const root = tempDir('m52-bk-')
+  const dbPath = path.join(root, 'acme', 'var', 'workbench', 'chat.db')
+  mkdirSync(path.dirname(dbPath), { recursive: true })
+  new DatabaseSync(dbPath).exec('CREATE TABLE t(x); INSERT INTO t VALUES (7);')
+
+  // 剥光 PATH（无 docker；date/gzip/sqlite3/stat/tar 均 /usr/bin:/bin 可用——macOS/Linux 皆然）
+  const STRIPPED = '/usr/bin:/bin'
+  const dockerLeaked = (() => {
+    try {
+      execFileSync('/bin/bash', ['-c', 'command -v docker'], { stdio: 'ignore', env: { PATH: STRIPPED } })
+      return true
+    } catch {
+      return false
+    }
+  })()
+
+  // —— K0 dry-run（docker 缺失）：计划行明示 docker=SKIP；零落盘 ——
+  const bk0 = path.join(root, 'bk-dry')
+  const dry = runSh(BACKUP, ['--dry-run', '--backup-dir', bk0, '--chatd-db', dbPath], { PATH: STRIPPED })
+  assert.equal(dry.status, 0, dry.stderr)
+  if (!dockerLeaked) {
+    assert.match(dry.stdout, /docker=SKIP reason=docker-unavailable/, 'dry-run 应明示 docker=SKIP（自动探测）')
+    assert.ok(!dry.stdout.includes('docker exec'), '不可用时 dry-run 不得再列 docker exec 命令')
+  }
+  assert.ok(!existsSync(bk0), 'dry-run 不得创建备份目录')
+
+  // —— K1 真跑：docker CLI 缺失 → 三段 SKIP（reason=docker-unavailable）＋chatd backed＋exit 0 ——
+  if (dockerLeaked) {
+    t.diagnostic('docker 在 /usr/bin:/bin 可见——K1（CLI 缺失面）本机无法隔离；K2（info 失败面）覆盖同一探测分支')
+  } else {
+    const bk1 = path.join(root, 'bk-nocli')
+    const r1 = runSh(BACKUP, ['--backup-dir', bk1, '--chatd-db', dbPath], { PATH: STRIPPED })
+    assert.equal(r1.status, 0, `docker CLI 缺失应 exit 0（不算失败）：${r1.stderr}\n${r1.stdout}`)
+    for (const sec of ['taiga', 'matrix', 'matrix-config']) {
+      assert.match(r1.stdout, new RegExp(`SKIP ${sec} reason=docker-unavailable`), `${sec} 段应明报 SKIP`)
+    }
+    const s1 = lastSummary(r1.stdout)
+    assert.equal(s1['ok'], true)
+    assert.deepEqual(s1['docker'], { skipped: true, reason: 'docker-unavailable', sections: ['taiga', 'matrix', 'matrix-config'] }, 'SUMMARY 应记 docker skipped（M5-2 口径）')
+    assert.deepEqual(s1['chatd'], { backed: 1, skipped: 0 }, 'chatd 段照常备份')
+    const files1 = readdirSync(bk1)
+    assert.ok(files1.some((f) => /^chatd-acme-\d{8}-\d{6}\.db\.gz$/.test(f)), `应有 chatd 产物：${files1.join(',')}`)
+    assert.ok(!files1.some((f) => f.startsWith('taiga-pg-') || f.startsWith('matrix-')), '不得产 Taiga/Matrix 文件')
+    assert.match(readFileSync(path.join(bk1, 'backup.log'), 'utf8'), /SKIP taiga reason=docker-unavailable/, 'backup.log 应明报 reason')
+    assert.match(readFileSync(path.join(bk1, '.platform-backup-manifest'), 'utf8'), /chatd-acme-\d{8}-\d{6}\.db\.gz/, 'manifest 应记 chatd 产物（保留策略面照旧）')
+  }
+
+  // —— K2 真跑：docker CLI 在但 docker info 失败 → 同一 SKIP 语义 ——
+  const failDir = path.join(root, 'shim-info-fail')
+  mkdirSync(failDir, { recursive: true })
+  writeFileSync(path.join(failDir, 'docker'), '#!/bin/bash\ncase "${1:-}" in info) exit 1 ;; *) echo "unexpected-docker-call: $*" >&2; exit 9 ;; esac\n')
+  chmodSync(path.join(failDir, 'docker'), 0o755)
+  const bk2 = path.join(root, 'bk-infofail')
+  const r2 = runSh(BACKUP, ['--backup-dir', bk2, '--chatd-db', dbPath], { PATH: `${failDir}:${STRIPPED}` })
+  assert.equal(r2.status, 0, `docker info 失败应 exit 0：${r2.stderr}\n${r2.stdout}`)
+  assert.ok(!r2.stderr.includes('unexpected-docker-call'), '不可用后不得再调用 docker（exec/inspect 均不该发生）')
+  const s2 = lastSummary(r2.stdout)
+  assert.deepEqual(s2['docker'], { skipped: true, reason: 'docker-unavailable', sections: ['taiga', 'matrix', 'matrix-config'] })
+  assert.deepEqual(s2['chatd'], { backed: 1, skipped: 0 })
+  assert.ok(readdirSync(bk2).some((f) => /^chatd-acme-\d{8}-\d{6}\.db\.gz$/.test(f)), 'chatd 照常落产物')
+
+  // —— K3 真跑：--skip-docker 显式（docker 可用也跳过；不触发 docker 调用） ——
+  const { binDir } = makeFakeDocker(root)
+  const bk3 = path.join(root, 'bk-flag')
+  const r3 = runSh(BACKUP, ['--skip-docker', '--backup-dir', bk3, '--chatd-db', dbPath], {
+    PATH: `${binDir}:${STRIPPED}`,
+    FAKE_DOCKER_DATA: path.join(root, 'fakedata'),
+  })
+  assert.equal(r3.status, 0, `--skip-docker 应 exit 0：${r3.stderr}\n${r3.stdout}`)
+  for (const sec of ['taiga', 'matrix', 'matrix-config']) {
+    assert.match(r3.stdout, new RegExp(`SKIP ${sec} reason=skip-docker-flag`), `显式跳过应明报 ${sec} SKIP`)
+  }
+  const s3 = lastSummary(r3.stdout)
+  assert.equal(s3['docker']?.['reason'], 'skip-docker-flag', '显式标志的 reason 应区分于自动探测')
+  assert.deepEqual(s3['chatd'], { backed: 1, skipped: 0 })
+  const files3 = readdirSync(bk3)
+  assert.ok(!files3.some((f) => f.startsWith('taiga-pg-') || f.startsWith('matrix-')), '显式跳过不得产 Docker 面产物')
+
+  // —— K4 dry-run --skip-docker（docker 可用）：计划行 reason=skip-docker-flag ——
+  const dryFlag = runSh(BACKUP, ['--dry-run', '--skip-docker', '--backup-dir', path.join(root, 'bk-dry2'), '--chatd-db', dbPath], {
+    PATH: `${binDir}:${STRIPPED}`,
+    FAKE_DOCKER_DATA: path.join(root, 'fakedata'),
+  })
+  assert.equal(dryFlag.status, 0, dryFlag.stderr)
+  assert.match(dryFlag.stdout, /docker=SKIP reason=skip-docker-flag/)
+
+  // —— K5 dry-run 默认（docker 可用）：计划行保持原版 docker exec 面 ——
+  const dryRun = runSh(BACKUP, ['--dry-run', '--backup-dir', path.join(root, 'bk-dry3'), '--chatd-db', dbPath], {
+    PATH: `${binDir}:${STRIPPED}`,
+    FAKE_DOCKER_DATA: path.join(root, 'fakedata'),
+  })
+  assert.equal(dryRun.status, 0, dryRun.stderr)
+  assert.match(dryRun.stdout, /docker exec taiga-docker-taiga-db-1 pg_dumpall/, 'docker 可用时 dry-run 应列原版命令')
+  assert.ok(!dryRun.stdout.includes('docker=SKIP'), '可用时 dry-run 不得出现 SKIP 行')
 })

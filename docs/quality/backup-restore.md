@@ -1,4 +1,4 @@
-# 平台备份与恢复（Taiga/Matrix；ops，2026-11-17）
+# 平台备份与恢复（Taiga/Matrix/chatd；ops，2026-11-17；2026-11-20 M5-2 第一刀 增无 Docker 支持）
 
 > 制作人 2026-11-17 批准「Taiga/Matrix 每日自动备份」。执行体=`scripts/ops/platform-backup.sh`；
 > 计划任务草案=`scripts/ops/io.studionext.platform-backup.plist`（每日 04:30；安装由 Lead/ops 在窗口执行）。
@@ -12,6 +12,7 @@
 | `taiga-pg-<...>.err` | pg_dumpall stderr（成功时 0B 也保留，便于排查） | 600 |
 | `matrix-hs-<...>.db.gz` | Synapse `/data/homeserver.db` 的 SQLite backup API 快照（`integrity_check=ok`），gzip | 600 |
 | `matrix-config-<...>.tgz` | `/data/homeserver.yaml`、`localhost.log.config`、**`localhost.signing.key`**（含密钥，勿外发） | 600 |
+| `chatd-<slug>-<...>.db.gz` | 公司 chatd SQLite 在线备份（`.backup`＋integrity_check；M4.5；缺库=SKIP） | 600 |
 | `backup.log` | 每次运行的 START/OK/FAIL/SUMMARY（JSON行）文本日志 | 600 |
 | `.platform-backup-manifest` | 本脚本产物清单（epoch\|文件名）；保留策略只依据此清单 | 600 |
 
@@ -87,3 +88,39 @@ tail -20 <backupDir>/backup.log
   备份任务失败不会修改既有备份；Lead 按告警处置并登记。
 - `gzip -t`/行数/size 失败：产物视为不可用，不要用于恢复；保留现场并重跑。
 - launchd `last exit` 非 0：`launchctl print ...` + `backup.launchd.err` 排查；必要时 `bootout` 后重新 `bootstrap`。
+
+## 7. 无 Docker 部署（M5-2 第一刀，2026-11-20）
+
+背景：Docker Desktop 已弃用（外部盘重挂导致存储层 EIO，Taiga/Matrix 容器损坏且不再使用）；
+备份脚本自 2026-11-20 起支持无 Docker 环境，计划任务无需重装或改动。
+
+### 7.1 触发方式
+
+| 方式 | 语义 |
+|---|---|
+| **自动探测（默认）** | docker CLI 缺失，或 `docker info` 失败（daemon 未装/未运行/不可达）→ 视为不可用 |
+| **显式 `--skip-docker`** | 操作者强制跳过（适用于 docker info 可通但容器已弃用/损坏的机器）；计划任务在 ProgramArguments 追加 `<string>--skip-docker</string>` 即可 |
+
+判定为「不可用/跳过」时：
+
+- Taiga、Matrix DB、Matrix-config 三段 **SKIP**：不备份、**不算失败**；`backup.log` 逐段明报
+  `SKIP <段名> reason=docker-unavailable`（显式标志为 `reason=skip-docker-flag`）；
+- SUMMARY JSON 记 `"docker":{"skipped":true,"reason":"...","sections":["taiga","matrix","matrix-config"]}`；
+- **chatd 段照常**（`--chatd-db`/`PLATFORM_BACKUP_CHATD_DBS` 的在线 `.backup`→integrity_check→gzip 600）；
+  manifest 与 7 天保留策略照旧（只清理本脚本 manifest 记录的产物）；
+- 退出码以 chatd/其余面为准：chatd 成功=0；**Docker 不可用本身不产生非零退出**。
+
+docker 可用且未显式跳过时，行为与原版逐字节一致（docker preflight 失败——CLI 在但容器未运行——仍按 §6 fail）。
+
+### 7.2 巡检口径
+
+```sh
+# 不可用日的正常形态：三行 SKIP + chatd OK + SUMMARY ok:true
+grep -E 'SKIP (taiga|matrix|matrix-config)' <backupDir>/backup.log | tail -3
+tail -1 <backupDir>/backup.log        # SUMMARY 应含 "docker":{"skipped":true,...} 且 ok:true
+ls <backupDir>/chatd-*.db.gz          # chatd 产物照常产出
+```
+
+- 长期无 Docker 的机器：SKIP 行是**预期常态**，不是告警；异常=非零退出或 SUMMARY `ok:false`。
+- 恢复 Taiga/Matrix 数据（§5）仍用历史备份；`docker` 命令面仅恢复演练时需要。
+- 若 `docker info` 挂起（罕见，损坏 VM 极端态）：显式加 `--skip-docker` 绕过探测。
