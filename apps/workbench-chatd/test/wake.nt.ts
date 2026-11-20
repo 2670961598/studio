@@ -7,41 +7,22 @@
  *       重试上限→dead-letter（稳定错误+审计封口；C2.1 加固：dead 后 ack 拒绝、审计零新增）、
  *       ack 幂等、审计只追加、重启租约恢复（含 dead 跨重启）、
  *       并发 claim 唯一、内存模式租约语义（向后兼容）、真客户端（WorkbenchTransport）wake 契约。
- *       （时钟注入/手动推进的零 sleep 覆盖见 test/wake-hardening.nt.ts。）
+ *       （时钟注入/零 sleep 覆盖见 test/wake-hardening.nt.ts；sourceSeq=roomSeq 语义回归见 test/wake-source-seq.nt.ts。）
  * 边界：无网络/无密钥/无 host；不接生产、不写公司目录、不迁数据。
  * 运行：node --experimental-strip-types --test apps/workbench-chatd/test/wake.nt.ts
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { rmSync } from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { SCHEMA_VERSION, SqliteChatStore } from '../src/store/sqlite.ts'
 import { createInitialState, WAKE_MAX_DELIVERY_ATTEMPTS, type MockMessage, type MockRoom, type MockWake } from '../src/store/types.ts'
 import { ChatdConfigError, loadConfig } from '../src/config.ts'
-import { startChatd, sleep, type ChatdHandle } from './support/proc.ts'
+import { startChatd, sleep } from './support/proc.ts'
 import { connectNdjson, type RawClient, type WbFrame } from './support/ndjson.ts'
+import { expectOk, readDb, tmpDir, withClient } from './support/wake-e2e.ts'
 import { DriverSession } from './support/driver.ts'
-
-function tmpDir(prefix: string): string {
-  return mkdtempSync(path.join(tmpdir(), `workbench-chatd-wake-${prefix}-`))
-}
-
-async function withClient<T>(h: ChatdHandle, run: (c: RawClient) => Promise<T>): Promise<T> {
-  await h.waitReady()
-  const c = await connectNdjson(h.socketPath)
-  try {
-    return await run(c)
-  } finally {
-    c.close()
-  }
-}
-
-async function expectOk<T>(frame: WbFrame): Promise<T> {
-  assert.equal(frame.ok, true, `期望 ok 响应：${JSON.stringify(frame)}`)
-  return (frame as { ok: true; result: T }).result
-}
 
 async function expectErr(frame: WbFrame): Promise<{ code: string; message: string }> {
   assert.equal(frame.ok, false, `期望失败响应：${JSON.stringify(frame)}`)
@@ -67,16 +48,6 @@ async function seedWake(c: RawClient): Promise<string> {
 
 interface EventRow { readonly event_id: number; readonly type: string; readonly attempt: number }
 interface LeaseRow { readonly attempt: number; readonly state: string }
-
-/** 进程退出后直读库（审计/租约断言用；node:sqlite 返回 null 原型行，取标量比较）。 */
-function readDb(dbPath: string, run: (db: DatabaseSync) => void): void {
-  const db = new DatabaseSync(dbPath)
-  try {
-    run(db)
-  } finally {
-    db.close()
-  }
-}
 
 const eventsOf = (db: DatabaseSync): string[] =>
   (db.prepare('SELECT event_id, type, attempt FROM wake_events ORDER BY event_id').all() as unknown as EventRow[])
@@ -224,46 +195,6 @@ test('config 单测：WORKBENCH_CHATD_WAKE_LEASE_MS 缺省 30000；合法解析�
 
 // ─── e2e（子进程 + 真 socket）：租约语义 ─────────────────────────────────────
 // 结构纪律：readDb/重启必须发生在 h.cleanup() 之前（cleanup 会删整个临时目录含 chat.db）。
-
-test('e2e：mention wake 的 source_seq=源消息 roomSeq（非全局 seq）——跨房消息错开两序，DB 可按 roomSeq 定位源消息', async () => {
-  const dir = tmpDir('sourceseq')
-  const dbPath = path.join(dir, 'chat.db')
-  const socketPath = path.join(dir, 'chat.sock')
-  try {
-    const h = await startChatd({ env: { WORKBENCH_CHATD_DB: dbPath }, dir, socketPath })
-    try {
-      await withClient(h, async (c) => {
-        const roomA = await expectOk<{ roomId: string }>(await c.call('rooms.create', { kind: 'group', name: 'a', memberIds: ['pm', 'dev'] }))
-        const roomB = await expectOk<{ roomId: string }>(await c.call('rooms.create', { kind: 'group', name: 'b', memberIds: ['pm', 'dev'] }))
-        // B 房 filler 先行：推大全局 seq 与 A 房 roomSeq 的差值
-        const filler = await expectOk<{ seq: number; roomSeq: number }>(await c.call('messages.send', { roomId: roomB.roomId, senderId: 'pm', body: 'filler' }))
-        assert.deepEqual([filler.seq, filler.roomSeq], [1, 1])
-        const sent = await expectOk<{ seq: number; roomSeq: number }>(await c.call('messages.send', { roomId: roomA.roomId, senderId: 'pm', body: '@dev hi', mentions: ['dev'] }))
-        assert.deepEqual([sent.seq, sent.roomSeq], [2, 1], '前置：全局 seq=2 与 A 房 roomSeq=1 错开')
-        const inbox = await expectOk<{ pendingWakeIds: string[] }>(await c.call('inbox', { actorId: 'dev' }))
-        const wakeId = inbox.pendingWakeIds[0]
-        assert.ok(wakeId !== undefined, 'mention 应产生 pending wake')
-        const claim = await expectOk<{ wakes: { sourceSeq: number }[] }>(await c.call('wakes.claim', { actorId: 'dev', wakeIds: [wakeId] }))
-        assert.equal(claim.wakes[0]?.sourceSeq, sent.roomSeq, 'claim 回包 sourceSeq=源消息 roomSeq')
-        assert.notEqual(claim.wakes[0]?.sourceSeq, sent.seq, 'claim 回包 sourceSeq 不得为全局 seq')
-      })
-      h.sigterm()
-      assert.equal((await h.waitExit()).code, 0)
-      readDb(dbPath, (db) => {
-        const wakeRow = db.prepare('SELECT room_id, source_seq FROM wakes').get() as unknown as { room_id: string; source_seq: number }
-        // 消费侧（chatd-mention-source）的定位路径：同房 room_seq=source_seq 必须命中源消息
-        const msgRow = db.prepare('SELECT seq, room_seq FROM messages WHERE room_id = ? AND room_seq = ?').get(wakeRow.room_id, wakeRow.source_seq) as unknown as { seq: number; room_seq: number } | undefined
-        assert.ok(msgRow !== undefined, '按 wake.source_seq=roomSeq 能定位源消息（旧全局 seq 语义在两序错开即 miss）')
-        assert.equal(wakeRow.source_seq, msgRow.room_seq, 'DB wakes.source_seq=源消息 room_seq')
-        assert.notEqual(wakeRow.source_seq, msgRow.seq, 'DB wakes.source_seq 不得为全局 seq')
-      })
-    } finally {
-      await h.cleanup()
-    }
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
 
 test('e2e：claim 幂等——租约有效期内重复 claim 回同 lease（alreadyClaimed、claimedUntil 不变）；同幂等键 replay', async () => {
   const dir = tmpDir('idem')
