@@ -20,7 +20,10 @@
  *     (source,kind,company,dedupKey) 幂等折叠（gate.ts:244-245）；超限 dead-letter 终态。
  *   - payload 与 daemon 消费闸 MentionIntentPayload 同形（engine/intents/taxonomy.ts:59-67
  *     checkMentionPayload 过闸才 emit）：target=wake.actorId、mention='@'+工号、
- *     text=消息 body、eventId=`${roomId}/${sourceSeq}`、sender、room、channel=房间名。
+ *     text=消息 body、eventId=`wake:<wakeId>`（=dedupKey——引擎幂等契约 dedupKey=eventId
+ *     源侧设置，消费件强制两者相等；chatd 源的 eventId=wake 身份而非 Matrix room/seq，
+ *     多 actor 各产独立 wake 天然不同键）、sender、room、channel=房间名；源消息定位
+ *     仍按 wake.sourceSeq（messages.list 按 roomSeq 匹配）不改。
  *   - emit 只产意图绝不直驱 worker（docs/22 铁律）；emit 抛错源自身捕获不中断轮询
  *     （docs/25-§3.4.5 源侧契约；不 ack——保守面，靠重投+引擎幂等收口）。
  *
@@ -226,7 +229,12 @@ export function createChatdMentionSource(options: ChatdMentionSourceOptions): In
       target: actor,
       mention: `@${actor}`,
       text: message.body,
-      eventId: `${roomId}/${String(sourceSeq)}`,
+      // eventId=dedupKey=`wake:<wakeId>`（引擎幂等契约 dedupKey=eventId 源侧设置，105-刀A/
+      // 21A-§5.10：taxonomy.ts mention 消费件强制两者相等，不等=伪造绕幂等面全拒收）。
+      // 对 chatd 源 eventId=wake 身份，非 Matrix room/seq：同一 wake 重投同键（恰一次归
+      // 引擎幂等折叠）、一条消息 @ 多 actor 各产独立 wake → 天然不同 dedupKey（互不吞并）；
+      // room/seq 溯源由 room 字段+上方按 wake.sourceSeq 定位源消息承载。
+      eventId: `wake:${wakeId}`,
       sender: message.senderId,
       room: roomId,
       channel,

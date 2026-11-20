@@ -6,6 +6,9 @@
  *   - wake 恰一次：新 wake → claim → emit → ack 一条链，后续拍不再重发；
  *   - claim/ack：批量 claim（idempotencyKey=actor+拍号）、逐 wake ack（幂等键=`wake:<id>`）、
  *     payload 与 daemon 消费闸 checkMentionPayload 同形；
+ *   - 引擎幂等契约：payload.eventId=dedupKey=`wake:<id>`（源侧设置，消费件强制相等——
+ *     修复前 eventId=room/seq ≠ dedupKey 全拒收）；多 actor 各独立 wake 不同键；直证过
+ *     createMentionConsumer dedupKey 闸（物化唤醒单零 errors）；
  *   - 幂等吸收：租约期内重claim=alreadyClaimed（attempt 不计数）照常 emit→ack（同 dedupKey 重发，引擎折叠）；
  *   - 重投幂等：租约过期重投（attempt+1）→ 同键 `wake:<id>` 重发 → ack 收口；
  *   - stop 清定时器无孤儿：清 setTimeout 链、关 transport、在途 poll 返回后不再调度/不再 emit；
@@ -15,9 +18,10 @@
  * 边界：不触 matrix 路径（既有源零改——本刀只加新文件）；mock transport/server，零真 socket。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { InvokeIntent } from '@studio-next/contract'
+import type { InvokeIntent, TicketId } from '@studio-next/contract'
 import type { AckResult, ClaimResult, InboxResult, Message, MessagePage, Room } from '@studio-next/workbench-transport'
-import { checkMentionPayload } from '../../src/engine/intents/taxonomy.ts'
+import { createFakePlatform } from '../../src/engine/fakes.ts'
+import { checkMentionPayload, createMentionConsumer, type IntentConsumerDeps } from '../../src/engine/intents/taxonomy.ts'
 import {
   CHATD_MENTION_SOURCE_NAME,
   classifyChatdError,
@@ -191,6 +195,13 @@ function fixture(overrides?: FixtureOpts) {
 
 const inboxCalls = (c: FakeChatd): { method: string; input: unknown; at: number }[] => c.calls.filter((x) => x.method === 'inbox')
 
+/** payload 收窄助手：InvokeIntent.payload=unknown，经消费闸同款结构校验收窄（源保证过闸） */
+function payloadOf(intent: InvokeIntent): { eventId: string } {
+  const checked = checkMentionPayload(intent.payload)
+  if (typeof checked === 'string') throw new Error(`payload 结构闸不过：${checked}`)
+  return checked
+}
+
 afterEach(() => {
   vi.useRealTimers()
 })
@@ -253,7 +264,8 @@ describe('createChatdMentionSource · 基线与恰一次', () => {
     const intent = f.emitted[0] as InvokeIntent
     expect(intent).toMatchObject({ kind: 'mention', company: 'acme', source: CHATD_MENTION_SOURCE_NAME, dedupKey: 'wake:wake-1' })
     expect(typeof checkMentionPayload(intent.payload)).not.toBe('string') // 与 daemon 消费闸同形（结构闸直证）
-    expect(intent.payload).toMatchObject({ target: 'AGENT-1', mention: '@AGENT-1', text: '@AGENT-1 干活', eventId: 'room-1/1', sender: 'PRIME-0', room: 'room-1', channel: '大厅' })
+    expect(intent.payload).toMatchObject({ target: 'AGENT-1', mention: '@AGENT-1', text: '@AGENT-1 干活', eventId: 'wake:wake-1', sender: 'PRIME-0', room: 'room-1', channel: '大厅' })
+    expect(payloadOf(intent).eventId).toBe(intent.dedupKey) // 引擎幂等契约：dedupKey=eventId 源侧设置（taxonomy.ts 消费件强制相等）
     const claim = f.chatd.calls.find((c) => c.method === 'claimWakes')
     expect(claim?.input).toMatchObject({ actorId: 'AGENT-1', wakeIds: ['wake-1'] })
     expect((claim?.input as { idempotencyKey?: string }).idempotencyKey).toContain('AGENT-1|tick:') // actor+拍号
@@ -274,6 +286,8 @@ describe('createChatdMentionSource · 基线与恰一次', () => {
     f.chatd.send('@AGENT-1 @AGENT-2 都来', ['AGENT-1', 'AGENT-2'])
     await vi.advanceTimersByTimeAsync(100)
     expect(f.emitted.map((i) => i.dedupKey).sort()).toEqual(['wake:wake-1', 'wake:wake-2'])
+    expect(f.emitted.every((i) => payloadOf(i).eventId === i.dedupKey)).toBe(true) // 多 actor 各自 eventId=dedupKey=wake:<各自 wakeId>
+    expect(new Set(f.emitted.map((i) => payloadOf(i).eventId)).size).toBe(2) // 两条 wake → 两个不同 eventId/dedupKey（互不吞并）
     expect(f.emitted.every((i) => typeof checkMentionPayload(i.payload) !== 'string')).toBe(true)
     f.source.stop()
   })
@@ -293,6 +307,7 @@ describe('createChatdMentionSource · 幂等与重投', () => {
     const claims = f.chatd.calls.filter((c) => c.method === 'claimWakes')
     expect((claims[1]?.input as { wakeIds: readonly string[] }).wakeIds).toEqual(['wake-1'])
     expect(f.emitted.map((i) => i.dedupKey)).toEqual(['wake:wake-1', 'wake:wake-1']) // 同键重发——恰一次归引擎幂等折叠
+    expect(f.emitted.every((i) => payloadOf(i).eventId === i.dedupKey && payloadOf(i).eventId === 'wake:wake-1')).toBe(true) // 重投同 wake 同键：eventId 恒=dedupKey
     expect(f.chatd.wakes[0]?.attempt).toBe(1) // 幂等吸收：租约期内不计数
     expect(f.chatd.wakes[0]?.status).toBe('acked')
     await vi.advanceTimersByTimeAsync(200)
@@ -312,7 +327,68 @@ describe('createChatdMentionSource · 幂等与重投', () => {
     await vi.advanceTimersByTimeAsync(2_000) // t=3000：租约（至 1300）已过期→重投(attempt=2)→emit#2→ack 收口
     expect(f.chatd.wakes[0]?.attempt).toBe(2)
     expect(f.emitted.map((i) => i.dedupKey)).toEqual(['wake:wake-1', 'wake:wake-1'])
+    expect(f.emitted.every((i) => payloadOf(i).eventId === i.dedupKey)).toBe(true) // 租约过期重投同 wake 同键：eventId 恒=dedupKey
     expect(f.chatd.wakes[0]?.status).toBe('acked')
+    f.source.stop()
+  })
+})
+
+describe('createChatdMentionSource · 引擎幂等契约（dedupKey=eventId 源侧设置）', () => {
+  /** 最小消费件依赖（fake 平台零账本面——只验共闸+物化链，不验台账） */
+  function mentionConsumerFixture(): { consume: ReturnType<typeof createMentionConsumer>; errors: string[]; candidates: Array<{ ticket: TicketId; intent: InvokeIntent }> } {
+    const errors: string[] = []
+    const candidates: Array<{ ticket: TicketId; intent: InvokeIntent }> = []
+    const deps: IntentConsumerDeps = {
+      platform: createFakePlatform(),
+      syncMirror: () => {},
+      makeEvent: () => {},
+      tickEvents: [],
+      config: {},
+      people: [{ id: 'AGENT-1' }, { id: 'AGENT-2' }],
+      errors,
+      drainSeen: new Set<string>(),
+      candidates,
+      onMutation: () => {},
+    }
+    return { consume: createMentionConsumer(deps), errors, candidates }
+  }
+
+  // 修复直证：修复前源产 eventId=`${roomId}/${sourceSeq}` ≠ dedupKey=`wake:<id>`，引擎
+  // 消费件（taxonomy.ts「幂等键源侧契约，105-刀A」）全拒收——daemon 日志 tick#944381 面。
+  it('emit 的 payload.eventId === dedupKey === wake:<id>，过引擎 mention 消费件 dedupKey 闸（物化唤醒单零 errors）', async () => {
+    vi.useFakeTimers()
+    const f = fixture()
+    f.source.start(f.emit)
+    await vi.advanceTimersByTimeAsync(0)
+    f.chatd.send('@AGENT-1 修幂等', ['AGENT-1'])
+    await vi.advanceTimersByTimeAsync(100)
+    expect(f.emitted.length).toBe(1)
+    const intent = f.emitted[0] as InvokeIntent
+    expect(intent.dedupKey).toBe('wake:wake-1')
+    expect(payloadOf(intent).eventId).toBe('wake:wake-1')
+    expect(payloadOf(intent).eventId).toBe(intent.dedupKey)
+    const c = mentionConsumerFixture()
+    await c.consume(intent, `${intent.source}|${intent.kind}|${intent.company}|${intent.dedupKey}`)
+    expect(c.errors).toEqual([]) // dedupKey≠eventId 丢弃面已消除（同键过闸）
+    expect(c.candidates.length).toBe(1) // 物化一张 @唤醒单（assignee=target）
+    f.source.stop()
+  })
+
+  it('多 actor 两条 wake → 两个不同 dedupKey（各eventId=dedupKey），逐一过消费闸互不吞并', async () => {
+    vi.useFakeTimers()
+    const f = fixture()
+    f.source.start(f.emit)
+    await vi.advanceTimersByTimeAsync(0)
+    f.chatd.send('@AGENT-1 @AGENT-2 各自独立', ['AGENT-1', 'AGENT-2'])
+    await vi.advanceTimersByTimeAsync(100)
+    expect(f.emitted.map((i) => i.dedupKey).sort()).toEqual(['wake:wake-1', 'wake:wake-2'])
+    for (const intent of f.emitted) {
+      expect(payloadOf(intent).eventId).toBe(intent.dedupKey)
+      const c = mentionConsumerFixture()
+      await c.consume(intent, `${intent.source}|${intent.kind}|${intent.company}|${intent.dedupKey}`)
+      expect(c.errors).toEqual([])
+      expect(c.candidates.length).toBe(1)
+    }
     f.source.stop()
   })
 })
