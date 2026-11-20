@@ -410,10 +410,11 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'matrixChannels': cfg.matrixChannels = bool(value, key); break
       case 'matrixDeptMap': cfg.matrixDeptMap = str(value, key); break
       case 'matrixProducerMxid': cfg.matrixProducerMxid = str(value, key); break
-      // —— chatd 唤起源键组（M4-1 task-136）：解析收口 assembly/serve/chatd-mention-source.ts ——
+      // —— chatd 唤起源键组（M4-1 task-136；P1 超时加固两键同走正整数收口）：解析收口 assembly/serve/chatd-mention-source.ts ——
       case 'mentionSource':
       case 'chatdSocket':
       case 'mentionPollMs':
+      case 'mentionConnectTimeoutMs': case 'mentionRequestTimeoutMs':
         coerceChatdServeKey(cfg, key, value, { str, num })
         break
       // —— 制作人-岗位持久对话（docs/21-§七，studio-dev-646 Phase 1）：五键解析即验 ——

@@ -138,6 +138,19 @@ export interface ServeConfig extends HrServeConfig, RestartServeConfig, Signatur
   /** chatd 唤起源轮询间隔 ms（缺省沿用 3000——chatd-mention-source.ts 源内缺省单一源） */
   mentionPollMs?: number
   /**
+   * chatd 唤起源传输连接超时 ms（mentionSource: chatd 时由组合根 apps/boot 消费；缺省
+   * 5000——boot 装配面缺省单一源 DEFAULT_MENTION_CONNECT_TIMEOUT_MS）。P1 加固：transport
+   * 包内缺省 1000ms 在 daemon 事件循环偶发 >1s 停顿（localplatform 全量 list 每拍扫描）时
+   * 首轮 poll 偶发 connect timeout——boot 显式抬高，不动物理包缺省（其余消费面零漂移）。
+   * 正整数毫秒，非法值解析即拒（CONFIG_INVALID）。
+   */
+  mentionConnectTimeoutMs?: number
+  /**
+   * chatd 唤起源传输请求超时 ms（同上；缺省 10000——DEFAULT_MENTION_REQUEST_TIMEOUT_MS）。
+   * 覆盖 inbox/claim/ack/list 各请求；正整数毫秒，非法值解析即拒（CONFIG_INVALID）。
+   */
+  mentionRequestTimeoutMs?: number
+  /**
    * 公司频道供给开关（130-P3，130 提案 §6.7.3-③；缺省关）：true=注入工厂装配（opts.
    * matrixRoomFace）——启动+热重载 ensure 八类地图＋派发/CLOSE 生命周期钩（EngineDeps.
    * rooms）。开而未注入=CONFIG_INVALID；供给失败不阻主循环（执行体 assembly/channels/）。

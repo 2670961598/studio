@@ -9,10 +9,14 @@
  *     依赖——env 不给密码、fetch 注入即炸）；
  *   - 互斥先炸：mentionSource: chatd + matrix: true → parse 面 CONFIG_INVALID，serve 未被调；
  *   - 装配面全假网：assembleChatdSource + mock transport 走 start→emit→stop 一条链
- *     （env WORKBENCH_CHATD_TOKEN → transport 请求附参；日志只报 socket/有无 token，不报值）。
+ *     （env WORKBENCH_CHATD_TOKEN → transport 请求附参；日志只报 socket/有无 token，不报值）；
+ *   - 传输超时加固（P1）：源工厂收 connectTimeoutMs/requestTimeoutMs——缺省 5000/10000
+ *     （boot 装配面 DEFAULT_MENTION_* 单一源）、daemon.yaml 两键正整数直通；非法值 parse
+ *     面拒启（0/负/非整数——事件循环偶发停顿下首轮 poll connect timeout 的加固面）。
  *
  * 边界：boot 不 import @studio-next/workbench-transport（依赖图无该边）——mock 与类型全部
- * 经 '@studio-next/daemon/serve' 再出口面消费（M4-1 结构性保证的直证）。
+ * 经 '@studio-next/daemon/serve' 再出口面消费（M4-1 结构性保证的直证）；超时参数断言同样
+ * 经该再出口面旁听（vi.mock 包真实现——行为零漂移，只记录源工厂收到的 options）。
  */
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -20,11 +24,19 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { InvokeIntent, InvokeSource } from '@studio-next/contract'
 import {
+  createChatdMentionSource,
   parseDaemonConfig,
   type ChatdSourceFactory,
   type ChatdTransportPort,
 } from '@studio-next/daemon/serve'
-import { assembleChatdSource, bootServe, WORKBENCH_CHATD_TOKEN_ENV } from '../../src/boot.ts'
+import { assembleChatdSource, bootServe, DEFAULT_MENTION_CONNECT_TIMEOUT_MS, DEFAULT_MENTION_REQUEST_TIMEOUT_MS, WORKBENCH_CHATD_TOKEN_ENV } from '../../src/boot.ts'
+
+// 旁听面（P1 超时加固断言用）：包住真 createChatdMentionSource——实现零漂移，只记录
+// boot 装配面递给源工厂的 options（transport 注入/超时参数同形直证；仍零直连 transport 包）。
+vi.mock('@studio-next/daemon/serve', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@studio-next/daemon/serve')>()
+  return { ...actual, createChatdMentionSource: vi.fn(actual.createChatdMentionSource) }
+})
 
 // ————————————————————————— mock transport（内存态；单 actor 最小链） —————————————————————————
 
@@ -107,10 +119,19 @@ class FakeChatd implements ChatdTransportPort {
 
 const roots: string[] = []
 
+/** 源工厂旁听面（vi.mock 包真实现后的 spy 引用——断言 boot 递给工厂的 options） */
+const chatdSourceFactorySpy = vi.mocked(createChatdMentionSource)
+
 afterEach(() => {
   vi.useRealTimers()
+  chatdSourceFactorySpy.mockClear()
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
+
+/** fake 栈 daemon.yaml（零外部依赖；parse 面走 daemon 同一条解析链）→ 解析产物 */
+function parseYaml(lines: readonly string[]): ReturnType<typeof parseDaemonConfig> {
+  return parseDaemonConfig(readFileSync(writeYaml(lines), 'utf8'))
+}
 
 /** fake 栈 daemon.yaml（零外部依赖；parse 面走 daemon 同一条解析链） */
 function writeYaml(lines: readonly string[]): string {
@@ -183,6 +204,12 @@ describe('bootServe：chatd 唤起源接线', () => {
     expect(joined).toContain(path.join(companyDir, 'var/workbench/chat.sock')) // 缺省 socket 推导进日志（可观测）
     expect(joined).toContain('token env 供给')
     expect(joined).not.toContain('tok-boot-1') // token 值永不入日志（红名单）
+    // P1 超时加固：bootServe 装配路径同样显式递超时（缺省 5000/10000）——源工厂旁听直证
+    expect(chatdSourceFactorySpy).toHaveBeenCalledWith(
+      expect.objectContaining({ connectTimeoutMs: DEFAULT_MENTION_CONNECT_TIMEOUT_MS, requestTimeoutMs: DEFAULT_MENTION_REQUEST_TIMEOUT_MS }),
+    )
+    expect(joined).toContain(`connectTimeoutMs=${String(DEFAULT_MENTION_CONNECT_TIMEOUT_MS)}`)
+    expect(joined).toContain(`requestTimeoutMs=${String(DEFAULT_MENTION_REQUEST_TIMEOUT_MS)}`)
   })
 
   it('mentionSource: chatd + matrix: true → 互斥先炸（parse 面 CONFIG_INVALID，serve 未被调）', async () => {
@@ -230,11 +257,22 @@ describe('assembleChatdSource：装配面全假网', () => {
     ])
     const config = parseDaemonConfig(readFileSync(yamlPath, 'utf8'))
     expect(config.mentionPollMs).toBe(100) // mentionPollMs 键组直通源节奏
+    expect(config.mentionConnectTimeoutMs).toBeUndefined() // 不写=undefined：缺省归 boot 装配面
+    expect(config.mentionRequestTimeoutMs).toBeUndefined()
     const factory = assembleChatdSource(config, { [WORKBENCH_CHATD_TOKEN_ENV]: 'tok-asm-1' }, {
       transport: chatd,
       log: (line) => logs.push(line),
     })
     const source: InvokeSource = factory({ actors: ['AGENT-1'] })
+    // P1 超时加固：注入 transport 的形态下，源工厂 options 仍同形收 connectTimeoutMs/
+    // requestTimeoutMs（缺省 5000/10000——不因 transport 注入而丢参）
+    expect(chatdSourceFactorySpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transport: chatd,
+        connectTimeoutMs: DEFAULT_MENTION_CONNECT_TIMEOUT_MS,
+        requestTimeoutMs: DEFAULT_MENTION_REQUEST_TIMEOUT_MS,
+      }),
+    )
     source.start((intent) => emitted.push(intent))
     await vi.advanceTimersByTimeAsync(0) // 首拉建基线（启动前 pending 不唤起——防重放）
     chatd.send('@AGENT-1 干活', ['AGENT-1'])
@@ -249,5 +287,61 @@ describe('assembleChatdSource：装配面全假网', () => {
     const joined = logs.join('\n')
     expect(joined).toContain('[chatd]')
     expect(joined).not.toContain('tok-asm-1') // token 值永不入日志（红名单）
+  })
+})
+
+// ————————————————————————— 传输超时加固（P1：事件循环偶发停顿 → 首轮 poll connect timeout） —————————————————————————
+
+describe('assembleChatdSource：传输超时参数（mentionConnectTimeoutMs/mentionRequestTimeoutMs）', () => {
+  it('缺省 5000/10000：不写两键 → boot 装配面显式递源工厂（自建 transport 面生效）；日志明示有效值', () => {
+    const logs: string[] = []
+    const config = parseYaml([
+      'mentionSource: chatd',
+      `chatdSocket: ${JSON.stringify(path.join(tmpdir(), 'chat-tmo.sock'))}`,
+    ])
+    expect(DEFAULT_MENTION_CONNECT_TIMEOUT_MS).toBe(5000) // 缺省单一源冻结（P1 加固口径）
+    expect(DEFAULT_MENTION_REQUEST_TIMEOUT_MS).toBe(10000)
+    const factory = assembleChatdSource(config, {}, { log: (line) => logs.push(line) })
+    const source = factory({ actors: ['AGENT-1'] })
+    expect(source.name).toBe('chatd') // 真工厂行为不破（旁听只记录 options）
+    const seen = chatdSourceFactorySpy.mock.calls.at(-1)?.[0]
+    expect(seen).toMatchObject({ connectTimeoutMs: 5000, requestTimeoutMs: 10000 })
+    expect(seen?.transport).toBeUndefined() // 未注入 transport → 源内自建 WorkbenchTransport 收超时
+    const joined = logs.join('\n')
+    expect(joined).toContain('connectTimeoutMs=5000')
+    expect(joined).toContain('requestTimeoutMs=10000')
+    source.stop()
+  })
+
+  it('config 覆盖：mentionConnectTimeoutMs/mentionRequestTimeoutMs 正整数直通源工厂与日志', () => {
+    const logs: string[] = []
+    const config = parseYaml([
+      'mentionSource: chatd',
+      `chatdSocket: ${JSON.stringify(path.join(tmpdir(), 'chat-tmo2.sock'))}`,
+      'mentionConnectTimeoutMs: 8000',
+      'mentionRequestTimeoutMs: 20000',
+    ])
+    expect(config.mentionConnectTimeoutMs).toBe(8000) // parse 面直通（正整数毫秒）
+    expect(config.mentionRequestTimeoutMs).toBe(20000)
+    const factory = assembleChatdSource(config, {}, { log: (line) => logs.push(line) })
+    factory({ actors: ['AGENT-1'] }).stop()
+    expect(chatdSourceFactorySpy).toHaveBeenCalledWith(
+      expect.objectContaining({ connectTimeoutMs: 8000, requestTimeoutMs: 20000 }),
+    )
+    const joined = logs.join('\n')
+    expect(joined).toContain('connectTimeoutMs=8000')
+    expect(joined).toContain('requestTimeoutMs=20000')
+  })
+
+  it('非法值 → parseDaemonConfig 拒启（0=非正整数；1.5=数值面明报；-5=扁平 YAML 层即拒）', () => {
+    for (const key of ['mentionConnectTimeoutMs', 'mentionRequestTimeoutMs'] as const) {
+      expect(() => parseYaml(['mentionSource: chatd', `${key}: 0`])).toThrow(
+        new RegExp(`${key} 须为正整数毫秒`),
+      )
+      expect(() => parseYaml(['mentionSource: chatd', `${key}: 1.5`])).toThrow(
+        new RegExp(`${key} 须为非负数`),
+      )
+      expect(() => parseYaml(['mentionSource: chatd', `${key}: -5`])).toThrow(/嵌套\/列表值/) // 负值在扁平 YAML 语法层先拒（fail-closed 同归拒启）
+    }
   })
 })

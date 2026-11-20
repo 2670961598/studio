@@ -33,6 +33,10 @@ export function renderDaemonYamlSkeleton(input: { dbPath: string; slug: string; 
     '# reloadAnchorAbsenceReason: init 模板目录不落锚（docs/44-§2.3-4）',
     '# 定时岗调度器（cron 到点→schedule 意图→主循环，结果落台账）；首跑可改 false 只看心跳',
     'jobs: true',
+    '# chatd @唤醒源（mentionSource: chatd 时启用，与 matrix: true 互斥；socket 缺省 <companyDir>/var/workbench/chat.sock，',
+    '# token 经 env WORKBENCH_CHATD_TOKEN 供给不入本文件）。传输超时可配 mentionConnectTimeoutMs/mentionRequestTimeoutMs',
+    '# （正整数毫秒；缺省 5000/10000——daemon 事件循环偶发停顿时防首轮 poll connect timeout）。启用示例：',
+    '# mentionSource: chatd',
     '',
   ].join('\n')
 }

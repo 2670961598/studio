@@ -101,9 +101,9 @@ export interface ChatdMentionSourceOptions {
   readonly pollMs?: number
   /** 退避上限，默认 60000ms */
   readonly maxBackoffMs?: number
-  /** 自建 transport 的请求超时，默认 2000ms（client.ts:37） */
+  /** 自建 transport 的请求超时，默认 2000ms（client.ts:37）；boot 组合根缺省显式传 10000（P1 加固） */
   readonly requestTimeoutMs?: number
-  /** 自建 transport 的连接超时，默认 1000ms（client.ts:36） */
+  /** 自建 transport 的连接超时，默认 1000ms（client.ts:36）；boot 组合根缺省显式传 5000（P1 加固） */
   readonly connectTimeoutMs?: number
   /** 定位源消息的 messages.limit 窗口（1..200，默认 200——服务端上限内取最大窗） */
   readonly messageLimit?: number
@@ -323,10 +323,12 @@ export interface ChatdServeKeyHelpers {
 
 /**
  * chatd 唤起源键解析（config.ts switch 显式 case 收口到此；缺省/交叉校验分离——缺省推导
- * 要看 companyDir，属尾段交叉面）：
+ * 要看 companyDir，属尾段交叉面；超时缺省归组合根 apps/boot 装配面，本配置面只收显式值）：
  *   - mentionSource：mentionSourceKindOf 值域校验（缺省 matrix、非法 CONFIG_INVALID）；
  *   - chatdSocket：显式配置须绝对路径（相对=CONFIG_INVALID——socket 定位不许含糊）；
- *   - mentionPollMs：正整数毫秒（0/负=CONFIG_INVALID——busy-loop 面直接拒启不兜底）。
+ *   - mentionPollMs/mentionConnectTimeoutMs/mentionRequestTimeoutMs：正整数毫秒
+ *     （0/负/非整数=CONFIG_INVALID——节奏/超时面配错直接拒启不兜底；P1 超时加固新增
+ *     两键，缺省 5000/10000 由 boot 装配面持有，不写本件）。
  */
 export function coerceChatdServeKey(cfg: ServeConfig, key: string, value: unknown, helpers: ChatdServeKeyHelpers): void {
   if (key === 'mentionSource') {
@@ -342,8 +344,10 @@ export function coerceChatdServeKey(cfg: ServeConfig, key: string, value: unknow
     return
   }
   const v = helpers.num(value, key)
-  if (!Number.isInteger(v) || v < 1) throw new Error(`daemon.yaml：mentionPollMs 须为正整数毫秒（实得 ${v}）`)
-  cfg.mentionPollMs = v
+  if (!Number.isInteger(v) || v < 1) throw new Error(`daemon.yaml：${key} 须为正整数毫秒（实得 ${v}）`)
+  if (key === 'mentionConnectTimeoutMs') cfg.mentionConnectTimeoutMs = v
+  else if (key === 'mentionRequestTimeoutMs') cfg.mentionRequestTimeoutMs = v
+  else cfg.mentionPollMs = v
 }
 
 /**
@@ -382,7 +386,7 @@ export type ChatdSourceFactory = (ctx: { actors: readonly PersonId[] }) => Invok
 export const CHATD_SOURCE_MANIFEST: SourceManifest = {
   name: CHATD_MENTION_SOURCE_NAME,
   kind: 'mention',
-  configSchema: 'daemon.yaml mentionSource/chatdSocket/mentionPollMs（扁平子集）＋env WORKBENCH_CHATD_TOKEN（值不入 yaml）',
+  configSchema: 'daemon.yaml mentionSource/chatdSocket/mentionPollMs/mentionConnectTimeoutMs/mentionRequestTimeoutMs（扁平子集；超时缺省 5000/10000=boot 装配面）＋env WORKBENCH_CHATD_TOKEN（值不入 yaml）',
 }
 
 /**
