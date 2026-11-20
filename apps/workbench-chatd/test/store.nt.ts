@@ -2,6 +2,7 @@
  * C-mini 测试：SQLite 持久化最小刀（Phase1 模块 C / P1-2 前半）。
  * 依据：docs/sentinel-logs/Phase1实现拆解-2026-11-17.md 模块 C（最小 rooms/messages/read；重启状态）。
  * 覆盖：schema 版本/幂等 init/降级拒绝、0600、append-only 触发器、写路径+hydrate 恢复（read 覆盖语义）、
+ *       删行空洞后的水合（seq 计数器=已分配最大值，非 count——P1 wakeSeq 水合回退撞 UNIQUE 修复）、
  *       模式选择（WORKBENCH_CHATD_DB / --memory / 缺省内存）、子进程 SIGTERM 重启恢复、
  *       双连接并发顺序 + kill -9 崩溃恢复。
  * 运行：node --experimental-strip-types --test apps/workbench-chatd/test/store.nt.ts
@@ -15,8 +16,35 @@ import { DatabaseSync } from 'node:sqlite'
 import { ChatdStoreError, SCHEMA_VERSION, SqliteChatStore } from '../src/store/sqlite.ts'
 import { createInitialState, type MockMessage, type MockRoom, type MockWake } from '../src/store/types.ts'
 import { ChatdConfigError, loadConfig } from '../src/config.ts'
+import { dispatch, type WakeDispatchOpts } from '../src/server.ts'
 import { startChatd, type ChatdHandle } from './support/proc.ts'
 import { connectNdjson, type RawClient, type WbFrame } from './support/ndjson.ts'
+
+/** dispatch 租约参数（store 级直驱用；TTL 语义本身由 wake-hardening.nt.ts 覆盖）。 */
+const OPTS: WakeDispatchOpts = { leaseTtlMs: 30_000 }
+
+/**
+ * 运维视角直写「删行空洞」库（P1 事故形状）：wakes 剩 wake-1/3/7（2/4/5/6 已清理）、
+ * messages seq 1/5（2/3/4 缺号）、rooms 剩 room-1/4（2/3 已删）——count 口径水合会全面回退。
+ */
+function seedHoledStore(dbPath: string): void {
+  const bootstrap = new SqliteChatStore(dbPath) // 幂等 init：只建 schema（v2），不写业务行
+  bootstrap.close()
+  const raw = new DatabaseSync(dbPath)
+  raw.exec(`
+    INSERT INTO rooms (room_id, kind, name, member_ids) VALUES
+      ('room-1', 'group', 'g1', '["pm","dev"]'),
+      ('room-4', 'group', 'g4', '["pm"]');
+    INSERT INTO messages (message_id, seq, room_id, room_seq, sender_id, body, mentions, created_at) VALUES
+      ('msg-1', 1, 'room-1', 1, 'pm', 'm1', '[]', 1700000000001),
+      ('msg-5', 5, 'room-1', 2, 'pm', 'm5', '[]', 1700000000005);
+    INSERT INTO wakes (wake_id, actor_id, room_id, source_seq, cause, status, claimed_by, claimed_until, created_at, acked_at) VALUES
+      ('wake-1', 'dev', 'room-1', 1, 'mention', 'acked', NULL, NULL, 1700000000001, 1700000000002),
+      ('wake-3', 'dev', 'room-1', 2, 'mention', 'acked', NULL, NULL, 1700000000005, 1700000000006),
+      ('wake-7', 'dev', 'room-1', 2, 'mention', 'pending', NULL, NULL, 1700000000005, NULL);
+  `)
+  raw.close()
+}
 
 function tmpDbPath(prefix: string): { readonly dir: string; readonly dbPath: string } {
   const dir = mkdtempSync(path.join(tmpdir(), `workbench-chatd-store-${prefix}-`))
@@ -124,6 +152,49 @@ test('store 单测：写路径落库 + 重开 hydrate 恢复（含 read 覆盖�
     assert.equal(state.roomSeq, 1, 'roomSeq 计数器恢复')
     assert.equal(state.msgSeq, 2, 'msgSeq 计数器恢复（续增无空洞）')
     assert.equal(state.wakeSeq, 1, 'wakeSeq 计数器恢复')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('store 单测：删行空洞后的水合——seq 计数器取已分配最大值而非 count（wake-1/3/7→wakeSeq=7；seq 1/5→msgSeq=5；room-1/4→roomSeq=4），新分配不撞 UNIQUE', () => {
+  const { dir, dbPath } = tmpDbPath('holes')
+  try {
+    seedHoledStore(dbPath)
+
+    // 「重启」水合：count 口径会回退（wakes 3 条→wake-4 复用已删号、rooms 2 条→room-3 复用已删号）
+    const reopened = new SqliteChatStore(dbPath)
+    const state = createInitialState()
+    try {
+      reopened.hydrate(state)
+      assert.equal(state.wakeSeq, 7, 'wakeSeq=wake-N 数值后缀 max（count=3 会回退生成 wake-4）')
+      assert.equal(state.msgSeq, 5, 'msgSeq=MAX(seq)（seq 1/5 有空洞也不回退）')
+      assert.equal(state.roomSeq, 4, 'roomSeq=room-N 数值后缀 max（count=2 会回退生成 room-3）')
+      assert.equal(state.rooms.get('room-1')?.headRoomSeq, 2, 'headRoomSeq=每房 MAX(room_seq) 投影')
+
+      // 新分配接 max 续增不撞库内残余 id（P1 事故：修复前新 wake-4 撞 UNIQUE → messages.send 500）
+      const sent = dispatch(state, reopened, 'messages.send', { roomId: 'room-1', senderId: 'pm', body: '@dev m6', mentions: ['dev'] }, OPTS) as { seq: number; roomSeq: number }
+      assert.equal(sent.seq, 6, '新消息 seq=MAX(seq)+1=6')
+      assert.equal(sent.roomSeq, 3, '新消息 roomSeq=head+1=3')
+      assert.equal(state.wakes[state.wakes.length - 1]?.wakeId, 'wake-8', '新 wake=max 后缀 7+1=wake-8（非 count 口径的 wake-4）')
+      const room = dispatch(state, reopened, 'rooms.create', { kind: 'group', name: 'g5', memberIds: ['pm'] }, OPTS) as { roomId: string }
+      assert.equal(room.roomId, 'room-5', '新房间=max 后缀 4+1=room-5')
+    } finally {
+      reopened.close()
+    }
+
+    // 再重启：新写入已落库且计数器继续按 max 续增（wake-8 / msg seq 6 / room-5 均在库）
+    const third = new SqliteChatStore(dbPath)
+    const state2 = createInitialState()
+    try {
+      third.hydrate(state2)
+      assert.deepEqual(state2.wakes.map((w) => w.wakeId), ['wake-1', 'wake-3', 'wake-7', 'wake-8'], '新增 wake-8 已持久化')
+      assert.equal(state2.wakeSeq, 8)
+      assert.equal(state2.msgSeq, 6)
+      assert.equal(state2.roomSeq, 5)
+    } finally {
+      third.close()
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -349,6 +420,41 @@ test('e2e：--memory 强制内存模式——env 配了 DB 也不落库，重启
       }
     } finally {
       await first.cleanup()
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('e2e：删行空洞库重启（P1 事故复现）——wakes 清理后剩 wake-1/3/7 + messages seq 1/5，mention 发送不 500，新 wake=wake-8、新消息 seq=6', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'workbench-chatd-e2e-holes-'))
+  const dbPath = path.join(dir, 'chat.db')
+  const socketPath = path.join(dir, 'chat.sock')
+  const env = { WORKBENCH_CHATD_DB: dbPath }
+  try {
+    seedHoledStore(dbPath)
+
+    const h = await startChatd({ env, dir, socketPath })
+    try {
+      await withClient(h, async (c) => {
+        // 修复前：wakeSeq 水合为 count(3) → 新建 wake-4 撞库内 UNIQUE 约束 → messages.send 500（WB_INTERNAL）
+        const sent = await expectOk<{ seq: number; roomSeq: number; messageId: string }>(
+          await c.call('messages.send', { roomId: 'room-1', senderId: 'pm', body: '@dev m6', mentions: ['dev'] }),
+        )
+        assert.equal(sent.seq, 6, '新消息 seq=MAX(seq)+1=6')
+        assert.equal(sent.roomSeq, 3, '新消息 roomSeq=head+1=3')
+
+        const inbox = await expectOk<{ pendingWakeIds: string[] }>(await c.call('inbox', { actorId: 'dev' }))
+        assert.deepEqual(inbox.pendingWakeIds, ['wake-7', 'wake-8'], '新 wake=wake-8（max 后缀续增）；残留 pending wake-7 照常可见')
+
+        await c.call('wakes.claim', { actorId: 'dev', wakeIds: ['wake-8'] })
+        await c.call('wakes.ack', { actorId: 'dev', wakeIds: ['wake-8'] })
+
+        const room = await expectOk<{ roomId: string }>(await c.call('rooms.create', { kind: 'group', name: 'g5', memberIds: ['pm'] }))
+        assert.equal(room.roomId, 'room-5', '新房间=max 后缀 4+1=room-5（count 口径会回退 room-3）')
+      })
+    } finally {
+      await h.cleanup()
     }
   } finally {
     rmSync(dir, { recursive: true, force: true })

@@ -213,6 +213,21 @@ const parseJsonArray = (raw: string, column: string): string[] => {
   return parsed as string[]
 }
 
+/**
+ * `room-N`/`wake-N` id 数值后缀的最大已分配值（无匹配行=0）：id 计数器水合的唯一口径。
+ * wakes/rooms 是可覆盖投影，运维删行会留空洞——count 口径在空洞上回退 → 新分配复用已删 id
+ * 撞库内残余行 UNIQUE 冲突（P1 实证：手动清理 wakes 后剩 wake-2/3/4，wakeSeq=count(3) 回退，
+ * 新建 wake-4 撞残留 wake-4 → messages.send 500）；max 后缀只前进不回退。
+ * 非「前缀+整数」形状的 id 不参与（忽略，不误判）。
+ */
+const maxIdSuffix = <T>(rows: readonly T[], idOf: (row: T) => string, prefix: string): number =>
+  rows.reduce((max, row) => {
+    const id = idOf(row)
+    if (!id.startsWith(prefix)) return max
+    const suffix = Number(id.slice(prefix.length))
+    return Number.isInteger(suffix) && suffix > max ? suffix : max
+  }, 0)
+
 export class SqliteChatStore implements ChatStore {
   readonly mode = 'sqlite' as const
   /** 可注入时钟（TTL/时间戳唯一源；缺省 Date.now，生产行为不变；测试手动推进/跳变用）。 */
@@ -352,10 +367,13 @@ export class SqliteChatStore implements ChatStore {
       if (room !== undefined) room.headRoomSeq = h.head
     }
 
-    // seq 计数器恢复：三表均只增不删，count/max 即历史分配数（无空洞）。
-    target.roomSeq = target.rooms.size
+    // seq 计数器恢复（口径=已分配最大值，id 永不回退复用）：wakes/rooms 可覆盖投影被删行后
+    // 有空洞，count 会回退 → 新分配撞库内残余 id UNIQUE 冲突（P1 实证，见 maxIdSuffix 注）。
+    // roomSeq/wakeSeq=数值后缀 max；msgSeq=MAX(seq)（上方 ORDER BY seq 末位即 max，seq 有空洞
+    // 也不回退）；wakeEventSeq 已取 MAX(event_id)；headRoomSeq 已按 MAX(room_seq) 投影回填。
+    target.roomSeq = maxIdSuffix(rooms, (r) => r.room_id, 'room-')
     target.msgSeq = messages.length === 0 ? 0 : messages[messages.length - 1]?.seq ?? 0
-    target.wakeSeq = target.wakes.length
+    target.wakeSeq = maxIdSuffix(wakes, (w) => w.wake_id, 'wake-')
   }
 
   insertRoom(room: MockRoom): void {
