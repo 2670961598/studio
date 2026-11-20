@@ -224,6 +224,21 @@ export const SECTION = {
        回执文件保留，轮询按 id 匹配不受影响。超时无回执 exit 1（daemon 未运行/拍太慢/控制面
        目录不符）；工位根发现序与 reload 同款。
 `,
+  stack: `  studio-next stack status|doctor|up|down [旗标]
+        公司闭环一命令起停/体检（M5-1 第一刀，plan/08-§2.2/§三；里程碑5：干净机器零 Docker）。
+        status＝只读探测三端点（daemon /healthz，--port 缺省 8788；chatd socket+token 两步
+        探针，缺 --company-dir 即跳过不算失败；panel --panel-port 缺省 8791）——绝不启动
+        进程；表/JSON（--json）。doctor＝六项体检（node>=24／companyDir 存在／daemon.yaml
+        platform=localfile／chatd 三件权限 socket 0700·db·token 0600／备份目录可写／磁盘
+        余量≥2GiB），缺项 exit 2 逐项明报。up＝安装 daemon(guardian)/chatd/panel 三 plist
+        （__占位符__ 模板实例化；token 0600 首产不覆盖）并 bootstrap（bootout 先行——幂等
+        重入）；down＝bootout 三服务，plist 与数据全保留（销毁走 chatd-setup --remove，
+        plan/08-§2.5）。up/down 首版仅 macOS launchd（非 macOS exit 3）；默认 dry-run 零
+        副作用，写盘/launchctl 需显式 --apply；路径全显式入参（--company-dir/
+        --deploy-root/--label-prefix/--guardian-config…），缺省值运行时推导（仓内零主机
+        路径）。退出码：0=成功；1=用法错/前置缺件/status 探针失败；2=doctor 缺项；3=
+        up/down 非 macOS。
+`,
 } as const
 
 /**
@@ -334,6 +349,11 @@ export const CONCISE = {
   例：studio-next stop --reason "维护窗口"
   本命令全文：studio-next stop --help
 `,
+  stack: `stack —— 公司闭环一命令起停/体检（status 三端点只读探测／doctor 六项体检／up·down 走 launchd；M5-1 第一刀）
+  studio-next stack status|doctor|up|down [--company-dir <公司目录>] [--json] [--apply] [其余旗标]
+  例：studio-next stack doctor --company-dir /abs/work-root/my-corp（体检缺项 exit 2）
+  本命令全文：studio-next stack --help
+`,
 } as const
 
 export const USAGE_HEADER = `studio-next —— Studio Next 框架 CLI（v0.1）
@@ -343,14 +363,16 @@ export const USAGE_HEADER = `studio-next —— Studio Next 框架 CLI（v0.1）
 
 export const USAGE_TAIL = `默认值：--dir 缺省 ./<slug>；--name 缺省 <slug>；--port 缺省 8791（panel）/ 8789（overview）
 语法位：位置参数=必给先给（init <slug>；company add <git-url> [名]）；旗标=--key value 或
-  --key=value（两式同效）；布尔旗标无值（--dry-run/--json/--allow-extra/--product/
-  --no-restart/--no-gray/--check/--close）；-h/--help/help 任何位置=该命令帮助面（先于
+  --key=value（两式同效）；布尔旗标无值（--dry-run/--json/--apply/--allow-extra/
+  --product/--no-restart/--no-gray/--check/--close）；-h/--help/help 任何位置=该命令帮助面（先于
   参数解析，零副作用）
 旗标同义：-h ≡ --help ≡ help；--flag=value ≡ --flag value；短旗标仅 -h 与 -V（版本）
 退出码：0=成功/显式求助/判定红是档案面（sandbox 判 FAIL、gray 自动回滚——链走完即 0）；
   1=用法错（缺参/未知旗标/未知子命令/裸命令）/校验或判定不通过/库不存在（不代建库）/
-  超时无回执（reload/stop）；2=命令自身错误：company validate 判定器自身错误（网络/权限/
-  解包失败）与 serve 运行中断（tick 异常——错误明细已先行打日志）
+  超时无回执（reload/stop）／stack 前置缺件与 status 探针失败；2=命令自身错误：company
+  validate 判定器自身错误（网络/权限/解包失败）与 serve 运行中断（tick 异常——错误明细已
+  先行打日志）／stack doctor 体检缺项（逐项明报）；3=stack up/down 非 macOS（首版仅
+  launchd——plan/08-§六）
 版本：studio-next --version 或 -V（读 apps/daemon/package.json，单行 studio-next <版本>）
 文档：docs/04-公司目录与等级体系.md §二/§七/§九；docs/16-技术实现与里程碑.md §四；docs/02-需求-框架面.md F2-11/F2-12；docs/17-整体技术设计.md §8`
 

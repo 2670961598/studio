@@ -41,6 +41,7 @@ import { cmdPanel } from './panel.ts'
 import { cmdOverview } from './overview.ts'
 import { cmdReload } from './reload.ts'
 import { cmdStop } from './stop.ts'
+import { cmdStack } from './stack/stack.ts'
 import { cmdServe } from './serve.ts'
 import { cmdTaigaCure } from './taiga-cure.ts'
 async function main(): Promise<number> {
@@ -88,6 +89,8 @@ async function main(): Promise<number> {
       return cmdReload(rest)
     case 'stop':
       return cmdStop(rest)
+    case 'stack':
+      return cmdStack(rest)
     case undefined:
     case '-h':
     case '--help':

@@ -49,11 +49,11 @@ describe('单源装配对账（S1a：usage.ts=命令文档唯一源）', () => {
     expect(USAGE).toBe(USAGE_HEADER + Object.values(SECTION).join('') + USAGE_TAIL)
   })
 
-  it('18 顶级命令齐全（main.ts 分发表=SECTION 键集——DEV-14 增 gen-templates）', () => {
+  it('22 顶级命令齐全（main.ts 分发表=SECTION 键集——DEV-14 增 gen-templates；M5-1 增 stack）', () => {
     expect(Object.keys(SECTION)).toEqual([
       'init', 'gen-templates', 'company', 'validate', 'ledger', 'acceptance', 'candidates', 'provenance', 'qa-eval', 'qa-report', 'jobs', 'sandbox',
       'cutover', 'gray', 'postmortem', 'panel', 'overview', 'serve', 'taiga-cure',
-      'reload', 'stop',
+      'reload', 'stop', 'stack',
     ])
   })
 
