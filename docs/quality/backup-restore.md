@@ -165,3 +165,10 @@ tar -xzf core-platform-<slug>-<ts>.tgz -C <companyDir>   # 回 platform/（相�
 gzip -dc core-ledger-<slug>-<ts>.db.gz > <companyDir>/ledger.sqlite
 tar -xzf core-company-<slug>-<ts>.tgz -C <companyDir>   # 回 company/ git 目录
 ```
+
+
+## 七、无 Docker/外置盘部署的 TCC 要点（2026-11-21 增补）
+
+- 备份计划任务**不能**由 launchd 直接 `/bin/bash` 启动：bash/sqlite3 子进程无外置卷 TCC 授权，`sqlite3 .backup` 失败（实测 `FAIL chatd ... .backup 失败`）。
+- 修法同 profit daemon：**launchd → node（FDA）→ spawn('/bin/bash',[script,...])**，见 `scripts/ops/backup-wrapper.mjs`；plist ProgramArguments = node + wrapper + 脚本实例路径。
+- 首跑核对（2026-11-21 06:17）：`SUMMARY ok:true, docker.skipped=true, chatd.backed=1, core.backed=3, durationMs=56000`（Docker 已退役，SKIP 属预期）。
