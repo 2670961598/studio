@@ -27,6 +27,9 @@
  *     不嵌 token 值（chatd config M4.5 起支持文件供给，值 env 仍优先）。
  *   - 仓内零 host 绝对路径：模板用 __占位符__，实例化只发生在目标机的
  *     ~/Library/LaunchAgents（生成物落主机不落仓）；缺省值运行时推导（repo/node/home）。
+ *   - 模板单一源（M5-2，plan/08 §七.6/§八）：plist 模板 import
+ *     apps/daemon/src/cli/stack/templates.ts（stack up 与本脚本共用同一字节；本件在
+ *     scripts/ 不受宪法扫描，apps→scripts 反向才是违例——此向唯一合法）。
  *   - 不 load plist、不启动进程、不触碰生产 daemon（mentionSource 保持 matrix 零漂移）。
  *
  * 退出码：0=成功（dry-run 打印计划/apply 落盘/remove 完成）；1=执行失败；
@@ -43,6 +46,8 @@ import { chmodSync, existsSync, mkdirSync, realpathSync, renameSync, rmSync, sta
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+// 模板单一源（M5-2）：Node 24+ 原生 type-stripping 直接 import .ts（guardian/chatd 同运行面）
+import { CHATD_PLIST_TEMPLATE, renderTemplate } from '../../apps/daemon/src/cli/stack/templates.ts'
 
 const PROG = 'chatd-setup'
 
@@ -56,56 +61,19 @@ export const CONVENTIONS = Object.freeze({
   plistRel: ['Library', 'LaunchAgents'],
   logRel: ['Library', 'Logs', 'studio-next'],
   logLevel: 'info',
+  throttleIntervalSec: 10, // 与 daemon STACK_CONVENTIONS.throttleIntervalSec 同源（模板 __THROTTLE__ 位）
 })
 
 /**
- * launchd plist 模板（占位符实例化——仓内零绝对路径）。
+ * launchd plist 模板＝单一源 re-export（M5-2 起 stack up 与本脚本共用同一字节——
+ * apps/daemon/src/cli/stack/templates.ts CHATD_PLIST_TEMPLATE；占位符 __DEPLOY_ROOT__
+ * 在本脚本侧取 --repo 值、__THROTTLE__ 取 CONVENTIONS.throttleIntervalSec）。
  * 与 apps/workbench-chatd/launchd/io.studionext.workbench-chat.plist.template（P1-1b 占位）
  * 同构：ProgramArguments=node main.ts（--experimental-strip-types 直跑 .ts）、
  * KeepAlive+RunAtLoad 常驻、ThrottleInterval 防抖；差异=Label 按 M4.5 任务书定
  * io.studionext.chatd.<slug>，token 走 TOKEN_FILE（不嵌值）。
  */
-export const PLIST_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- 由 scripts/ops/chatd-setup.mjs 实例化（M4.5；--dry-run 可预览）。安装后不自动 load。 -->
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>__LABEL__</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>__NODE_BIN__</string>
-    <string>--experimental-strip-types</string>
-    <string>__CHATD_MAIN__</string>
-  </array>
-  <key>WorkingDirectory</key>
-  <string>__REPO__</string>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>WORKBENCH_CHATD_SOCKET</key>
-    <string>__SOCKET__</string>
-    <key>WORKBENCH_CHATD_DB</key>
-    <string>__DB__</string>
-    <key>WORKBENCH_CHATD_TOKEN_FILE</key>
-    <string>__TOKEN_FILE__</string>
-    <key>WORKBENCH_CHATD_LOG</key>
-    <string>__LOG_LEVEL__</string>
-  </dict>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>ThrottleInterval</key>
-  <integer>10</integer>
-  <key>StandardOutPath</key>
-  <string>__LOG_OUT__</string>
-  <key>StandardErrorPath</key>
-  <string>__LOG_ERR__</string>
-  <key>ProcessType</key>
-  <string>Background</string>
-</dict>
-</plist>
-`
+export const PLIST_TEMPLATE = CHATD_PLIST_TEMPLATE
 
 /* ------------------------------------------------------------------ */
 /* 纯函数面（测试直接 import）                                          */
@@ -194,24 +162,21 @@ export function buildPlan(input) {
   }
 }
 
-/** plist 实例化（纯函数）；残留 __占位符__ 即抛错（模板/计划不齐不落盘）。 */
+/** plist 实例化（纯函数，共用渲染器 renderTemplate——M5-2 单一源）；残留 __占位符__ 即抛错（模板/计划不齐不落盘）。 */
 export function renderPlist(plan) {
-  const map = {
+  return renderTemplate(PLIST_TEMPLATE, {
     __LABEL__: plan.label,
     __NODE_BIN__: plan.nodeBin,
     __CHATD_MAIN__: plan.chatdMain,
-    __REPO__: plan.repo,
+    __DEPLOY_ROOT__: plan.repo,
     __SOCKET__: plan.socketPath,
     __DB__: plan.dbPath,
     __TOKEN_FILE__: plan.tokenFile,
     __LOG_LEVEL__: plan.logLevel,
+    __THROTTLE__: String(CONVENTIONS.throttleIntervalSec),
     __LOG_OUT__: plan.logOut,
     __LOG_ERR__: plan.logErr,
-  }
-  let out = PLIST_TEMPLATE
-  for (const [key, value] of Object.entries(map)) out = out.split(key).join(value)
-  if (/__[A-Z_]+__/.test(out)) throw new Error(`plist 渲染残留占位符：${out.match(/__[A-Z_]+__/g)?.join(',')}`)
-  return out
+  })
 }
 
 /* ------------------------------------------------------------------ */

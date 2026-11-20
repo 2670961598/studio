@@ -33,6 +33,9 @@
  *      .backup+integrity+gzip/core-company git tgz；全 600）＋manifest＋7 天保留策略删过期
  *      core-*；缺目录/缺文件=SKIP 不报错（SUMMARY core.backed/skipped）；相对路径拒；
  *      同一 run 同 slug 冲突（两个同名公司目录）exit 2；dry-run 计划行＋缺失标注。
+ *   M) 模板单一源（M5-2 第二刀，plan/08 §七.6/§八）：PLIST_TEMPLATE===daemon
+ *      templates.ts CHATD_PLIST_TEMPLATE（同一引用）；renderPlist 与 renderTemplate
+ *      同值 map 渲染逐字节一致（占位面 __DEPLOY_ROOT__/__LOG_LEVEL__/__THROTTLE__）。
  *
  * 运行：node --experimental-strip-types --test scripts/test/chatd-setup.test.ts
  */
@@ -45,8 +48,9 @@ import { createServer, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { buildPlan, CONVENTIONS, parseArgs, renderPlist, SetupUsageError } from '../ops/chatd-setup.mjs'
+import { buildPlan, CONVENTIONS, parseArgs, PLIST_TEMPLATE, renderPlist, SetupUsageError } from '../ops/chatd-setup.mjs'
 import { loadConfig, ChatdConfigError, ENV_KEYS } from '../../apps/workbench-chatd/src/config.ts'
+import { CHATD_PLIST_TEMPLATE, renderTemplate } from '../../apps/daemon/src/cli/stack/templates.ts'
 
 const HERE = import.meta.dirname
 const REPO = path.join(HERE, '..', '..')
@@ -688,4 +692,29 @@ test('L) platform-backup core：dry-run 计划/路径校验/同 slug 冲突/env 
   assert.match(comList, /^company\//, 'company tgz 应以 company/ 开头')
   assert.match(comList, /company\/\.git\/HEAD/, 'company tgz 应含 git 目录')
   assert.match(comList, /company\/AGENTS\.md/)
+})
+
+/* ------------------------------------------------------------------ */
+/* M) 模板单一源一致性（M5-2 第二刀，docs/plan/08 §七.6/§八）：         */
+/*    chatd-setup.mjs 与 stack up 共用 templates.ts 同一字节            */
+/* ------------------------------------------------------------------ */
+
+test('M) 单一源：PLIST_TEMPLATE===CHATD_PLIST_TEMPLATE；renderPlist===renderTemplate 同值 map 逐字节', () => {
+  assert.equal(PLIST_TEMPLATE, CHATD_PLIST_TEMPLATE, 'chatd-setup 模板必须是 daemon templates.ts 的同一引用（re-export，非复制）')
+  const home = path.join(tempDir('m52-single-source-'), 'home')
+  const plan = buildPlan({ companyDir: '/Companies/AcmeCorp', repo: '/deploy/tree', nodeBin: '/usr/bin/node', home })
+  const expected = renderTemplate(CHATD_PLIST_TEMPLATE, {
+    __LABEL__: plan.label,
+    __NODE_BIN__: plan.nodeBin,
+    __CHATD_MAIN__: plan.chatdMain,
+    __DEPLOY_ROOT__: plan.repo,
+    __SOCKET__: plan.socketPath,
+    __DB__: plan.dbPath,
+    __TOKEN_FILE__: plan.tokenFile,
+    __LOG_LEVEL__: plan.logLevel,
+    __THROTTLE__: String(CONVENTIONS.throttleIntervalSec),
+    __LOG_OUT__: plan.logOut,
+    __LOG_ERR__: plan.logErr,
+  })
+  assert.equal(renderPlist(plan), expected, '两消费面渲染结果逐字节一致（占位面 __DEPLOY_ROOT__/__LOG_LEVEL__/__THROTTLE__ 统一）')
 })

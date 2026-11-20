@@ -1,46 +1,52 @@
-// stack —— `studio-next stack status|doctor|up|down` 命令组（M5-1 第一刀，2026-11-21）。
+// stack —— `studio-next stack status|doctor|up|down` 命令组（M5-1 第一刀；M5-2 Linux systemd 分支）。
 //
 // 依据（实现单引用设计文档章节号——AGENTS §五.1）：
-//   - docs/plan/08-M5打包分发-2026-11-20.md §2.2（up=plist 实例化＋bootstrap；down=bootout
-//     保数据）、§2.5（卸载/停服边界）、§三（里程碑5-1 CLI 骨架刀：本刀只做骨架与幂等）
+//   - docs/plan/08-M5打包分发-2026-11-20.md §2.2（up=单元实例化＋加载；down=停服
+//     保数据）、§2.5（卸载/停服边界）、§三（里程碑5-1 CLI 骨架刀；里程碑5-2 运维刀：
+//     macOS launchd＋Linux systemd user 双分支）、§七/§八（实现记录）
 //   - docs/plan/06-自研单子与聊天室切换-2026-11-19.md §二 里程碑5（干净机器一条命令起公司）
 //   - scripts/ops/chatd-setup.mjs（dry-run 缺省/--apply 写盘/token 0600 不覆盖/原子写判例）、
 //     scripts/ops/chatd-health.mjs（chatd 两步探针判例——本文件内联同款最小客户端）
 //   - scripts/ops/deploy.mjs（launchctl kickstart/healthz 判例；gui/$(id -u) 域）
 //
-// 形态（首版边界——不接 daemon 内部协议，只做进程面起停体检）：
+// 形态（进程面起停体检——不接 daemon 内部协议）：
 //   - status：只读探测 daemon /healthz（--port，缺省 8788）、chatd socket+token（Transport v1
 //     health+rooms.list 两步）、panel（--panel-port，缺省 8791）三端点；表/JSON（--json）；
 //     绝不启动任何进程。缺 --company-dir 时 chatd 探针=skipped（不算失败）。
 //   - doctor：六项体检（node>=24 / companyDir / daemon.yaml platform=localfile / chatd 三件权限
 //     0700·0600·0600 / 备份目录可写 / 磁盘余量），缺项 exit 2 逐项明报。
-//   - up/down：仅 macOS launchd 首版；非 macOS 明报 unsupported exit 3。默认 dry-run 零副作用，
-//     写盘/launchctl 需显式 --apply；所有路径显式入参（--company-dir/--deploy-root/--label-prefix…），
-//     缺省值运行时推导（deploy/node/home），仓内零主机路径。
-//   - 退出码：0=成功；1=用法错（缺参/未知旗标/前置缺件）或 status 有探针失败；2=doctor 体检缺项；
-//     3=up/down 非 macOS。
+//   - up/down：macOS=launchd plist（M5-1）；Linux=systemd user unit（M5-2，systemd.ts——
+//     三枚写入 ~/.config/systemd/user/ 后 daemon-reload+enable --now；down=disable --now）；
+//     其余平台明报 unsupported exit 3。默认 dry-run 零副作用，写盘/服务管理器调用需显式
+//     --apply；所有路径显式入参（--company-dir/--deploy-root/--label-prefix…），缺省值
+//     运行时推导（deploy/node/home），仓内零主机路径。
+//   - 退出码：0=成功；1=用法错（缺参/未知旗标/前置缺件）或 status 有探针失败/up 加载失败；
+//     2=doctor 体检缺项；3=up/down 平台或服务管理器不支持（非 macOS launchd／Linux 无
+//     systemd user 会话）。
 //
-// 可测性：平台判定/node 版本/uid/HOME/launchctl 执行器/HTTP·chatd 探针/statfs 全部可注入
-// （StackDeps；测试不真调 launchctl——test/v2/cli/stack.test.ts）。
+// 可测性：平台判定/node 版本/uid/HOME/systemd 会话在场/launchctl·systemctl 执行器/
+// HTTP·chatd 探针/statfs 全部可注入（StackDeps；测试不真调 launchctl/systemctl——
+// test/v2/cli/stack.test.ts）。
 import { spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statfsSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, statfsSync, statSync } from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
 import process from 'node:process'
-import { fileURLToPath } from 'node:url'
 import { CONCISE, SECTION } from '../usage.ts'
 import { helpOk, missingSub, unknownSub, usageFail, wantsHelp } from '../help.ts'
 import { errText, parseArgv } from '../argv.ts'
-import { buildDownPlan, buildUpPlan, readFlatYamlScalars, StackUsageError, STACK_CONVENTIONS } from './plists.ts'
+import { buildDownPlan, buildUpPlan, readFlatYamlScalars, STACK_CONVENTIONS, STACK_EXIT, StackUsageError } from './plists.ts'
 import { checkBackupDir, checkChatdPerms, checkCompanyDir, checkDaemonPlatform, checkDiskFree, checkNodeVersion, DISK_MIN_FREE_BYTES, doctorVerdict, probeWritableDir } from './doctor.ts'
+import { atomicWrite, defaultDaemonConfigPath, parsePort, parsePositiveInt, requireCompanyDir, upContext, type UpContext } from './updown.ts'
+import { runDownSystemd, runUpSystemd } from './systemd.ts'
 
 const PROG = 'stack'
 const SUBCOMMANDS = ['status', 'doctor', 'up', 'down'] as const
 const CHATD_PROTOCOL = 'workbench-transport/v1'
 
-/** 退出码（usage.ts 尾部声明面同源） */
-export const STACK_EXIT = Object.freeze({ ok: 0, usage: 1, doctor: 2, unsupported: 3 })
+/** 退出码（usage.ts 尾部声明面同源；定义收口 plists.ts——systemd 分支共用） */
+export { STACK_EXIT } from './plists.ts'
 
 /* ------------------------------------------------------------------ */
 /* 可注入依赖面（测试不真调 launchctl/不碰真 HOME/不依赖真平台）          */
@@ -71,6 +77,8 @@ export interface StackDeps {
   readonly home: string
   readonly env: Record<string, string | undefined>
   readonly uid: number
+  /** systemd user 会话在场（缺省=/run/systemd/users/<uid> 存在性——loginctl enable-linger 面） */
+  readonly systemdAvailable: boolean
   readonly run: (argv: readonly string[]) => RunResult
   readonly httpGet: (url: string, timeoutMs: number) => Promise<HttpProbeResult>
   readonly chatdProbe: (socketPath: string, tokenFile: string, timeoutMs: number) => Promise<ChatdProbeResult>
@@ -86,6 +94,7 @@ function resolveDeps(init: StackDepsInit): StackDeps {
     home: init.home ?? (process.env.HOME ?? ''),
     env: init.env ?? process.env,
     uid: init.uid ?? (typeof process.getuid === 'function' ? process.getuid() : 0),
+    systemdAvailable: init.systemdAvailable ?? existsSync(`/run/systemd/users/${String(typeof process.getuid === 'function' ? process.getuid() : 0)}`),
     run:
       init.run ??
       ((argv) => {
@@ -324,90 +333,59 @@ function statQuiet(p: string): { exists: boolean; isDir: boolean; mode: number }
 }
 
 /* ------------------------------------------------------------------ */
-/* up / down：dry-run 缺省 + --apply 写面（仅 macOS launchd 首版）        */
+/* up / down：dry-run 缺省 + --apply 写面（macOS launchd＋Linux systemd） */
 /* ------------------------------------------------------------------ */
 
-function defaultDeployRoot(): string {
-  return fileURLToPath(new URL('../../../../..', import.meta.url)) // cli/stack/stack.ts → 仓根
-}
-
-function guardLaunchd(deps: StackDeps): number | undefined {
-  if (deps.platform === 'darwin') return undefined
-  console.error(`stack：up/down 首版仅支持 macOS launchd（当前 platform=${deps.platform}；Linux systemd 模板归 M5-2——plan/08 §六）`)
+/**
+ * 服务管理器判定（M5-2 双分支）：darwin=launchd；linux=systemd user（须 systemd user
+ * 会话在场——/run/systemd/users/<uid>，缺则明报 enable-linger 面）；其余平台 unsupported。
+ * 返回 undefined=通过；返回数字=已打错误面的退出码。
+ */
+function serviceManagerMode(deps: StackDeps): 'launchd' | 'systemd' | number {
+  if (deps.platform === 'darwin') return 'launchd'
+  if (deps.platform === 'linux') {
+    if (deps.systemdAvailable) return 'systemd'
+    console.error(`stack：up/down 在 Linux 需 systemd user 会话（/run/systemd/users/${String(deps.uid)} 不在场——loginctl enable-linger <user> 开常驻会话后复跑，或前台模式跑 daemon；plan/08 §八）`)
+    return STACK_EXIT.unsupported
+  }
+  console.error(`stack：up/down 仅支持 macOS launchd 与 Linux systemd user（当前 platform=${deps.platform}——plan/08 §2.2/§八）`)
   return STACK_EXIT.unsupported
 }
 
-function requireCompanyDir(flags: Map<string, string>): string {
-  const dir = flags.get('company-dir') ?? ''
-  if (dir === '') throw new StackUsageError('缺 --company-dir <公司目录>')
-  return dir
-}
-
-/**
- * daemon.yaml 缺省位＝`<company-dir>/daemon.yaml`（resolve 规范化：尾斜杠/相对输入→绝对）。
- * 口径＝扁平布局 marker（assembly/serve/config.ts detectCompanyLayout 的 flatMarker 同款）；
- * company create 顺产位 `<work-root>/var/daemon.yaml` 属历史嵌套位——不在缺省推导面，
- * 该布局用 --config 显式指定（回归 2026-11-21：旧推导 dirname(companyDir)/var/daemon.yaml
- * 丢公司段，错误地命中了公司父目录下的陈旧文件）。
- */
-function defaultDaemonConfigPath(companyDir: string): string {
-  return path.join(path.resolve(companyDir), 'daemon.yaml')
-}
-
 async function runUp(flags: Map<string, string>, apply: boolean, deps: StackDeps): Promise<number> {
-  const unsupported = guardLaunchd(deps)
-  if (unsupported !== undefined) return unsupported
-  const companyDir = requireCompanyDir(flags)
-  const home = flags.get('home') ?? deps.home
-  if (home === '') throw new StackUsageError('$HOME 未设置（或 --home 显式指定）')
-  const guardianConfig = flags.get('guardian-config') ?? ''
-  if (guardianConfig === '') throw new StackUsageError('缺 --guardian-config <guardian.json>（daemon plist 保活 guardian——ops/launchd/io.studionext.daemon.plist 同构）')
-  const configPath = path.resolve(flags.get('config') ?? defaultDaemonConfigPath(companyDir))
-  const deployRoot = path.resolve(flags.get('deploy-root') ?? defaultDeployRoot())
+  const mode = serviceManagerMode(deps)
+  if (typeof mode === 'number') return mode
+  const ctx = upContext(flags, apply, deps) // 双分支公共前置（含两档体检）
+  return mode === 'systemd' ? runUpSystemd({ flags, apply, deps, ctx }) : runUpLaunchd(flags, apply, deps, ctx)
+}
 
-  let daemonDb = ''
-  let platform: string | null = null
-  try {
-    const scalars = readFlatYamlScalars(readFileSync(configPath, 'utf8'))
-    daemonDb = scalars['db'] ?? ''
-    platform = scalars['platform'] ?? null
-  } catch (err) {
-    throw new StackUsageError(`daemon.yaml 不可读（${configPath}）：${errText(err)}（panel --db 取其 db 键；--config 显式指定）`)
-  }
-  if (daemonDb === '') throw new StackUsageError(`daemon.yaml 缺 db 键（${configPath}）——panel plist 需要 --db`)
+function runDown(flags: Map<string, string>, apply: boolean, deps: StackDeps): number {
+  const mode = serviceManagerMode(deps)
+  if (typeof mode === 'number') return mode
+  return mode === 'systemd' ? runDownSystemd({ flags, apply, deps }) : runDownLaunchd(flags, apply, deps)
+}
 
+/** up（macOS launchd 分支——M5-1 形态保持不变） */
+async function runUpLaunchd(flags: Map<string, string>, apply: boolean, deps: StackDeps, ctx: UpContext): Promise<number> {
   const plan = buildUpPlan({
-    companyDir,
-    company: flags.get('company') ?? '',
-    deployRoot,
-    nodeBin: flags.get('node-bin') ?? process.execPath,
-    guardianConfig,
-    daemonConfigPath: configPath,
-    daemonDb,
-    port: parsePort(flags.get('port') ?? '8788', 'port'),
-    panelPort: parsePort(flags.get('panel-port') ?? '8791', 'panel-port'),
-    home,
+    companyDir: ctx.companyDir,
+    company: ctx.company,
+    deployRoot: ctx.deployRoot,
+    nodeBin: ctx.nodeBin,
+    guardianConfig: ctx.guardianConfig,
+    daemonConfigPath: ctx.configPath,
+    daemonDb: ctx.daemonDb,
+    port: ctx.port,
+    panelPort: ctx.panelPort,
+    home: ctx.home,
     labelPrefix: flags.get('label-prefix') ?? STACK_CONVENTIONS.labelPrefix,
     launchAgents: flags.get('launch-agents') ?? '',
     logDir: flags.get('log-dir') ?? '',
   })
 
-  // 前置体检（两档：dry-run 软提醒不拦预览；--apply 硬拒——fail-closed）
-  const warnings: string[] = []
-  const missing: string[] = []
-  for (const [name, p] of [
-    ['部署树', deployRoot],
-    ['node', plan.nodeBin],
-    ['guardian 配置', plan.guardianConfig],
-    ['guardian 入口', plan.guardianEntry],
-    ['chatd 入口', plan.chatdEntry],
-    ['CLI 入口', plan.cliEntry],
-  ] as const) {
-    if (!existsSync(p)) (apply ? missing : warnings).push(`${name}不存在：${p}`)
-  }
-  if (platform !== null && platform !== 'localfile') warnings.push(`daemon.yaml platform=${platform}（非 localfile——M5 目标态，doctor 会红；plan/08 §1.A#3）`)
-  if (apply && missing.length > 0) {
-    for (const line of missing) console.error(`stack up：前置缺件：${line}`)
+  // 前置体检已由 upContext 收拢（ctx.warnings/ctx.missing；两档——dry-run 软提醒不拦预览、--apply 硬拒）
+  if (apply && ctx.missing.length > 0) {
+    for (const line of ctx.missing) console.error(`stack up：前置缺件：${line}`)
     return STACK_EXIT.usage
   }
 
@@ -420,7 +398,7 @@ async function runUp(flags: Map<string, string>, apply: boolean, deps: StackDeps
     console.log(`         plist=${service.plistPath}`)
     console.log(`         日志=${path.dirname(service.logOut)}/${path.basename(service.logOut)}|${path.basename(service.logErr)}`)
   }
-  for (const warning of warnings) console.log(`  提醒  ${warning}`)
+  for (const warning of ctx.warnings) console.log(`  提醒  ${warning}`)
   console.log('--- 将执行（--apply）---')
   for (const service of plan.services) console.log(`  ${service.bootstrapCmd}（已加载的先 bootout 再 bootstrap——幂等重入）`)
   if (!apply) {
@@ -466,9 +444,8 @@ async function runUp(flags: Map<string, string>, apply: boolean, deps: StackDeps
   return STACK_EXIT.ok
 }
 
-function runDown(flags: Map<string, string>, apply: boolean, deps: StackDeps): number {
-  const unsupported = guardLaunchd(deps)
-  if (unsupported !== undefined) return unsupported
+/** down（macOS launchd 分支——M5-1 形态保持不变） */
+function runDownLaunchd(flags: Map<string, string>, apply: boolean, deps: StackDeps): number {
   const companyDir = requireCompanyDir(flags)
   const plan = buildDownPlan({ companyDir, company: flags.get('company') ?? '', labelPrefix: flags.get('label-prefix') ?? STACK_CONVENTIONS.labelPrefix })
   console.log(apply ? 'stack down --apply（bootout 三服务）' : 'stack down dry-run（零副作用——停服需 --apply）')
@@ -489,27 +466,11 @@ function runDown(flags: Map<string, string>, apply: boolean, deps: StackDeps): n
 /* 参数面与分发                                                         */
 /* ------------------------------------------------------------------ */
 
-function parsePort(raw: string, flag: string): number {
-  const port = parsePositiveInt(raw, flag)
-  if (port > 65535) throw new StackUsageError(`--${flag} 超出端口域：${raw}`)
-  return port
-}
-
-function parsePositiveInt(raw: string, flag: string): number {
-  if (!/^\d+$/.test(raw) || Number(raw) < 1) throw new StackUsageError(`--${flag} 须为正整数：${raw}`)
-  return Number(raw)
-}
-
-/** 原子写（tmp+rename；0600 收口）——chatd-setup.mjs atomicWrite 同款防线 */
-function atomicWrite(file: string, content: string, mode: number): void {
-  mkdirSync(path.dirname(file), { recursive: true })
-  const tmp = `${file}.tmp-${String(process.pid)}-${String(Date.now())}`
-  writeFileSync(tmp, content, { mode })
-  chmodSync(tmp, mode)
-  renameSync(tmp, file)
-}
-
-const VALUE_FLAGS = new Set(['company-dir', 'company', 'config', 'port', 'panel-port', 'timeout-ms', 'backup-dir', 'deploy-root', 'node-bin', 'label-prefix', 'guardian-config', 'home', 'launch-agents', 'log-dir'])
+const VALUE_FLAGS = new Set([
+  'company-dir', 'company', 'config', 'port', 'panel-port', 'timeout-ms', 'backup-dir',
+  'deploy-root', 'node-bin', 'label-prefix', 'guardian-config', 'home', 'launch-agents', 'log-dir',
+  'env-file', 'user-units-dir', // M5-2 systemd 分支（--user-units-dir 为测试/沙箱注入口）
+])
 
 export async function cmdStack(argv: string[], depsInit: StackDepsInit = {}): Promise<number> {
   if (wantsHelp(argv)) return helpOk(SECTION.stack) // S1b 预检：先于解析与一切副作用
