@@ -1,7 +1,8 @@
 #!/bin/bash
-# platform-backup.sh —— Taiga/Matrix/chatd 每日备份（ops，2026-11-17 制作人批准计划任务；
+# platform-backup.sh —— Taiga/Matrix/chatd/core 每日备份（ops，2026-11-17 制作人批准计划任务；
 #                        2026-11-19 M4.5 增 chatd SQLite 面；
-#                        2026-11-20 M5-2 第一刀 增「无 Docker 环境」支持：--skip-docker + 自动探测）
+#                        2026-11-20 M5-2 第一刀 增「无 Docker 环境」支持：--skip-docker + 自动探测；
+#                        2026-11-20 M5-2 第二刀 增 core 自研事实源：--core-company 三面备份）
 #
 # 设计：
 #   - Taiga：docker exec taiga-docker-taiga-db-1 pg_dumpall -U taiga | gzip → taiga-pg-<ts>.sql.gz
@@ -19,10 +20,21 @@
 #     （日志明报 reason=docker-unavailable，计入 SUMMARY 的 docker.skipped；不算失败），
 #     chatd 段/manifest/保留策略照常；docker 可用且未显式跳过 → 行为与原版逐字节一致
 #     （docker preflight 失败仍 fail）。
+#   - core 自研事实源（M5-2 第二刀，Docker 退役后生产事实源全在外部数据盘单点）：
+#     `--core-company <companyDir>`（可重复；env PLATFORM_BACKUP_CORE_COMPANIES 冒号清单
+#     合并去重）逐公司备份三面——
+#       <companyDir>/platform     → tar（保留 platform/ 相对结构）→ core-platform-<slug>-<ts>.tgz
+#       <companyDir>/ledger.sqlite→ sqlite3 .backup 热备 → integrity_check → gzip
+#                                  → core-ledger-<slug>-<ts>.db.gz（与 chatd 同法）
+#       <companyDir>/company      → tar（git 目录整树）→ core-company-<slug>-<ts>.tgz
+#     产物全 600、入 manifest、同一 7 天保留策略；**缺目录/缺文件=SKIP 不算失败**（该公司
+#     未部署该面是正常态）；slug=公司目录名；同一 run 两个不同目录同名（同 slug 冲突）=用法错
+#     exit 2。SUMMARY 增 core 段（backed/skipped）。
 #
-# 用法：platform-backup.sh [--dry-run] [--skip-docker] [--backup-dir DIR] [--keep-days N] [--chatd-db <chat.db>]...
+# 用法：platform-backup.sh [--dry-run] [--skip-docker] [--backup-dir DIR] [--keep-days N] [--chatd-db <chat.db>]... [--core-company <companyDir>]...
 #   环境：PLATFORM_BACKUP_DIR（缺省 $HOME/backups/studio-next；生产建议显式指向备份盘，如 <backupDir>）
 #         PLATFORM_BACKUP_CHATD_DBS（冒号分隔多个 chat.db；与 --chatd-db 合并去重）
+#         PLATFORM_BACKUP_CORE_COMPANIES（冒号分隔多个公司目录；与 --core-company 合并去重）
 #   退出：0=成功；1=备份/校验/锁失败；2=用法错误。
 set -euo pipefail
 umask 077
@@ -36,7 +48,7 @@ MATRIX_CONTAINER="matrix-synapse"
 
 usage() {
   cat <<'USAGE'
-用法：platform-backup.sh [--dry-run] [--skip-docker] [--backup-dir DIR] [--keep-days N] [--chatd-db <chat.db>]...
+用法：platform-backup.sh [--dry-run] [--skip-docker] [--backup-dir DIR] [--keep-days N] [--chatd-db <chat.db>]... [--core-company <companyDir>]...
   --dry-run        只打印将执行命令，不创建目录/不写备份/不取锁
   --skip-docker    跳过 Taiga/Matrix/Matrix-config 段（不备份、不算失败；chatd 照常）。
                    不传时自动探测：docker CLI 缺失 或 docker info 失败 → 视为不可用并同样 SKIP
@@ -44,11 +56,15 @@ usage() {
   --keep-days      保留天数（缺省 7；仅清理本脚本 manifest 记录的产物）
   --chatd-db       chatd SQLite 路径（可重复；缺省布局 <companyDir>/var/workbench/chat.db；
                    文件缺失=SKIP 不报错；建议每公司一条）
-环境：PLATFORM_BACKUP_DIR、PLATFORM_BACKUP_CHATD_DBS（冒号分隔，与 --chatd-db 合并去重）
+  --core-company   core 事实源公司目录（可重复；备份 <dir>/platform、<dir>/ledger.sqlite、
+                   <dir>/company 三面；缺目录/缺文件=SKIP 不报错；同一 run 同 slug 冲突 fail）
+环境：PLATFORM_BACKUP_DIR、PLATFORM_BACKUP_CHATD_DBS（冒号分隔，与 --chatd-db 合并去重）、
+      PLATFORM_BACKUP_CORE_COMPANIES（冒号分隔公司目录，与 --core-company 合并去重）
 USAGE
 }
 
 CHATD_DBS=()
+CORE_COMPANIES=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
@@ -56,6 +72,7 @@ while [ $# -gt 0 ]; do
     --backup-dir) BACKUP_DIR="${2:-}"; shift 2 ;;
     --keep-days) KEEP_DAYS="${2:-}"; shift 2 ;;
     --chatd-db) CHATD_DBS+=("${2:-}"); shift 2 ;;
+    --core-company) CORE_COMPANIES+=("${2:-}"); shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "platform-backup: 未知参数 $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -79,6 +96,31 @@ for d in ${CHATD_DBS[@]+"${CHATD_DBS[@]}"}; do
   case "$CHATD_SEEN" in *"$d"$NL*) continue ;; esac
   CHATD_SEEN="$CHATD_SEEN$d$NL"
   CHATD_DB_LIST="$CHATD_DB_LIST$d$NL"
+done
+
+# —— core 公司清单（M5-2 第二刀）：--core-company 重复项 + env 冒号清单 → 合并去重校验 ——
+# 同 slug 冲突（两个不同目录同名 → 三面产物名将互撞）：用法错 exit 2，绝不静默覆盖。
+if [ -n "${PLATFORM_BACKUP_CORE_COMPANIES:-}" ]; then
+  oldIFS=$IFS; IFS=:
+  for d in $PLATFORM_BACKUP_CORE_COMPANIES; do CORE_COMPANIES+=("$d"); done
+  IFS=$oldIFS
+fi
+CORE_SEEN=""
+CORE_COMPANY_LIST=""
+CORE_SLUG_SEEN=""
+for d in ${CORE_COMPANIES[@]+"${CORE_COMPANIES[@]}"}; do
+  case "$d" in '') echo "platform-backup: --core-company 不能为空" >&2; exit 2 ;; esac
+  case "$d" in /*) ;; *) echo "platform-backup: --core-company 须为绝对路径：$d" >&2; exit 2 ;; esac
+  while [ "$d" != "${d%/}" ]; do d="${d%/}"; done # 去尾斜杠规范化（/a/b/ 与 /a/b 视为同一路径）
+  case "$d" in '') echo "platform-backup: --core-company 不能为根目录" >&2; exit 2 ;; esac
+  case "$CORE_SEEN" in *"$d"$NL*) continue ;; esac
+  CORE_SEEN="$CORE_SEEN$d$NL"
+  slug="$(basename "$d")"
+  case "$CORE_SLUG_SEEN" in
+    *"$slug"$NL*) echo "platform-backup: --core-company 同 slug 冲突（两个公司目录同名 ${slug}）：$d" >&2; exit 2 ;;
+  esac
+  CORE_SLUG_SEEN="$CORE_SLUG_SEEN$slug$NL"
+  CORE_COMPANY_LIST="$CORE_COMPANY_LIST$d$NL"
 done
 
 # —— Docker 可用性判定（M5-2 第一刀）：--skip-docker 显式跳过；否则自动探测 ——
@@ -158,6 +200,74 @@ backup_chatd_db() {
   echo "platform-backup: OK chatd slug=${slug} file=$(basename "$gz") size=${size}"
   CHATD_BACKED=$((CHATD_BACKED + 1))
 }
+
+# core 单公司三面备份（M5-2 第二刀）：platform/company → tar.gz（保留相对结构）；
+# ledger.sqlite → sqlite3 .backup 热备 → integrity_check → gzip（与 chatd 同法）。
+# 缺目录/缺文件=SKIP 不报错；产物 600、入 manifest（与既有面同一保留策略）。
+backup_core_company() {
+  local dir="$1" slug tgz gz tmp size
+  slug="$(basename "$dir")"
+  # —— platform（单子平台 jsonl 树）——
+  if [ -d "${dir}/platform" ]; then
+    tgz="${BACKUP_DIR}/core-platform-${slug}-${TS}.tgz"
+    [ -e "$tgz" ] && fail "core platform ${slug} 目标已存在（同一 run 内同 slug 冲突）：${tgz}"
+    tar -czf "$tgz" -C "$dir" platform || { rm -f "$tgz"; fail "core platform ${slug} tar 失败：${dir}/platform"; }
+    tar -tzf "$tgz" >/dev/null || { rm -f "$tgz"; fail "core platform ${slug} tgz 校验失败：${tgz}"; }
+    chmod 600 "$tgz"
+    size="$(stat -f%z "$tgz" 2>/dev/null || stat -c%s "$tgz")"
+    [ "$size" -gt 0 ] || fail "core platform ${slug} 备份为空：${tgz}"
+    printf '%s|%s\n' "$START_EPOCH" "$(basename "$tgz")" >> "$MANIFEST"
+    log_line "OK core-platform slug=${slug} file=$(basename "$tgz") size=${size} mode=600"
+    echo "platform-backup: OK core-platform slug=${slug} file=$(basename "$tgz") size=${size}"
+    CORE_BACKED=$((CORE_BACKED + 1))
+  else
+    log_line "SKIP core-platform company=${dir}（目录缺失=该公司未部署该面，不算失败）"
+    echo "platform-backup: SKIP core-platform ${dir}/platform（缺失）"
+    CORE_SKIPPED=$((CORE_SKIPPED + 1))
+  fi
+  # —— ledger.sqlite（SQLite 台账；在线 .backup 页级快照，热库/WAL 安全）——
+  if [ -f "${dir}/ledger.sqlite" ]; then
+    command -v sqlite3 >/dev/null 2>&1 || fail "sqlite3 不在 PATH（core ledger 备份需要）"
+    gz="${BACKUP_DIR}/core-ledger-${slug}-${TS}.db.gz"
+    tmp="${BACKUP_DIR}/.core-ledger-${slug}-${TS}-$$.db"
+    [ -e "$gz" ] && fail "core ledger ${slug} 目标已存在（同一 run 内同 slug 冲突）：${gz}"
+    sqlite3 "${dir}/ledger.sqlite" ".backup '${tmp}'" || { rm -f "$tmp"; fail "core ledger ${slug} sqlite3 .backup 失败：${dir}/ledger.sqlite"; }
+    [ -f "$tmp" ] || fail "core ledger ${slug} .backup 未产出文件：${tmp}"
+    [ "$(sqlite3 "$tmp" 'PRAGMA integrity_check;' 2>/dev/null)" = "ok" ] || { rm -f "$tmp"; fail "core ledger ${slug} integrity_check 失败（备份副本损坏）"; }
+    gzip -c "$tmp" > "$gz" || { rm -f "$tmp" "$gz"; fail "core ledger ${slug} gzip 失败"; }
+    rm -f "$tmp"
+    gzip -t "$gz" || fail "core ledger ${slug} gzip 校验失败：${gz}"
+    chmod 600 "$gz"
+    size="$(stat -f%z "$gz" 2>/dev/null || stat -c%s "$gz")"
+    [ "$size" -gt 0 ] || fail "core ledger ${slug} 备份为空：${gz}"
+    printf '%s|%s\n' "$START_EPOCH" "$(basename "$gz")" >> "$MANIFEST"
+    log_line "OK core-ledger slug=${slug} file=$(basename "$gz") size=${size} mode=600"
+    echo "platform-backup: OK core-ledger slug=${slug} file=$(basename "$gz") size=${size}"
+    CORE_BACKED=$((CORE_BACKED + 1))
+  else
+    log_line "SKIP core-ledger company=${dir}（文件缺失=该公司未部署该面，不算失败）"
+    echo "platform-backup: SKIP core-ledger ${dir}/ledger.sqlite（缺失）"
+    CORE_SKIPPED=$((CORE_SKIPPED + 1))
+  fi
+  # —— company（公司 git 目录，daemon 唯一写入者的组织/人事/章程事实源）——
+  if [ -d "${dir}/company" ]; then
+    tgz="${BACKUP_DIR}/core-company-${slug}-${TS}.tgz"
+    [ -e "$tgz" ] && fail "core company ${slug} 目标已存在（同一 run 内同 slug 冲突）：${tgz}"
+    tar -czf "$tgz" -C "$dir" company || { rm -f "$tgz"; fail "core company ${slug} tar 失败：${dir}/company"; }
+    tar -tzf "$tgz" >/dev/null || { rm -f "$tgz"; fail "core company ${slug} tgz 校验失败：${tgz}"; }
+    chmod 600 "$tgz"
+    size="$(stat -f%z "$tgz" 2>/dev/null || stat -c%s "$tgz")"
+    [ "$size" -gt 0 ] || fail "core company ${slug} 备份为空：${tgz}"
+    printf '%s|%s\n' "$START_EPOCH" "$(basename "$tgz")" >> "$MANIFEST"
+    log_line "OK core-company slug=${slug} file=$(basename "$tgz") size=${size} mode=600"
+    echo "platform-backup: OK core-company slug=${slug} file=$(basename "$tgz") size=${size}"
+    CORE_BACKED=$((CORE_BACKED + 1))
+  else
+    log_line "SKIP core-company company=${dir}（目录缺失=该公司未部署该面，不算失败）"
+    echo "platform-backup: SKIP core-company ${dir}/company（缺失）"
+    CORE_SKIPPED=$((CORE_SKIPPED + 1))
+  fi
+}
 cleanup() {
   local code=$?
   if [ -d "$LOCK_DIR" ] && [ "$(cat "$LOCK_DIR/pid" 2>/dev/null || true)" = "$$" ]; then rm -rf "$LOCK_DIR"; fi
@@ -182,12 +292,21 @@ EOF
   fi
   cat <<EOF
   chatd(M4.5)：每库 sqlite3 <db> ".backup <tmp>" → integrity_check → gzip chatd-<slug>-${TS}.db.gz（600）；缺失=SKIP
+  core(M5-2)：每公司 platform→tar(相对结构) / ledger.sqlite→".backup"→integrity_check→gzip / company(git)→tar（全 600；缺失=SKIP）
   retention: 仅删 ${MANIFEST} 中记录且 mtime 超过 ${KEEP_DAYS} 天的本脚本产物
 EOF
   while IFS= read -r db; do
     [ -n "$db" ] || continue
     echo "  chatd db=${db} slug=$(chatd_slug "$db") → ${BACKUP_DIR}/chatd-$(chatd_slug "$db")-${TS}.db.gz$([ -f "$db" ] || echo '（缺失→SKIP）')"
   done <<< "$CHATD_DB_LIST"
+  while IFS= read -r cdir; do
+    [ -n "$cdir" ] || continue
+    cslug="$(basename "$cdir")"
+    pmiss=$([ -d "${cdir}/platform" ] || echo '（缺失→SKIP）')
+    lmiss=$([ -f "${cdir}/ledger.sqlite" ] || echo '（缺失→SKIP）')
+    cmiss=$([ -d "${cdir}/company" ] || echo '（缺失→SKIP）')
+    echo "  core company=${cdir} slug=${cslug} platform→${BACKUP_DIR}/core-platform-${cslug}-${TS}.tgz${pmiss} ledger→${BACKUP_DIR}/core-ledger-${cslug}-${TS}.db.gz${lmiss} company→${BACKUP_DIR}/core-company-${cslug}-${TS}.tgz${cmiss}"
+  done <<< "$CORE_COMPANY_LIST"
   exit 0
 fi
 
@@ -282,6 +401,14 @@ while IFS= read -r db; do
   backup_chatd_db "$db"
 done <<< "$CHATD_DB_LIST"
 
+# —— core 事实源（M5-2 第二刀；platform/ledger.sqlite/company 三面；缺失=SKIP 不报错） ——
+CORE_BACKED=0
+CORE_SKIPPED=0
+while IFS= read -r cdir; do
+  [ -n "$cdir" ] || continue
+  backup_core_company "$cdir"
+done <<< "$CORE_COMPANY_LIST"
+
 # —— 保留策略：仅清理 manifest 内、超过 KEEP_DAYS 的本脚本产物 ——
 NOW="$(date +%s)"
 KEEP_SECONDS=$((KEEP_DAYS * 86400))
@@ -291,7 +418,7 @@ DELETED=0
 while IFS='|' read -r epoch name; do
   [ -n "${epoch:-}" ] || continue
   case "$name" in
-    taiga-pg-*.sql.gz|taiga-pg-*.err|matrix-hs-*.db.gz|matrix-config-*.tgz|chatd-*.db.gz) ;;
+    taiga-pg-*.sql.gz|taiga-pg-*.err|matrix-hs-*.db.gz|matrix-config-*.tgz|chatd-*.db.gz|core-platform-*.tgz|core-ledger-*.db.gz|core-company-*.tgz) ;;
     *) continue ;; # 非本脚本命名：保留（不写回清单）
   esac
   if [ $((NOW - epoch)) -gt "$KEEP_SECONDS" ]; then
@@ -305,9 +432,9 @@ log_line "OK retention deleted=${DELETED} keepDays=${KEEP_DAYS}"
 
 END_EPOCH="$(date +%s)"
 if [ "$DOCKER_MODE" = run ]; then
-SUMMARY="{\"ok\":true,\"ts\":\"${TS}\",\"backupDir\":\"${BACKUP_DIR}\",\"taiga\":{\"file\":\"$(basename "$TAIGA_GZ")\",\"size\":${TAIGA_SIZE},\"lines\":${TAIGA_LINES}},\"matrix\":{\"file\":\"$(basename "$MATRIX_GZ")\",\"size\":${MATRIX_SIZE}},\"matrixConfig\":{\"file\":\"$(basename "$MATRIX_CONFIG")\",\"size\":${CONFIG_SIZE}},\"chatd\":{\"backed\":${CHATD_BACKED},\"skipped\":${CHATD_SKIPPED}},\"retentionDeleted\":${DELETED},\"durationMs\":$(((END_EPOCH - START_EPOCH) * 1000))}"
+SUMMARY="{\"ok\":true,\"ts\":\"${TS}\",\"backupDir\":\"${BACKUP_DIR}\",\"taiga\":{\"file\":\"$(basename "$TAIGA_GZ")\",\"size\":${TAIGA_SIZE},\"lines\":${TAIGA_LINES}},\"matrix\":{\"file\":\"$(basename "$MATRIX_GZ")\",\"size\":${MATRIX_SIZE}},\"matrixConfig\":{\"file\":\"$(basename "$MATRIX_CONFIG")\",\"size\":${CONFIG_SIZE}},\"chatd\":{\"backed\":${CHATD_BACKED},\"skipped\":${CHATD_SKIPPED}},\"core\":{\"backed\":${CORE_BACKED},\"skipped\":${CORE_SKIPPED}},\"retentionDeleted\":${DELETED},\"durationMs\":$(((END_EPOCH - START_EPOCH) * 1000))}"
 else
-SUMMARY="{\"ok\":true,\"ts\":\"${TS}\",\"backupDir\":\"${BACKUP_DIR}\",\"docker\":{\"skipped\":true,\"reason\":\"${DOCKER_SKIP_REASON}\",\"sections\":[\"taiga\",\"matrix\",\"matrix-config\"]},\"chatd\":{\"backed\":${CHATD_BACKED},\"skipped\":${CHATD_SKIPPED}},\"retentionDeleted\":${DELETED},\"durationMs\":$(((END_EPOCH - START_EPOCH) * 1000))}"
+SUMMARY="{\"ok\":true,\"ts\":\"${TS}\",\"backupDir\":\"${BACKUP_DIR}\",\"docker\":{\"skipped\":true,\"reason\":\"${DOCKER_SKIP_REASON}\",\"sections\":[\"taiga\",\"matrix\",\"matrix-config\"]},\"chatd\":{\"backed\":${CHATD_BACKED},\"skipped\":${CHATD_SKIPPED}},\"core\":{\"backed\":${CORE_BACKED},\"skipped\":${CORE_SKIPPED}},\"retentionDeleted\":${DELETED},\"durationMs\":$(((END_EPOCH - START_EPOCH) * 1000))}"
 fi
 log_line "SUMMARY ${SUMMARY}"
 printf '%s\n' "$SUMMARY"

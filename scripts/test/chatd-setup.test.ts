@@ -28,6 +28,11 @@
  *      chatd 照常 backed＋manifest＋exit 0；docker info 失败（shim exit 1）→ 同上；
  *      --skip-docker 显式（docker 可用也跳过，reason=skip-docker-flag）；dry-run 明示
  *      docker=SKIP 计划行；docker 可用＋未显式跳过 → 原行为（J 面加强：三段产物齐）。
+ *   L) platform-backup.sh core 事实源（M5-2 第二刀，docs/quality/backup-restore.md §7.3）：
+ *      --core-company/env 合并去重 → 三面产物（core-platform tgz 相对结构/core-ledger
+ *      .backup+integrity+gzip/core-company git tgz；全 600）＋manifest＋7 天保留策略删过期
+ *      core-*；缺目录/缺文件=SKIP 不报错（SUMMARY core.backed/skipped）；相对路径拒；
+ *      同一 run 同 slug 冲突（两个同名公司目录）exit 2；dry-run 计划行＋缺失标注。
  *
  * 运行：node --experimental-strip-types --test scripts/test/chatd-setup.test.ts
  */
@@ -479,6 +484,7 @@ interface BackupSummary {
   ok?: boolean
   docker?: { skipped?: boolean; reason?: string; sections?: string[] }
   chatd?: { backed?: number; skipped?: number }
+  core?: { backed?: number; skipped?: number }
   retentionDeleted?: number
 }
 
@@ -583,4 +589,103 @@ test('K) platform-backup 无 Docker：CLI 缺失/info 失败 → SKIP+chatd 照�
   assert.equal(dryRun.status, 0, dryRun.stderr)
   assert.match(dryRun.stdout, /docker exec taiga-docker-taiga-db-1 pg_dumpall/, 'docker 可用时 dry-run 应列原版命令')
   assert.ok(!dryRun.stdout.includes('docker=SKIP'), '可用时 dry-run 不得出现 SKIP 行')
+})
+
+/* ------------------------------------------------------------------ */
+/* L) platform-backup.sh：core 事实源（M5-2 第二刀）                    */
+/* ------------------------------------------------------------------ */
+
+test('L) platform-backup core：dry-run 计划/路径校验/同 slug 冲突/env 合并去重/三面产物/manifest/retention/skip', async (t) => {
+  if (!sqlite3Available) return t.skip('sqlite3 CLI 不在 PATH——真跑分支 skip')
+
+  const root = tempDir('m52-core-')
+  // 公司 acme：三面齐备（platform jsonl 树 / 台账 / 公司 git 目录）
+  const acme = path.join(root, 'acme')
+  mkdirSync(path.join(acme, 'platform', 'rooms'), { recursive: true })
+  writeFileSync(path.join(acme, 'platform', 'events.jsonl'), '{"seq":1}\n')
+  writeFileSync(path.join(acme, 'platform', 'rooms', 'r1.jsonl'), '{"seq":2}\n')
+  new DatabaseSync(path.join(acme, 'ledger.sqlite')).exec('CREATE TABLE ledger_t(x); INSERT INTO ledger_t VALUES (99);')
+  mkdirSync(path.join(acme, 'company', '.git', 'refs'), { recursive: true })
+  writeFileSync(path.join(acme, 'company', '.git', 'HEAD'), 'ref: refs/heads/main\n')
+  writeFileSync(path.join(acme, 'company', 'AGENTS.md'), '# acme\n')
+  // 公司 beta：仅台账（platform/company 缺 → 两面 SKIP）
+  const beta = path.join(root, 'beta')
+  mkdirSync(beta, { recursive: true })
+  new DatabaseSync(path.join(beta, 'ledger.sqlite')).exec('CREATE TABLE b(x); INSERT INTO b VALUES (1);')
+
+  // —— L0 dry-run：core 计划行＋缺失标注；零落盘 ——
+  const bkDry = path.join(root, 'bk-dry')
+  const dry = runSh(BACKUP, ['--dry-run', '--skip-docker', '--backup-dir', bkDry, '--core-company', acme, '--core-company', beta])
+  assert.equal(dry.status, 0, dry.stderr)
+  assert.match(dry.stdout, /core company=\S*\/acme slug=acme/, 'dry-run 应列 core 公司计划行')
+  assert.match(dry.stdout, /core-platform-acme-\d{8}-\d{6}\.tgz/)
+  assert.match(dry.stdout, /core-ledger-acme-\d{8}-\d{6}\.db\.gz/)
+  assert.match(dry.stdout, /core-company-acme-\d{8}-\d{6}\.tgz/)
+  assert.match(dry.stdout, /core-ledger-beta-\d{8}-\d{6}\.db\.gz/)
+  assert.ok((dry.stdout.match(/缺失→SKIP/g) ?? []).length >= 2, `beta 的 platform/company 两面应标注缺失→SKIP：${dry.stdout}`)
+  assert.ok(!existsSync(bkDry), 'dry-run 不得创建备份目录')
+
+  // —— L1 用法面：相对路径拒 / 空值拒（exit 2） ——
+  assert.equal(runSh(BACKUP, ['--dry-run', '--core-company', 'rel/company']).status, 2, '--core-company 相对路径应 exit 2')
+  assert.equal(runSh(BACKUP, ['--dry-run', '--core-company', '']).status, 2, '--core-company 空值应 exit 2')
+
+  // —— L2 同 slug 冲突：两个不同目录同名 → exit 2 且零落盘（绝不静默覆盖） ——
+  const dup1 = path.join(root, 'dup1', 'acme')
+  const dup2 = path.join(root, 'dup2', 'acme')
+  mkdirSync(dup1, { recursive: true })
+  mkdirSync(dup2, { recursive: true })
+  const bkDup = path.join(root, 'bk-dup')
+  const confl = runSh(BACKUP, ['--dry-run', '--backup-dir', bkDup, '--core-company', dup1, '--core-company', dup2])
+  assert.equal(confl.status, 2, '同 slug 冲突应 exit 2')
+  assert.match(confl.stderr, /同 slug 冲突/)
+  assert.ok(!existsSync(bkDup), '冲突退出不得创建备份目录')
+
+  // —— L3 真跑：--skip-docker ＋ env/flag 合并去重（acme 双份喂入）→ 三面产物＋manifest＋retention ——
+  const backupDir = path.join(root, 'bk-core')
+  mkdirSync(backupDir, { recursive: true })
+  writeFileSync(path.join(backupDir, 'core-platform-oldco-20260101-000000.tgz'), 'old\n')
+  writeFileSync(path.join(backupDir, '.platform-backup-manifest'), '0|core-platform-oldco-20260101-000000.tgz\n')
+  const r = runSh(BACKUP, ['--skip-docker', '--backup-dir', backupDir, '--core-company', beta, '--core-company', acme], {
+    PLATFORM_BACKUP_CORE_COMPANIES: acme, // 与 flag 重复 → 去重后仍只备一次
+  })
+  assert.equal(r.status, 0, `core 真跑应 exit 0：${r.stderr}\n${r.stdout}`)
+  const s = lastSummary(r.stdout)
+  assert.equal(s['ok'], true)
+  assert.deepEqual(s['docker'], { skipped: true, reason: 'skip-docker-flag', sections: ['taiga', 'matrix', 'matrix-config'] })
+  assert.deepEqual(s['core'], { backed: 4, skipped: 2 }, 'acme 三面＋beta 一面 backed；beta platform/company SKIP')
+  assert.deepEqual(s['chatd'], { backed: 0, skipped: 0 }, '未给 chatd 面时计数为零')
+  for (const sec of ['core-platform', 'core-company']) {
+    assert.match(r.stdout, new RegExp(`SKIP ${sec} .*beta.*（缺失）`), `${sec} 缺失应明报 SKIP（beta）`)
+  }
+  assert.match(r.stdout, /OK core-ledger slug=beta/, 'beta 的 ledger 存在应照常备份')
+
+  const files = readdirSync(backupDir)
+  const pick = (prefix: string): string => files.find((f) => f.startsWith(prefix)) ?? ''
+  const platTgz = pick('core-platform-acme-')
+  const ledGz = pick('core-ledger-acme-')
+  const comTgz = pick('core-company-acme-')
+  const betaGz = pick('core-ledger-beta-')
+  for (const [name, f] of [['platform', platTgz], ['ledger', ledGz], ['company', comTgz], ['beta-ledger', betaGz]] as const) {
+    assert.match(f, new RegExp(`^core-.*-\\d{8}-\\d{6}\\.(tgz|db\\.gz)$`), `应有 ${name} 产物：${files.join(',')}`)
+    assert.equal(mode(path.join(backupDir, f)), 0o600, `${name} 产物应 600`)
+  }
+
+  const manifest = readFileSync(path.join(backupDir, '.platform-backup-manifest'), 'utf8')
+  for (const f of [platTgz, ledGz, comTgz, betaGz]) assert.match(manifest, new RegExp(`\\|${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'), `manifest 应记 ${f}`)
+  assert.ok(!existsSync(path.join(backupDir, 'core-platform-oldco-20260101-000000.tgz')), '过期 core-* 应被保留策略删除')
+  assert.ok(!manifest.includes('oldco'), '删除后 manifest 不写回该条')
+
+  // —— L4 恢复语义：platform tgz 保留相对结构；ledger 副本可读出数据；company tgz 含 git 目录 ——
+  const platList = execFileSync('/bin/bash', ['-c', `tar -tzf ${JSON.stringify(path.join(backupDir, platTgz))}`], { encoding: 'utf8' })
+  assert.match(platList, /^platform\//, 'platform tgz 应以 platform/ 开头（保留相对结构）')
+  assert.match(platList, /platform\/events\.jsonl/)
+  assert.match(platList, /platform\/rooms\/r1\.jsonl/)
+  const restored = path.join(root, 'ledger-restore.db')
+  const ledOut = path.join(root, 'led.txt')
+  execFileSync('/bin/bash', ['-c', `gzip -dc ${JSON.stringify(path.join(backupDir, ledGz))} > ${JSON.stringify(restored)} && sqlite3 ${JSON.stringify(restored)} "SELECT x FROM ledger_t;" > ${JSON.stringify(ledOut)}`])
+  assert.equal(readFileSync(ledOut, 'utf8').trim(), '99', 'ledger 备份副本可读出原数据（在线 .backup 语义有效）')
+  const comList = execFileSync('/bin/bash', ['-c', `tar -tzf ${JSON.stringify(path.join(backupDir, comTgz))}`], { encoding: 'utf8' })
+  assert.match(comList, /^company\//, 'company tgz 应以 company/ 开头')
+  assert.match(comList, /company\/\.git\/HEAD/, 'company tgz 应含 git 目录')
+  assert.match(comList, /company\/AGENTS\.md/)
 })

@@ -20,6 +20,15 @@
   显式跳过（例如 docker info 可通但容器已弃用/损坏的机器）：ProgramArguments 追加
       <string>--skip-docker</string>
   计划任务无需因退 Docker 而重装/改动；日志面 SKIP 行可作巡检依据。
+  core 事实源备份（M5-2 第二刀，2026-11-20）：Docker 退役后生产事实源全在外部数据盘（单点），
+  本任务起随每日备份逐公司备三面——&lt;companyDir&gt;/platform（jsonl 树）、&lt;companyDir&gt;/ledger.sqlite
+  （台账，sqlite3 .backup 热备）、&lt;companyDir&gt;/company（git 目录）。已装实例在 ProgramArguments
+  的脚本参数后追加（每公司一条，可重复）：
+      <string>--core-company</string><string>&lt;companyDir&gt;</string>
+  或给 launchd 环境 PLATFORM_BACKUP_CORE_COMPANIES（冒号分隔多公司目录，与 flag 合并去重）。
+  缺目录/缺文件自动 SKIP 不报错；产物 core-platform|core-ledger|core-company-&lt;slug&gt;-&lt;ts&gt;.*
+  （全 600）与既有面同 manifest/同 7 天保留策略；SUMMARY 记 core.backed/core.skipped；
+  两个同名公司目录（同 slug 冲突）用法错退出，绝不静默覆盖。
 -->
 <plist version="1.0">
 <dict>

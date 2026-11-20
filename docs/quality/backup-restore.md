@@ -1,4 +1,4 @@
-# 平台备份与恢复（Taiga/Matrix/chatd；ops，2026-11-17；2026-11-20 M5-2 第一刀 增无 Docker 支持）
+# 平台备份与恢复（Taiga/Matrix/chatd/core；ops，2026-11-17；2026-11-20 M5-2 增无 Docker 支持与 core 事实源）
 
 > 制作人 2026-11-17 批准「Taiga/Matrix 每日自动备份」。执行体=`scripts/ops/platform-backup.sh`；
 > 计划任务草案=`scripts/ops/io.studionext.platform-backup.plist`（每日 04:30；安装由 Lead/ops 在窗口执行）。
@@ -13,6 +13,9 @@
 | `matrix-hs-<...>.db.gz` | Synapse `/data/homeserver.db` 的 SQLite backup API 快照（`integrity_check=ok`），gzip | 600 |
 | `matrix-config-<...>.tgz` | `/data/homeserver.yaml`、`localhost.log.config`、**`localhost.signing.key`**（含密钥，勿外发） | 600 |
 | `chatd-<slug>-<...>.db.gz` | 公司 chatd SQLite 在线备份（`.backup`＋integrity_check；M4.5；缺库=SKIP） | 600 |
+| `core-platform-<slug>-<...>.tgz` | `<companyDir>/platform` jsonl 树整树 tar（保留 `platform/` 相对结构；M5-2 第二刀；缺目录=SKIP） | 600 |
+| `core-ledger-<slug>-<...>.db.gz` | `<companyDir>/ledger.sqlite` 台账在线备份（`.backup`＋integrity_check；M5-2 第二刀；缺文件=SKIP） | 600 |
+| `core-company-<slug>-<...>.tgz` | `<companyDir>/company` 公司 git 目录整树 tar（M5-2 第二刀；缺目录=SKIP） | 600 |
 | `backup.log` | 每次运行的 START/OK/FAIL/SUMMARY（JSON行）文本日志 | 600 |
 | `.platform-backup-manifest` | 本脚本产物清单（epoch\|文件名）；保留策略只依据此清单 | 600 |
 
@@ -23,6 +26,8 @@ gzip -t taiga-pg-*.sql.gz
 gzip -dc taiga-pg-*.sql.gz | wc -l          # 真机 ~52k 行；0=失败
 gzip -t matrix-hs-*.db.gz
 tar -tzf matrix-config-*.tgz                # 应含 homeserver.yaml/signing key/log config
+tar -tzf core-platform-*.tgz                # 应以 platform/ 开头（M5-2 第二刀）
+gzip -t core-ledger-*.db.gz && tar -tzf core-company-*.tgz  # 后者应以 company/（含 .git/）开头
 ls -l backup.log                            # 末尾 SUMMARY {"ok":true,...}
 ```
 
@@ -124,3 +129,39 @@ ls <backupDir>/chatd-*.db.gz          # chatd 产物照常产出
 - 长期无 Docker 的机器：SKIP 行是**预期常态**，不是告警；异常=非零退出或 SUMMARY `ok:false`。
 - 恢复 Taiga/Matrix 数据（§5）仍用历史备份；`docker` 命令面仅恢复演练时需要。
 - 若 `docker info` 挂起（罕见，损坏 VM 极端态）：显式加 `--skip-docker` 绕过探测。
+
+### 7.3 core 事实源备份（M5-2 第二刀，2026-11-20）
+
+背景：Docker 退役后，生产自研事实源全在外部数据盘（单点）——`<companyDir>/platform`（单子平台
+jsonl 树）、`<companyDir>/ledger.sqlite`（SQLite 台账）、`<companyDir>/company`（公司 git 目录，
+daemon 唯一写入者）。本刀起随每日任务逐公司备份三面：
+
+| 面 | 产物 | 方式 |
+|---|---|---|
+| platform | `core-platform-<slug>-<ts>.tgz` | `tar -czf - -C <companyDir> platform`（保留 `platform/` 相对结构） |
+| ledger.sqlite | `core-ledger-<slug>-<ts>.db.gz` | `sqlite3 .backup` 在线热备 → `integrity_check=ok` → gzip（与 chatd 同法） |
+| company | `core-company-<slug>-<ts>.tgz` | `tar -czf - -C <companyDir> company`（git 目录整树） |
+
+- `<slug>` = 公司目录名（如 `studio-dev`）；**缺目录/缺文件=SKIP 不算失败**（该公司未部署该面
+  是正常态），SUMMARY 记 `core.skipped`；**同一 run 两个不同目录同名（同 slug 冲突）=用法错
+  exit 2**，绝不静默覆盖。
+- 三面产物全 600、入同一 `.platform-backup-manifest`、同 7 天保留策略；SUMMARY 增
+  `"core":{"backed":N,"skipped":M}`；退出码不受 SKIP 影响。
+- 指定公司：`--core-company <companyDir>`（可重复）或 env `PLATFORM_BACKUP_CORE_COMPANIES`
+  （冒号分隔多公司目录；与 flag 合并去重）。
+
+安装侧提示（已装 launchd 实例**不重装**，改参数后 `bootout`+`bootstrap` 生效）：在 ProgramArguments
+的脚本参数后追加（每公司一条）：
+
+```xml
+<string>--core-company</string><string>&lt;companyDir&gt;</string>
+```
+
+巡检与恢复（示意；恢复 ledger 前先停 daemon，恢复后对账台账事件数）：
+
+```sh
+ls <backupDir>/core-*.tgz <backupDir>/core-*.db.gz    # 巡检：core 产物照常产出
+tar -xzf core-platform-<slug>-<ts>.tgz -C <companyDir>   # 回 platform/（相对结构直落）
+gzip -dc core-ledger-<slug>-<ts>.db.gz > <companyDir>/ledger.sqlite
+tar -xzf core-company-<slug>-<ts>.tgz -C <companyDir>   # 回 company/ git 目录
+```
