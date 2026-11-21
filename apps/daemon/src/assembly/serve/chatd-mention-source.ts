@@ -44,10 +44,12 @@
  * 组合根 apps/boot 构造本源产物经 opts.chatdSource 注入，不启动 chatd 进程——独立 ops/launchd）。
  */
 import type { CompanySlug, InvokeIntent, InvokeSource, PersonId, SourceManifest } from '@studio-next/contract'
-import { WB_ERROR_CODES, WorkbenchTransport } from '@studio-next/workbench-transport'
+import { WorkbenchTransport } from '@studio-next/workbench-transport'
 import type { AckResult, ClaimResult, InboxResult, MessagePage, Room } from '@studio-next/workbench-transport'
 import { isAbsolute, join, resolve } from 'node:path'
 import { checkMentionPayload } from '../../engine/intents/taxonomy.ts'
+import { classifyChatdError, type ChatdServeKeyHelpers } from './chatd-errors.ts'
+import { coerceChatdNotifyKey, validateChatdNotifyCross } from './chatd-notify-face.ts'
 import type { ServeConfig } from './config-types.ts'
 
 /** 唤醒源名（InvokeIntent.source 的固定值；与 matrix 源 'matrix' 命名判例同构） */
@@ -115,47 +117,9 @@ export interface ChatdMentionSourceOptions {
 }
 
 // ————————————————————————— 错误分类（WB_* → 可读分类，提案 §5.3） —————————————————————————
-
-const WB_CODES = new Set<string>(WB_ERROR_CODES)
-
-/** 源侧错误分类（分类面=处置语义；具体处置计数/日志归轮询循环） */
-export type ChatdErrorKind = 'transport' | 'config' | 'defect' | 'conflict' | 'gone' | 'unknown'
-
-export interface ChatdSourceError {
-  readonly kind: ChatdErrorKind
-  readonly code: string
-  readonly readable: string
-}
-
-/** WB_* 稳定码 → 可读分类（非 WB_* 错误归 unknown，同走软失败面不炸循环） */
-export function classifyChatdError(err: unknown): ChatdSourceError {
-  const code = (err as { code?: unknown } | null | undefined)?.code
-  const message = err instanceof Error ? err.message : String(err)
-  if (typeof code !== 'string' || !WB_CODES.has(code)) {
-    return { kind: 'unknown', code: 'UNKNOWN', readable: `未分类错误：${message}` }
-  }
-  switch (code) {
-    case 'WB_TIMEOUT':
-    case 'WB_UNAVAILABLE':
-    case 'WB_NOT_CONNECTED':
-      return { kind: 'transport', code, readable: `传输面（${code}，可重试）：${message}` }
-    case 'WB_INVALID_ARGUMENT':
-      return {
-        kind: 'config',
-        code,
-        readable: message.startsWith('unauthenticated:')
-          ? `配置面（${code} 鉴权失败——token 缺失/不符，检查 env WORKBENCH_CHATD_TOKEN 供给）：${message}`
-          : `配置面（${code} 参数缺陷——socket/token/工号拼参明报）：${message}`,
-      }
-    case 'WB_PROTOCOL':
-    case 'WB_INTERNAL':
-      return { kind: 'defect', code, readable: `源缺陷（${code}）：${message}` }
-    case 'WB_IDEMPOTENCY_CONFLICT':
-      return { kind: 'conflict', code, readable: `幂等冲突（${code}，以 chatd 审计为准，跳过不重试）：${message}` }
-    default: // WB_ROOM/MESSAGE/WAKE_NOT_FOUND、WB_WAKE_NOT_CLAIMABLE（含 dead-letter 终态）
-      return { kind: 'gone', code, readable: `对象缺失/终态（${code}，软失败跳过）：${message}` }
-  }
-}
+// M5 尾拆件至共享叶 chatd-errors.ts（notify 面同用——两面互不 import 单向路由；再出口保
+// 消费面零漂移，chatd-mention-source.test.ts 等既有导入不动）。
+export { classifyChatdError, type ChatdErrorKind, type ChatdSourceError } from './chatd-errors.ts'
 
 // ————————————————————————— 源实现 —————————————————————————
 
@@ -323,22 +287,22 @@ export function createChatdMentionSource(options: ChatdMentionSourceOptions): In
 
 // ————————————————————————— 配置收口 + 注册面（M4-1 接线，team task-136） —————————————————————————
 
-/** serveconfig 值收口助手（config.ts 扁平解析面的 str/num 同形——保持本件与解析件解耦的单孔） */
-export interface ChatdServeKeyHelpers {
-  readonly str: (value: unknown, key: string) => string
-  readonly num: (value: unknown, key: string) => number
-}
-
 /**
- * chatd 唤起源键解析（config.ts switch 显式 case 收口到此；缺省/交叉校验分离——缺省推导
+ * chatd serve 键解析（config.ts switch 显式 case 收口到此；缺省/交叉校验分离——缺省推导
  * 要看 companyDir，属尾段交叉面；超时缺省归组合根 apps/boot 装配面，本配置面只收显式值）：
  *   - mentionSource：mentionSourceKindOf 值域校验（缺省 matrix、非法 CONFIG_INVALID）；
  *   - chatdSocket：显式配置须绝对路径（相对=CONFIG_INVALID——socket 定位不许含糊）；
  *   - mentionPollMs/mentionConnectTimeoutMs/mentionRequestTimeoutMs：正整数毫秒
  *     （0/负/非整数=CONFIG_INVALID——节奏/超时面配错直接拒启不兜底；P1 超时加固新增
- *     两键，缺省 5000/10000 由 boot 装配面持有，不写本件）。
+ *     两键，缺省 5000/10000 由 boot 装配面持有，不写本件）；
+ *   - notifyChatdRoomId/notifyChatdSenderId（M5 尾，plan/09 §二#3）：路由至
+ *     chatd-notify-face.ts 的 coerceChatdNotifyKey（同 socket 同键族；config.ts 零新增行）。
  */
 export function coerceChatdServeKey(cfg: ServeConfig, key: string, value: unknown, helpers: ChatdServeKeyHelpers): void {
+  if (key === 'notifyChatdRoomId' || key === 'notifyChatdSenderId') {
+    coerceChatdNotifyKey(cfg, key, value, helpers)
+    return
+  }
   if (key === 'mentionSource') {
     cfg.mentionSource = mentionSourceKindOf(helpers.str(value, key))
     return
@@ -359,24 +323,28 @@ export function coerceChatdServeKey(cfg: ServeConfig, key: string, value: unknow
 }
 
 /**
- * chatd 唤起源交叉校验（parseDaemonConfig 尾段调用；matrix 必配键交叉之后的收口位）：
- *   - 与 matrix: true 互斥——双唤起源=双写（mention 幂等键第一槽 source 不同，引擎折叠
- *     不了；M4 双跑走影子工具不走配置双开，docs/plan/06-…-2026-11-19.md §M4）；
- *   - chatdSocket 缺省推导 `<companyDir>/var/workbench/chat.sock`（提案 §5.1 生产约定）；
- *     无 companyDir 又未显式配=CONFIG_INVALID（不猜 cwd 相对路径）。
+ * chatd 交叉校验（parseDaemonConfig 尾段调用；matrix 必配键交叉之后的收口位）：
+ *   - 唤醒源面：mentionSource: chatd 与 matrix: true 互斥——双唤起源=双写（mention 幂等
+ *     键第一槽 source 不同，引擎折叠不了；M4 双跑走影子工具不走配置双开，docs/plan/06-…
+ *     -2026-11-19.md §M4）；chatdSocket 缺省推导 `<companyDir>/var/workbench/chat.sock`
+ *     （提案 §5.1 生产约定），无 companyDir 又未显式配=CONFIG_INVALID（不猜 cwd 相对路径）；
+ *   - 通知面（M5 尾 plan/09 §二#3）：尾接 validateChatdNotifyCross——与 mentionSource 开关
+ *     独立（notify 两键全缺零交叉零推导）；config.ts 保持单一调用点（尺寸阈零新增行）。
  * mentionSource: matrix（缺省）零交叉零推导——既有路径行为零漂移。
  */
 export function validateChatdMentionCross(cfg: ServeConfig): void {
-  if (cfg.mentionSource !== 'chatd') return
-  if (cfg.matrix) {
-    throw new Error('CONFIG_INVALID：mentionSource: chatd 与 matrix: true 互斥（双唤起源=双写；M4 双跑走影子工具不走配置双开）')
-  }
-  if (cfg.chatdSocket === undefined) {
-    if (cfg.companyDir === undefined) {
-      throw new Error('CONFIG_INVALID：mentionSource: chatd 缺 chatdSocket 且无 companyDir 可推导缺省（<companyDir>/var/workbench/chat.sock）——显式配绝对路径')
+  if (cfg.mentionSource === 'chatd') {
+    if (cfg.matrix) {
+      throw new Error('CONFIG_INVALID：mentionSource: chatd 与 matrix: true 互斥（双唤起源=双写；M4 双跑走影子工具不走配置双开）')
     }
-    cfg.chatdSocket = join(resolve(cfg.companyDir), 'var/workbench/chat.sock')
+    if (cfg.chatdSocket === undefined) {
+      if (cfg.companyDir === undefined) {
+        throw new Error('CONFIG_INVALID：mentionSource: chatd 缺 chatdSocket 且无 companyDir 可推导缺省（<companyDir>/var/workbench/chat.sock）——显式配绝对路径')
+      }
+      cfg.chatdSocket = join(resolve(cfg.companyDir), 'var/workbench/chat.sock')
+    }
   }
+  validateChatdNotifyCross(cfg)
 }
 
 /** chatd 源注册面所需的最小注册表形状（SourceRegistry 结构满足——同结构同形注入纪律） */

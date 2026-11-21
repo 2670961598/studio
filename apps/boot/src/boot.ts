@@ -13,11 +13,12 @@
  *       matrixDeptMap JSON 装载 + matrixProducerMxid 缺省神号；ctx.snapshot 活取公司快照）
  *       + createMatrixBroadcastFace（105-刀B notify 广播面：#alert/部门频道/总览——
  *       事件中继+escalate 警戒 IM 出口+惊动计量，studio-dev-219）
- *     → mentionSource: chatd → createChatdMentionSource（M4-1 task-136，plan/07 §5.4：
- *       workbench-chatd 唤醒源工厂——socket 经 chatdSocket（缺省 <companyDir>/var/workbench/
- *       chat.sock），token 经 env WORKBENCH_CHATD_TOKEN，传输超时经 mentionConnectTimeoutMs/
- *       mentionRequestTimeoutMs（缺省 5000/10000，P1 加固）；与 matrix: true 互斥；
- *       boot 不启动 chatd 进程——独立 ops/launchd 运维，transport 惰性连接）
+ *     → mentionSource: chatd → assembleChatdSource（M4-1 task-136，plan/07 §5.4：workbench-
+ *       chatd 唤醒源工厂；notifyChatdRoomId 在场（M5 尾，plan/09 §二#3）→ assembleChatdNotifyFace
+ *       （chatd 通知面：matrix: false 时替代 matrix broadcast 的 fail-closed 出口——socket/token/
+ *       超时复用 chatd 键组，senderId 缺省 PRIME-0；与 matrix/matrixChannels 互斥由解析面收口，
+ *       缺键=零注入零行为）。两装配件与 chatd 常量收口 chatd-assembly.ts（M5 尾拆件）；共同
+ *       纪律：零登录零网络、boot 不启动 chatd 进程（独立 ops/launchd 运维，transport 惰性连接））
  *     → runServe(configPath, { matrixSource?, chatdSource?, matrixRoomFace?, notifyBroadcast?, secretDeclarations? }）
  *       （源/面工厂注入；秘密声明经 env STUDIO_SECRET_DECLARATIONS_FILE 读引用侧 JSON——值不入仓）
  *
@@ -30,12 +31,10 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import type { InvokeSource, PersonId } from '@studio-next/contract'
 import {
-  createChatdMentionSource,
   parseDaemonConfig,
   readSecretDeclarations,
   runServe,
   type ChatdSourceFactory,
-  type ChatdTransportPort,
   type MatrixRoomFace,
   type MatrixRoomFaceContext,
   type NotifyBroadcastFace,
@@ -43,6 +42,10 @@ import {
   type ServeConfig,
   type ServeResult,
 } from '@studio-next/daemon/serve'
+import { assembleChatdNotifyFace, assembleChatdSource } from './chatd-assembly.ts'
+
+// chatd 装配件/常量再出口（M5 尾拆件至 chatd-assembly.ts——20-§十五.三.3 尺寸阈；消费面零漂移）
+export { assembleChatdNotifyFace, assembleChatdSource, DEFAULT_MENTION_CONNECT_TIMEOUT_MS, DEFAULT_MENTION_REQUEST_TIMEOUT_MS, WORKBENCH_CHATD_TOKEN_ENV } from './chatd-assembly.ts'
 import {
   createMatrixBroadcastFace,
   createMatrixProvisionFace,
@@ -59,13 +62,6 @@ import {
 export const MATRIX_BOT_PASSWORD_ENV = 'MATRIX_BOT_PASSWORD'
 
 /**
- * chatd 鉴权 token env 名（M4-1 task-136；红名单同 bot 密码——值永不入 daemon.yaml/日志/
- * 台账，仅随 transport 请求附参）：与 chatd 侧同名 env（apps/workbench-chatd/src/config.ts）；
- * 缺省不拒启（chatd ALLOW_NO_AUTH 面合法）——鉴权失败走源软失败明报，分类=config。
- */
-export const WORKBENCH_CHATD_TOKEN_ENV = 'WORKBENCH_CHATD_TOKEN'
-
-/**
  * hr 建号 shared secret env 名（studio-dev-217，docs/52-§7.2/§十二；红名单同 bot 密码）：
  * 值=homeserver.yaml 侧 `registration_shared_secret`（21A-§2.3 冻结建号通道），经 env
  * 注入不落盘；次选 MATRIX_SHARED_SECRET（daemon collectHrSecrets 同扫两名——出站
@@ -75,16 +71,6 @@ export const MATRIX_HR_SHARED_SECRET_ENV = 'MATRIX_HR_SHARED_SECRET'
 
 /** 制作人 MXID 缺省（神号全知，130 §6.7.2；21A-§2.2 冻结锚） */
 export const DEFAULT_PRODUCER_MXID = '@opengames:localhost'
-
-/**
- * chatd 唤起源传输连接/请求超时缺省 ms（P1 加固——localplatform 全量 list 每拍扫描致 daemon
- * 事件循环偶发 >1s 停顿，transport 包内缺省 connect 1000/request 2000 会让启动首轮 poll 偶发
- * "connect timeout after 1000ms"；boot 组合根显式抬高，不动物理包缺省——面板聊天等其余
- * 消费面零漂移。可经 daemon.yaml mentionConnectTimeoutMs/mentionRequestTimeoutMs 覆盖
- * （正整数毫秒，非法值 parseDaemonConfig 即拒）。
- */
-export const DEFAULT_MENTION_CONNECT_TIMEOUT_MS = 5_000
-export const DEFAULT_MENTION_REQUEST_TIMEOUT_MS = 10_000
 
 /** 秘密声明文件 env 名（JSON 引用侧数组；**不含值**——值仍经 env/短时句柄通道，v2/15 §4.1） */
 export const SECRET_DECLARATIONS_ENV = 'STUDIO_SECRET_DECLARATIONS_FILE'
@@ -442,10 +428,10 @@ export function assembleMatrixBroadcastFace(
 
 /**
  * 组合根入口：读 daemon.yaml →（matrix: true 时）装配 matrix 源 →（matrixChannels:
- * true 时）装配频道供给面+notify 广播面 → runServe。两开关独立（只开供给不开唤醒源=
- * 合法灰度形态：频道先建、mention 后开）；都关=透传 runServe（matrix 面整体关闭，boot
- * 仍是合法入口）。配置解析在 daemon 收口（runServe 内部再读同一文件——单一解析器，
- * boot 不重造）。
+ * true 时）装配频道供给面+notify 广播面 →（notifyChatdRoomId 在场时，M5 尾 plan/09
+ * §二#3）装配 chatd 通知面 → runServe。两开关独立（只开供给不开唤醒源=合法灰度形态：
+ * 频道先建、mention 后开）；都关=透传 runServe（matrix 面整体关闭，boot 仍是合法入口）。
+ * 配置解析在 daemon 收口（runServe 内部再读同一文件——单一解析器，boot 不重造）。
  */
 /**
  * matrix 人事执行面装配（studio-dev-217，docs/52-§七；hrSync+hrMatrix: true 时）：
@@ -475,53 +461,6 @@ export async function assembleMatrixHrFace(
   return createMatrixHrFace({ client, sharedSecret: secret })
 }
 
-/**
- * chatd @唤醒源装配件（M4-1 task-136，docs/plan/06 §M3/M4 + plan/07 §5.4）：config 键组 +
- * env token → 源工厂。与 matrix 装配件同纪律但**零登录零网络**：transport 惰性连接（首请求
- * 才 connect），boot 不启动/不守护 chatd 进程（独立 ops/launchd 运维——M1 交付面）。
- * 工厂 ctx.actors 由 runServe 在公司快照在场处回调供给（boot 不持快照；matrixRoomFace ctx 判例）。
- * token 缺省不拒启（chatd ALLOW_NO_AUTH 面合法）——鉴权失败走源软失败明报（分类=config）。
- * 传输超时显式传 connectTimeoutMs/requestTimeoutMs（config 可配，缺省 5000/10000——P1 加固，
- * 防事件循环偶发停顿致首轮 poll connect timeout）。
- * 测试注入面：options.transport 传结构同形 mock（ChatdTransportPort——daemon/serve 再出口）。
- */
-export function assembleChatdSource(
-  config: ServeConfig,
-  env: Record<string, string | undefined>,
-  options?: { transport?: ChatdTransportPort; log?: (line: string) => void },
-): ChatdSourceFactory {
-  if (config.mentionSource !== 'chatd') {
-    throw new Error('CONFIG_INVALID：assembleChatdSource 在 mentionSource ≠ chatd 下被调用（装配面与开关面不一致）')
-  }
-  const socketPath = config.chatdSocket
-  if (socketPath === undefined || socketPath === '') {
-    throw new Error('CONFIG_INVALID：mentionSource: chatd 缺 chatdSocket（缺省 <companyDir>/var/workbench/chat.sock——解析面已收口，此处兜底明报）')
-  }
-  const token = env[WORKBENCH_CHATD_TOKEN_ENV]
-  const tokenNote = token !== undefined && token !== '' ? 'env 供给' : '未设（chatd ALLOW_NO_AUTH 面；鉴权失败走源软失败明报）'
-  // P1 加固：传输超时 config 可配、缺省 5000/10000（DEFAULT_MENTION_* 单一源）——显式传入
-  // 源工厂自建 transport 面（注入 transport 时选项仍随 factory 透传，同形不特判）。
-  const connectTimeoutMs = config.mentionConnectTimeoutMs ?? DEFAULT_MENTION_CONNECT_TIMEOUT_MS
-  const requestTimeoutMs = config.mentionRequestTimeoutMs ?? DEFAULT_MENTION_REQUEST_TIMEOUT_MS
-  options?.log?.(
-    `[boot] chatd @唤醒源已装配（socket=${socketPath}${config.mentionPollMs !== undefined ? `，pollMs=${String(config.mentionPollMs)}` : ''}` +
-      `，connectTimeoutMs=${String(connectTimeoutMs)}，requestTimeoutMs=${String(requestTimeoutMs)}，token ${tokenNote}）→ runServe opts.chatdSource 注入` +
-      '（chatd 进程独立 ops/launchd 运维——boot 不 spawn 不守护；源 emit 统一进 engine.ingest，22-§一 源零直驱）',
-  )
-  return (ctx): InvokeSource =>
-    createChatdMentionSource({
-      company: config.company,
-      actors: ctx.actors,
-      socketPath,
-      ...(options?.transport !== undefined ? { transport: options.transport } : {}),
-      ...(token !== undefined && token !== '' ? { token } : {}),
-      ...(config.mentionPollMs !== undefined ? { pollMs: config.mentionPollMs } : {}),
-      connectTimeoutMs,
-      requestTimeoutMs,
-      ...(options?.log !== undefined ? { log: options.log } : {}),
-    })
-}
-
 export async function bootServe(options: BootOptions): Promise<ServeResult> {
   const log = options.log ?? ((line: string): void => console.log(line))
   const config = parseDaemonConfig(readFileSync(path.resolve(options.configPath), 'utf8'))
@@ -529,7 +468,8 @@ export async function bootServe(options: BootOptions): Promise<ServeResult> {
   const secretDeclarations = readSecretDeclarationsFromEnv(options.env ?? process.env, log)
   const hrFaceNeeded = config.hrSync === true && config.hrMatrix === true // studio-dev-217：hr 面独立灰度形态（matrix/matrixChannels 关也不早退）
   const chatdMention = config.mentionSource === 'chatd' // M4-1 task-136：chatd 唤起源独立于 matrix 面装配（零登录零网络）
-  if (!config.matrix && !config.matrixChannels && !hrFaceNeeded && !chatdMention) {
+  const chatdNotify = config.notifyChatdRoomId !== undefined // M5 尾 plan/09 §二#3：chatd 通知面（与 matrix/matrixChannels 互斥由解析面收口）
+  if (!config.matrix && !config.matrixChannels && !hrFaceNeeded && !chatdMention && !chatdNotify) {
     log('[boot] matrix: false、matrixChannels: false——@唤醒源/频道供给面/notify 广播面均未装配（组合根透传 runServe）')
     return serve(options.configPath, secretDeclarations !== undefined ? { secretDeclarations } : undefined)
   }
@@ -566,6 +506,11 @@ export async function bootServe(options: BootOptions): Promise<ServeResult> {
   if (chatdMention) {
     // M4-1 task-136：mentionSource: chatd → 组合根装配源工厂注入（与 matrix: true 互斥由解析面保证）
     chatdSource = assembleChatdSource(config, options.env ?? process.env, { log })
+  }
+  if (chatdNotify) {
+    // M5 尾 plan/09 §二#3：notifyChatdRoomId 在场 → chatd 通知面注入（与 matrix/matrixChannels
+    // 互斥由解析面保证——本分支只在 matrix: false 形态到达；缺键=零注入现状不回归）
+    notifyBroadcast = assembleChatdNotifyFace(config, options.env ?? process.env, { log })
   }
   return serve(options.configPath, {
     ...(matrixSource !== undefined ? { matrixSource } : {}),

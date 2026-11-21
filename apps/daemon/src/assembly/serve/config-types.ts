@@ -151,6 +151,18 @@ export interface ServeConfig extends HrServeConfig, RestartServeConfig, Signatur
    */
   mentionRequestTimeoutMs?: number
   /**
+   * chatd 通知面目标房间 roomId（M5 尾收口，plan/09 §二#3；键在场=面开——组合根 apps/boot
+   * 在 matrix: false 时注入 createChatdNotifyFace 产物替代 matrix broadcast 的 fail-closed
+   * 出口）。非空字符串解析即拒；与 matrix/matrixChannels 互斥（notify 出口单一）；
+   * socket/token 复用 chatdSocket/WORKBENCH_CHATD_TOKEN（见 chatd-notify-face.ts 收口）。
+   */
+  notifyChatdRoomId?: string
+  /**
+   * chatd 通知面发送者工号（缺省 PRIME-0——DEFAULT_CHATD_NOTIFY_SENDER_ID 装配面单一源；
+   * 工号样式解析即拒）。单独在场（无 notifyChatdRoomId）=CONFIG_INVALID 孤儿键拒启。
+   */
+  notifyChatdSenderId?: string
+  /**
    * 公司频道供给开关（130-P3，130 提案 §6.7.3-③；缺省关）：true=注入工厂装配（opts.
    * matrixRoomFace）——启动+热重载 ensure 八类地图＋派发/CLOSE 生命周期钩（EngineDeps.
    * rooms）。开而未注入=CONFIG_INVALID；供给失败不阻主循环（执行体 assembly/channels/）。

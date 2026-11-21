@@ -410,11 +410,11 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       case 'matrixChannels': cfg.matrixChannels = bool(value, key); break
       case 'matrixDeptMap': cfg.matrixDeptMap = str(value, key); break
       case 'matrixProducerMxid': cfg.matrixProducerMxid = str(value, key); break
-      // —— chatd 唤起源键组（M4-1 task-136；P1 超时加固两键同走正整数收口）：解析收口 assembly/serve/chatd-mention-source.ts ——
+      // —— chatd 键组（唤醒源 M4-1 task-136＋通知面 M5 尾 plan/09 §二#3）：收口 chatd-mention-source.ts（notifyChatd* 路由至 chatd-notify-face.ts）——
       case 'mentionSource':
       case 'chatdSocket':
       case 'mentionPollMs':
-      case 'mentionConnectTimeoutMs': case 'mentionRequestTimeoutMs':
+      case 'mentionConnectTimeoutMs': case 'mentionRequestTimeoutMs': case 'notifyChatdRoomId': case 'notifyChatdSenderId':
         coerceChatdServeKey(cfg, key, value, { str, num })
         break
       // —— 制作人-岗位持久对话（docs/21-§七，studio-dev-646 Phase 1）：五键解析即验 ——
@@ -549,7 +549,7 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       )
     }
   }
-  // —— chatd 唤起源交叉校验（M4-1 task-136）：与 matrix:true 互斥＋chatdSocket 缺省推导 ——
+  // —— chatd 交叉校验（唤醒源 M4-1 task-136＋通知面 M5 尾 plan/09 §二#3）：收口 chatd-mention-source.ts（notify 尾接 chatd-notify-face.ts）——
   validateChatdMentionCross(cfg)
   // —— 频道供给交叉校验（130-P3，130 提案 §6.7.3-③；fail-fast 同 matrix 先例）
   crossValidateMatrixChannels(cfg)

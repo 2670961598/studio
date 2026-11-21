@@ -52,6 +52,15 @@ export {
   type ChatdTransportPort,
   type MentionSourceKind,
 } from './serve/chatd-mention-source.ts'
+// chatd 通知面再出（M5 尾，plan/09 §二#3）：boot 组合根从 '@studio-next/daemon/serve' 消费
+// 工厂与类型——boot 不直接 import @studio-next/workbench-transport（边界图无该边；判例同上）
+export {
+  DEFAULT_CHATD_NOTIFY_SENDER_ID,
+  createChatdNotifyFace,
+  formatChatdNotification,
+  type ChatdNotifyFaceOptions,
+  type ChatdNotifyTransportPort,
+} from './serve/chatd-notify-face.ts'
 
 // —— 既有公共面再出口（路径/名字冻结；实现件按 20-§十五「先拆再增」早已拆出）——
 export { DEMO_SNAPSHOT } from './demo/demo-snapshot.ts'

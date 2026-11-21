@@ -37,6 +37,10 @@ export function renderDaemonYamlSkeleton(input: { dbPath: string; slug: string; 
     '# token 经 env WORKBENCH_CHATD_TOKEN 供给不入本文件）。传输超时可配 mentionConnectTimeoutMs/mentionRequestTimeoutMs',
     '# （正整数毫秒；缺省 5000/10000——daemon 事件循环偶发停顿时防首轮 poll connect timeout）。启用示例：',
     '# mentionSource: chatd',
+    '# chatd 通知面（M5 尾 plan/09 §二#3）：notifyChatdRoomId 配置房收 notify 广播——matrix: false 形态下',
+    '# 替代 matrix broadcast 的 fail-closed 出口（缺键=面关零行为）；与 matrix/matrixChannels 互斥；发送者',
+    '# notifyChatdSenderId 缺省 PRIME-0（工号样式）；socket/token/超时复用上方 chatd 键组。启用示例：',
+    '# notifyChatdRoomId: "room-1"',
     '',
   ].join('\n')
 }
