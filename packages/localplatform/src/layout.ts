@@ -9,6 +9,8 @@
  *     meta/fields.json           字段 schema + provision 落盘
  *     meta/guards.json           guard 规则落盘（仅落盘不执行，见 guards.ts 头注）
  *     meta/links.jsonl           单据间链接（append-only）
+ *     id-floor.json              发号下限（可选 {"min":N}；M5 尾 #5——ops 专用：人工/迁移
+ *                                脚本写，daemon 只读，见 issues.ts readIdFloor）
  *
  * 当前 state = 末次 transitioned 事件派生（append-only + 派生态，对齐 SQLite 台账哲学）；
  * 不采用 board/<state>/ 目录流转——git 历史可读性差（23-§一定调）。
@@ -53,4 +55,9 @@ export function guardsPath(root: string): string {
 
 export function linksPath(root: string): string {
   return join(metaDir(root), 'links.jsonl')
+}
+
+/** 发号下限（M5 尾 #5）：平台根级文件（不进 meta/——ops 决策不属于公司 provision 面） */
+export function idFloorPath(root: string): string {
+  return join(root, 'id-floor.json')
 }

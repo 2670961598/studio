@@ -30,14 +30,23 @@
  *     与本头注「updated = 末事件 ts」的冻结口径矛盾——M2 真实数据（185 张 lane 单）
  *     对账时暴露。现对齐口径：每事件 ts 即 updated。既有测试（M1 fixture 无 lane、
  *     created==updated；lifecycle 步进时钟断言）在两口径下均绿，行为无回退。
+ *
+ * M5 尾 #5（发号下限代码化；plan/09 §二.5/§五，2026-11-21）：
+ *   - createIssue 自增号 = max(全树 LOCAL-N 最大号, 发号下限) + 1。下限源=
+ *     `<platformRoot>/id-floor.json`（形如 {"min":99}；可选、不存在=无下限）。
+ *     替换 2026-11-20 切单时的 LOCAL-99 占位单数据 hack（sentinel-logs/
+ *     单子切换执行记录-2026-11-20.md §三：树内 max=28，用 Archived 占位单抬号到
+ *     LOCAL-100 防与历史 demo LOCAL-1..28 撞号）。ops 专用文件：daemon 只读不写，
+ *     人工只能由 ops/迁移脚本落盘。floor 只抬下限不压上界（低于树内 max 时仍取
+ *     max+1）、只影响新发号——既有单号/list/get/activity 语义零改动。
  */
 import { readdirSync } from 'node:fs'
 import type { IssueCreate, IssueQuery, IssueRecord, TicketId } from '@studio-next/contract'
 import { appendActivity } from './activity.ts'
 import { LocalPlatformError } from './errors.ts'
 import { readProvision } from './fields.ts'
-import { appendJsonl, fileExists, readJsonl } from './fsutil.ts'
-import { issuePath, issuesDir } from './layout.ts'
+import { appendJsonl, fileExists, isPlainObject, readJsonl, readTextIfExists } from './fsutil.ts'
+import { idFloorPath, issuePath, issuesDir } from './layout.ts'
 
 const ISSUE_PREFIX = 'LOCAL-'
 
@@ -124,6 +133,34 @@ function scanIssueIds(root: string): TicketId[] {
     }
   }
   return out.sort(compareTicketIds)
+}
+
+/**
+ * 平台级发号下限（M5 尾 #5，见文件头注）：读 `<root>/id-floor.json`（形如 {"min":99}）。
+ * 可选——文件不存在=无下限（返回 null，发号退回 M2 全树 max+1 口径，行为逐位不变）。
+ * 在场即严检、明报不静默：非合法 JSON / 顶层非对象 / 缺 min / 非数字 / 非安全整数 /
+ * 负值 ⇒ LocalPlatformError(CONFIG_INVALID, 'bad-id-floor')——发号撞号是事故，宁可拒建单。
+ * ops 专用文件（daemon 只读不写）；每次建单直读盘、无缓存——重复读幂等，同内容必同值。
+ */
+export function readIdFloor(root: string): number | null {
+  const path = idFloorPath(root)
+  const text = readTextIfExists(path)
+  if (text === null) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch (err) {
+    throw new LocalPlatformError('CONFIG_INVALID', 'bad-id-floor', `${path}: 不是合法 JSON：${String(err)}`)
+  }
+  const min = isPlainObject(parsed) ? parsed['min'] : undefined
+  if (typeof min !== 'number' || !Number.isSafeInteger(min) || min < 0) {
+    throw new LocalPlatformError(
+      'CONFIG_INVALID',
+      'bad-id-floor',
+      `${path}: 发号下限必须形如 {"min": 非负整数}（ops 专用文件，daemon 只读）`,
+    )
+  }
+  return min
 }
 
 function validateIssueCreate(input: IssueCreate): void {
@@ -257,14 +294,18 @@ export function createIssue(root: string, now: () => string, input: IssueCreate)
     ?? (input.type !== undefined ? prov?.typeInbox?.[input.type] : undefined)
     ?? prov?.states[0]
     ?? DEFAULT_INITIAL_STATE
-  // 自增号=全树 LOCAL-N 最大号+1（混 id 树上排序末位可能是外源 id，取 max 才不撞号；
-  // 纯 LOCAL 树=旧版行为逐位不变——M2 修，见头注）
+  // 自增号=max(全树 LOCAL-N 最大号, 发号下限)+1。树内 max 仍是 M2 口径（混 id 树上排序
+  // 末位可能是外源 id，取 max 才不撞号；纯 LOCAL 树=旧版行为逐位不变）；floor=M5 尾 #5
+  // 平台级下限（id-floor.json，可选、ops 专用）——只抬下限不压上界：floor 低于树内 max
+  // 时仍取 max+1，floor 高于树内 max 时从 floor+1 起号（切换现场：max=28、floor=99→LOCAL-100）
   const ids = scanIssueIds(root)
+  const floor = readIdFloor(root)
   let nextNo = 1
   for (const existing of ids) {
     const n = ticketNo(existing)
     if (n !== null && n >= nextNo) nextNo = n + 1
   }
+  if (floor !== null && floor >= nextNo) nextNo = floor + 1
   const id = `${ISSUE_PREFIX}${nextNo}`
   appendJsonl(issuePath(root, id), { type: 'created', ts: now(), state: firstState, input })
   appendActivity(root, now, { issue: id, kind: 'created' })
