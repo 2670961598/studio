@@ -224,9 +224,9 @@ export const SECTION = {
        回执文件保留，轮询按 id 匹配不受影响。超时无回执 exit 1（daemon 未运行/拍太慢/控制面
        目录不符）；工位根发现序与 reload 同款。
 `,
-  stack: `  studio-next stack status|doctor|up|down [旗标]
-        公司闭环一命令起停/体检（M5-1 第一刀＋M5-2 Linux 分支，plan/08-§2.2/§三/§八；
-        里程碑5：干净机器零 Docker）。
+  stack: `  studio-next stack status|doctor|up|down|run [旗标]
+        公司闭环一命令起停/体检（M5-1 第一刀＋M5-2 Linux 分支＋M5-3 run 前台分支，
+        plan/08-§2.2/§三/§八/§九；里程碑5：干净机器零 Docker）。
         status＝只读探测三端点（daemon /healthz，--port 缺省 8788；chatd socket+token 两步
         探针，缺 --company-dir 即跳过不算失败；panel --panel-port 缺省 8791）——绝不启动
         进程；表/JSON（--json）。doctor＝六项体检（node>=24／companyDir 存在／daemon.yaml
@@ -236,12 +236,23 @@ export const SECTION = {
         重入）；Linux＝systemd user unit——三枚 .service 写入 ~/.config/systemd/user/
         （--user-units-dir 可注入口；--env-file 可选 EnvironmentFile 行）后 daemon-reload
         ＋enable --now（日志走 journald）。down＝停服三服务（bootout／disable --now），
-        单元文件与数据全保留（销毁走 chatd-setup --remove，plan/08-§2.5）。其余平台或
-        Linux 无 systemd user 会话（/run/systemd/users/<uid>）exit 3；默认 dry-run 零
-        副作用，写盘/launchctl/systemctl 需显式 --apply；路径全显式入参（--company-dir/
-        --deploy-root/--label-prefix/--guardian-config…），缺省值运行时推导（仓内零主机
-        路径）。退出码：0=成功；1=用法错/前置缺件/status 探针失败/up 加载失败；2=
-        doctor 缺项；3=up/down 平台或服务管理器不支持。
+        单元文件与数据全保留（销毁走 chatd-setup --remove，plan/08-§2.5）。
+        run＝前台双进程（M5-3，干净机器无 launchd/systemd 也能起公司闭环）：node 裸跑
+        daemon（apps/daemon/src/index.ts --config，--daemon-args 透传）＋chatd（env 四键；
+        token 首产 0600 复用不覆盖）两个子进程——不写任何服务管理器；就绪门＝daemon
+        /healthz ∧ chatd health 双绿后打 READY daemon=<pid> chatd=<pid>；Ctrl-C/SIGTERM
+        优雅停（先 chatd 后 daemon，SIGTERM→宽限→SIGKILL）exit 0；任一子进程意外退出
+        或就绪超时→停另一个 exit 1（fail-closed）。前置：--company-dir 必需且存在、
+        daemon.yaml platform=localfile（--config 可指位；探针端口缺省=其 apiPort 再缺省
+        8788，0=ephemeral 拒跑）、--deploy-root 缺省仓根推导；healthz 端口已有 daemon
+        在跑=拒跑不触碰（--no-chatd 只跑 daemon；--ready-timeout-ms 缺省 60000、
+        --stop-timeout-ms 缺省 8000）。run=临时/CI/干净机器烟测面，常驻服务走 up。
+        其余平台或 Linux 无 systemd user 会话（/run/systemd/users/<uid>）exit 3；up/down
+        默认 dry-run 零副作用，写盘/launchctl/systemctl 需显式 --apply；路径全显式入参
+        （--company-dir/--deploy-root/--label-prefix/--guardian-config…），缺省值运行时
+        推导（仓内零主机路径）。退出码：0=成功；1=用法错/前置缺件/status 探针失败/up
+        加载失败／run 就绪超时或子进程崩溃（fail-closed）；2=doctor 缺项；3=up/down
+        平台或服务管理器不支持。
 `,
 } as const
 
@@ -353,9 +364,10 @@ export const CONCISE = {
   例：studio-next stop --reason "维护窗口"
   本命令全文：studio-next stop --help
 `,
-  stack: `stack —— 公司闭环一命令起停/体检（status 三端点只读探测／doctor 六项体检／up·down 走 launchd 或 systemd user；M5-1＋M5-2）
-  studio-next stack status|doctor|up|down [--company-dir <公司目录>] [--json] [--apply] [其余旗标]
-  例：studio-next stack doctor --company-dir /abs/work-root/my-corp（体检缺项 exit 2）
+  stack: `stack —— 公司闭环一命令起停/体检（status 三端点只读探测／doctor 六项体检／up·down 走 launchd 或 systemd user／run 前台双进程；M5-1＋M5-2＋M5-3）
+  studio-next stack status|doctor|up|down|run [--company-dir <公司目录>] [--json] [--apply] [其余旗标]
+  例：studio-next stack doctor --company-dir /abs/work-root/my-corp（体检缺项 exit 2）；
+      studio-next stack run --company-dir /abs/work-root/my-corp（前台 daemon+chatd，Ctrl-C 优雅停）
   本命令全文：studio-next stack --help
 `,
 } as const
@@ -373,7 +385,8 @@ export const USAGE_TAIL = `默认值：--dir 缺省 ./<slug>；--name 缺省 <sl
 旗标同义：-h ≡ --help ≡ help；--flag=value ≡ --flag value；短旗标仅 -h 与 -V（版本）
 退出码：0=成功/显式求助/判定红是档案面（sandbox 判 FAIL、gray 自动回滚——链走完即 0）；
   1=用法错（缺参/未知旗标/未知子命令/裸命令）/校验或判定不通过/库不存在（不代建库）/
-  超时无回执（reload/stop）／stack 前置缺件与 status 探针失败；2=命令自身错误：company
+  超时无回执（reload/stop）／stack 前置缺件与 status 探针失败／stack run 就绪超时或
+  子进程崩溃（fail-closed）；2=命令自身错误：company
   validate 判定器自身错误（网络/权限/解包失败）与 serve 运行中断（tick 异常——错误明细已
   先行打日志）／stack doctor 体检缺项（逐项明报）；3=stack up/down 平台或服务管理器不支持
   （非 macOS launchd／非 Linux systemd user，或 Linux 无 systemd user 会话——plan/08-§八）

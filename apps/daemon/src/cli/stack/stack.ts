@@ -1,4 +1,4 @@
-// stack —— `studio-next stack status|doctor|up|down` 命令组（M5-1 第一刀；M5-2 Linux systemd 分支）。
+// stack —— `studio-next stack status|doctor|up|down|run` 命令组（M5-1 第一刀；M5-2 Linux systemd 分支；M5-3 run 前台分支）。
 //
 // 依据（实现单引用设计文档章节号——AGENTS §五.1）：
 //   - docs/plan/08-M5打包分发-2026-11-20.md §2.2（up=单元实例化＋加载；down=停服
@@ -40,9 +40,10 @@ import { buildDownPlan, buildUpPlan, readFlatYamlScalars, STACK_CONVENTIONS, STA
 import { checkBackupDir, checkChatdPerms, checkCompanyDir, checkDaemonPlatform, checkDiskFree, checkNodeVersion, DISK_MIN_FREE_BYTES, doctorVerdict, probeWritableDir } from './doctor.ts'
 import { atomicWrite, defaultDaemonConfigPath, parsePort, parsePositiveInt, requireCompanyDir, upContext, type UpContext } from './updown.ts'
 import { runDownSystemd, runUpSystemd } from './systemd.ts'
+import { runRun, spawnChildReal, type SpawnedChild } from './run.ts'
 
 const PROG = 'stack'
-const SUBCOMMANDS = ['status', 'doctor', 'up', 'down'] as const
+const SUBCOMMANDS = ['status', 'doctor', 'up', 'down', 'run'] as const
 const CHATD_PROTOCOL = 'workbench-transport/v1'
 
 /** 退出码（usage.ts 尾部声明面同源；定义收口 plists.ts——systemd 分支共用） */
@@ -83,6 +84,14 @@ export interface StackDeps {
   readonly httpGet: (url: string, timeoutMs: number) => Promise<HttpProbeResult>
   readonly chatdProbe: (socketPath: string, tokenFile: string, timeoutMs: number) => Promise<ChatdProbeResult>
   readonly statfs: (p: string) => { bavail: number; bsize: number }
+  /** 子进程拉起（run 前台分支专用——缺省 spawnChildReal；测试注入 fake 零真进程） */
+  readonly spawnChild: (cmd: string, args: readonly string[], opts: { cwd: string; env: Record<string, string | undefined> }) => SpawnedChild
+  /** 计时睡眠（就绪轮询节拍——测试注 no-op 快进） */
+  readonly sleep: (ms: number) => Promise<void>
+  /** 时钟（就绪窗口判定——测试注入可控步进） */
+  readonly now: () => number
+  /** 信号注册（SIGINT/SIGTERM 优雅停；返回退订——测试注入假信号源） */
+  readonly onSignal: (signal: 'SIGINT' | 'SIGTERM', handler: () => void) => () => void
 }
 
 export type StackDepsInit = Partial<StackDeps>
@@ -104,6 +113,15 @@ function resolveDeps(init: StackDepsInit): StackDeps {
     httpGet: init.httpGet ?? httpGetReal,
     chatdProbe: init.chatdProbe ?? probeChatdReal,
     statfs: init.statfs ?? ((p) => statfsSync(p)),
+    spawnChild: init.spawnChild ?? spawnChildReal,
+    sleep: init.sleep ?? ((ms) => new Promise<void>((resolve) => { setTimeout(resolve, ms) })),
+    now: init.now ?? (() => Date.now()),
+    onSignal: init.onSignal ?? ((signal, handler) => {
+      process.on(signal, handler)
+      return () => {
+        process.off(signal, handler)
+      }
+    }),
   }
 }
 
@@ -470,11 +488,12 @@ const VALUE_FLAGS = new Set([
   'company-dir', 'company', 'config', 'port', 'panel-port', 'timeout-ms', 'backup-dir',
   'deploy-root', 'node-bin', 'label-prefix', 'guardian-config', 'home', 'launch-agents', 'log-dir',
   'env-file', 'user-units-dir', // M5-2 systemd 分支（--user-units-dir 为测试/沙箱注入口）
+  'daemon-args', 'ready-timeout-ms', 'stop-timeout-ms', // M5-3 run 前台分支
 ])
 
 export async function cmdStack(argv: string[], depsInit: StackDepsInit = {}): Promise<number> {
   if (wantsHelp(argv)) return helpOk(SECTION.stack) // S1b 预检：先于解析与一切副作用
-  const parsed = parseArgv(argv, VALUE_FLAGS, undefined, new Set(['json', 'apply']))
+  const parsed = parseArgv(argv, VALUE_FLAGS, undefined, new Set(['json', 'apply', 'no-chatd']))
   if ('error' in parsed) return usageFail(PROG, parsed.error, CONCISE.stack)
   const [sub, ...extra] = parsed.positionals
   if (sub === undefined) return missingSub(PROG, [...SUBCOMMANDS], CONCISE.stack)
@@ -485,6 +504,7 @@ export async function cmdStack(argv: string[], depsInit: StackDepsInit = {}): Pr
     if (sub === 'status') return await runStatus(new Map(Object.entries(parsed.flags)), parsed.booleans.has('json'), deps)
     if (sub === 'doctor') return runDoctor(new Map(Object.entries(parsed.flags)), parsed.booleans.has('json'), deps)
     if (sub === 'up') return await runUp(new Map(Object.entries(parsed.flags)), parsed.booleans.has('apply'), deps)
+    if (sub === 'run') return await runRun(new Map(Object.entries(parsed.flags)), parsed.booleans.has('no-chatd'), deps)
     return runDown(new Map(Object.entries(parsed.flags)), parsed.booleans.has('apply'), deps)
   } catch (err) {
     if (err instanceof StackUsageError) return usageFail(PROG, err.message, CONCISE.stack)
