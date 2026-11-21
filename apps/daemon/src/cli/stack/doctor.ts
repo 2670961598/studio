@@ -1,8 +1,9 @@
-// doctor —— `studio-next stack doctor` 六项体检判定纯函数（M5-1 第一刀，2026-11-21）。
+// doctor —— `studio-next stack doctor` 六项体检＋第 7 项可选提示判定纯函数（M5-1 第一刀，2026-11-21；
+// M5-4a 增 Docker 退役提示项，2026-11-24）。
 //
 // 依据：docs/plan/08-M5打包分发-2026-11-20.md §三 里程碑5-1（体检刀）＋§四 验收 #2
-// （chat.sock 0700 / chatd.token·chat.db 0600）——判定与事实收集分离：本件全部纯函数，
-// 事实（存在性/权限/statfs/uid）由 stack.ts 收集注入，测试零真 IO 依赖。
+// （chat.sock 0700 / chatd.token·chat.db 0600）＋§一 1.B#8（docker 栈退役面）——判定与事实收集分离：
+// 本件全部纯函数，事实（存在性/权限/statfs/uid）由 stack.ts 收集注入，测试零真 IO 依赖。
 import { accessSync, constants, existsSync } from 'node:fs'
 import path from 'node:path'
 import { EXPECTED_MODES } from './plists.ts'
@@ -89,6 +90,23 @@ export function checkDiskFree(freeBytes: number | null, minBytes: number): Check
   const gib = (n: number): string => `${(n / 1024 ** 3).toFixed(1)}GiB`
   if (freeBytes === null) return { id: 'disk-free', name: '磁盘余量', ok: false, detail: '无法检测（公司目录不存在？）', hint: '先修第 2 项' }
   return { id: 'disk-free', name: '磁盘余量', ok: freeBytes >= minBytes, detail: `free=${gib(freeBytes)}（下限 ${gib(minBytes)}）`, hint: freeBytes >= minBytes ? undefined : '清理或换盘（SQLite/备份增长面）' }
+}
+
+/** 7) Docker 退役提示（M5-4a，plan/08 §一 1.B#8）：恒绿——提示面不是体检项；只提示、不自动卸载 */
+export const DOCKER_RETIRED_ENV = 'STUDIO_NEXT_DOCKER_RETIRED'
+
+export function checkDockerRetired(facts: { dockerCliExists: boolean; retiredDeclared: boolean; source: string | null }): CheckResult {
+  const id = 'docker-retired'
+  const name = 'Docker 退役'
+  if (!facts.dockerCliExists) return { id, name, ok: true, detail: 'docker CLI 不在（干净机器形态）', hint: undefined }
+  if (!facts.retiredDeclared) return { id, name, ok: true, detail: 'Docker CLI 在位；未声明退役', hint: undefined }
+  return {
+    id,
+    name,
+    ok: true,
+    detail: `Docker CLI 在位＋已声明退役（${facts.source ?? '来源未记录'}）`,
+    hint: 'Docker 已退役，可卸载（watchdog 已自动跳过 docker 栈探测——plan/08 §1.B#8；卸载前按 docs/quality/backup-restore.md 保卷数据备份；本提示不代卸载）',
+  }
 }
 
 export function doctorVerdict(checks: readonly CheckResult[]): { pass: boolean; failed: number } {

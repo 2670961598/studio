@@ -16,6 +16,14 @@ function run(args: string[]): { status: number | null; stdout: string; stderr: s
   return spawnSync(process.execPath, [BIN, ...args], { encoding: 'utf8', timeout: 30_000 })
 }
 
+/** 剔除 Node 运行时噪声（node:sqlite ExperimentalWarning 等 `(node:…)` 前缀行——不入断言面） */
+function sansRuntimeNoise(stderr: string): string {
+  return stderr
+    .split('\n')
+    .filter((line) => !line.startsWith('(node:') && !line.startsWith('(Use '))
+    .join('\n')
+}
+
 describe('S5a/b/c：声明在场（USAGE 尾部四表）', () => {
   it('语法位/旗标同义/退出码/版本四声明齐', () => {
     expect(USAGE).toContain('语法位：')
@@ -30,7 +38,7 @@ describe('S5c 版本声明被行为兑现（--version/-V）', () => {
     const res = run(['--version'])
     expect(res.status).toBe(0)
     expect(res.stdout.trim()).toBe(`studio-next ${PKG.version}`)
-    expect(res.stderr).toBe('')
+    expect(sansRuntimeNoise(res.stderr)).toBe('')
   })
 
   it('-V 短旗标同义（≡ --version）', () => {
@@ -61,6 +69,6 @@ describe('S5b 旗标同义被行为兑现（--flag=value ≡ --flag value）', (
     // 两式同因「库不存在」拒（同错误面=同解析结果；差异只在文件名不可观测处）
     expect(a.status).toBe(1)
     expect(b.status).toBe(1)
-    expect(a.stderr.replace(/a\.sqlite/g, 'X')).toBe(b.stderr.replace(/a\.sqlite/g, 'X'))
+    expect(sansRuntimeNoise(a.stderr).replace(/a\.sqlite/g, 'X')).toBe(sansRuntimeNoise(b.stderr).replace(/a\.sqlite/g, 'X'))
   })
 })

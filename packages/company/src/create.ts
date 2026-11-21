@@ -110,8 +110,9 @@ export interface CompanyCreateOptions {
   /** 工作根（缺省=targetDir 同级；.AIWS/var 布局锚点——docs/43 布局同款） */
   workRoot?: string
   /**
-   * 平台绑定（M-B：localfile；缺省不落绑定行=沿用模板缺省 youtrack）。
-   * 落盘行=org-config company.platform（docs/23-§二「换平台=改一行配置」的创建时定版）。
+   * 平台绑定（M-B：localfile；缺省不落绑定行=沿用模板声明——M5-4a 起全模板自带 localfile）。
+   * 落盘行=org-config company.platform（docs/23-§二「换平台=改一行配置」的创建时定版）；
+   * 模板已绑定同平台=幂等 no-op（异平台仍 fail-closed）。
    */
   platform?: CreatePlatform
   /**
@@ -182,9 +183,12 @@ async function mountOrReject(dir: string, what: string): Promise<CompanySnapshot
 /**
  * 平台绑定行落盘（fresh 通道子步）：org-config company 段插入 `platform: <name>`。
  * 锚点=列 0 的 `company:` 行（validator 必收段——找不到即模板漂移 fail-closed）。
- * 写后重挂载自检（先检后写同款纪律的反向：写后回读），不合法即抛（调用方撤除半成品）。
+ * M5-4a（plan/08 §1.A#4）起全模板自带 `platform: localfile` 声明行——**同平台绑定幂等**：
+ * 模板已绑定同平台=零漂移 no-op（返回 'already'，不重写不重复行、不加空提交）；已绑定**异平台**
+ * 仍 fail-closed（绑定只落一次，换平台走配置批示面）。写后重挂载自检（先检后写同款纪律的反向：
+ * 写后回读），不合法即抛（调用方撤除半成品）。
  */
-async function writePlatformBinding(targetDir: string, platform: CreatePlatform, slug: string): Promise<void> {
+async function writePlatformBinding(targetDir: string, platform: CreatePlatform, slug: string): Promise<'written' | 'already'> {
   const orgPath = path.join(targetDir, 'org-config.yaml')
   const src = await readFile(orgPath, 'utf8')
   const lines = src.split('\n')
@@ -192,8 +196,20 @@ async function writePlatformBinding(targetDir: string, platform: CreatePlatform,
   if (anchor === -1) {
     configInvalid('create/platform-anchor-missing', 'org-config.yaml 缺列 0 的「company:」段锚（模板漂移——停手改模板对齐，docs/04-§二）')
   }
-  if (lines.some((l) => /^\s*platform:/u.test(l))) {
-    configInvalid('create/platform-already-bound', 'org-config.yaml 已有 platform 行——绑定只落一次（再跑应走 adopt 通道；此为模板漂移）')
+  let bound: string | undefined
+  for (const line of lines) {
+    const hit = /^\s*platform:\s*(\S+)/u.exec(line)
+    if (hit !== null) {
+      bound = hit[1]
+      break
+    }
+  }
+  if (bound !== undefined) {
+    if (bound === platform) return 'already' // 同平台已绑定（M5 模板缺省行）——幂等 no-op
+    configInvalid(
+      'create/platform-already-bound',
+      `org-config.yaml 已绑定 platform: ${bound}（命令给 ${platform}）——绑定只落一次，换平台走配置批示面（docs/23-§二；再跑应走 adopt 通道）`,
+    )
   }
   lines.splice(anchor + 1, 0, `  platform: ${platform} # 创建时定版（docs/23-§二 换平台=改一行配置；studio-next company create）`)
   await writeFile(orgPath, lines.join('\n'), 'utf8')
@@ -201,6 +217,7 @@ async function writePlatformBinding(targetDir: string, platform: CreatePlatform,
   if (snapshot.platform.platform !== platform) {
     configInvalid('create/platform-bind-failed', `平台绑定回读不符：期望 ${platform}，实得 ${snapshot.platform.platform}（slug=${slug}）`)
   }
+  return 'written'
 }
 
 /** 模板内存挂载（dry-run fresh 通道：证「模板可挂载」而不落盘） */
@@ -372,14 +389,16 @@ export async function companyCreate(opts: CompanyCreateOptions): Promise<Company
   } else {
     try {
       const init = await initCompany({ slug: opts.slug, ...(opts.name !== undefined ? { name: opts.name } : {}), targetDir, ...(opts.templateDir !== undefined ? { templateDir: opts.templateDir } : {}) })
+      gitCommit = init.gitCommit
       if (opts.platform !== undefined) {
-        await writePlatformBinding(targetDir, opts.platform, opts.slug)
-        const git = simpleGit(targetDir)
-        await git.addConfig('user.name', GIT_IDENTITY.name)
-        await git.addConfig('user.email', GIT_IDENTITY.email)
-        gitCommit = await commitAll(targetDir, `create: 平台绑定落 ${opts.platform}（slug=${opts.slug}；docs/23-§二——studio-next company create）`)
-      } else {
-        gitCommit = init.gitCommit
+        // M5-4a：模板自带同平台声明行 → 'already'（零漂移，不加空提交）；手写插入 → 'written'
+        const bound = await writePlatformBinding(targetDir, opts.platform, opts.slug)
+        if (bound === 'written') {
+          const git = simpleGit(targetDir)
+          await git.addConfig('user.name', GIT_IDENTITY.name)
+          await git.addConfig('user.email', GIT_IDENTITY.email)
+          gitCommit = await commitAll(targetDir, `create: 平台绑定落 ${opts.platform}（slug=${opts.slug}；docs/23-§二——studio-next company create）`)
+        }
       }
     } catch (err) {
       // P1 整体撤除（fresh 通道本 run 新建目录——init 子步失败 initCompany 自撤，绑定子步失败此处兜底撤）

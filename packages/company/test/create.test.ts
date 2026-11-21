@@ -102,7 +102,7 @@ function harness(workRoot: string, slug: string) {
 }
 
 describe('companyCreate 内核 · fresh 全链（localfile）', () => {
-  it('六相位一次串完：绑定行/git 两提交/provision 落盘/.AIWS 工位/播种/报告', async () => {
+  it('六相位一次串完：模板平台行（M5 幂等绑定）/git 一提/provision 落盘/.AIWS 工位/播种/报告', async () => {
     const workRoot = path.join(root, 'full')
     const h = harness(workRoot, 'acme')
 
@@ -118,18 +118,19 @@ describe('companyCreate 内核 · fresh 全链（localfile）', () => {
       'report:provisioned',
     ])
 
-    // 平台绑定行落 org-config company 段（docs/23-§二），且快照回读 localfile
+    // 平台绑定行落 org-config company 段（docs/23-§二），且快照回读 localfile。
+    // M5-4a：2 级模板自带 platform: localfile → 同平台绑定幂等——单行不重复（不二次插入）
     const orgSrc = await readFile(path.join(h.targetDir, 'org-config.yaml'), 'utf8')
-    expect(orgSrc).toMatch(/^\s*platform: localfile/mu)
+    expect(orgSrc.match(/^\s*platform: localfile/mu)?.length).toBe(1)
     expect(result.snapshot.platform.platform).toBe('localfile')
     expect(result.snapshot.slug).toBe('acme')
 
-    // git：init 首提 + 平台绑定提交，工作区干净
+    // git：模板自带绑定行 → 绑定子步零漂移 no-op（不加空提交），仅 init 首提，工作区干净
     const git = simpleGit(h.targetDir)
     expect((await git.status()).isClean()).toBe(true)
     const log = await git.log()
-    expect(log.total).toBe(2)
-    expect(log.latest?.message).toContain('平台绑定落 localfile')
+    expect(log.total).toBe(1)
+    expect(log.latest?.message).toContain('init: studio-next init')
     expect(result.gitCommit).toMatch(/^[0-9a-f]{40}$/)
 
     // provision 真落 localplatform（<platformRoot>/meta/fields.json.provision——缺省映射）
@@ -139,9 +140,9 @@ describe('companyCreate 内核 · fresh 全链（localfile）', () => {
     expect(fieldsJson.provision.fields).toMatchObject({ state: 'State', dept: '部门', level: '等级' })
     expect(fieldsJson.provision.states[0]).toBe('新单')
 
-    // .AIWS 工位树（workRoot 下，不进公司 git 目录——docs/43-§五）
+    // .AIWS 工位树（workRoot 下，不进公司 git 目录——docs/43-§五）；2 级模板 2 人（AGENT-1＋PRIME-0 拟任）
     expect(existsSync(path.join(workRoot, '.AIWS', 'departments', '工程部', 'AGENT-1'))).toBe(true)
-    expect(result.aiws.personDirs).toHaveLength(1)
+    expect(result.aiws.personDirs).toHaveLength(2)
 
     // jobs 播种：模板 2 岗首跑全下槽（docs/17-§2）
     expect(h.seeder.calls).toEqual([[2, 0, FIXED_NOW().getTime(), 2]])
@@ -168,9 +169,9 @@ describe('companyCreate 内核 · fresh 全链（localfile）', () => {
     expect(again.phases[0]).toMatchObject({ phase: 'init', status: 'adopted' })
     expect(again.phases.slice(1).map((p) => p.status)).toEqual(['provisioned', 'provisioned', 'provisioned', 'provisioned', 'provisioned'])
 
-    // git 提交数不增（adopt 不重建不补建）
+    // git 提交数不增（adopt 不重建不补建；M5 模板自带绑定行 → 首跑也仅 init 一提）
     const log = await simpleGit(h.targetDir).log()
-    expect(log.total).toBe(2)
+    expect(log.total).toBe(1)
 
     // 播种语义：再跑 kept=2、seeded=0
     expect(h.seeder.calls[1]).toEqual([0, 2, FIXED_NOW().getTime(), 2])
@@ -265,7 +266,10 @@ describe('companyCreate · fail-closed 面', () => {
   it('平台错配再跑 → CONFIG_INVALID(create/platform-mismatch)（绑定创建时定版）', async () => {
     const workRoot = path.join(root, 'plat-mismatch')
     const h = harness(workRoot, 'acme')
-    await companyCreate({ ...h.opts }) // 不落绑定行=模板缺省 youtrack
+    await companyCreate({ ...h.opts, platform: 'localfile' })
+    // 篡改既有绑定行 → 异平台（M5 模板缺省=localfile；此处人工改行模拟历史公司绑 taiga）
+    const orgPath = path.join(h.targetDir, 'org-config.yaml')
+    await writeFile(orgPath, (await readFile(orgPath, 'utf8')).replace(/^(\s*platform:) localfile\b/mu, '$1 taiga'), 'utf8')
 
     await expect(companyCreate({ ...h.opts, platform: 'localfile' })).rejects.toMatchObject({
       category: 'CONFIG_INVALID',
@@ -292,14 +296,15 @@ describe('companyCreate · fail-closed 面', () => {
     expect(existsSync(orgPath)).toBe(true)
   })
 
-  it('绑定子步失败 → CONFIG_INVALID(create/platform-already-bound) 且整体撤除不留半成品', async () => {
+  it('毒模板绑定异平台 → CONFIG_INVALID(create/platform-already-bound) 且整体撤除不留半成品', async () => {
     const workRoot = path.join(root, 'atomic')
     const h = harness(workRoot, 'acme')
-    // 毒模板：org-config 已带 platform 行 → init 过、绑定子步 fail-closed（全树拷贝再打毒）
+    // 毒模板：org-config 已带**异平台**行（同平台行自 M5-4a 起为模板缺省=幂等 no-op）→
+    // init 过、绑定子步 fail-closed（全树拷贝再打毒）
     const poisoned = path.join(root, 'poisoned-template')
     cpSync(path.join(repoRoot(), 'templates', 'company-2-level'), poisoned, { recursive: true })
     const orgPath = path.join(poisoned, 'org-config.yaml')
-    await writeFile(orgPath, (await readFile(orgPath, 'utf8')).replace(/^company:$/m, 'company:\n  platform: localfile'), 'utf8')
+    await writeFile(orgPath, (await readFile(orgPath, 'utf8')).replace(/^(\s*platform:) localfile\b/mu, '$1 taiga'), 'utf8')
 
     await expect(companyCreate({ ...h.opts, platform: 'localfile', templateDir: poisoned })).rejects.toMatchObject({
       category: 'CONFIG_INVALID',
@@ -309,6 +314,30 @@ describe('companyCreate · fail-closed 面', () => {
     expect(existsSync(h.targetDir)).toBe(false)
     expect(existsSync(path.join(workRoot, '.AIWS'))).toBe(false)
     expect(h.seeder.calls).toEqual([])
+  })
+
+  it('M5-4a：模板自带 platform: localfile → 同平台绑定幂等 no-op（不重写不重复行）；模板无声明行 → 手写插入+绑定提交', async () => {
+    // ① 缺省模板（自带行）：幂等 no-op——单行、git 仅 init 一提（上一例已覆盖全链，此处只断言绑定面）
+    const workRootA = path.join(root, 'tpl-bound')
+    const hA = harness(workRootA, 'acme')
+    const resultA = await companyCreate({ ...hA.opts, platform: 'localfile' })
+    const srcA = await readFile(path.join(hA.targetDir, 'org-config.yaml'), 'utf8')
+    expect(srcA.match(/^\s*platform: localfile/mu)?.length).toBe(1)
+    expect(srcA).not.toContain('创建时定版') // no-op 不改写模板自带行
+    expect((await simpleGit(hA.targetDir).log()).total).toBe(1)
+    expect(resultA.phases[0]?.detail).toContain('平台绑定 localfile')
+
+    // ② 摘除声明行的模板（历史模板形状）：走手写插入 → 「创建时定版」行 + 绑定提交（两提）
+    const workRootB = path.join(root, 'tpl-bare')
+    const hB = harness(workRootB, 'acme')
+    const bare = path.join(root, 'bare-template')
+    cpSync(path.join(repoRoot(), 'templates', 'company-2-level'), bare, { recursive: true })
+    const bareOrg = path.join(bare, 'org-config.yaml')
+    await writeFile(bareOrg, (await readFile(bareOrg, 'utf8')).replace(/^\s*platform: localfile.*\n/mu, ''), 'utf8')
+    await companyCreate({ ...hB.opts, platform: 'localfile', templateDir: bare })
+    const srcB = await readFile(path.join(hB.targetDir, 'org-config.yaml'), 'utf8')
+    expect(srcB.match(/^\s*platform: localfile # 创建时定版/mu)?.length).toBe(1)
+    expect((await simpleGit(hB.targetDir).log()).total).toBe(2)
   })
 
   it('缺账号锚 → create/accounts-inconsistent（localfile 退化实现：断言不代写）', async () => {

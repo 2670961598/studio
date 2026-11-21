@@ -29,6 +29,14 @@ function run(args: string[]): { status: number | null; stdout: string; stderr: s
   return spawnSync(process.execPath, [BIN, ...args], { encoding: 'utf8', timeout: 60_000 })
 }
 
+/** 剔除 Node 运行时噪声（node:sqlite ExperimentalWarning 等 `(node:…)` 前缀行——不入断言面） */
+function sansRuntimeNoise(stderr: string): string {
+  return stderr
+    .split('\n')
+    .filter((line) => !line.startsWith('(node:') && !line.startsWith('(Use '))
+    .join('\n')
+}
+
 describe('company check（正位面）', () => {
   it('合法目录：exit 0 + 同款摘要/下一步（与 validate 的 stdout 逐行全等）', () => {
     const check = run(['company', 'check', path.join(work, 'corp')])
@@ -55,7 +63,7 @@ describe('company check（正位面）', () => {
     const help = run(['company', '--help'])
     expect(help.stdout).toContain('studio-next company check <目录>')
     const bare = run(['company'])
-    expect(bare.stderr).toContain('当前支持：add、create、validate、check')
+    expect(sansRuntimeNoise(bare.stderr)).toContain('当前支持：add、approve、create、seed、validate、check')
   })
 })
 
@@ -71,7 +79,7 @@ describe('validate（兼容别名——加法式弃用）', () => {
   it('-h 面不触发弃用告警（纯求助零噪声）', () => {
     const res = run(['validate', '--help'])
     expect(res.status).toBe(0)
-    expect(res.stderr).toBe('')
+    expect(sansRuntimeNoise(res.stderr)).toBe('')
     expect(res.stdout).toContain('兼容别名——已让位 company check')
   })
 })

@@ -103,7 +103,8 @@ describe('DEV-32 · company validate · --json 机器面', () => {
   it('不合法：exit 1 + violations 数组逐条 {rule,file,location,problem,fix}', () => {
     const r = runCli(['company', 'validate', illegalDir, '--json'])
     expect(r.status).toBe(1)
-    const parsed = JSON.parse(r.stderr) as {
+    // 从首个 { 起解析：Node 25 的 node:sqlite ExperimentalWarning 会先混入 stderr（运行时噪声不计入断言面）
+    const parsed = JSON.parse(r.stderr.slice(r.stderr.indexOf('{'))) as {
       ok: boolean
       violations: { rule: string; file: string; location: string; problem: string; fix: string }[]
     }

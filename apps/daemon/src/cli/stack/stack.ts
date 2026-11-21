@@ -14,7 +14,8 @@
 //     health+rooms.list 两步）、panel（--panel-port，缺省 8791）三端点；表/JSON（--json）；
 //     绝不启动任何进程。缺 --company-dir 时 chatd 探针=skipped（不算失败）。
 //   - doctor：六项体检（node>=24 / companyDir / daemon.yaml platform=localfile / chatd 三件权限
-//     0700·0600·0600 / 备份目录可写 / 磁盘余量），缺项 exit 2 逐项明报。
+//     0700·0600·0600 / 备份目录可写 / 磁盘余量）＋第 7 项 Docker 退役可选提示（M5-4a 恒绿：
+//     docker CLI 在位且声明退役→hint「可卸载」，不自动卸载），缺项 exit 2 逐项明报。
 //   - up/down：macOS=launchd plist（M5-1）；Linux=systemd user unit（M5-2，systemd.ts——
 //     三枚写入 ~/.config/systemd/user/ 后 daemon-reload+enable --now；down=disable --now）；
 //     其余平台明报 unsupported exit 3。默认 dry-run 零副作用，写盘/服务管理器调用需显式
@@ -37,7 +38,7 @@ import { CONCISE, SECTION } from '../usage.ts'
 import { helpOk, missingSub, unknownSub, usageFail, wantsHelp } from '../help.ts'
 import { errText, parseArgv } from '../argv.ts'
 import { buildDownPlan, buildUpPlan, readFlatYamlScalars, STACK_CONVENTIONS, STACK_EXIT, StackUsageError } from './plists.ts'
-import { checkBackupDir, checkChatdPerms, checkCompanyDir, checkDaemonPlatform, checkDiskFree, checkNodeVersion, DISK_MIN_FREE_BYTES, doctorVerdict, probeWritableDir } from './doctor.ts'
+import { checkBackupDir, checkChatdPerms, checkCompanyDir, checkDaemonPlatform, checkDiskFree, checkDockerRetired, checkNodeVersion, DISK_MIN_FREE_BYTES, DOCKER_RETIRED_ENV, doctorVerdict, probeWritableDir } from './doctor.ts'
 import { atomicWrite, defaultDaemonConfigPath, parsePort, parsePositiveInt, requireCompanyDir, upContext, type UpContext } from './updown.ts'
 import { runDownSystemd, runUpSystemd } from './systemd.ts'
 import { runRun, spawnChildReal, type SpawnedChild } from './run.ts'
@@ -319,6 +320,17 @@ function runDoctor(flags: Map<string, string>, json: boolean, deps: StackDeps): 
     }
   }
 
+  // 7) Docker 退役提示事实（M5-4a：恒绿提示项——声明面=环境变量或 <company-dir>/var/DOCKER_RETIRED 标记文件）
+  const dockerRetiredMarker = path.join(path.resolve(companyDir), 'var', 'DOCKER_RETIRED')
+  const dockerRetiredEnv = deps.env[DOCKER_RETIRED_ENV] === '1'
+  const dockerMarkerPresent = existsSync(dockerRetiredMarker)
+  let dockerCliExists = false
+  try {
+    dockerCliExists = deps.run(['docker', '--version']).status === 0
+  } catch {
+    dockerCliExists = false
+  }
+
   const checks = [
     checkNodeVersion(deps.nodeVersion),
     checkCompanyDir(companyDir, { exists: dirStat.exists, isDir: dirStat.isDir }),
@@ -326,15 +338,20 @@ function runDoctor(flags: Map<string, string>, json: boolean, deps: StackDeps): 
     checkChatdPerms(chatdItems),
     checkBackupDir(backupDir, probeWritableDir(backupDir)),
     checkDiskFree(freeBytes, DISK_MIN_FREE_BYTES),
+    checkDockerRetired({
+      dockerCliExists,
+      retiredDeclared: dockerRetiredEnv || dockerMarkerPresent,
+      source: dockerRetiredEnv ? `env ${DOCKER_RETIRED_ENV}=1` : dockerMarkerPresent ? dockerRetiredMarker : null,
+    }),
   ]
   const verdict = doctorVerdict(checks)
   if (json) {
     console.log(JSON.stringify({ command: 'stack doctor', checks, pass: verdict.pass, failed: verdict.failed }, null, 2))
   } else {
-    console.log('stack doctor（六项体检；缺项 exit 2）')
+    console.log('stack doctor（六项体检＋Docker 退役可选提示；缺项 exit 2）')
     checks.forEach((check, i) => {
       console.log(`  ${String(i + 1)}. ${check.ok ? '● ok  ' : '○ FAIL'} ${check.name.padEnd(6)} ${check.detail}`)
-      if (!check.ok && check.hint !== undefined) console.log(`       ↳ ${check.hint}`)
+      if (check.hint !== undefined) console.log(`       ↳ ${check.hint}`)
     })
     console.log(verdict.pass ? `结论 PASS（${String(checks.length)}/${String(checks.length)}）——可 stack up` : `结论 FAIL（${String(checks.length - verdict.failed)}/${String(checks.length)}）——缺项 exit 2`)
   }
@@ -458,7 +475,7 @@ async function runUpLaunchd(flags: Map<string, string>, apply: boolean, deps: St
     console.error(`stack up：${String(failed)} 项 bootstrap 失败——launchctl print gui/$(id -u)/<label> 查因；plist/数据已就位，修复后重跑（幂等）`)
     return STACK_EXIT.usage
   }
-  console.log('  下一步：studio-next stack status 验证三端点；studio-next stack doctor 复检六项')
+  console.log('  下一步：studio-next stack status 验证三端点；studio-next stack doctor 复检体检面')
   return STACK_EXIT.ok
 }
 

@@ -6,10 +6,14 @@
  * → Synapse(:8008)/Taiga(:9000) 全挂 → daemon Matrix 登录 500 连续崩溃 ×5 → guardian crash-loop
  * brake 15min → daemon 停 ~16min；profit 同停。恢复全靠人工。本脚本=host 侧独立 watchdog：
  *   - 探测：①docker daemon（unix socket `_ping`）②Matrix :8008 ③Taiga :9000 ④studio-dev /healthz
- *     ⑤profit daemon 进程；容器运行态（docker inspect）
+ *     ⑤profit daemon 进程；容器运行态（docker inspect）；⑥chatd（workbench-transport/v1 NDJSON
+ *     health 帧——M5 新装默认 IM 面，socket/tokenFile 配置后恒在）
+ *   - M5-4a 目标集自动裁剪（plan/08 §1.B#8）：docker CLI 不在 PATH（未装/已退役）→ docker/
+ *     matrix/taiga/container:* 整组 SKIP（reason=unavailable，缺栈≠故障——不计数不告警不恢复）；
+ *     状态转移沿各落一条 probe-set-trimmed / probe-set-restored（state 持久化去重，重启不刷屏）
  *   - 连续 N 次失败 → 结构化告警（alerts.jsonl，info/warn/error 分级）＋按配置**自动恢复**：
  *     docker 卡死=杀 Docker 进程并重开；容器未起=docker start；studio-dev daemon 停=kickstart guardian；
- *     恢复动作有冷却/小时上限/开关（默认开启，可 `--alert-only` 只告警）
+ *     chatd 停=kickstart guardian（配 guardianLabel 时）；恢复动作有冷却/小时上限/开关（默认开启，可 `--alert-only` 只告警）
  *   - 恢复成功后记 `recovered`（info）；单次瞬态失败只 warn 不动作；失败重复告警按 alertRepeatMs 节流
  *
  * 边界（774）：零业务依赖（仅 node 标准库）；不 import daemon/契约/公司目录；不改端口/业务逻辑；
@@ -41,6 +45,9 @@ import {
   probeDockerSocket,
   probeHttp,
   probeProcess,
+  probeChatd,
+  dockerCliAvailable,
+  trimDockerStackTargets,
   readWatchdogState,
   resolvePaths,
   targetList,
@@ -141,6 +148,14 @@ export function recoveryPlan(target, config, probe) {
     const prefix = Array.isArray(commands.studioDevKickstart) ? commands.studioDevKickstart : ['launchctl', 'kickstart', '-k']
     return { commands: [[...prefix, `${guiDomain()}/${String(label)}`]], note: `guardian-kickstart:${String(label)}` }
   }
+  if (target === 'chatd') {
+    const label = config.probes.chatd?.guardianLabel
+    if (typeof label === 'string' && label !== '') {
+      const prefix = Array.isArray(commands.chatdKickstart) ? commands.chatdKickstart : ['launchctl', 'kickstart', '-k']
+      return { commands: [[...prefix, `${guiDomain()}/${label}`]], note: `guardian-kickstart:${label}` }
+    }
+    return { commands: [], note: 'no-recovery-configured（chatd 未配 guardianLabel；安装面见 chatd-setup）' }
+  }
   if (target === 'studioProfit') {
     const label = config.probes.studioProfit.guardianLabel
     if (typeof label === 'string' && label !== '') {
@@ -157,6 +172,9 @@ function probeTarget(target, config) {
   if (target === 'matrix') return probeHttp(config.probes.matrix.url, { timeoutMs: config.probes.matrix.timeoutMs })
   if (target === 'taiga') return probeHttp(config.probes.taiga.url, { timeoutMs: config.probes.taiga.timeoutMs })
   if (target === 'studioDev') return probeHttp(config.probes.studioDev.url, { timeoutMs: config.probes.studioDev.timeoutMs, expectOkBody: true })
+  if (target === 'chatd') {
+    return probeChatd(config.probes.chatd.socket, { tokenFile: config.probes.chatd.tokenFile, timeoutMs: config.probes.chatd.timeoutMs })
+  }
   if (target === 'studioProfit') return probeProcess(config.probes.studioProfit.processPattern, { execImpl: execProbe })
   if (target.startsWith('container:')) return probeContainer(target.slice('container:'.length), { execImpl: execProbe })
   return { ok: false, reason: 'unknown-target' }
@@ -178,10 +196,34 @@ async function runRound(config, state, paths, options) {
   const now = Date.now()
   // 部署抑制窗（可选；缺省 fail-open）——每轮读一次状态文件，缺失/坏 JSON 均不抑制（与旧版一致）
   const deployState = config.deployStateFile !== null ? readDeployStateFile(config.deployStateFile) : null
-  const targets = targetList(config).filter((name) => {
+  const configured = targetList(config).filter((name) => {
     if (name === 'studioProfit' && (config.probes.studioProfit.processPattern === null || config.probes.studioProfit.processPattern === undefined)) return false
+    // chatd：socket 未配置=安装侧未启用（缺省 null），不进目标集；一旦配置即恒在（不受 docker 裁剪影响）
+    if (name === 'chatd' && (config.probes.chatd.socket === null || config.probes.chatd.socket === undefined || config.probes.chatd.socket === '')) return false
     return true
   })
+  // M5-4a：docker CLI 缺席 → docker 栈整组 SKIP（缺栈≠故障）；转移沿各落一条（state 去重）
+  const dockerProbe = dockerCliAvailable({ execImpl: execProbe })
+  const { targets, skipped } = trimDockerStackTargets(configured, dockerProbe.available)
+  const trimState = state.probeTrim?.dockerStack ?? { active: false, since: null }
+  if (skipped.length > 0 && trimState.active !== true) {
+    emit('info', 'probe-set-trimmed', {
+      target: 'docker-stack',
+      reason: 'unavailable',
+      note: `docker CLI 缺席（${dockerProbe.reason}）——本轮 SKIP（M5-4a：缺栈≠故障）`,
+      targets: skipped,
+    })
+  }
+  if (skipped.length === 0 && trimState.active === true) {
+    emit('info', 'probe-set-restored', { target: 'docker-stack', reason: 'ok', note: 'docker CLI 回到 PATH——docker 栈探测恢复' })
+  }
+  state.probeTrim = {
+    dockerStack: {
+      active: skipped.length > 0,
+      since: skipped.length > 0 ? (trimState.active === true ? (trimState.since ?? now) : now) : null,
+      targets: skipped,
+    },
+  }
   for (const target of targets) {
     const probe = await probeTarget(target, config)
     const targetState = state.targets[target] ?? { failures: 0, lastAlertAt: 0, lastRecoveryAt: 0, recoveryTimes: [] }

@@ -54,6 +54,7 @@ company:
     7: 1
     8: 6
     9: 1
+  platform: localfile # M5 默认：自研 localfile（plan/08 §1.A#4）；换平台=改此行（docs/23-§二）；taiga=历史兼容可选导入
 
 # 部门索引：部门领导 = 该部门 config.yaml 的 leader；部门成员 = people/ 内档案
 # dept.level = Dn（=负责人 Gn；v2/03 §6.2 表 E；D9 不启用）；嵌套深度看目录（6 根部门）

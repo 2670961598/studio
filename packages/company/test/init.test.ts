@@ -96,7 +96,7 @@ describe('initCompany 全链（复制 / 占位替换 / 自检 / git 首提）', 
     expect(result.dir).toBe(path.resolve(target))
     expect(result.gitCommit).toMatch(/^[0-9a-f]{40}$/)
 
-    // 模板树 9 文件原样复制（含 .studio-next.yaml / .gitkeep 点文件）
+    // 模板树 16 文件原样复制（含 .studio-next.yaml / .gitkeep 点文件；PRIME-0 档案与 prompts/roles/ 六角色面）
     const files = await readDirectoryFiles(target)
     expect(Object.keys(files).sort()).toEqual([
       '.studio-next.yaml',
@@ -104,9 +104,16 @@ describe('initCompany 全链（复制 / 占位替换 / 自检 / git 首提）', 
       'charter.md',
       'departments/工程部/config.yaml',
       'departments/工程部/people/AGENT-1.md',
+      'departments/工程部/people/PRIME-0.md',
       'docs/.gitkeep',
       'org-config.yaml',
       'prompts/company.md',
+      'prompts/roles/executor.md',
+      'prompts/roles/intel.md',
+      'prompts/roles/minister.md',
+      'prompts/roles/ops.md',
+      'prompts/roles/planner.md',
+      'prompts/roles/qa.md',
       'reports/.gitkeep',
     ])
 
@@ -128,7 +135,7 @@ describe('initCompany 全链（复制 / 占位替换 / 自检 / git 首提）', 
       expect(mounted.snapshot.slug).toBe('demo-corp')
       expect(mounted.snapshot.level).toBe(2)
       expect(mounted.snapshot.departments).toHaveLength(1)
-      expect(mounted.snapshot.people).toHaveLength(1)
+      expect(mounted.snapshot.people).toHaveLength(2) // AGENT-1＋PRIME-0（模板新基线）
     }
 
     // git 首提：恰好 1 个 commit、哈希与返回值一致、工作区干净（全量入库）
@@ -203,7 +210,7 @@ describe('D8 泛化：.studio-next.yaml template 行为行级键替换（DEV-14�
       expect(mounted.snapshot.level).toBe(5)
       expect(mounted.snapshot.departments).toHaveLength(6)
       expect(mounted.snapshot.people).toHaveLength(13)
-      expect(mounted.snapshot.jobs).toHaveLength(12)
+      expect(mounted.snapshot.jobs).toHaveLength(13)
     }
   })
 
@@ -255,7 +262,8 @@ describe('spawn 冒烟（拟冻结验收命令：init demo → validate demo →
     expect(validateRun.status).toBe(0)
     // S2（studio-dev-103，studio-dev-125 实施）：validate=兼容别名——stderr 固定一行
     // 弃用告警（stdout/退码零变化）；结果断言不受扰
-    expect(validateRun.stderr.trim()).toBe('validate：已让位 company check（同语义同退码同输出）——本命令保留兼容，后续版本移除（studio-dev-103 S2）')
+    // toContain 而非 toBe：Node 25 的 node:sqlite ExperimentalWarning 也会进 stderr（运行时噪声不计入断言面）
+    expect(validateRun.stderr).toContain('validate：已让位 company check（同语义同退码同输出）——本命令保留兼容，后续版本移除（studio-dev-103 S2）')
     expect(validateRun.stdout).toContain('demo')
     expect(validateRun.stdout).toContain('2 级公司')
   })

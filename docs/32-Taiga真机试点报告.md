@@ -1,5 +1,8 @@
 # 32 · Taiga 真机试点报告（docs/30 §7 待实测清单的答卷）
 
+> **状态（2026-11-24，M5-4a）**：历史归档——Taiga/Docker 不再是新装机默认路径。新装默认协作平台=
+> localfile（自研，plan/08）；本文保留作历史兼容/可选导入与回滚参考（兼容键未删——回滚零成本）。
+
 > 探针单产出（与 docs/31 dsh 探针同法）：**实测前不写结论、实测后修正文档**。
 > 环境：本机 Docker Desktop（arm64）+ taiga-docker 官方 compose，端口 9000（避开 8080/8008/8787-8789/4399）。
 > 试点时间：2026-10-18；原始证据：`/tmp/taiga-probe/`（走查脚本/角色权限快照/102 条 webhook 捕获/history diff/webhooklogs）；

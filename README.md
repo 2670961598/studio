@@ -89,24 +89,24 @@ Studio Next 将这些内容从「提示词约定」变成可运行、可检查�
 - **质量与证据**：冻结验收命令、证据四要件、复验、批示链、失败分类；
 - **安全与权限**：网关写入、写者围栏、seatbelt 写域/网域、秘密扫描；
 - **运行观测**：SQLite 台账、监控面板、公司概览、只读 API；
-- **平台适配**：Taiga、YouTrack、LocalFile、Matrix 等接入面；
+- **平台适配**：LocalFile＋chatd 为起步默认（零 Docker 外部依赖，plan/08）；Taiga、YouTrack、Matrix 为历史兼容/可选导入面；
 - **自我维护**：自优化轨道、自主存活阶梯、灰度切换与复盘。
 
 ## 仓库结构
 
 ```text
 apps/daemon/        常驻进程：engine / control / evolve / cli
-apps/boot/          Matrix 等外部装配的组合根
+apps/boot/          装配组合根（daemon 常驻面；Matrix 等外部装配=历史兼容/可选导入）
 packages/contract/  契约：cases.json、JSON Schema、runner
 packages/core/      纯逻辑：状态机 / 主循环决策 / 收割 / 闸门 / 预算 / 断路
 packages/store/     node:sqlite + drizzle：schema / 迁移 / 快照 / 重建
-packages/taiga/     协作平台客户端：活动流 / 字段映射 / 网关凭据
+packages/taiga/     协作平台客户端：活动流 / 字段映射 / 网关凭据（历史兼容/可选导入，非新装默认）
 packages/adapters/  执行器适配：dsh / claude / codex / kimi
 packages/company/   公司目录：schema 校验 / 挂载 / 报表 / 定时岗
 packages/prompt/    L0-L5 组装器 → AGENTS.md + 任务书 + 分层指纹
 packages/panel/     Hono 面板：监控与公司概览
 packages/api/       对外 API（gated-only）
-packages/matrix/    Matrix 源 / 通知 / 房间 / 人事面
+packages/matrix/    Matrix 源 / 通知 / 房间 / 人事面（历史兼容/可选导入，非新装默认）
 templates/          公司目录模板（2-9 级 + 行业模板）
 docs/               设计与施工文档（docs/v2、docs/plan 等）
 ```
@@ -124,9 +124,9 @@ bun install
 bun run typecheck
 bun run verify:v2
 
-# 创建一家公司（init + 建号 + 建库 + 播种定时岗）
+# 创建一家公司（init + 建号 + 建库 + 播种定时岗；模板自带 platform: localfile——M5 起步默认）
 node apps/daemon/src/cli/main.ts company create my-company \
-  --template templates/company-3-level
+  --template templates/company-3-level --platform localfile
 
 # 启动 daemon
 bun run daemon -- --config my-company/var/daemon.yaml
@@ -185,7 +185,7 @@ V2 定稿时基线：`106` 个测试文件、`1583` 条用例通过，tag `v2-fi
   - API 触发认证与部分只读数据源；
   - OPS 实际执行面（当前以记录为主）；
   - PB-3 / PB-5 探针；
-  - 真实 Matrix / Taiga 实例的写路径验证。
+  - 历史兼容面（Matrix / Taiga，可选导入——非新装默认路径）的真机写路径验证。
 - 旧测试（V2 开工前）只作观察位，不属于 V2 门禁。
 
 因此：**适合本地运行、研究与二次开发；不建议直接作为无人值守的生产系统。**

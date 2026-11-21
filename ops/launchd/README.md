@@ -147,6 +147,12 @@ node <主仓>/scripts/ops/deploy.mjs deploy --repo <主仓> --deploy <部署树>
 - `infra-watchdog.example.json`：配置模板（`__LOGDIR__`/`__WORKROOT__` 占位；安装时替换）。
 - 脚本：`scripts/ops/infra-watchdog.mjs`（=`--help`；纯 node 标准库，零业务依赖）。
 
+**目标集（M5-4a，plan/08 §1.B#8）**：daemon（studioDev /healthz）与 chatd（workbench-transport/v1
+NDJSON health 帧，socket/tokenFile 配置后恒在）为**新装默认面**；docker/matrix/taiga/container:* 为
+docker 栈组——**docker CLI 不在 PATH 时整组 SKIP**（事件 `probe-set-trimmed` reason=unavailable，
+缺栈≠故障：不计数、不告警、不恢复；CLI 回到 PATH 落 `probe-set-restored` 恢复探测）。Docker 已退役
+的机器可径直卸载，watchdog 不再报 docker 面失败。
+
 **安装（部署窗口执行；不重启无关进程）**：
 
 ```sh

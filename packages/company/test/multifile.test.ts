@@ -160,7 +160,7 @@ describe('多文件全绿面', () => {
     if (r.ok) {
       expect(r.snapshot.slug).toBe('example-corp')
       expect(r.snapshot.departments.map((d) => d.path)).toEqual(['departments/工程部'])
-      expect(r.snapshot.people.map((p) => p.id)).toEqual(['AGENT-1'])
+      expect(r.snapshot.people.map((p) => p.id)).toEqual(['AGENT-1', 'PRIME-0'])
       expect(r.snapshot.jobs.map((j) => j.job_id)).toEqual(['health-patrol-工程部', 'daily-report-工程部'])
     }
   })

@@ -268,7 +268,7 @@ export async function runUpSystemd(input: { flags: Map<string, string>; apply: b
     console.error(`stack up：${String(failed)} 项 enable 失败——journalctl --user -u <unit> -n 50 查因；unit/数据已就位，修复后重跑（幂等）`)
     return STACK_EXIT.usage
   }
-  console.log('  下一步：studio-next stack status 验证三端点；studio-next stack doctor 复检六项')
+  console.log('  下一步：studio-next stack status 验证三端点；studio-next stack doctor 复检体检面')
   return STACK_EXIT.ok
 }
 

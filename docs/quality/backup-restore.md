@@ -1,5 +1,8 @@
 # 平台备份与恢复（Taiga/Matrix/chatd/core；ops，2026-11-17；2026-11-20 M5-2 增无 Docker 支持与 core 事实源）
 
+> **状态（2026-11-24，M5-4a）**：Taiga/Matrix（Docker 栈）章节=历史归档，非新装默认路径；chatd/台账/公司
+> 目录备份=现役默认（`--local-only`）。新装默认=localfile＋chatd 零 Docker（plan/08）；兼容键未删——回滚零成本。
+
 > 制作人 2026-11-17 批准「Taiga/Matrix 每日自动备份」。执行体=`scripts/ops/platform-backup.sh`；
 > 计划任务草案=`scripts/ops/io.studionext.platform-backup.plist`（每日 04:30；安装由 Lead/ops 在窗口执行）。
 > 备份目录缺省 `$HOME/backups/studio-next`（生产建议显式用 `--backup-dir` 或 `PLATFORM_BACKUP_DIR` 指向备份盘 `<backupDir>`）。

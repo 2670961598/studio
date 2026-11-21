@@ -66,16 +66,29 @@ afterAll(() => {
   else process.env.STUDIO_GATEWAY_SECRET = prevGatewaySecret
 })
 
+/**
+ * SEC-WD-02 平台绑定（幂等）：M5-4a（plan/08 §1.A#4）起模板自带 `platform:` 声明行——
+ * 已在场＝原位改值为 fake（保留行内注释，不得二次插入成重复键）；模板缺该行才在
+ * mission 前插入。两条路夹具的平台绑定值恒为 fake，与 serveConfig.platform 同源。
+ */
+function bindFakePlatform(org: string): string {
+  const existing = /^  platform:[^\n]*$/m.exec(org)
+  if (existing !== null) {
+    return org.replace(existing[0], existing[0].replace(/^  platform:\s*\S+/, '  platform: fake'))
+  }
+  return org.replace('  mission:', '  platform: fake # 测试绑定（SEC-WD-02）\n  mission:')
+}
+
 /** 模板 → 公司目录（init 通道同形：占位替换；不跑 git 首提——本测试不依赖 git） */
 function makeCompany(slug: string): string {
   const dir = path.join(root, slug)
   cpSync(TEMPLATE, dir, { recursive: true })
   const orgPath = path.join(dir, 'org-config.yaml')
-  const org = readFileSync(orgPath, 'utf8')
-    .replace('slug: example-corp', `slug: ${slug}`)
-    .replace('name: 示例公司', `name: ${slug}`)
-    // SEC-WD-02 绑定：模板未声明 platform（装载缺省 youtrack）——本套用 fake 平台，显式绑定
-    .replace('  mission:', '  platform: fake # 测试绑定（SEC-WD-02）\n  mission:')
+  const org = bindFakePlatform(
+    readFileSync(orgPath, 'utf8')
+      .replace('slug: example-corp', `slug: ${slug}`)
+      .replace('name: 示例公司', `name: ${slug}`),
+  )
   writeFileSync(orgPath, org, 'utf8')
   const metaPath = path.join(dir, '.studio-next.yaml')
   const meta = readFileSync(metaPath, 'utf8').replace('created_at: null', `created_at: ${new Date(T0).toISOString()}`)

@@ -305,10 +305,39 @@ describe('stack status（只读探测，注入探针）', () => {
 })
 
 describe('stack doctor（端到端，真实临时目录）', () => {
-  it('健康公司：exit 0（6/6 PASS）', async () => {
+  it('健康公司：exit 0（7/7 PASS——第 7 项=Docker 退役提示恒绿）', async () => {
     const res = await capture(() => cmdStack(['doctor', '--company-dir', companyDir, '--backup-dir', path.join(root, 'backups')], deps()))
     expect(res.code).toBe(STACK_EXIT.ok)
-    expect(res.out.includes('PASS（6/6）')).toBe(true)
+    expect(res.out.includes('PASS（7/7）')).toBe(true)
+    expect(res.out.includes('docker-retired')).toBe(false) // 文本面按序号+名称显示，id 只进 --json
+  })
+
+  it('M5-4a：Docker 在位＋声明退役（env）→ 第 7 项绿＋hint 可卸载；不声明则无 hint', async () => {
+    const retired = await capture(() =>
+      cmdStack(['doctor', '--company-dir', companyDir, '--backup-dir', path.join(root, 'backups')], deps({ env: { STUDIO_NEXT_DOCKER_RETIRED: '1' } })),
+    )
+    expect(retired.code).toBe(STACK_EXIT.ok)
+    expect(retired.out.includes('7. ● ok')).toBe(true)
+    expect(retired.out.includes('Docker 已退役，可卸载')).toBe(true)
+    const quiet = await capture(() => cmdStack(['doctor', '--company-dir', companyDir, '--backup-dir', path.join(root, 'backups'), '--json'], deps()))
+    const payload = JSON.parse(quiet.out) as { checks: { id: string; ok: boolean; hint?: string }[] }
+    const item = payload.checks.find((c) => c.id === 'docker-retired')
+    expect(item?.ok).toBe(true)
+    expect(item?.hint).toBeUndefined()
+  })
+
+  it('M5-4a：Docker CLI 不在（run 返回非零）→ 第 7 项绿、detail=干净机器形态', async () => {
+    const res = await capture(() =>
+      cmdStack(
+        ['doctor', '--company-dir', companyDir, '--backup-dir', path.join(root, 'backups'), '--json'],
+        deps({ run: () => ({ status: 127, stdout: '', stderr: 'not found' }) }),
+      ),
+    )
+    expect(res.code).toBe(STACK_EXIT.ok)
+    const payload = JSON.parse(res.out) as { checks: { id: string; ok: boolean; detail: string }[] }
+    const item = payload.checks.find((c) => c.id === 'docker-retired')
+    expect(item?.ok).toBe(true)
+    expect(item?.detail.includes('干净机器')).toBe(true)
   })
 
   it('缺省 daemon.yaml 推导＝<company-dir>/daemon.yaml：尾斜杠/相对路径输入规范化为绝对后相等（回归 2026-11-21：不丢公司段、不拼父级 var）', async () => {

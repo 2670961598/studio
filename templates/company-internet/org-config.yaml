@@ -51,7 +51,7 @@ company:
   level_distribution: # 拟任人数按 G 档实数（与 people[].level 逐档相等——投影规则）
     2: 3
     9: 1
-  platform: localfile # 声明性平台绑定（docs/23-§二：换平台=改配置行；导入流据此走字段 provision）
+  platform: localfile # M5 默认：自研 localfile（plan/08 §1.A#4）；换平台=改此行（docs/23-§二）；taiga=历史兼容可选导入
 
 # 部门索引：纵向=等级锚权限，横向=部门树；互联网公司的两轴=研发交付 + 增长运营
 departments:

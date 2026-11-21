@@ -11,8 +11,10 @@ import {
   checkCompanyDir,
   checkDaemonPlatform,
   checkDiskFree,
+  checkDockerRetired,
   checkNodeVersion,
   DISK_MIN_FREE_BYTES,
+  DOCKER_RETIRED_ENV,
   doctorVerdict,
 } from '../../../src/cli/stack/doctor.ts'
 
@@ -85,9 +87,34 @@ describe('doctor 六项判定纯函数', () => {
     expect(checkDiskFree(null, DISK_MIN_FREE_BYTES).ok).toBe(false)
   })
 
+  it('7) Docker 退役提示（M5-4a）：恒绿三分支——CLI 不在／在位未声明／在位已声明→hint 可卸载', () => {
+    // 7a. 干净机器：CLI 不在——绿、无 hint
+    const clean = checkDockerRetired({ dockerCliExists: false, retiredDeclared: false, source: null })
+    expect(clean.ok).toBe(true)
+    expect(clean.hint).toBeUndefined()
+    expect(clean.detail.includes('干净机器')).toBe(true)
+    // 7b. CLI 在位、未声明退役——绿、无 hint（Docker 仍在用不是错）
+    const active = checkDockerRetired({ dockerCliExists: true, retiredDeclared: false, source: null })
+    expect(active.ok).toBe(true)
+    expect(active.hint).toBeUndefined()
+    // 7c. CLI 在位＋已声明退役（env 或标记文件）——绿＋hint「可卸载」（只提示不代卸载）
+    const retiredEnv = checkDockerRetired({ dockerCliExists: true, retiredDeclared: true, source: `env ${DOCKER_RETIRED_ENV}=1` })
+    expect(retiredEnv.ok).toBe(true)
+    expect((retiredEnv.hint ?? '').includes('Docker 已退役，可卸载')).toBe(true)
+    expect((retiredEnv.hint ?? '').includes('不代卸载')).toBe(true)
+    const retiredMarker = checkDockerRetired({ dockerCliExists: true, retiredDeclared: true, source: path.join(companyDir, 'var', 'DOCKER_RETIRED') })
+    expect(retiredMarker.ok).toBe(true)
+    expect(retiredMarker.detail.includes('DOCKER_RETIRED')).toBe(true)
+    // 7d. 声明了退役但 CLI 已不在——落在 7a 分支（CLI 不在=干净形态，无提示面）
+    const gone = checkDockerRetired({ dockerCliExists: false, retiredDeclared: true, source: 'env' })
+    expect(gone.hint).toBeUndefined()
+  })
+
   it('doctorVerdict：任一红即 fail', () => {
     const green = [checkNodeVersion('24.0.0'), checkDiskFree(DISK_MIN_FREE_BYTES, DISK_MIN_FREE_BYTES)]
     expect(doctorVerdict(green)).toEqual({ pass: true, failed: 0 })
     expect(doctorVerdict([...green, checkDiskFree(1, DISK_MIN_FREE_BYTES)])).toEqual({ pass: false, failed: 1 })
+    // 第 7 项恒绿：混入 docker-retired 不改变 verdict（提示项不进失败面）
+    expect(doctorVerdict([...green, checkDockerRetired({ dockerCliExists: true, retiredDeclared: true, source: null })])).toEqual({ pass: true, failed: 0 })
   })
 })

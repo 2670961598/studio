@@ -42,6 +42,11 @@
       "launchctl",
       "kickstart",
       "-k"
+    ],
+    "chatdKickstart": [
+      "launchctl",
+      "kickstart",
+      "-k"
     ]
   },
   "probes": {
@@ -63,6 +68,12 @@
       "url": "http://127.0.0.1:8788/healthz",
       "timeoutMs": 3000,
       "guardianLabel": "io.studionext.daemon"
+    },
+    "chatd": {
+      "socket": "__WORKROOT__/companies/studio-dev/var/workbench/chat.sock",
+      "tokenFile": "__WORKROOT__/companies/studio-dev/var/workbench/chatd.token",
+      "timeoutMs": 3000,
+      "guardianLabel": "io.studionext.chatd.studio-dev"
     },
     "studioProfit": {
       "processPattern": "apps/boot/src/main.ts __WORKROOT__/companies/studio-profit/daemon.yaml",

@@ -202,7 +202,7 @@ test('CLI：容器未起→docker start；daemon /healthz 连续失败→launchc
   const markerDir = path.join(dir, 'markers')
   mkdirSync(markerDir, { recursive: true })
   const binDir = await writeFakeBin(dir, {
-    docker: `#!/bin/sh\nif [ "$1" = "inspect" ]; then echo false; exit 0; fi\nif [ "$1" = "start" ]; then echo "$2" >> ${markerDir}/containers-started; exit 0; fi\nexit 1\n`,
+    docker: `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Docker version 27.0.0-fake"; exit 0; fi\nif [ "$1" = "inspect" ]; then echo false; exit 0; fi\nif [ "$1" = "start" ]; then echo "$2" >> ${markerDir}/containers-started; exit 0; fi\nexit 1\n`,
     launchctl: `#!/bin/sh\necho "$@" >> ${markerDir}/launchctl-calls; exit 0\n`,
   })
   // 假外部端口：matrix/taiga/docker 健康；studio-dev healthz 前两轮 500（触发阈值），之后 200
@@ -281,7 +281,7 @@ test('CLI --alert-only：同样连续失败但不执行任何恢复命令', asyn
   const markerDir = path.join(dir, 'markers')
   mkdirSync(markerDir, { recursive: true })
   const binDir = await writeFakeBin(dir, {
-    docker: `#!/bin/sh\nif [ "$1" = "inspect" ]; then echo true; exit 0; fi\necho "$@" >> ${markerDir}/called; exit 1\n`,
+    docker: `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Docker version 27.0.0-fake"; exit 0; fi\nif [ "$1" = "inspect" ]; then echo true; exit 0; fi\necho "$@" >> ${markerDir}/called; exit 1\n`,
     launchctl: `#!/bin/sh\necho "$@" >> ${markerDir}/called; exit 0\n`,
   })
   const hangBase = await startHttp((_req, res) => {
@@ -364,6 +364,8 @@ test('B1：shipped example 形状经 CLI --once 实跑 exit0（占位替换 + �
     res.setHeader('content-type', 'application/json')
     res.end(JSON.stringify({ ok: true, pid: 1 }))
   })
+  // M5-4a：docker CLI 在位探测需要 PATH 里有可答 --version 的 docker（不依赖宿主机装没装）
+  const binDir = await writeFakeBin(dir, { docker: `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Docker version 27.0.0-fake"; exit 0; fi\nexit 1\n` })
   const cfg = {
     ...raw,
     probeIntervalMs: 20,
@@ -385,7 +387,7 @@ test('B1：shipped example 形状经 CLI --once 实跑 exit0（占位替换 + �
   }
   const configPath = path.join(dir, 'shipped-example.json')
   writeFileSync(configPath, JSON.stringify(cfg), 'utf8')
-  const result = await runCliAsync(['--config', configPath, '--once', '--json'])
+  const result = await runCliAsync(['--config', configPath, '--once', '--json'], { PATH: `${binDir}:${process.env.PATH ?? ''}` })
   assert.equal(result.status, 0, result.stderr)
   assert.ok(existsSync(path.join(dir, 'alerts.jsonl')))
 })
@@ -409,6 +411,8 @@ async function suppressionFixture(healthHandler, extraConfig = {}) {
   })
   const binDir = await writeFakeBin(dir, {
     launchctl: `#!/bin/sh\necho "$@" >> ${markerDir}/launchctl-calls\nexit 0\n`,
+    // M5-4a：docker CLI 在位探测（docker --version）——假栈恒在位，保证 docker/matrix/taiga 照常被探
+    docker: `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Docker version 27.0.0-fake"; exit 0; fi\nif [ "$1" = "inspect" ]; then echo true; exit 0; fi\nexit 1\n`,
   })
   const alertsFile = path.join(dir, 'infra-alerts.jsonl')
   const stateFile = path.join(dir, 'state.json')

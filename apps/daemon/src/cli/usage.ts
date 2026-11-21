@@ -229,9 +229,9 @@ export const SECTION = {
         plan/08-§2.2/§三/§八/§九；里程碑5：干净机器零 Docker）。
         status＝只读探测三端点（daemon /healthz，--port 缺省 8788；chatd socket+token 两步
         探针，缺 --company-dir 即跳过不算失败；panel --panel-port 缺省 8791）——绝不启动
-        进程；表/JSON（--json）。doctor＝六项体检（node>=24／companyDir 存在／daemon.yaml
+        进程；表/JSON（--json）。doctor＝六项体检＋Docker 退役可选提示（node>=24／companyDir 存在／daemon.yaml
         platform=localfile／chatd 三件权限 socket 0700·db·token 0600／备份目录可写／磁盘
-        余量≥2GiB），缺项 exit 2 逐项明报。up/down 双平台：macOS＝launchd——三 plist
+        余量≥2GiB；提示项恒绿——Docker 声明退役则 hint 可卸载），缺项 exit 2 逐项明报。up/down 双平台：macOS＝launchd——三 plist
         （__占位符__ 模板实例化；token 0600 首产不覆盖）＋bootstrap（bootout 先行——幂等
         重入）；Linux＝systemd user unit——三枚 .service 写入 ~/.config/systemd/user/
         （--user-units-dir 可注入口；--env-file 可选 EnvironmentFile 行）后 daemon-reload
@@ -364,7 +364,7 @@ export const CONCISE = {
   例：studio-next stop --reason "维护窗口"
   本命令全文：studio-next stop --help
 `,
-  stack: `stack —— 公司闭环一命令起停/体检（status 三端点只读探测／doctor 六项体检／up·down 走 launchd 或 systemd user／run 前台双进程；M5-1＋M5-2＋M5-3）
+  stack: `stack —— 公司闭环一命令起停/体检（status 三端点只读探测／doctor 六项体检＋Docker 退役可选提示／up·down 走 launchd 或 systemd user／run 前台双进程；M5-1＋M5-2＋M5-3）
   studio-next stack status|doctor|up|down|run [--company-dir <公司目录>] [--json] [--apply] [其余旗标]
   例：studio-next stack doctor --company-dir /abs/work-root/my-corp（体检缺项 exit 2）；
       studio-next stack run --company-dir /abs/work-root/my-corp（前台 daemon+chatd，Ctrl-C 优雅停）

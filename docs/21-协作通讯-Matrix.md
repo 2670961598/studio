@@ -1,5 +1,8 @@
 # 21 · 协作通讯（Matrix 公司内 IM）
 
+> **状态（2026-11-24，M5-4a）**：历史归档——Matrix 不再是新装机默认路径。新装默认 IM=chatd（workbench
+> Unix socket NDJSON，plan/08）；本文保留作历史兼容/可选导入与回滚参考（兼容键未删——回滚零成本）。
+
 > 2026-10-16 ｜ 制作人定调：部署 Matrix，AI 之间用频道交互，不把全部内容塞进 YouTrack
 > 定位：Matrix = 公司内部 IM（走廊）；YouTrack = 流程+工作知识（档案室）。两者分工不可越界。
 

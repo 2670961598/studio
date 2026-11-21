@@ -27,12 +27,17 @@ export const DEFAULT_WATCHDOG_CONFIG = Object.freeze({
     matrix: { url: 'http://127.0.0.1:8008/_matrix/client/versions', timeoutMs: 3_000 },
     taiga: { url: 'http://127.0.0.1:9000/api/v1/', timeoutMs: 3_000 },
     studioDev: { url: 'http://127.0.0.1:8788/healthz', timeoutMs: 3_000, guardianLabel: 'io.studionext.daemon' },
+    /** M5-4a（plan/08 §1.B#8）：chatd=新装默认 IM 探针；socket=null 时不出现在目标集（安装侧替换路径） */
+    chatd: { socket: null, tokenFile: null, timeoutMs: 3_000, guardianLabel: null },
     studioProfit: { processPattern: null, guardianLabel: null },
   },
   containers: [],
 })
 
-const TARGET_ORDER = ['docker', 'matrix', 'taiga', 'studioDev', 'studioProfit']
+const TARGET_ORDER = ['docker', 'matrix', 'taiga', 'studioDev', 'chatd', 'studioProfit']
+
+/** docker 栈目标（M5-4a：docker CLI 缺席时整组让位——matrix/taiga 现役部署都在容器面） */
+const DOCKER_STACK_TARGET = /^(?:docker|matrix|taiga|container:)/u
 
 /** 配置归一化（缺省补全 + 基本形状校验；非法抛错，fail-fast 不猜） */
 export function normalizeConfig(raw) {
@@ -44,7 +49,7 @@ export function normalizeConfig(raw) {
   const probes = { ...DEFAULT_WATCHDOG_CONFIG.probes, ...(cfg.probes ?? {}) }
   for (const [name, probe] of Object.entries(probes)) {
     if (typeof probe !== 'object' || probe === null) throw new Error(`probes.${name} 必须是对象`)
-    for (const key of ['url', 'socket', 'processPattern', 'guardianLabel']) {
+    for (const key of ['url', 'socket', 'tokenFile', 'processPattern', 'guardianLabel']) {
       const value = probe[key]
       if (value !== undefined && value !== null && typeof value !== 'string') throw new Error(`probes.${name}.${key} 必须是字符串或 null`)
     }
@@ -281,6 +286,103 @@ export function probeProcess(pattern, options = {}) {
   } catch (err) {
     return { ok: false, reason: `probe-error:${err instanceof Error ? err.message : String(err)}` }
   }
+}
+
+/**
+ * chatd 探活（M5-4a，plan/08 §1.B#8）：workbench-transport/v1 NDJSON 帧 —— 与
+ * scripts/ops/chatd-health.mjs 同 wire 格式（id 关联 + params.token 鉴权），但本件只发
+ * health 一帧即可判活（运维探针粒度，不做 rooms.list 双步）。socket/tokenFile 未配置 →
+ * not-configured（安装侧替换路径后才进目标集）。纪律：token 只用不回显（结果面零 token）。
+ */
+export async function probeChatd(socketPath, options = {}) {
+  const connectImpl = options.connectImpl ?? connect
+  const timeoutMs = options.timeoutMs ?? 3_000
+  const nowImpl = options.nowImpl ?? (() => Date.now())
+  if (typeof socketPath !== 'string' || socketPath === '') return { ok: false, reason: 'not-configured' }
+  let token = options.token
+  if (token === undefined || token === null || token === '') {
+    const tokenFile = options.tokenFile ?? null
+    if (tokenFile === null) return { ok: false, reason: 'token-missing' }
+    if (!existsSync(tokenFile)) return { ok: false, reason: 'token-file-missing' }
+    token = readFileSync(tokenFile, 'utf8').trim()
+    if (token === '') return { ok: false, reason: 'token-file-empty' }
+  }
+  const startedAt = nowImpl()
+  return await new Promise((resolve) => {
+    let settled = false
+    let buffer = ''
+    const finish = (result) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      try {
+        socket.destroy()
+      } catch {
+        /* 竞态 */
+      }
+      resolve({ ...result, latencyMs: nowImpl() - startedAt })
+    }
+    const socket = connectImpl(socketPath)
+    const timer = setTimeout(() => finish({ ok: false, reason: `timeout-after-${String(timeoutMs)}ms` }), timeoutMs)
+    socket.once('error', (err) => finish({ ok: false, reason: `socket-error:${err instanceof Error ? err.message : String(err)}` }))
+    socket.once('connect', () => {
+      socket.write(`${JSON.stringify({ id: 'infra-watchdog-health', method: 'health', params: { token } })}\n`)
+    })
+    socket.on('data', (chunk) => {
+      buffer += chunk.toString('utf8')
+      const idx = buffer.indexOf('\n')
+      if (idx < 0) return
+      const line = buffer.slice(0, idx).trim()
+      if (line === '') return
+      let msg
+      try {
+        msg = JSON.parse(line)
+      } catch {
+        return finish({ ok: false, reason: 'bad-response:non-json' })
+      }
+      if (msg.id !== 'infra-watchdog-health') return // 乱序他帧（不应发生）：忽略
+      if (msg.ok !== true) {
+        const code = msg.error?.code ?? 'WB_PROTOCOL'
+        return finish({ ok: false, reason: `protocol-error:${String(code)}` })
+      }
+      const result = msg.result ?? {}
+      const healthy = result.ok === true && result.protocol === 'workbench-transport/v1'
+      finish({
+        ok: healthy,
+        reason: healthy ? 'ok' : `bad-health:ok=${JSON.stringify(result.ok)} protocol=${JSON.stringify(result.protocol)}`,
+        server: typeof result.server === 'string' ? result.server : null,
+      })
+    })
+    socket.once('close', () => finish({ ok: false, reason: 'closed-before-response' }))
+  })
+}
+
+/** docker CLI 在位探测（M5-4a）：CLI 不在 PATH = Docker 未装/已退役 → docker 栈整组 SKIP（缺栈≠故障） */
+export function dockerCliAvailable(options = {}) {
+  const execImpl = options.execImpl
+  if (typeof execImpl !== 'function') return { available: false, reason: 'no-exec' }
+  try {
+    const out = execImpl(['docker', '--version'])
+    return { available: out.status === 0, reason: out.status === 0 ? 'ok' : `exit-${String(out.status)}` }
+  } catch (err) {
+    return { available: false, reason: `error:${err instanceof Error ? err.message : String(err)}` }
+  }
+}
+
+/**
+ * 目标集自动裁剪（M5-4a 纯函数）：docker CLI 缺席 → docker/matrix/taiga/container:* 整组让位。
+ * SKIP 不是失败（不进 failures 计数、不触发告警/恢复）；daemon（studioDev）/chatd 探针恒在
+ * （M5 新装默认面=localfile＋chatd，零 Docker 外部依赖——plan/08 §一）。
+ */
+export function trimDockerStackTargets(targets, dockerAvailable) {
+  if (dockerAvailable === true) return { targets: [...targets], skipped: [] }
+  const kept = []
+  const skipped = []
+  for (const target of targets) {
+    if (DOCKER_STACK_TARGET.test(target)) skipped.push(target)
+    else kept.push(target)
+  }
+  return { targets: kept, skipped }
 }
 
 /** 容器运行态探测（docker inspect -f {{.State.Running}}；exec 注入；恒不抛） */
