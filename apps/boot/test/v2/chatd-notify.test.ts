@@ -120,7 +120,7 @@ describe('bootServe：chatd 通知面接线', () => {
     const logs: string[] = []
     await bootServe({
       configPath: yamlPath,
-      env: { [WORKBENCH_CHATD_TOKEN_ENV]: 'tok-boot-notify-1' }, // 不给 MATRIX_BOT_PASSWORD：零 matrix 依赖
+      env: { [WORKBENCH_CHATD_TOKEN_ENV]: 'test-token-boot-notify' }, // 不给 MATRIX_BOT_PASSWORD：零 matrix 依赖
       fetch: noNetworkFetch,
       serve: async (configPath, opts) => {
         seen.push({ path: configPath, ...(opts !== undefined ? { opts } : {}) })
@@ -139,7 +139,7 @@ describe('bootServe：chatd 通知面接线', () => {
         socketPath: path.join(companyDir, 'var/workbench/chat.sock'), // 缺省 socket 推导（notify 交叉面）
         roomId: 'room-9',
         senderId: DEFAULT_CHATD_NOTIFY_SENDER_ID, // 未写 notifyChatdSenderId → 缺省 PRIME-0
-        token: 'tok-boot-notify-1',
+        token: 'test-token-boot-notify',
         connectTimeoutMs: DEFAULT_MENTION_CONNECT_TIMEOUT_MS, // 复用 mention 键组缺省（同 socket 单一源）
         requestTimeoutMs: DEFAULT_MENTION_REQUEST_TIMEOUT_MS,
       }),
@@ -150,7 +150,7 @@ describe('bootServe：chatd 通知面接线', () => {
     expect(joined).toContain(`senderId=${DEFAULT_CHATD_NOTIFY_SENDER_ID}`)
     expect(joined).toContain(`connectTimeoutMs=${String(DEFAULT_MENTION_CONNECT_TIMEOUT_MS)}`)
     expect(joined).toContain('token env 供给')
-    expect(joined).not.toContain('tok-boot-notify-1') // token 值永不入日志（红名单）
+    expect(joined).not.toContain('test-token-boot-notify') // token 值永不入日志（红名单）
   })
 
   it('notifyChatdSenderId 显式直通；mentionConnectTimeoutMs/mentionRequestTimeoutMs 复用直通', async () => {
@@ -238,20 +238,20 @@ describe('assembleChatdNotifyFace：装配面全假网', () => {
     const logs: string[] = []
     const yamlPath = writeYaml(['notifyChatdRoomId: "room-9"', `chatdSocket: ${JSON.stringify(path.join(tmpdir(), 'notify-asm.sock'))}`])
     const config = parseDaemonConfig(readFileSync(yamlPath, 'utf8'))
-    const face = assembleChatdNotifyFace(config, { [WORKBENCH_CHATD_TOKEN_ENV]: 'tok-asm-notify-1' }, {
+    const face = assembleChatdNotifyFace(config, { [WORKBENCH_CHATD_TOKEN_ENV]: 'test-token-asm-notify' }, {
       transport: chatd,
       log: (line) => logs.push(line),
     })
     const report = await face.send(NOTICE, { alert: true, dept: 'departments/研发部' })
     expect(report).toEqual({ sent: ['alert', 'dept:departments/研发部'], failed: [] })
     expect(chatd.sends).toHaveLength(1) // 三逻辑角色折叠同房恰一条
-    expect(chatd.sends[0]).toMatchObject({ roomId: 'room-9', senderId: 'PRIME-0', token: 'tok-asm-notify-1' })
+    expect(chatd.sends[0]).toMatchObject({ roomId: 'room-9', senderId: 'PRIME-0', token: 'test-token-asm-notify' })
     expect(chatd.sends[0]?.body).toBe(['[gate] 单据被拒', 'LOCAL-1 验收不过', '—— daemon@demo'].join('\n')) // 纯文本体
     expect(notifyFaceFactorySpy).toHaveBeenCalledWith(
       expect.objectContaining({ transport: chatd, connectTimeoutMs: DEFAULT_MENTION_CONNECT_TIMEOUT_MS, requestTimeoutMs: DEFAULT_MENTION_REQUEST_TIMEOUT_MS }),
     )
     const joined = logs.join('\n')
     expect(joined).toContain('chatd notify 面已装配')
-    expect(joined).not.toContain('tok-asm-notify-1') // token 值永不入日志（红名单）
+    expect(joined).not.toContain('test-token-asm-notify') // token 值永不入日志（红名单）
   })
 })
