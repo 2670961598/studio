@@ -170,6 +170,13 @@ export const SECTION = {
   panel: `  studio-next panel --db <库路径> [--port 8791] [--company-dir <公司目录>]
        :8791 只读监控面（v0.3，docs/16-§四）：jobs/runs/workers/事件流（SSE），
        全部读 SQLite 零写；库不存在即拒启；Ctrl-C 优雅关闭
+  studio-next panel --portal --company-dir <公司目录> --db <库路径> [--platform-root <平台根>]
+                    [--portal-port 8800] [--chatd-socket <socket 路径>] [--chatd-token-file <token 文件>]
+       :8800 公司门户（docs/plan/11-公司门户-2026-11-23.md）：概览/单子/聊天/组织/报表
+       五读面同端口＋只读 JSON API（/api/stats|activity|tickets|org|reports），自研 CSS 零外网依赖；
+       --platform-root 缺省 <companyDir>/../platform（缺=单子面空列表降级，不代建）；
+       --chatd-socket 缺省 env WORKBENCH_CHATD_SOCKET（缺=聊天面降级卡，/api/chat/* 503）；
+       token 仅驻内存；库/公司目录不存在即拒启；监控面 :8791 独立不并入
 `,
   overview: `  studio-next overview --company <目录> [--company <目录2> …] [--db <库路径>] [--port 8789]
        :8789 公司概览面（v0.7 读面，docs/04-§七）：挂载公司目录（可多家，校验不过拒绝挂载）
@@ -337,6 +344,8 @@ export const CONCISE = {
   panel: `panel —— :8791 监控面（jobs/runs/workers/事件流 SSE 全读零写；库不存在即拒启；--company-dir 目录不存在即拒启）
   studio-next panel --db <库路径> [--port 8791] [--company-dir <公司目录>]
   例：studio-next panel --db var/ledger.sqlite --company-dir /path/to/company（含 --company-dir 时装配对话页）
+  studio-next panel --portal --company-dir <公司目录> --db <库路径> [--platform-root <平台根>] [--portal-port 8800] [--chatd-socket <socket>] [--chatd-token-file <文件>]
+       :8800 公司门户（docs/plan/11）：概览/单子/聊天/组织/报表五读面＋只读 API；平台/chatd 缺=降级不拒启
   本命令全文：studio-next panel --help
 `,
   overview: `overview —— :8789 公司概览面（挂载公司目录→/<slug>/ 概览/组织/人事/进度/财务五读面，全 GET 只读）
@@ -377,10 +386,10 @@ export const USAGE_HEADER = `studio-next —— Studio Next 框架 CLI（v0.1）
 用法：
 `
 
-export const USAGE_TAIL = `默认值：--dir 缺省 ./<slug>；--name 缺省 <slug>；--port 缺省 8791（panel）/ 8789（overview）
+export const USAGE_TAIL = `默认值：--dir 缺省 ./<slug>；--name 缺省 <slug>；--port 缺省 8791（panel）/ 8789（overview）；--portal-port 缺省 8800（panel --portal；覆盖 --port）
 语法位：位置参数=必给先给（init <slug>；company add <git-url> [名]）；旗标=--key value 或
   --key=value（两式同效）；布尔旗标无值（--dry-run/--json/--apply/--allow-extra/
-  --product/--no-restart/--no-gray/--check/--close）；-h/--help/help 任何位置=该命令帮助面（先于
+  --product/--no-restart/--no-gray/--check/--close/--portal）；-h/--help/help 任何位置=该命令帮助面（先于
   参数解析，零副作用）
 旗标同义：-h ≡ --help ≡ help；--flag=value ≡ --flag value；短旗标仅 -h 与 -V（版本）
 退出码：0=成功/显式求助/判定红是档案面（sandbox 判 FAIL、gray 自动回滚——链走完即 0）；

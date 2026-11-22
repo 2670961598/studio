@@ -33,6 +33,14 @@ export { LocalPlatformError } from './errors.ts'
 export { DEFAULT_INITIAL_STATE, readIdFloor } from './issues.ts'
 export { DEFAULT_PAGE_SIZE, formatActivityId, nextActivityId, parseActivityId } from './activity.ts'
 
+// —— 只读出口（2026-11-23 公司门户，docs/plan/11-公司门户-2026-11-23.md §三）——
+// createLocalPlatform 构造即 ensureDir×3（写面）——只读消费方（daemon portal）不得经它
+// 读数据（平台根缺失时会 mkdir，破「零写」）。以下为纯读函数直出（零行为变更，仅 export）：
+//   listIssues(root,q)       全树派生列表（平台扫描+事件折叠，见 issues.ts 头注）
+//   getIssue(root,id)        单条派生记录（不存在抛 EXTERNAL_REJECT/issue-not-found）
+//   parseIssueEvents(root,id)单条原始事件流（时间线渲染用；不存在/损坏如实抛错）
+export { getIssue, listIssues, parseIssueEvents, type IssueEvent } from './issues.ts'
+
 /** 包名常量 */
 export const PACKAGE_NAME = '@studio-next/localplatform'
 

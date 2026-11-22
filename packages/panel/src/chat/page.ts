@@ -25,62 +25,22 @@ interface PageConfig {
   readonly pollIntervalMs: number
 }
 
-/** 渲染聊天室页（纯字符串；零 IO） */
-export function renderChatPage(opts: ChatPageOptions): string {
+function pageConfigOf(opts: ChatPageOptions): PageConfig {
   const pollRaw = opts.pollIntervalMs
   const poll = typeof pollRaw === 'number' && Number.isInteger(pollRaw) && pollRaw > 0 ? pollRaw : 2000
-  const config: PageConfig = { enabled: opts.enabled, actor: opts.defaultActorId, pollIntervalMs: poll }
-  return `<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>聊天室 · Studio Next :8791</title>
-<style>
-  :root { color-scheme: light dark; --line:#d0d7de; --muted:#6a737d; --bg:#f6f8fa; --card:#fff; --accent:#0969da; --danger:#cf222e; }
-  * { box-sizing: border-box; }
-  body { margin:0; font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:#24292f; }
-  header { display:flex; align-items:center; gap:12px; padding:10px 16px; background:var(--card); border-bottom:1px solid var(--line); }
-  header h1 { font-size:15px; margin:0; }
-  header .hint { color:var(--muted); font-size:12px; }
-  header a { margin-left:auto; color:var(--accent); text-decoration:none; font-size:13px; }
-  main { display:grid; grid-template-columns:240px 1fr; height:calc(100vh - 49px); }
-  aside { border-right:1px solid var(--line); background:var(--card); overflow:auto; padding:8px; }
-  aside .title { color:var(--muted); font-size:12px; padding:4px 8px; }
-  .room { display:flex; align-items:center; gap:6px; width:100%; text-align:left; border:0; background:transparent; padding:8px; border-radius:6px; cursor:pointer; }
-  .room:hover, .room.active { background:var(--bg); }
-  .room .name { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:600; }
-  .room .kind { color:var(--muted); font-size:11px; }
-  .room .unread { min-width:20px; text-align:center; font-size:11px; padding:1px 6px; border-radius:10px; background:var(--accent); color:#fff; }
-  .room .unread.zero { display:none; }
-  section { display:flex; flex-direction:column; min-width:0; }
-  #banner { margin:8px 16px; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:#fff8c5; color:#4d2d00; font-size:13px; display:none; }
-  #meta { display:flex; gap:8px; align-items:center; padding:8px 16px 0; color:var(--muted); font-size:12px; }
-  #meta input { width:140px; padding:4px 8px; border:1px solid var(--line); border-radius:6px; font:inherit; }
-  #messages { flex:1; overflow:auto; padding:16px; display:flex; flex-direction:column; gap:8px; }
-  .msg { max-width:72ch; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--card); }
-  .msg.mine { align-self:flex-end; border-color:#0969da55; background:#ddf4ff; }
-  .msg .who { color:var(--muted); font-size:11px; margin-bottom:2px; }
-  .msg .body { white-space:pre-wrap; word-break:break-word; }
-  form { display:flex; gap:8px; padding:10px 16px; border-top:1px solid var(--line); background:var(--card); }
-  textarea { flex:1; min-height:44px; max-height:160px; resize:vertical; padding:8px; border:1px solid var(--line); border-radius:6px; font:inherit; }
-  button { padding:8px 14px; border:1px solid var(--line); border-radius:6px; background:var(--card); cursor:pointer; font:inherit; }
-  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
-  #status { padding:0 16px 10px; color:var(--muted); font-size:12px; min-height:18px; }
-  .disabled-card { margin:40px auto; max-width:560px; padding:20px 24px; border:1px solid var(--line); border-radius:8px; background:var(--card); }
-  .disabled-card h2 { font-size:15px; margin:0 0 8px; }
-  .disabled-card code { background:var(--bg); padding:1px 5px; border-radius:4px; font-size:12px; }
-  .disabled-card p { color:var(--muted); font-size:13px; margin:6px 0; }
-</style>
-</head>
-<body>
-<header>
-  <h1>聊天室（自研 chatd）</h1>
-  <span class="hint">rooms / messages / 未读 · Transport v1 · 本地 socket</span>
-  <a href="/">← 监控面</a>
-</header>
-${
-  opts.enabled
+  return { enabled: opts.enabled, actor: opts.defaultActorId, pollIntervalMs: poll }
+}
+
+/**
+ * 渲染聊天室**内容片段**（enabled：main 两栏＋轮询脚本｜disabled：未启用降级卡）——
+ * 单源供 renderChatPage（独立整页）与门户嵌装（apps/daemon assembly/portal，
+ * docs/plan/11-公司门户-2026-11-23.md §1.2/§三）消费。嵌装方自备样式与布局；
+ * 类名/容器 id 契约：.title/.room/.kind/.unread/.msg/.mine/.who/.body/.disabled-card 与
+ * #rooms/#banner/#meta/#actor/#messages/#sendForm/#text/#send/#status（业务脚本按 id 取节点）。
+ */
+export function renderChatBody(opts: ChatPageOptions): string {
+  const config = pageConfigOf(opts)
+  return opts.enabled
     ? `<main>
   <aside>
     <div class="title">房间（未读）</div>
@@ -272,6 +232,59 @@ ${
   <p>未配置不报错：本页保持只读降级，<code>/api/chat/*</code> 一律 503。</p>
 </div>`
 }
+
+/** 渲染聊天室页（独立整页；纯字符串；零 IO）——内容本体单源经 renderChatBody */
+export function renderChatPage(opts: ChatPageOptions): string {
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>聊天室 · Studio Next :8791</title>
+<style>
+  :root { color-scheme: light dark; --line:#d0d7de; --muted:#6a737d; --bg:#f6f8fa; --card:#fff; --accent:#0969da; --danger:#cf222e; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:#24292f; }
+  header { display:flex; align-items:center; gap:12px; padding:10px 16px; background:var(--card); border-bottom:1px solid var(--line); }
+  header h1 { font-size:15px; margin:0; }
+  header .hint { color:var(--muted); font-size:12px; }
+  header a { margin-left:auto; color:var(--accent); text-decoration:none; font-size:13px; }
+  main { display:grid; grid-template-columns:240px 1fr; height:calc(100vh - 49px); }
+  aside { border-right:1px solid var(--line); background:var(--card); overflow:auto; padding:8px; }
+  aside .title { color:var(--muted); font-size:12px; padding:4px 8px; }
+  .room { display:flex; align-items:center; gap:6px; width:100%; text-align:left; border:0; background:transparent; padding:8px; border-radius:6px; cursor:pointer; }
+  .room:hover, .room.active { background:var(--bg); }
+  .room .name { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:600; }
+  .room .kind { color:var(--muted); font-size:11px; }
+  .room .unread { min-width:20px; text-align:center; font-size:11px; padding:1px 6px; border-radius:10px; background:var(--accent); color:#fff; }
+  .room .unread.zero { display:none; }
+  section { display:flex; flex-direction:column; min-width:0; }
+  #banner { margin:8px 16px; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:#fff8c5; color:#4d2d00; font-size:13px; display:none; }
+  #meta { display:flex; gap:8px; align-items:center; padding:8px 16px 0; color:var(--muted); font-size:12px; }
+  #meta input { width:140px; padding:4px 8px; border:1px solid var(--line); border-radius:6px; font:inherit; }
+  #messages { flex:1; overflow:auto; padding:16px; display:flex; flex-direction:column; gap:8px; }
+  .msg { max-width:72ch; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--card); }
+  .msg.mine { align-self:flex-end; border-color:#0969da55; background:#ddf4ff; }
+  .msg .who { color:var(--muted); font-size:11px; margin-bottom:2px; }
+  .msg .body { white-space:pre-wrap; word-break:break-word; }
+  form { display:flex; gap:8px; padding:10px 16px; border-top:1px solid var(--line); background:var(--card); }
+  textarea { flex:1; min-height:44px; max-height:160px; resize:vertical; padding:8px; border:1px solid var(--line); border-radius:6px; font:inherit; }
+  button { padding:8px 14px; border:1px solid var(--line); border-radius:6px; background:var(--card); cursor:pointer; font:inherit; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  #status { padding:0 16px 10px; color:var(--muted); font-size:12px; min-height:18px; }
+  .disabled-card { margin:40px auto; max-width:560px; padding:20px 24px; border:1px solid var(--line); border-radius:8px; background:var(--card); }
+  .disabled-card h2 { font-size:15px; margin:0 0 8px; }
+  .disabled-card code { background:var(--bg); padding:1px 5px; border-radius:4px; font-size:12px; }
+  .disabled-card p { color:var(--muted); font-size:13px; margin:6px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>聊天室（自研 chatd）</h1>
+  <span class="hint">rooms / messages / 未读 · Transport v1 · 本地 socket</span>
+  <a href="/">← 监控面</a>
+</header>
+${renderChatBody(opts)}
 </body>
 </html>`
 }

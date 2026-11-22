@@ -20,7 +20,7 @@
 import { Hono, type Context } from 'hono'
 import { WB_ERROR_CODES } from '@studio-next/workbench-transport'
 import type { WbErrorCode } from '@studio-next/workbench-transport'
-import { renderChatPage } from './page.ts'
+import { renderChatPage, type ChatPageOptions } from './page.ts'
 import {
   DEFAULT_CHAT_ACTOR_ID,
   DEFAULT_CHAT_LIMIT,
@@ -42,6 +42,12 @@ export interface ChatAppOptions {
   readonly defaultActorId?: string
   /** 页面轮询间隔 ms（缺省 2000；非正数落回缺省） */
   readonly pollIntervalMs?: number
+  /**
+   * 页面渲染器（可选，加法式注入位——docs/plan/11-公司门户-2026-11-23.md §1.2）：
+   * 缺省=renderChatPage 独立整页（现行为零变化）；门户装配方传入「门户壳包 renderChatBody」
+   * 的渲染器以统一导航与主题——业务脚本/类名/路由仍单源在本包，不改聊天业务逻辑。
+   */
+  readonly pageRenderer?: (opts: ChatPageOptions) => string
 }
 
 const WB_CODES = new Set<string>(WB_ERROR_CODES)
@@ -165,10 +171,9 @@ export function createChatApp(opts: ChatAppOptions): Hono {
   const enabled = opts.transport !== null
 
   const app = new Hono()
+  const renderPage = opts.pageRenderer ?? renderChatPage
 
-  app.get('/chat', (c) =>
-    c.html(renderChatPage({ enabled, defaultActorId, pollIntervalMs: pollMs })),
-  )
+  app.get('/chat', (c) => c.html(renderPage({ enabled, defaultActorId, pollIntervalMs: pollMs })))
 
   app.get('/api/chat/rooms', async (c) => {
     const transport = opts.transport

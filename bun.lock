@@ -40,6 +40,7 @@
         "@studio-next/yt": "workspace:*",
         "croner": "^9.0.0",
         "execa": "^9.4.0",
+        "hono": "^4.6.0",
         "simple-git": "^3.27.0",
         "zod": "^4.0.0",
       },

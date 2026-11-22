@@ -34,4 +34,4 @@ export {
   type ParsedReadBody,
   type ParsedSendBody,
 } from './server.ts'
-export { renderChatPage, type ChatPageOptions } from './page.ts'
+export { renderChatBody, renderChatPage, type ChatPageOptions } from './page.ts'

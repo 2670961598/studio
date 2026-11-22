@@ -91,7 +91,9 @@ export function isIssueEvent(v: unknown): v is IssueEvent {
   return false
 }
 
-function parseIssueEvents(root: string, id: TicketId): IssueEvent[] {
+// 已导出（2026-11-23 公司门户，docs/plan/11-§三）：只读消费面（daemon portal）需要
+// 单条原始事件流渲染时间线；与 listIssues/getIssue 同为纯读函数（零写盘）。
+export function parseIssueEvents(root: string, id: TicketId): IssueEvent[] {
   const path = issuePath(root, id)
   return readJsonl(path).map((line, i) => {
     if (!isIssueEvent(line)) {
