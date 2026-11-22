@@ -31,9 +31,10 @@ beforeEach(() => {
       err.push(args.map(String).join(' '))
     }) as unknown as { mockRestore: () => void },
   ]
-  // 聊天 env 隔离：宿主机若配了 WORKBENCH_CHATD_* 不得渗入用例
+  // 聊天 env 隔离：宿主机若配了 WORKBENCH_CHATD_* / PANEL_CHAT_ACTOR 不得渗入用例
   vi.stubEnv('WORKBENCH_CHATD_SOCKET', '')
   vi.stubEnv('WORKBENCH_CHATD_TOKEN', '')
+  vi.stubEnv('PANEL_CHAT_ACTOR', '')
 })
 
 afterEach(() => {
@@ -68,7 +69,7 @@ describe('缺省关（无 --portal＝监控面原行为）', () => {
   })
 
   it('--portal-only 旗标在监控面给出即用法错（不静默忽略）', async () => {
-    for (const flag of ['--platform-root', '--portal-port', '--chatd-socket', '--chatd-token-file']) {
+    for (const flag of ['--platform-root', '--portal-port', '--chatd-socket', '--chatd-token-file', '--chat-actor']) {
       out = []
       err = []
       const code = await cmdPanel(['--db', 'x.sqlite', flag, 'v'])
@@ -322,11 +323,96 @@ describe('聊天接线（token 只驻内存）', () => {
   })
 })
 
+describe('--chat-actor 缺省操作者（面板包缺省 panel 非 chatd 房间成员——门户换在册工号）', () => {
+  let tree: PortalTree
+  beforeEach(() => {
+    tree = makeTree('sn-portal-cli-actor-')
+  })
+  afterEach(() => {
+    dropTree(tree)
+  })
+
+  it('非法值（空白/内嵌空白/超 64 字符）→ 用法错 exit 1，不占端口', async () => {
+    for (const bad of [' ', 'a b', 'x'.repeat(65)]) {
+      out = []
+      err = []
+      const code = await cmdPanel([
+        '--portal',
+        '--company-dir',
+        tree.companyDir,
+        '--db',
+        tree.dbPath,
+        '--chat-actor',
+        bad,
+        '--portal-port',
+        String(await freePort()),
+      ])
+      expect(code, JSON.stringify(bad)).toBe(1)
+      expect(err[0], JSON.stringify(bad)).toContain('--chat-actor 取值非法')
+      expect(out[0], JSON.stringify(bad)).toContain('studio-next panel --db')
+    }
+  })
+
+  it('无 flag 无 env → 内置缺省 PRIME-0：横幅如实，/chat 页 CONFIG 同值', async () => {
+    const port = await freePort()
+    let html = ''
+    // 给个不存在的 socket：transport 装上（页面才注入 CONFIG），chatd 面如实 503
+    const code = await cmdPanel(
+      ['--portal', '--company-dir', tree.companyDir, '--db', tree.dbPath, '--chatd-socket', path.join(tree.root, 'nope.sock'), '--portal-port', String(port)],
+      {
+        waitForStop: async () => {
+          html = await (await fetch(`http://127.0.0.1:${String(port)}/chat`)).text()
+        },
+      },
+    )
+    expect(code).toBe(0)
+    expect(out.join('\n')).toContain('缺省操作者 PRIME-0，内置缺省')
+    expect(html).toContain('"actor":"PRIME-0"')
+    expect(html).not.toContain('"actor":"panel"')
+  })
+
+  it('env PANEL_CHAT_ACTOR 兜底；--chat-actor 显式旗标优先于 env', async () => {
+    vi.stubEnv('PANEL_CHAT_ACTOR', 'ENG-9')
+    const ghost = path.join(tree.root, 'nope.sock')
+    const port = await freePort()
+    let fromEnv = ''
+    const envCode = await cmdPanel(
+      ['--portal', '--company-dir', tree.companyDir, '--db', tree.dbPath, '--chatd-socket', ghost, '--portal-port', String(port)],
+      {
+        waitForStop: async () => {
+          fromEnv = await (await fetch(`http://127.0.0.1:${String(port)}/chat`)).text()
+        },
+      },
+    )
+    expect(envCode).toBe(0)
+    expect(out.join('\n')).toContain('缺省操作者 ENG-9，来自 env PANEL_CHAT_ACTOR')
+    expect(fromEnv).toContain('"actor":"ENG-9"')
+
+    out = []
+    const port2 = await freePort()
+    let fromFlag = ''
+    const flagCode = await cmdPanel(
+      ['--portal', '--company-dir', tree.companyDir, '--db', tree.dbPath, '--chatd-socket', ghost, '--chat-actor', 'QA-2', '--portal-port', String(port2)],
+      {
+        waitForStop: async () => {
+          fromFlag = await (await fetch(`http://127.0.0.1:${String(port2)}/chat`)).text()
+        },
+      },
+    )
+    expect(flagCode).toBe(0)
+    expect(out.join('\n')).toContain('缺省操作者 QA-2，来自 --chat-actor')
+    expect(out.join('\n')).not.toContain('ENG-9')
+    expect(fromFlag).toContain('"actor":"QA-2"')
+  })
+})
+
 describe('help 面（§1.4：--help 更新且监控面首行不变）', () => {
   it('SECTION.panel 首行仍为 studio-next panel --db；含 --portal 用法行', async () => {
     expect(SECTION.panel.trimStart().startsWith('studio-next panel --db <库路径>')).toBe(true)
     expect(SECTION.panel).toContain('--portal --company-dir <公司目录>')
     expect(SECTION.panel).toContain('--portal-port')
+    expect(SECTION.panel).toContain('--chat-actor <工号>')
+    expect(SECTION.panel).toContain('PRIME-0')
     const code = await cmdPanel(['--portal', '--help'])
     expect(code).toBe(0)
     expect(out[0]).toBe(SECTION.panel)

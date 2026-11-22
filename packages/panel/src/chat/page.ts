@@ -60,7 +60,7 @@ export function renderChatBody(opts: ChatPageOptions): string {
 <script>
 (function () {
   'use strict';
-  var CONFIG = ${JSON.stringify(config)};
+  var CONFIG = ${JSON.stringify(config).replaceAll('<', '\\u003c')};
   var state = { roomId: null, actor: CONFIG.actor, rooms: [], unreadTotal: null, sent: {} };
   var $ = function (id) { return document.getElementById(id); };
 
@@ -100,6 +100,19 @@ export function renderChatBody(opts: ChatPageOptions): string {
     return pairs.length > 0 ? ('?' + pairs.join('&')) : '';
   }
   function errCode(err) { return (err && err.message && err.message.split(':')[0]) || ''; }
+
+  // chatd 侧失效族（未配置/未连接/不可达/超时）：可读降级文案，不当内部错误渲染
+  function isChatdDown(code) {
+    return code === 'CHAT_PANEL_DISABLED' || code === 'WB_NOT_CONNECTED' || code === 'WB_UNAVAILABLE' || code === 'WB_TIMEOUT';
+  }
+
+  // 读面失败 → 降级文案（成员未入/房间缺/chatd 缺三族可读化；其余原样带码）
+  function degradeText(action, err) {
+    var code = errCode(err);
+    if (code === 'WB_INVALID_ARGUMENT') return '操作者 ' + state.actor + ' 不是该房间成员——无法' + action + '（切换房间，或在上方操作者栏改为在册工号）';
+    if (isChatdDown(code)) return action + '不可用：chatd 未配置或不可达（chatd 起后自动恢复）';
+    return action + '失败：' + err.message;
+  }
 
   function renderRooms() {
     var box = $('rooms');
@@ -171,7 +184,10 @@ export function renderChatBody(opts: ChatPageOptions): string {
     state.roomId = roomId;
     setBanner('');
     renderRooms();
-    loadMessages().catch(function (err) { setBanner('消息读取失败：' + err.message); });
+    loadMessages().catch(function (err) {
+      setBanner(degradeText('读取消息', err));
+      if (errCode(err) === 'WB_INVALID_ARGUMENT') renderMessages([]);
+    });
   }
 
   function sendText(text) {
@@ -185,7 +201,7 @@ export function renderChatBody(opts: ChatPageOptions): string {
       setStatus(data.result && data.result.replayed ? '已存在（幂等回放）' : '已发送');
       return loadMessages().then(loadRooms);
     }).catch(function (err) {
-      setStatus('发送失败：' + err.message, true);
+      setStatus(degradeText('发送', err), true);
       throw err;
     });
   }
@@ -195,7 +211,7 @@ export function renderChatBody(opts: ChatPageOptions): string {
     var value = $('actor').value.trim();
     if (!value) { $('actor').value = state.actor; return; }
     state.actor = value;
-    loadRooms().catch(function (err) { setBanner('房间读取失败：' + err.message); });
+    loadRooms().catch(function (err) { setBanner(degradeText('读取房间', err)); });
   });
 
   $('sendForm').addEventListener('submit', function (event) {
@@ -215,7 +231,7 @@ export function renderChatBody(opts: ChatPageOptions): string {
     }
   });
 
-  loadRooms().catch(function (err) { setBanner('房间读取失败：' + err.message + (errCode(err) === 'CHAT_PANEL_DISABLED' ? '（chatd 未配置）' : '')); });
+  loadRooms().catch(function (err) { setBanner(degradeText('读取房间', err)); });
   window.setInterval(function () {
     loadRooms().catch(function () { /* 轮询失败不刷屏；下周期重试 */ });
     loadMessages().catch(function () { });
@@ -233,6 +249,14 @@ export function renderChatBody(opts: ChatPageOptions): string {
 </div>`
 }
 
+/** 独立整页 favicon（内联 SVG data URI）：与门户壳同一图样（依赖方向 daemon→panel，
+ *  故此处各持一份同图——门户 /chat 与独立页同标，浏览器标签不跳标）。零外链。 */
+const CHAT_FAVICON =
+  'data:image/svg+xml,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#11151a"/><path d="M10 20V12l6 8v-8" fill="none" stroke="#6c9cff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 12v8" fill="none" stroke="#6c9cff" stroke-width="2.2" stroke-linecap="round"/></svg>',
+  )
+
 /** 渲染聊天室页（独立整页；纯字符串；零 IO）——内容本体单源经 renderChatBody */
 export function renderChatPage(opts: ChatPageOptions): string {
   return `<!doctype html>
@@ -241,6 +265,7 @@ export function renderChatPage(opts: ChatPageOptions): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>聊天室 · Studio Next :8791</title>
+<link rel="icon" href="${CHAT_FAVICON}">
 <style>
   :root { color-scheme: light dark; --line:#d0d7de; --muted:#6a737d; --bg:#f6f8fa; --card:#fff; --accent:#0969da; --danger:#cf222e; }
   * { box-sizing: border-box; }

@@ -3,11 +3,12 @@
  *
  * 依据：docs/plan/11-公司门户-2026-11-23.md §一.1（布局）／§二（设计系统·主题/图标/脚本）。
  * 安全：脚本仅操作主题与导航态（无用户数据插值，CSP 友好——无内联事件处理器）；
- * 公司名等用户侧文本一律经 esc()。
+ * 公司名等用户侧文本一律经 esc()；聊天徽标取数地址由服务端拼好（actor 经 url+esc）
+ * 放进 data-src，脚本只读属性、不拼用户数据。
  */
 import type { CompanySnapshot } from '@studio-next/contract'
 import { PORTAL_CSS } from './styles.ts'
-import { esc, icon } from './html.ts'
+import { esc, icon, url } from './html.ts'
 
 /** 导航项（§1.1——五页；不含监控页） */
 const NAV: readonly { href: string; key: string; label: string; ic: string }[] = [
@@ -36,6 +37,13 @@ const THEME_INIT = `(function(){try{var t=localStorage.getItem('portal-theme');i
 /** 主题切换脚本（文档尾；无内联事件处理器——CSP 友好） */
 const THEME_TOGGLE = `(function(){var b=document.getElementById('themeToggle');if(!b)return;b.addEventListener('click',function(){var d=document.documentElement;var t=d.getAttribute('data-theme')==='light'?'dark':'light';d.setAttribute('data-theme',t);try{localStorage.setItem('portal-theme',t);}catch(e){}});})();`
 
+/**
+ * 聊天导航未读徽标脚本（文档尾；fetch /api/chat/rooms?actor= 聚合 totalUnread——与 /chat
+ * 页同源同 API）。失败/无未读/无 chatd→徽标保持 hidden（「失败不显示」；无内联事件处理器）。
+ * 取数地址来自徽标元素的 data-src（服务端拼好并经 esc；脚本零用户数据插值）。
+ */
+const CHAT_UNREAD_BADGE = `(function(){var b=document.getElementById('navChatUnread');if(!b)return;var src=b.getAttribute('data-src');if(!src)return;fetch(src).then(function(r){return r.ok?r.json():null;}).then(function(d){if(!d||d.ok!==true)return;var n=d.totalUnread;if(typeof n==='number'&&n>0){b.textContent=n>999?'999+':String(n);b.removeAttribute('hidden');}}).catch(function(){});})();`
+
 export interface ShellOptions {
   readonly company: CompanySnapshot
   readonly title: string
@@ -46,13 +54,19 @@ export interface ShellOptions {
   /** 内容区用 <div> 而非 <main>（聊天页：@studio-next/panel/chat 片段自带 <main> 地标——
    *  一页只能一个 main 地标，嵌装时外壳让位；其余页不变） */
   readonly mainAsDiv?: boolean
+  /** 聊天未读徽标（transport 已配才注入）：actor 进查询串（esc 转义），脚本惰性取数 */
+  readonly chatBadge?: { readonly actor: string }
 }
 
 /** 渲染门户整页（doctype → 壳 → body；pageRenderer 注入位消费同构） */
 export function portalShell(opts: ShellOptions): string {
+  const chatBadge =
+    opts.chatBadge === undefined
+      ? ''
+      : `<span class="nav-badge" id="navChatUnread" data-src="/api/chat/rooms${opts.chatBadge.actor !== '' ? `?actor=${esc(url(opts.chatBadge.actor))}` : ''}" hidden></span>`
   const nav = NAV.map(
     (n) =>
-      `<a href="${n.href}"${n.key === opts.active ? ' class="active" aria-current="page"' : ''}>${icon(n.ic)}<span>${n.label}</span></a>`,
+      `<a href="${n.href}"${n.key === opts.active ? ' class="active" aria-current="page"' : ''}>${icon(n.ic)}<span>${n.label}</span>${n.key === 'chat' ? chatBadge : ''}</a>`,
   ).join('\n        ')
   const tag = opts.mainAsDiv === true ? 'div' : 'main'
   return `<!doctype html>
@@ -98,6 +112,7 @@ ${opts.body}
   </div>
 </div>
 <script>${THEME_TOGGLE}</script>
+${opts.chatBadge === undefined ? '' : `<script>${CHAT_UNREAD_BADGE}</script>`}
 </body>
 </html>`
 }

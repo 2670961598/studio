@@ -11,13 +11,16 @@ import {
 } from '@studio-next/panel'
 import { DaemonPanelConversationStore } from '../assembly/panel/conversation-store.ts'
 import { ConversationStore as DaemonConversationStore } from '../engine/conversation/store.ts'
-import { PORTAL_DEFAULT_PORT, servePortal } from '../assembly/portal/server.ts'
+import { PORTAL_DEFAULT_CHAT_ACTOR, PORTAL_DEFAULT_PORT, servePortal } from '../assembly/portal/server.ts'
 import { CONCISE, SECTION } from './usage.ts'
 import { helpOk, usageFail, wantsHelp } from './help.ts'
 import { errText, parseArgv } from './argv.ts'
 
 /** 仅 --portal 公司门户态有效的旗标（监控面给出即用法错——防静默忽略） */
-const PORTAL_ONLY_FLAGS: readonly string[] = ['platform-root', 'portal-port', 'chatd-socket', 'chatd-token-file']
+const PORTAL_ONLY_FLAGS: readonly string[] = ['platform-root', 'portal-port', 'chatd-socket', 'chatd-token-file', 'chat-actor']
+
+/** --chat-actor 合法形：非空白、无内嵌空白、≤64 字符（chatd 按房间成员校验工号） */
+const CHAT_ACTOR_RE = /^\S{1,64}$/
 
 /** 运行期注入位（测试停机信号；缺省=SIGINT/SIGTERM——vitest worker 会吃信号，测试须注入） */
 export interface PanelRuntime {
@@ -100,13 +103,21 @@ export async function cmdPanel(argv: string[], runtime: PanelRuntime = {}): Prom
   return 0
 }
 
-/** --portal 公司门户态的聊天接线（显式旗标优先，env 缺省兜底；token 只驻内存不打印） */
-function buildPortalChat(flags: Record<string, string>): { options: ChatAppOptions; socketPath: string | null; tokenFromFile: boolean } {
-  const envChat = loadChatPanelEnv(process.env)
+/**
+ * --portal 公司门户态的聊天接线（显式旗标优先，env 缺省兜底；token 只驻内存不打印）。
+ * 缺省操作者三级：--chat-actor > env PANEL_CHAT_ACTOR > PORTAL_DEFAULT_CHAT_ACTOR（在册工号）。
+ */
+function buildPortalChat(flags: Record<string, string>): { options: ChatAppOptions; socketPath: string | null; tokenFromFile: boolean; actor: string; actorFrom: 'flag' | 'env' | 'default' } {
+  // fallbackActorId 只改「env 未配时」的缺省——监控面（不带 fallback）缺省 'panel' 不变
+  const envChat = loadChatPanelEnv(process.env, { fallbackActorId: PORTAL_DEFAULT_CHAT_ACTOR })
+  const actorFlag = flags['chat-actor']
+  const actor = actorFlag !== undefined ? actorFlag : envChat.defaultActorId
+  const envActorSet = (process.env['PANEL_CHAT_ACTOR'] ?? '').trim() !== ''
+  const actorFrom: 'flag' | 'env' | 'default' = actorFlag !== undefined ? 'flag' : envActorSet ? 'env' : 'default'
   const socketFlag = flags['chatd-socket']
   const socketPath = socketFlag !== undefined ? socketFlag : envChat.socketPath ?? undefined
   if (socketPath === undefined || socketPath === '') {
-    return { options: { transport: null, defaultActorId: envChat.defaultActorId }, socketPath: null, tokenFromFile: false }
+    return { options: { transport: null, defaultActorId: actor }, socketPath: null, tokenFromFile: false, actor, actorFrom }
   }
   let token: string | undefined
   let tokenFromFile = false
@@ -123,11 +134,11 @@ function buildPortalChat(flags: Record<string, string>): { options: ChatAppOptio
     token = envChat.token
   }
   const options: ChatAppOptions = {
-    transport: createChatPanelTransport({ enabled: true, socketPath, token, defaultActorId: envChat.defaultActorId }),
+    transport: createChatPanelTransport({ enabled: true, socketPath, token, defaultActorId: actor }),
     ...(token !== undefined ? { token } : {}),
-    defaultActorId: envChat.defaultActorId,
+    defaultActorId: actor,
   }
-  return { options, socketPath, tokenFromFile }
+  return { options, socketPath, tokenFromFile, actor, actorFrom }
 }
 
 /**
@@ -166,6 +177,10 @@ async function cmdCompanyPortal(flags: Record<string, string>, runtime: PanelRun
   const platformFlag = flags['platform-root']
   const platformRoot = platformFlag !== undefined ? path.resolve(platformFlag) : path.resolve(companyDir, '..', 'platform')
   const platformOk = existsSync(platformRoot) && statSync(platformRoot).isDirectory()
+  const chatActorFlag = flags['chat-actor']
+  if (chatActorFlag !== undefined && !CHAT_ACTOR_RE.test(chatActorFlag)) {
+    return usageFail('panel', `--chat-actor 取值非法：空白或超过 64 字符（收工号，例：--chat-actor ${PORTAL_DEFAULT_CHAT_ACTOR}）`, CONCISE.panel)
+  }
   const chat = buildPortalChat(flags)
   if (chat.socketPath !== null && !existsSync(chat.socketPath)) {
     console.error(`[portal] chatd socket 不存在：${chat.socketPath}（不拒启；聊天面实时降级 503，chatd 起后自愈）`)
@@ -193,11 +208,12 @@ async function cmdCompanyPortal(flags: Record<string, string>, runtime: PanelRun
   } else {
     console.log(`[portal] 单子平台未接：${platformRoot} 不存在——单子面空列表降级（不代建；加 --platform-root 或建 <companyDir>/../platform）`)
   }
+  const actorSource = chat.actorFrom === 'flag' ? '来自 --chat-actor' : chat.actorFrom === 'env' ? '来自 env PANEL_CHAT_ACTOR' : '内置缺省'
   if (chat.socketPath !== null) {
     const tokenNote = chat.options.token !== undefined ? `token ${chat.tokenFromFile ? '由 --chatd-token-file 读入内存' : '来自 env'}（永不落日志）` : '未配 token'
-    console.log(`[portal] 聊天：chatd socket ${chat.socketPath}（${tokenNote}；chatd 挂时页面实时降级）`)
+    console.log(`[portal] 聊天：chatd socket ${chat.socketPath}（缺省操作者 ${chat.actor}，${actorSource}；${tokenNote}；chatd 挂时页面实时降级）`)
   } else {
-    console.log('[portal] 聊天未配置（--chatd-socket 或 env WORKBENCH_CHATD_SOCKET）：/chat 降级卡，/api/chat/* 503')
+    console.log(`[portal] 聊天未配置（--chatd-socket 或 env WORKBENCH_CHATD_SOCKET）：/chat 降级卡，/api/chat/* 503（缺省操作者 ${chat.actor}，${actorSource}）`)
   }
   await (runtime.waitForStop ?? defaultWaitForStop)()
   await handle.close()

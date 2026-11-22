@@ -7,7 +7,15 @@
  *                            不因未配 chatd 拒启 panel/daemon——本解析不抛错）。
  *   WORKBENCH_CHATD_TOKEN ：鉴权 token（可选；chatd 配了 token 才需要；随 params 上帧，永不入页面/日志）。
  *   PANEL_CHAT_ACTOR      ：缺省操作者标识（可选；缺省 'panel'——chatd 端按房间成员校验）。
+ *
+ * 装配方可传 fallbackActorId 覆盖「env 未配时的缺省工号」（加法式可选参——门户装配缺省
+ * PRIME-0，监控面缺省 'panel' 不变；显式 env 恒优先于 fallback）。
  */
+
+/** loadChatPanelEnv 可选缺省注入（缺省全不覆盖——监控面现状行为零变化） */
+export interface ChatPanelEnvDefaults {
+  readonly fallbackActorId?: string
+}
 
 /** env 解析结果：enabled=false 时其余字段为缺省值（唯一事实=没配 socket） */
 export interface ChatPanelEnv {
@@ -22,7 +30,7 @@ const trimOf = (value: string | undefined): string => (typeof value === 'string'
 /**
  * 解析聊天室 env（不抛错——配置缺失=关闭而非失败，任务单铁律「不得因未配 chatd 拒启」）。
  */
-export function loadChatPanelEnv(env: Readonly<Record<string, string | undefined>>): ChatPanelEnv {
+export function loadChatPanelEnv(env: Readonly<Record<string, string | undefined>>, defaults: ChatPanelEnvDefaults = {}): ChatPanelEnv {
   const socketPath = trimOf(env['WORKBENCH_CHATD_SOCKET'])
   const token = trimOf(env['WORKBENCH_CHATD_TOKEN'])
   const actor = trimOf(env['PANEL_CHAT_ACTOR'])
@@ -30,6 +38,6 @@ export function loadChatPanelEnv(env: Readonly<Record<string, string | undefined
     enabled: socketPath !== '',
     socketPath: socketPath !== '' ? socketPath : null,
     token: token !== '' ? token : undefined,
-    defaultActorId: actor !== '' ? actor : 'panel',
+    defaultActorId: actor !== '' ? actor : defaults.fallbackActorId ?? 'panel',
   }
 }

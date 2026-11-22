@@ -119,6 +119,19 @@ describe('env 开关（缺省 off；显式启用=socket 非空）', () => {
     expect(loadChatPanelEnv({ WORKBENCH_CHATD_SOCKET: '/tmp/chat.sock', PANEL_CHAT_ACTOR: 'PRIME-0' }).defaultActorId).toBe('PRIME-0')
   })
 
+  it('fallbackActorId：装配面改「env 未配时」的缺省工号；env 显式/监控面缺省不变', () => {
+    const env = { WORKBENCH_CHATD_SOCKET: '/tmp/chat.sock' }
+    // env 未配/空白 → 落 fallback（门户装配传在册工号；chatd 按房间成员校验）
+    expect(loadChatPanelEnv(env, { fallbackActorId: 'PRIME-0' }).defaultActorId).toBe('PRIME-0')
+    expect(loadChatPanelEnv({ ...env, PANEL_CHAT_ACTOR: ' ' }, { fallbackActorId: 'PRIME-0' }).defaultActorId).toBe('PRIME-0')
+    // env 显式给出仍最优先
+    expect(loadChatPanelEnv({ ...env, PANEL_CHAT_ACTOR: 'ENG-9' }, { fallbackActorId: 'PRIME-0' }).defaultActorId).toBe('ENG-9')
+    // 不传 fallback＝监控面原缺省 panel（既有契约不变）
+    expect(loadChatPanelEnv(env).defaultActorId).toBe('panel')
+    // 未配 chatd 面同样落 fallback（门户未接 chatd 时降级文案也署在册工号）
+    expect(loadChatPanelEnv({}, { fallbackActorId: 'PRIME-0' })).toEqual({ enabled: false, socketPath: null, token: undefined, defaultActorId: 'PRIME-0' })
+  })
+
   it('createChatPanelOptions：未配=transport:null；配了=transport 装配+token+缺省工号', () => {
     expect(createChatPanelOptions({})).toEqual({ transport: null })
     const opts = createChatPanelOptions({ WORKBENCH_CHATD_SOCKET: '/tmp/chat.sock', WORKBENCH_CHATD_TOKEN: TOKEN, PANEL_CHAT_ACTOR: 'PRIME-0' })
@@ -192,6 +205,13 @@ describe('启用页渲染（mock transport）', () => {
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+
+  it('CONFIG 注入转义：工号含 < 时写 \\u003c（脚本内无未转义尖括号串出）', () => {
+    const html = renderChatPage({ enabled: true, defaultActorId: 'a<b' })
+    const config = /var CONFIG = (\{.*?\});/s.exec(html)?.[1] ?? ''
+    expect(config).toContain('"actor":"a\\u003cb"')
+    expect(config).not.toContain('a<b')
   })
 })
 

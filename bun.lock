@@ -37,6 +37,7 @@
         "@studio-next/prompt": "workspace:*",
         "@studio-next/store": "workspace:*",
         "@studio-next/taiga": "workspace:*",
+        "@studio-next/workbench-transport": "workspace:*",
         "@studio-next/yt": "workspace:*",
         "croner": "^9.0.0",
         "execa": "^9.4.0",
@@ -48,6 +49,10 @@
         "@modelcontextprotocol/server": "^2.3.1",
         "@studio-next/studio-tools": "workspace:*",
       },
+    },
+    "apps/workbench-chatd": {
+      "name": "@studio-next/workbench-chatd",
+      "version": "0.1.0",
     },
     "packages/adapters": {
       "name": "@studio-next/adapters",
@@ -64,12 +69,8 @@
       "name": "@studio-next/api",
       "version": "0.1.0",
       "dependencies": {
-        "@modelcontextprotocol/server": "^2.0.0",
-        "@studio-next/company": "workspace:*",
         "@studio-next/contract": "workspace:*",
-        "@studio-next/store": "workspace:*",
         "hono": "^4.6.0",
-        "zod": "^4.0.0",
       },
     },
     "packages/company": {
@@ -134,6 +135,7 @@
       "dependencies": {
         "@studio-next/contract": "workspace:*",
         "@studio-next/store": "workspace:*",
+        "@studio-next/workbench-transport": "workspace:*",
         "hono": "^4.6.0",
       },
       "devDependencies": {
@@ -163,6 +165,9 @@
     "packages/studio-tools": {
       "name": "@studio-next/studio-tools",
       "version": "0.1.0",
+      "bin": {
+        "studio-tools": "./src/stdio.ts",
+      },
       "dependencies": {
         "@modelcontextprotocol/server": "^2.3.1",
         "@studio-next/contract": "workspace:*",
@@ -176,6 +181,10 @@
       "dependencies": {
         "@studio-next/contract": "workspace:*",
       },
+    },
+    "packages/workbench-transport": {
+      "name": "@studio-next/workbench-transport",
+      "version": "0.1.0",
     },
     "packages/yt": {
       "name": "@studio-next/yt",
@@ -340,6 +349,10 @@
     "@studio-next/studio-tools": ["@studio-next/studio-tools@workspace:packages/studio-tools"],
 
     "@studio-next/taiga": ["@studio-next/taiga@workspace:packages/taiga"],
+
+    "@studio-next/workbench-chatd": ["@studio-next/workbench-chatd@workspace:apps/workbench-chatd"],
+
+    "@studio-next/workbench-transport": ["@studio-next/workbench-transport@workspace:packages/workbench-transport"],
 
     "@studio-next/yt": ["@studio-next/yt@workspace:packages/yt"],
 

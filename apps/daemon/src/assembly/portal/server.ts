@@ -5,10 +5,10 @@
  * 形状 {ok,…}）／§三（数据来源·降级矩阵·安全）。
  *
  * 端面（页面全 GET、门户自身零写）：
- *   页面：/ /tickets /tickets/:id /chat /org /reports /reports/view?path=
+ *   页面：/ /tickets /tickets/:id /chat /org /reports?q=&limit=&page= /reports/view?path=
  *   API ：/api/stats /api/activity?limit= /api/tickets?state=&q=&limit=&offset=
- *         /api/tickets/:id /api/org /api/reports ＋ /api/chat/*（createChatApp 同端口挂载，
- *         其发送/已读写面经 chatd 网关——事实源写入者不变）
+ *         /api/tickets/:id /api/org /api/reports?q=&limit=&offset= ＋ /api/chat/*
+ *         （createChatApp 同端口挂载，其发送/已读写面经 chatd 网关——事实源写入者不变）
  * 聊天复用：/chat 与 /api/chat/* 整体来自 @studio-next/panel/chat 的 createChatApp——
  * portal 显式注入 pageRenderer（非路由排序覆盖），业务脚本/降级卡零复制（§三）。
  *
@@ -22,7 +22,7 @@ import { createChatApp, type ChatAppOptions } from '@studio-next/panel/chat'
 import { loadCompanyDirectory, readDirectoryFiles } from '@studio-next/company'
 import type { CompanySnapshot } from '@studio-next/contract'
 import { openLedger } from '@studio-next/store'
-import { chatPageRenderer, orgBody, reportViewBody, reportsBody } from './pages-side.ts'
+import { chatPageRenderer, orgBody, REPORTS_DEFAULT_LIMIT, REPORTS_MAX_LIMIT, reportViewBody, reportsBody } from './pages-side.ts'
 import { activityJson, overviewBody, ticketDetailBody, ticketJson, ticketsBody } from './pages-core.ts'
 import { createPortalData, extractMission, type ChatStatsView, type PortalData } from './data.ts'
 import { emptyState, esc, icon } from './html.ts'
@@ -30,6 +30,13 @@ import { portalShell, type ShellOptions } from './layout.ts'
 
 /** 缺省端口（§一.1；--portal-port 覆盖；监控 :8791 不动） */
 export const PORTAL_DEFAULT_PORT = 8800
+
+/**
+ * 门户聊天缺省操作者工号（--chat-actor 缺省值）：面板生产 env PANEL_CHAT_ACTOR 同值。
+ * 取 PRIME-0 而非面板包缺省 'panel'——门户面向公司成员，'panel' 非 chatd 房间成员，
+ * 消息面会吃 WB_INVALID_ARGUMENT（actor is not a room member）。
+ */
+export const PORTAL_DEFAULT_CHAT_ACTOR = 'PRIME-0'
 
 /** 聊天统计 TTL/超时：概览页不被卡死的 chatd 拖住（§三 降级矩阵） */
 const CHAT_TTL_MS = 15_000
@@ -106,8 +113,20 @@ function errorBody(status: number, code: string, message: string): string {
 /** 门户 Hono app（纯工厂——测试可 app.request() 直打，不占端口） */
 export function createPortalApp(opts: PortalAppOptions): Hono {
   const data = opts.data
+  // 聊天未读导航徽标（§二 组件）：transport 已配才注入（脚本取 /api/chat/rooms?actor= 聚合，
+  // 失败/无未读→徽标保持 hidden——chatd 缺不占导航位）
+  const chatBadge = opts.chat.transport === null ? undefined : { actor: opts.chat.defaultActorId ?? 'panel' }
   const shell = (title: string, active: string, body: string, so?: { mainAsDiv?: boolean }): string => {
-    const shellOpts: ShellOptions = { company: data.company(), title, active, online: data.daemonOnline(), version: opts.version, body, ...(so ?? {}) }
+    const shellOpts: ShellOptions = {
+      company: data.company(),
+      title,
+      active,
+      online: data.daemonOnline(),
+      version: opts.version,
+      body,
+      ...(so ?? {}),
+      ...(chatBadge !== undefined ? { chatBadge } : {}),
+    }
     return portalShell(shellOpts)
   }
 
@@ -143,9 +162,31 @@ export function createPortalApp(opts: PortalAppOptions): Hono {
   })
   app.get('/org', (c) => c.html(shell('组织', 'org', orgBody(data))))
   app.get('/reports', (c) => {
+    const search = textParam(c.req.query('q'), 120)
+    const limit = intParam(c.req.query('limit'), REPORTS_DEFAULT_LIMIT, 1, REPORTS_MAX_LIMIT)
     const page = intParam(c.req.query('page'), 1, 1, 1_000_000)
-    if (page === null) return c.html(shell('报表', 'reports', errorBody(400, 'bad-query', 'page 须为整数')), 400)
-    return c.html(shell('报表', 'reports', reportsBody(data.reports(), page, 50)))
+    if (search === null || limit === null || page === null) {
+      return c.html(shell('报表', 'reports', errorBody(400, 'bad-query', '查询参数非法：q 过长或含控制字符；limit/page 须为整数')), 400)
+    }
+    const all = data.reports()
+    const needle = (search ?? '').trim().toLowerCase()
+    const matched = needle === '' ? all : all.filter((f) => f.relPath.toLowerCase().includes(needle))
+    const pages = Math.max(1, Math.ceil(matched.length / limit))
+    const cur = Math.min(page, pages)
+    const from = (cur - 1) * limit
+    return c.html(
+      shell(
+        '报表',
+        'reports',
+        reportsBody(matched.slice(from, from + limit), {
+          q: (search ?? '').trim(),
+          limit,
+          page: cur,
+          totalAll: all.length,
+          totalMatch: matched.length,
+        }),
+      ),
+    )
   })
   app.get('/reports/view', (c) => {
     const raw = c.req.query('path')
@@ -194,7 +235,20 @@ export function createPortalApp(opts: PortalAppOptions): Hono {
     const company = data.company()
     return c.json({ ok: true, company: { slug: company.slug, name: company.name, level: company.level }, departments: o.departments, people: o.people })
   })
-  app.get('/api/reports', (c) => c.json({ ok: true, files: data.reports() }))
+  app.get('/api/reports', (c) => {
+    // 可选 q/limit/offset（§1.3 补订）：缺省=全清单（现契约形状零变化）；limit=0 亦=不截断
+    const search = textParam(c.req.query('q'), 120)
+    const limit = intParam(c.req.query('limit'), 0, 0, REPORTS_MAX_LIMIT)
+    const offset = intParam(c.req.query('offset'), 0, 0, 1_000_000)
+    if (search === null || limit === null || offset === null) {
+      return c.json(jsonError('bad-query', '查询参数非法：q 过长或含控制字符；limit/offset 须为非负整数'), 400)
+    }
+    const all = data.reports()
+    const needle = (search ?? '').trim().toLowerCase()
+    const matched = needle === '' ? all : all.filter((f) => f.relPath.toLowerCase().includes(needle))
+    const files = limit === 0 ? matched.slice(offset) : matched.slice(offset, offset + limit)
+    return c.json({ ok: true, total: matched.length, ...(search !== undefined ? { q: (search ?? '').trim() } : {}), files })
+  })
 
   // —— 聊天（createChatApp 同端口挂载：GET /chat ＋ /api/chat/*；portal 只注入壳渲染器） ——
   app.route('/', createChatApp({ ...opts.chat, pageRenderer: chatPageRenderer(shell) }))

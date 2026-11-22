@@ -172,10 +172,13 @@ export const SECTION = {
        全部读 SQLite 零写；库不存在即拒启；Ctrl-C 优雅关闭
   studio-next panel --portal --company-dir <公司目录> --db <库路径> [--platform-root <平台根>]
                     [--portal-port 8800] [--chatd-socket <socket 路径>] [--chatd-token-file <token 文件>]
+                    [--chat-actor <工号>]
        :8800 公司门户（docs/plan/11-公司门户-2026-11-23.md）：概览/单子/聊天/组织/报表
        五读面同端口＋只读 JSON API（/api/stats|activity|tickets|org|reports），自研 CSS 零外网依赖；
        --platform-root 缺省 <companyDir>/../platform（缺=单子面空列表降级，不代建）；
        --chatd-socket 缺省 env WORKBENCH_CHATD_SOCKET（缺=聊天面降级卡，/api/chat/* 503）；
+       --chat-actor 聊天缺省操作者（缺省 env PANEL_CHAT_ACTOR，再缺省 PRIME-0；chatd 按房间
+       成员校验——非成员/未配均降级不 500）；
        token 仅驻内存；库/公司目录不存在即拒启；监控面 :8791 独立不并入
 `,
   overview: `  studio-next overview --company <目录> [--company <目录2> …] [--db <库路径>] [--port 8789]
@@ -344,7 +347,7 @@ export const CONCISE = {
   panel: `panel —— :8791 监控面（jobs/runs/workers/事件流 SSE 全读零写；库不存在即拒启；--company-dir 目录不存在即拒启）
   studio-next panel --db <库路径> [--port 8791] [--company-dir <公司目录>]
   例：studio-next panel --db var/ledger.sqlite --company-dir /path/to/company（含 --company-dir 时装配对话页）
-  studio-next panel --portal --company-dir <公司目录> --db <库路径> [--platform-root <平台根>] [--portal-port 8800] [--chatd-socket <socket>] [--chatd-token-file <文件>]
+  studio-next panel --portal --company-dir <公司目录> --db <库路径> [--platform-root <平台根>] [--portal-port 8800] [--chatd-socket <socket>] [--chatd-token-file <文件>] [--chat-actor <工号>]
        :8800 公司门户（docs/plan/11）：概览/单子/聊天/组织/报表五读面＋只读 API；平台/chatd 缺=降级不拒启
   本命令全文：studio-next panel --help
 `,

@@ -117,6 +117,9 @@ const LAYOUT = `
   .nav a:hover { background: var(--bg2); color: var(--fg); text-decoration: none; }
   .nav a.active { background: var(--accent-soft); color: var(--accent); }
   .nav a .ic { opacity: 0.85; }
+  /* 聊天未读徽标（flex 项靠右；hidden=无未读/取数失败——不占位） */
+  .nav a .nav-badge { margin-left: auto; min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 600; line-height: 17px; text-align: center; font-variant-numeric: tabular-nums; }
+  .nav a .nav-badge[hidden] { display: none; }
   .sidebar-foot { margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 10px; color: var(--fg-subtle); font-size: 12px; }
   .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .topbar {
@@ -151,13 +154,14 @@ const COMPONENTS = `
   .hero .mission { margin-top: 8px; max-width: 72ch; color: var(--fg-muted); font-size: 14.5px; }
   .hero .chips { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px; }
 
-  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12px; color: var(--fg-muted); background: var(--bg2); border: 1px solid var(--line); }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12px; line-height: 18px; color: var(--fg-muted); background: var(--bg2); border: 1px solid var(--line); }
   .chip .ic { opacity: 0.8; }
-  .chip-link { color: var(--fg-muted); }
+  .chip-link { color: var(--fg-muted); white-space: nowrap; }
   .chip-link:hover { color: var(--accent); text-decoration: none; border-color: var(--accent); }
   .chip-link.active { background: var(--accent-soft); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
-  .chip .count { color: var(--fg-subtle); font-variant-numeric: tabular-nums; }
-  .chip-link.active .count { color: var(--accent); }
+  /* 计数药丸：等高同基线（数字宽窄不抖动；tabular 对齐） */
+  .chip .count { padding: 0 6px; border-radius: 999px; background: var(--bg3); font-size: 11.5px; line-height: 16px; color: var(--fg-subtle); font-variant-numeric: tabular-nums; }
+  .chip-link.active .count { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 
   .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(172px, 1fr)); gap: 12px; margin-bottom: 16px; }
   .stat { display: flex; gap: 12px; padding: 14px 16px; background: var(--bg1); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-1); min-height: 84px; }

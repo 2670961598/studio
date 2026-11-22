@@ -39,7 +39,7 @@ export function overviewBody(data: PortalData, stats: PortalStats): string {
   <div class="chips">
     <span class="chip">${icon('org', 13)}${esc(company.slug)}</span>
     <span class="chip">${icon('people', 13)}等级 L${company.level}</span>
-    <span class="chip">${icon('link', 13)}平台 ${esc(String(company.platform))}</span>
+    <span class="chip">${icon('link', 13)}平台 ${esc(company.platform.platform)}</span>
     <span class="chip">${icon('ticket', 13)}${ticketsLabel}</span>
   </div>
 </section>`
@@ -198,7 +198,11 @@ ${items
             : emptyState('ticket', '未接单子平台', '启动时加 --platform-root <目录>（缺省 <companyDir>/../platform）——门户只读，不代建平台目录')
         }</div></div>`
 
-  return `${pageHead('单子', result.available ? `共 ${result.total} 张（筛选后）· 平台 ${data.platformRoot() ?? ''}` : '未接平台')}
+  // 页头副题：公司 slug＋平台全树只读——host 绝对路径不出页面（§三.安全：路径只进日志）
+  const headSub = result.available
+    ? `共 ${result.total} 张（筛选后）· ${data.company().slug} 平台全树 · 只读`
+    : '未接平台'
+  return `${pageHead('单子', headSub)}
 ${toolbar}
 ${table}`
 }
@@ -211,13 +215,14 @@ const shortDept = (dept: string): string => {
 /** 单子详情页 body（§1.2：头部＋meta 网格＋描述＋验收＋事件时间线＋返回） */
 export function ticketDetailBody(view: TicketDetailView): string {
   const r = view.record
+  // 空值行直出「—」的只留有信息量的（父单缺=不渲染该行；类型/负责人等业务字段保留占位）
   const meta = `<dl class="meta-grid">
   <div><dt>类型</dt><dd>${r.type !== undefined ? esc(r.type) : '—'}</dd></div>
   <div><dt>负责人</dt><dd>${r.assignee !== undefined ? esc(r.assignee) : '—'}</dd></div>
-  <div><dt>部门</dt><dd>${r.dept !== undefined ? esc(r.dept) : '—'}</dd></div>
+  <div><dt>部门</dt><dd>${r.dept !== undefined ? esc(shortDept(r.dept)) : '—'}</dd></div>
   <div><dt>泳道</dt><dd>${r.lane !== undefined ? esc(r.lane) : '—'}</dd></div>
-  <div><dt>等级</dt><dd>${r.level !== undefined ? `L${r.level}` : '—'}</dd></div>
-  <div><dt>父单</dt><dd>${r.parent !== undefined ? `<a class="mono" href="/tickets/${url(r.parent)}">${esc(r.parent)}</a>` : '—'}</dd></div>
+  <div><dt>等级</dt><dd>${r.level !== undefined ? `<span class="lvl">L${r.level}</span>` : '—'}</dd></div>
+  ${r.parent !== undefined ? `<div><dt>父单</dt><dd><a class="mono" href="/tickets/${url(r.parent)}">${esc(r.parent)}</a></dd></div>` : ''}
   <div><dt>创建</dt><dd class="num">${esc(fmtTime(view.created))}</dd></div>
   <div><dt>更新</dt><dd class="num">${esc(fmtTime(r.updated))}</dd></div>
 </dl>`
@@ -239,7 +244,7 @@ ${view.events
     }
     let body = ''
     if (ev.kind === 'created') body = `标题 ${esc(r.title)}`
-    else if (ev.kind === 'field-set') body = `<code>${esc(ev.value ?? '')}</code>`
+    else if (ev.kind === 'field-set') body = `<code>${esc(ev.field === 'dept' ? shortDept(ev.value ?? '') : (ev.value ?? ''))}</code>`
     return `  <div class="tl-item ${cls}">
     <div class="tl-dot">${dot}</div>
     <div><div class="tl-head">${head}<time title="${esc(fmtTime(ev.ts))}">${esc(fmtAgo(ev.ts))}</time></div>${body === '' ? '' : `<div class="tl-body">${body}</div>`}</div>

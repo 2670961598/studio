@@ -5,7 +5,7 @@
  * page（服务端渲染壳＋原生 JS 轮询）/ server（Hono 路由）。默认关闭（WORKBENCH_CHATD_SOCKET
  * 未配=未启用），不因未配 chatd 拒启 panel。
  */
-export { loadChatPanelEnv, type ChatPanelEnv } from './env.ts'
+export { loadChatPanelEnv, type ChatPanelEnv, type ChatPanelEnvDefaults } from './env.ts'
 export { createChatPanelOptions, createChatPanelTransport } from './wiring.ts'
 export {
   DEFAULT_CHAT_ACTOR_ID,

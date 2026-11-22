@@ -19,6 +19,7 @@ export const ORG_CONFIG = [
   '  mission: 用一条可验证的交付链，把需求变成有证据的产出 # 使命',
   '  charter_ref: charter.md',
   '  level: 2',
+  '  platform: localfile',
   '  level_distribution:',
   '    2: 1',
   '    1: 2',
