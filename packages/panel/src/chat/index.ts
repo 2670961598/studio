@@ -35,3 +35,4 @@ export {
   type ParsedSendBody,
 } from './server.ts'
 export { renderChatBody, renderChatPage, type ChatPageOptions } from './page.ts'
+export { HOST_PATH_MASK_SOURCE, maskHostPaths } from './mask.ts'

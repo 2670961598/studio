@@ -294,7 +294,7 @@ export function buildServeRuntime(
     wrappedNotifyFace !== undefined
       ? wireNotifyAssembly({
           face: wrappedNotifyFace,
-          company: config.company,
+          company: config.company, companyDir: config.companyDir,
           heartbeatIssue: engineConfig.heartbeatIssue,
           actor: engineConfig.actor,
           deptFallback: engineConfig.deptFallback,

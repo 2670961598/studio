@@ -3,7 +3,8 @@
  * （不在表=不广播）+ `;output=` 日报产物分流 + cost 警戒计划 + 摘要件低噪形。
  */
 import { describe, expect, it } from 'vitest'
-import { planCostNoticeBroadcast, planEventBroadcast, reportOutputOf } from '../../../src/engine/notify/route.ts'
+import path from 'node:path'
+import { planCostNoticeBroadcast, planEventBroadcast, relativizeReportPath, reportOutputOf } from '../../../src/engine/notify/route.ts'
 import type { EventRecord } from '@studio-next/contract'
 
 const FROM = 'daemon@studio-dev（bot 代发）'
@@ -50,6 +51,20 @@ describe('planEventBroadcast（冻结路由表）', () => {
     expect(reportOutputOf(undefined)).toBeUndefined()
   })
 
+  it('GATE_PASS ;output= 携 companyDir → 文案=相对公司目录位址（通知不带主机绝对路径）', () => {
+    // 真实链路样例：output-account `path.join(path.resolve(companyDir), <output>, <归档名>)`
+    const company = '/Volumes/演示盘/companies/studio-dev/company'
+    const file = '2026-11-21-report-综合部-LOCAL-174.md'
+    const target = path.join(path.resolve(company), 'reports/综合部', file)
+    const note = `四要件齐；report=…;output=${target}`
+    const plan = planEventBroadcast(evt('GATE_PASS', { note }), FROM, company)
+    expect(plan?.message.body).toBe(`落位：reports/综合部/${file}`)
+    expect(plan?.digest.body).toBe(`落位：reports/综合部/${file}`)
+    expect(plan?.message.body).not.toContain(company)
+    // 未注入 companyDir=原样绝对位址（台账号证据不动；兜底归面板渲染层脱敏）
+    expect(planEventBroadcast(evt('GATE_PASS', { note }), FROM)?.message.body).toBe(`落位：${target}`)
+  })
+
   it('STALL/CIRCUIT_BREAK/DAILY_ALARM → alert+dept+overview（警戒族三连）', () => {
     for (const [event, kind] of [['STALL', 'stall'], ['CIRCUIT_BREAK', 'breaker'], ['DAILY_ALARM', 'alarm']] as const) {
       const plan = planEventBroadcast(evt(event, { note: '看门狗告警第 1/2 次' }), FROM)
@@ -69,6 +84,22 @@ describe('planEventBroadcast（冻结路由表）', () => {
     const plan = planEventBroadcast(evt('STALL', { note: long }), FROM)
     expect(plan?.digest.body.length).toBe(120)
     expect(plan?.digest.body).not.toContain('第二段')
+  })
+})
+
+describe('relativizeReportPath（公司目录前缀剥离；非前缀原样）', () => {
+  const company = '/Volumes/演示盘/companies/studio-dev/company'
+  it('前缀命中 → 相对形（分隔符统一 `/`）；companyDir 尾斜杠同样剥离', () => {
+    const root = path.resolve(company)
+    expect(relativizeReportPath(path.join(root, 'reports/综合部', 'x.md'), company)).toBe('reports/综合部/x.md')
+    expect(relativizeReportPath(path.join(root, 'reports/x.md'), `${company}/`)).toBe('reports/x.md')
+    expect(relativizeReportPath(path.join(root, 'x.md'), company)).toBe('x.md')
+  })
+  it('非前缀（公司目录外/向上逃逸）与 companyDir 缺席/空白 → 原样返回', () => {
+    expect(relativizeReportPath('/other/root/reports/x.md', company)).toBe('/other/root/reports/x.md')
+    expect(relativizeReportPath(path.join('..', 'out.md'), company)).toBe(path.join('..', 'out.md'))
+    expect(relativizeReportPath('/abs/out.md', undefined)).toBe('/abs/out.md')
+    expect(relativizeReportPath('/abs/out.md', ' ')).toBe('/abs/out.md')
   })
 })
 

@@ -35,6 +35,11 @@ export interface NotifyRelayOptions {
   face: NotifyBroadcastFace
   /** 出面署名（Notification.from——105-刀B-4；serve 传 `daemon@<company>` 形） */
   from: string
+  /**
+   * 公司目录根（可选；report 落位脱敏锚——`落位：` 文案改相对公司目录位址，
+   * 通知不带主机绝对路径；缺省=原样，兜底归渲染层 chat 页脱敏）
+   */
+  companyDir?: string | undefined
   /** cost 警戒 target 工号 → 部门 path（serve 注入 people 索引活取；缺省=只投 #alert+总览） */
   deptOf?: (target: string) => string | undefined
   log?: (line: string) => void
@@ -126,7 +131,7 @@ export function createNotifyRelay(options: NotifyRelayOptions): {
     async relayEvents(events: readonly EventRecord[]): Promise<void> {
       const tally = new Tally()
       for (const event of events) {
-        const plan = planEventBroadcast(event, options.from)
+        const plan = planEventBroadcast(event, options.from, options.companyDir)
         if (plan === undefined) continue
         if (!dedup.shouldSend(event.event, event.issue, event.attempt, event.note)) continue
         await deliver(options.face, plan.message, plan.digest, plan.targets, plan.kind, tally, log)

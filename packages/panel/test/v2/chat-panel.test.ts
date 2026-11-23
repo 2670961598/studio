@@ -20,9 +20,12 @@ import {
   clampChatLimit,
   createChatApp,
   createChatPanelOptions,
+  HOST_PATH_MASK_SOURCE,
   loadChatPanelEnv,
+  maskHostPaths,
   parseReadBody,
   parseSendBody,
+  renderChatBody,
   renderChatPage,
   type ChatPanelTransport,
 } from '../../src/chat/index.ts'
@@ -212,6 +215,60 @@ describe('启用页渲染（mock transport）', () => {
     const config = /var CONFIG = (\{.*?\});/s.exec(html)?.[1] ?? ''
     expect(config).toContain('"actor":"a\\u003cb"')
     expect(config).not.toContain('a<b')
+  })
+})
+
+// ─── 显示层脱敏（主机绝对路径 → <path>；只改显示，不改 chatd 数据） ─────────────
+
+describe('maskHostPaths（主机路径族 → <path>；TS 单源本体）', () => {
+  it('POSIX 卷/家目录根：/Volumes/ /Users/ /home/ 形态全罩（正斜杠与反斜杠变体）', () => {
+    expect(maskHostPaths('落位：/Volumes/演示盘/company/reports/综合部/x.md')).toBe('落位：<path>')
+    expect(maskHostPaths('/Users/张三/日报.md')).toBe('<path>')
+    expect(maskHostPaths('/home/岗位/out.md')).toBe('<path>')
+    expect(maskHostPaths('\\home\\岗位\\out.md')).toBe('<path>')
+  })
+  it('Windows 盘符：C:\\Users\\… 与 D:/… 正斜杠书写同罩；一段正文多路径逐个替换', () => {
+    expect(maskHostPaths('C:\\Users\\李四\\日报.md')).toBe('<path>')
+    expect(maskHostPaths('D:/data/日报.md')).toBe('<path>')
+    expect(maskHostPaths('/Users/张三/a.md 与 C:\\Users\\李四\\b.md')).toBe('<path> 与 <path>')
+  })
+  it('相对位址与无路径正文不误伤；daemon 通知整段样例只罩路径段；幂等（已 <path> 不再改写）', () => {
+    expect(maskHostPaths('落位：reports/综合部/2026-11-21-x.md')).toBe('落位：reports/综合部/2026-11-21-x.md')
+    expect(maskHostPaths('无路径正文')).toBe('无路径正文')
+    expect(
+      maskHostPaths('[report] 日报产物归档 LOCAL-1\n落位：/Volumes/演示盘/company/reports/综合部/2026-11-21-x.md\n—— daemon@studio-dev'),
+    ).toBe('[report] 日报产物归档 LOCAL-1\n落位：<path>\n—— daemon@studio-dev')
+    expect(maskHostPaths('已脱敏 <path> 不变')).toBe('已脱敏 <path> 不变')
+  })
+})
+
+describe('渲染层兜底（服务端 HTML 与前端 JS 同源；门户嵌装共用 renderChatBody）', () => {
+  it('独立整页与门户片段都内嵌脱敏：消息体渲染处套用 + 注入正则与 TS 单源逐字一致', () => {
+    for (const html of [renderChatPage({ enabled: true, defaultActorId: 'panel' }), renderChatBody({ enabled: true, defaultActorId: 'panel' })]) {
+      expect(html).toContain('maskHostPaths(message.body)')
+      const injected = /var HOST_PATH_RE = new RegExp\((.*?), 'g'\)/.exec(html)?.[1] ?? ''
+      expect(injected).not.toBe('')
+      expect(new RegExp(JSON.parse(injected), 'g').source).toBe(HOST_PATH_MASK_SOURCE)
+    }
+  })
+  it('内联脚本真实可执行且脱敏生效（提取脚本段在 Node 里跑——前端行为非纸面断言）', () => {
+    const html = renderChatPage({ enabled: true, defaultActorId: 'panel' })
+    const start = html.indexOf('var HOST_PATH_RE')
+    const fn = html.indexOf('function maskHostPaths', start)
+    const end = html.indexOf('}', fn)
+    expect(start).toBeGreaterThanOrEqual(0)
+    const jsMask = new Function(`${html.slice(start, end + 1)}; return maskHostPaths;`)() as (t: string | undefined) => string | undefined
+    expect(jsMask('/Volumes/演示盘/company/reports/综合部/x.md')).toBe('<path>')
+    expect(jsMask('C:\\Users\\李四\\日报.md')).toBe('<path>')
+    expect(jsMask('落位：reports/综合部/x.md')).toBe('落位：reports/综合部/x.md')
+    expect(jsMask(undefined)).toBe(undefined)
+  })
+  it('chatd 数据面不动：/api/chat/messages 回包正文原样（脱敏只发生在渲染层）', async () => {
+    const { mock } = makeMock()
+    const app = createChatApp({ transport: mock })
+    const res = await app.request('/api/chat/messages?roomId=room-1')
+    const body = (await res.json()) as { page?: { items: { body: string }[] } }
+    expect(body.page?.items[0]?.body).toBe('早')
   })
 })
 

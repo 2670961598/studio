@@ -24,6 +24,8 @@ export interface WireNotifyOptions {
   /** 广播面（boot 注入 createMatrixBroadcastFace 产物；缺省=不装配零行为） */
   face: NotifyBroadcastFace
   company: string
+  /** 公司目录根（report 落位脱敏锚——通知文案相对公司目录，不带主机绝对路径；未配=原样） */
+  companyDir: string | undefined
   /** 计量锚=心跳哨兵单（181 PATROL/ESCALATE 同锚） */
   heartbeatIssue: string
   actor: string
@@ -50,6 +52,7 @@ export function wireNotifyAssembly(opts: WireNotifyOptions): WiredNotify {
   const relay = createNotifyRelay({
     face: opts.face,
     from: `daemon@${opts.company}（bot 代发）`,
+    companyDir: opts.companyDir,
     deptOf: (target: string): string | undefined => {
       const p = opts.people.find((person) => person.id === target)
       return p?.dept

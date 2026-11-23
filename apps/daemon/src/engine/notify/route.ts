@@ -24,6 +24,7 @@
  * 总览=低噪摘要：overview 只投单行摘要件（digest=kind+title+一行核心事实），全文
  * （body 明细）只进 #alert 与部门频道——「低噪只读」的机制化落点。
  */
+import path from 'node:path'
 import type { EventRecord, Notification } from '@studio-next/contract'
 
 /** 一条事件的广播计划：全文（alert/dept）+ 摘要件（overview）+ 目标频道角色 */
@@ -43,6 +44,24 @@ export function reportOutputOf(note: string | undefined): string | undefined {
   return m === null ? undefined : m[1]
 }
 
+/**
+ * 通知文案路径脱敏（展示面卫生；AGENTS.md §五.6「本机路径不出现在对外面」同精神）：
+ * `;output=` 落位是**公司目录内**的绝对路径（output-account `path.join(companyRoot,…)`），
+ * 但通知是精选副本（IM/聊天），正文只应携带**相对公司目录**的位址（如
+ * `reports/综合部/2026-….md`）——主机目录布局（盘名/家目录）属部署面隐私。
+ *
+ * 公司目录前缀剥离：命中前缀 → 相对形（分隔符统一 `/`，跨平台一致文案）；非前缀
+ * （公司目录外/异盘/companyDir 未注入）→ 原样（台账号证据不动，兜底归面板渲染层
+ * chat 页的主机路径脱敏）。纯字符串/路径运算，零 IO。
+ */
+export function relativizeReportPath(target: string, companyDir: string | undefined): string {
+  if (companyDir === undefined || companyDir.trim() === '') return target
+  const rel = path.relative(path.resolve(companyDir), path.resolve(target))
+  // 相对形逃逸（../…）或异盘绝对形=非公司目录前缀——原样返回
+  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return target
+  return rel.split(path.sep).join('/')
+}
+
 /** 事件单行核心事实（摘要件 body——note 首段截断，低噪） */
 function digestFact(event: EventRecord): string {
   const head = (event.note ?? '').split('；')[0]?.split(';')[0] ?? ''
@@ -52,9 +71,10 @@ function digestFact(event: EventRecord): string {
 /**
  * 事件 → 广播计划（不在路由表=undefined 不广播）。from=出面署名（105-刀B-4：bot 代发
  * 带署名——系统面 relay 用 daemon 出面身份，人面四段式 composeSignature 归人面发送侧；
- * 调用方传入，本函数零依赖）。
+ * 调用方传入，本函数零依赖）。companyDir=公司目录根（可选；供 report 落位脱敏为
+ * 相对公司目录的位址——缺省=原样绝对路径，兜底归渲染层）。
  */
-export function planEventBroadcast(event: EventRecord, from: string): EventBroadcastPlan | undefined {
+export function planEventBroadcast(event: EventRecord, from: string, companyDir?: string): EventBroadcastPlan | undefined {
   const issue = event.issue
   const dept = event.dept
   const base = (kind: string, title: string): { message: Notification; digest: Notification } => ({
@@ -65,11 +85,13 @@ export function planEventBroadcast(event: EventRecord, from: string): EventBroad
     case 'GATE_PASS': {
       const output = reportOutputOf(event.note)
       if (output !== undefined) {
-        // 日报产物（岗单收割+归档）：只进部门频道（例行产物不是告警——任务书冻结口径）
+        // 日报产物（岗单收割+归档）：只进部门频道（例行产物不是告警——任务书冻结口径）。
+        // 落位脱敏：绝对路径 → 相对公司目录位址（relativizeReportPath——展示面不带主机布局）
+        const rel = relativizeReportPath(output, companyDir)
         return {
           kind: 'report',
-          message: { kind: 'report', title: `日报产物归档 ${issue}`, body: `落位：${output}`, from },
-          digest: { kind: 'report', title: `日报产物归档 ${issue}`, body: `落位：${output}`, from },
+          message: { kind: 'report', title: `日报产物归档 ${issue}`, body: `落位：${rel}`, from },
+          digest: { kind: 'report', title: `日报产物归档 ${issue}`, body: `落位：${rel}`, from },
           targets: { alert: false, dept, overview: false },
         }
       }

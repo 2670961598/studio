@@ -345,6 +345,10 @@ describe('降级矩阵（缺件不冒充——§三）', () => {
     expect(chat).toContain('chat-embed')
     expect(chat).toContain('id="rooms"')
     expect(chat).toContain('id="sendForm"')
+    // 渲染层脱敏同源（门户嵌装=单源 renderChatBody）：消息体渲染套 maskHostPaths，
+    // 主机绝对路径 → <path>（只读卫生面；chatd 数据不动）
+    expect(chat).toContain('maskHostPaths(message.body)')
+    expect(chat).toContain("'<path>'")
     expect(chat).not.toContain('secret-token')
     const stats = (await jsonOf(chatApp, '/api/stats')) as { stats: { chat: { available: boolean; rooms: number; messages: number } } }
     expect(stats.stats.chat).toEqual({ available: true, rooms: 2, messages: 15 })

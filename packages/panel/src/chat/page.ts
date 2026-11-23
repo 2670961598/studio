@@ -6,8 +6,12 @@
  *
  * 安全（对话页 page.ts 判例）：消息正文一律 textContent 注入（不拼 innerHTML）；
  * 页面无内联用户数据（CONFIG 仅数字/布尔/缺省工号——服务端可信值）；token 永不进页面。
+ * 显示层脱敏（chat/mask.ts 同源）：正文渲染前经 maskHostPaths 把主机绝对路径
+ * （/Volumes/… /Users/… /home/… C:\…）替换为 `<path>`——只读卫生面，不改 chatd 数据。
  * 未启用态：整页降级「未启用」说明（不报错不白屏），API 面 503（fail-closed 不冒充空列表）。
  */
+
+import { HOST_PATH_MASK_SOURCE } from './mask.ts'
 
 /** 页面渲染选项（全部为服务端可信值） */
 export interface ChatPageOptions {
@@ -101,6 +105,12 @@ export function renderChatBody(opts: ChatPageOptions): string {
   }
   function errCode(err) { return (err && err.message && err.message.split(':')[0]) || ''; }
 
+  // 显示层脱敏（chat/mask.ts 同源注入）：主机绝对路径 → <path>（只改显示，不改数据）
+  var HOST_PATH_RE = new RegExp(${JSON.stringify(HOST_PATH_MASK_SOURCE).replaceAll('<', '\\u003c')}, 'g');
+  function maskHostPaths(text) {
+    return text === undefined || text === null ? text : String(text).replace(HOST_PATH_RE, '<path>');
+  }
+
   // chatd 侧失效族（未配置/未连接/不可达/超时）：可读降级文案，不当内部错误渲染
   function isChatdDown(code) {
     return code === 'CHAT_PANEL_DISABLED' || code === 'WB_NOT_CONNECTED' || code === 'WB_UNAVAILABLE' || code === 'WB_TIMEOUT';
@@ -141,7 +151,7 @@ export function renderChatBody(opts: ChatPageOptions): string {
       var node = el('div', 'msg' + (mine ? ' mine' : ''));
       var when = message.createdAt ? new Date(message.createdAt).toLocaleString() : '';
       node.appendChild(el('div', 'who', (message.senderId || '?') + ' · ' + when + ' · #' + String(message.roomSeq)));
-      node.appendChild(el('div', 'body', message.body));
+      node.appendChild(el('div', 'body', maskHostPaths(message.body)));
       box.appendChild(node);
     });
     box.scrollTop = box.scrollHeight;

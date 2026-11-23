@@ -91,6 +91,16 @@ describe('createNotifyRelay.relayEvents（拍边界事件中继）', () => {
     expect(face.calls[0]?.message.kind).toBe('report')
   })
 
+  it('companyDir 注入：日报产物落位文案=相对公司目录（通知不带主机绝对路径）', async () => {
+    const face = recordingFace()
+    const company = '/Volumes/演示盘/companies/studio-dev/company'
+    const relay = createNotifyRelay({ face, from: FROM, companyDir: company })
+    const target = `${company}/reports/综合部/2026-11-21-report-综合部-LOCAL-174.md`
+    await relay.relayEvents([evt('GATE_PASS', { note: `四要件齐;output=${target}` })])
+    expect(face.calls[0]?.message.body).toBe('落位：reports/综合部/2026-11-21-report-综合部-LOCAL-174.md')
+    expect(face.calls[0]?.message.body).not.toContain('/Volumes/')
+  })
+
   it('不在路由表的事件零发送；同签名连发只透传第一条（去重）', async () => {
     const face = recordingFace()
     const relay = createNotifyRelay({ face, from: FROM })
