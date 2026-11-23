@@ -50,9 +50,14 @@ export function noopLinesOf(report: TickReport): string[] {
  */
 export function renderHoldLaneBusy(seq: number, entry: TickDecisionEntry): string {
   const expiresAt = entry.laneExpiresAt !== undefined ? new Date(entry.laneExpiresAt).toISOString() : '-'
+  // LOCAL-329 多槽观测：容量>1 才追加 holders=N/capacity=M（前缀兼容——容量 1 行字节不变）
+  const slots =
+    entry.laneCapacity !== undefined && entry.laneCapacity > 1
+      ? ` holders=${String(entry.laneHolders?.length ?? 0)}/${String(entry.laneCapacity)}`
+      : ''
   return (
     `[serve] tick#${seq} hold：${entry.ticket} code=HOLD_LANE_BUSY lane=${entry.lane ?? '-'} ` +
-    `holder=${entry.laneHolder ?? '-'} expiresAt=${expiresAt}（hold 无台账事件；此行=唯一观测面，签名去重）`
+    `holder=${entry.laneHolder ?? '-'} expiresAt=${expiresAt}${slots}（hold 无台账事件；此行=唯一观测面，签名去重）`
   )
 }
 

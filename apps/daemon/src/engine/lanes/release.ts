@@ -62,6 +62,8 @@ export function releaseTicketLane(
     return releaseWithEpoch(lanes, { lane, ticket, epoch: entry.laneEpoch }, errors)
   }
   const state = lanes.state(lane)
-  if (state.holder !== ticket) return undefined
-  return releaseWithEpoch(lanes, { lane, ticket, epoch: state.epoch }, errors)
+  // LOCAL-329 多槽：按 ticket 精确到本单租约 epoch（容量 1 下与 holder===ticket＋state.epoch 逐字节等价）
+  const mine = state.holders.find((h) => h.ticket === ticket)
+  if (mine === undefined) return undefined
+  return releaseWithEpoch(lanes, { lane, ticket, epoch: mine.epoch }, errors)
 }

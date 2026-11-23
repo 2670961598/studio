@@ -125,7 +125,7 @@ export function createRuntime(deps: EngineDeps, seams: EngineSeams): EngineRunti
       ledger.kvSet(`lease.epoch.${key}`, String(epoch))
     },
   }
-  const lanes = createLaneRegistry(config.laneTtlMs, epochStore)
+  const lanes = createLaneRegistry(config.laneTtlMs, epochStore, config.laneCapacity) // LOCAL-329：容量表注入（缺省=全 1 单持有者）
   const mergeLeases = createMergeLeaseRegistry(config.mergeLeaseTtlMs, epochStore) // 202-P4 合并租约簿（per-engine——merge-run.ts 经 mergeHost 注入）
   const inflight = new Map<TicketId, Inflight>()
   const harvestBook = createHarvestBatchLedger() // 收割批次簿（IMPL-06-03；观测/测试只读——写口仅收割相位）

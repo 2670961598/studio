@@ -109,6 +109,12 @@ export interface EngineConfig {
   limits: ConcurrencyLimits
   /** 泳道租约 TTL（ms；续租/死主回收归后续刀） */
   laneTtlMs: number
+  /**
+   * 泳道容量表（LOCAL-329 泳道容量域，docs/quality/lane-capacity.md；daemon.yaml
+   * `laneCapacity` 解析注入）：lane→并发槽位（缺省/未列=1 单持有者旧语义）。装载期已
+   * fail-closed 校验（JSON 对象、键非空、1..8 整数、坏配拒启）；生产启用＝配置+重启。
+   */
+  laneCapacity?: Readonly<Record<string, number>>
   /** 合并租约 TTL（ms；202-P4——每拍续租+死主回收，跨进程归后续刀） */
   mergeLeaseTtlMs: number
   /** 在工静默告警阈值（ms；只盯已派发态，decide 4 号判定——缺省全档） */

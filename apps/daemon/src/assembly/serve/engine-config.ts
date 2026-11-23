@@ -75,6 +75,7 @@ export function buildServeEngineConfig(input: ServeEngineConfigInput): EngineCon
     ...stallServeOverrides(config), // 看门狗阈值面（studio-dev-505：含按 executor 分级）
     harvestSliceMs: config.harvestSliceMs,
     laneTtlMs: config.laneTtlMs,
+    ...(config.laneCapacity !== undefined ? { laneCapacity: config.laneCapacity } : {}), // LOCAL-329 泳道容量表（缺省不注入=全 1 单持有者）
     mergeLeaseTtlMs: config.mergeLeaseTtlMs,
     breakerThreshold: config.breakerThreshold,
     breakerCooldownMs: config.breakerCooldownMs,

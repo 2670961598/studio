@@ -260,6 +260,10 @@ export interface LaneLeaseState {
   holder: string | null
   /** 租约到期 epoch-ms；holder 非空且 now<expiresAt 才算有主（过期=死主，视同无主） */
   expiresAt?: number
+  /** 泳道容量（LOCAL-329 泳道容量域，docs/quality/lane-capacity.md）：缺省/未提供=1（单持有者旧语义） */
+  capacity?: number
+  /** 在册租约全量快照（LOCAL-329 多槽面）：未提供=单持有者旧语义；提供=按活跃数<容量判空闲 */
+  holders?: readonly { ticket: string; expiresAt?: number }[]
 }
 
 /** 并发四闸阈值（随公司可配，纯入参；docs/17-§2；129-§6.2-R3 人闸入序） */
@@ -525,8 +529,12 @@ function mergeTo(ticket: TicketId, delivered: string): MergeAction {
   return { type: 'merge', code: 'MERGE_DUE', ticket, toState: delivered }
 }
 
-/** 泳道无主判定：无持有人，或持有人租约已过期（死主回收语义：回收归 daemon，decide 视同可用） */
+/** 泳道无主判定：无持有人，或持有人租约已过期（死主回收语义：回收归 daemon，decide 视同可用）。holders 在场=容量域（活跃数<容量，LOCAL-329；容量 1 与前者逐分支等价） */
 function laneFree(lease: LaneLeaseState, now: number): boolean {
+  if (lease.holders !== undefined) {
+    const active = lease.holders.filter((h) => h.expiresAt === undefined || now < h.expiresAt).length
+    return active < Math.max(1, lease.capacity ?? 1)
+  }
   if (lease.holder === null) return true
   return lease.expiresAt !== undefined && now >= lease.expiresAt
 }

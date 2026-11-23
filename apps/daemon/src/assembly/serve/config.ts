@@ -36,6 +36,7 @@ import type { SeatbeltGrant } from '@studio-next/adapters'
 import { parseWhitelistSpec } from '../../engine/directive/index.ts'
 import { parseJudgeSites } from '../../engine/judge/sites129.ts'
 import { parseModelTierTickets } from '../../engine/tier/model-tier.ts'
+import { parseLaneCapacity } from '../../engine/lanes/registry.ts'
 import { parsePersonInflightOverrides } from '../../engine/todoqueue/queue.ts'
 import { parseStallAfterMsByExecutor } from './watchdog-config.ts'
 import { bool, coerceDispatchSelectionChain, coerceSeatbeltGrant, num, rejectRemovedGatewayKey, str, type SeatbeltConfigRaw } from '../serveconfig/coerce.ts'
@@ -372,6 +373,8 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       }
       case 'harvestSliceMs': cfg.harvestSliceMs = num(value, key); break
       case 'laneTtlMs': cfg.laneTtlMs = num(value, key); break
+      case 'laneCapacity': // 泳道容量表（LOCAL-329）：JSON 对象解析即验，坏值＝启动拒（fail-closed）
+        cfg.laneCapacity = parseLaneCapacity(str(value, key)); break
       case 'mergeLeaseTtlMs': cfg.mergeLeaseTtlMs = num(value, key); break
       case 'breakerThreshold': cfg.breakerThreshold = num(value, key); break
       case 'breakerCooldownMs': cfg.breakerCooldownMs = num(value, key); break
@@ -589,12 +592,6 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
 
 // —— 签根供给与 SEC-WD-02 绑定比对（MIG-07 搬迁：serveconfig/coerce.ts 收口，路径名不变）——
 export {
-  GATEWAY_SECRET_ENV,
-  assertPlatformBinding,
-  daemonIdentity,
-  resolveGatewaySecret,
-  type DaemonIdentity,
-  type GatewaySecretOrigin,
-  type GatewaySecretSource,
-  type ResolvedGatewaySecret,
+  GATEWAY_SECRET_ENV, assertPlatformBinding, daemonIdentity, resolveGatewaySecret,
+  type DaemonIdentity, type GatewaySecretOrigin, type GatewaySecretSource, type ResolvedGatewaySecret,
 } from '../serveconfig/coerce.ts'

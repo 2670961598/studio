@@ -73,6 +73,10 @@ export interface ServeConfig extends HrServeConfig, RestartServeConfig, Signatur
   harvestSliceMs: number
   /** 泳道租约 TTL ms */
   laneTtlMs: number
+  /** 泳道容量表（LOCAL-329 泳道容量域，docs/quality/lane-capacity.md）：lane→并发槽位；缺省 {}＝
+   *  全泳道容量 1（单持有者旧语义，零行为变）。daemon.yaml `laneCapacity` JSON 对象解析即验——
+   *  键非空、1..8 整数、坏值启动拒（CONFIG_INVALID fail-closed，同 stallAfterMsByExecutor 风格）。 */
+  laneCapacity?: Readonly<Record<string, number>>
   /** 合并租约 TTL ms（202-P4：TTL+每拍续租+死主回收；缺省同泳道 30min） */
   mergeLeaseTtlMs: number
   /** 断路阈值 N */
@@ -362,6 +366,8 @@ export const DEFAULT_SERVE_CONFIG: ServeConfig = {
   stallKillAfterAlarms: ENGINE_CONFIG_DEFAULTS.stallKillAfterAlarms ?? 2,
   harvestSliceMs: ENGINE_CONFIG_DEFAULTS.harvestSliceMs,
   laneTtlMs: ENGINE_CONFIG_DEFAULTS.laneTtlMs,
+  // LOCAL-329：缺省空表＝全泳道容量 1（既有部署字节不变；启用＝daemon.yaml 加键+重启）
+  laneCapacity: {},
   mergeLeaseTtlMs: ENGINE_CONFIG_DEFAULTS.mergeLeaseTtlMs,
   breakerThreshold: ENGINE_CONFIG_DEFAULTS.breakerThreshold,
   breakerCooldownMs: ENGINE_CONFIG_DEFAULTS.breakerCooldownMs ?? 30 * 60_000,

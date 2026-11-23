@@ -118,6 +118,51 @@ describe('并发三闸基线（17-§2 并发四闸前三闸；F1-05 触顶顺延
   })
 })
 
+describe('泳道容量域（LOCAL-329；docs/quality/lane-capacity.md §3：holders 在场＝活跃数<容量）', () => {
+  const now = T0 + 60_000 // makeInput 缺省 now
+  const live = (ticket: string) => ({ ticket, expiresAt: now + 600_000 })
+  const dead = (ticket: string) => ({ ticket, expiresAt: now - 1 })
+  /** 多槽快照：holder=首持有者（兼容面）、holders=全量、capacity=容量 */
+  const multi = (holders: { ticket: string; expiresAt?: number }[], capacity: number) => ({
+    lane: 'main',
+    holder: (holders[0]?.ticket as string | undefined) ?? null,
+    holders,
+    capacity,
+  })
+
+  it('容量 2：1 活跃 → 有余位照常派发', () => {
+    expect(decide(makeInput({ laneLease: multi([live('P-9')], 2) })).action).toMatchObject({ type: 'dispatch', code: 'DISPATCH' })
+  })
+
+  it('容量 2：2 活跃（满员）→ hold HOLD_LANE_BUSY（超额＝HOLD_LANE_BUSY）', () => {
+    const out = decide(makeInput({ laneLease: multi([live('P-9'), live('P-8')], 2) }))
+    expect(out.action).toMatchObject({ type: 'hold', code: 'HOLD_LANE_BUSY' })
+  })
+
+  it('容量 2：1 活跃+1 过期 → 死主不占槽，照常派发（过期序无关）', () => {
+    expect(decide(makeInput({ laneLease: multi([dead('P-8'), live('P-9')], 2) })).action).toMatchObject({ type: 'dispatch', code: 'DISPATCH' })
+    expect(decide(makeInput({ laneLease: multi([live('P-9'), dead('P-8')], 2) })).action).toMatchObject({ type: 'dispatch', code: 'DISPATCH' })
+  })
+
+  it('容量 1 带 holders 快照＝单持有者旧语义逐分支等价（空=派、活=挡、死=回收派）', () => {
+    expect(decide(makeInput({ laneLease: multi([], 1) })).action).toMatchObject({ type: 'dispatch', code: 'DISPATCH' })
+    expect(decide(makeInput({ laneLease: multi([live('P-9')], 1) })).action).toMatchObject({ type: 'hold', code: 'HOLD_LANE_BUSY' })
+    expect(decide(makeInput({ laneLease: multi([dead('P-9')], 1) })).action).toMatchObject({ type: 'dispatch', code: 'DISPATCH' })
+  })
+
+  it('容量缺省/非法 fail-closed 视同 1（holders 在场而 capacity 未配＝1）', () => {
+    const noCap = { lane: 'main', holder: 'P-9', holders: [live('P-9')] }
+    expect(decide(makeInput({ laneLease: noCap })).action).toMatchObject({ type: 'hold', code: 'HOLD_LANE_BUSY' })
+    expect(decide(makeInput({ laneLease: multi([live('P-9')], 0) })).action).toMatchObject({ type: 'hold', code: 'HOLD_LANE_BUSY' })
+  })
+
+  it('闸序不变：满员且每拍/在途同时触顶仍取泳道首因；容量不绕过断路器', () => {
+    const full = multi([live('P-9'), live('P-8')], 2)
+    expect(decide(makeInput({ laneLease: full, tickActionCount: 5, limits: { maxActionsPerTick: 5, maxInflight: 1 }, inflightCount: 1 })).action).toMatchObject({ type: 'hold', code: 'HOLD_LANE_BUSY' })
+    expect(decide(makeInput({ laneLease: full, breaker: { strikes: 3, threshold: 3 } })).action).toMatchObject({ type: 'hold', code: 'HOLD_BREAKER_OPEN' })
+  })
+})
+
 describe('人闸（129-§6.2-R3 第四闸；studio-dev-167 单B：缺省 1/人，顺延不丢不抢占）', () => {
   it('人忙（count ≥ limit）→ hold PERSON_BUSY（顺延不丢）', () => {
     const out = decide(makeInput({ personGate: { inflightCount: 1, limit: 1 } }))

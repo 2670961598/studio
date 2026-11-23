@@ -302,6 +302,13 @@ export async function stateDiffPhase(
               lane: holdLane.lane,
               laneHolder: holdLane.holder,
               ...(holdLane.expiresAt !== undefined ? { laneExpiresAt: holdLane.expiresAt } : {}),
+              // LOCAL-329 多槽观测（仅容量>1 携带——容量 1 决策载荷字节不变，golden 判据不动）
+              ...(holdLane.capacity > 1
+                ? {
+                    laneHolders: holdLane.holders.map((h) => ({ ticket: h.ticket, ...(h.expiresAt !== undefined ? { expiresAt: h.expiresAt } : {}) })),
+                    laneCapacity: holdLane.capacity,
+                  }
+                : {}),
             }
           : {}),
       })

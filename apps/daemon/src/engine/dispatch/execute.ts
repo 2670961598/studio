@@ -90,9 +90,9 @@ export async function executeDispatch(
     // state-diff 排队时已占泳道（决策即占用）——任何失败路径都必须归还，不留死锁
     const fail = makeDispatchFail({ face: rt.deps.capabilitySupply, ticket, actionType: action.type, attemptOf: () => index.attemptOf(ticket), at: () => new Date(now()).toISOString(), releaseLane: () => {
       // studio-dev-812：释放带 epoch（phase2 acquire 返回值）；无传入(旧调用面)时仅当
-      // holder===ticket 用 state.epoch；否则跳过（禁止无 epoch 释放）。
+      // 本单在册租约存在用其 epoch（LOCAL-329 多槽：按 ticket 精确）；否则跳过（禁止无 epoch 释放）。
       const state = lanes.state(action.lane)
-      const epoch = laneEpoch ?? (state.holder === ticket ? state.epoch : undefined)
+      const epoch = laneEpoch ?? state.holders.find((h) => h.ticket === ticket)?.epoch
       const result = releaseWithEpoch(lanes, { lane: action.lane, ticket, epoch })
       if (!result.ok && result.reason === 'stale-epoch') {
         makeEvent('ESCALATE', { id: ticket } as IssueRecord, index.attemptOf(ticket), tickEvents, {

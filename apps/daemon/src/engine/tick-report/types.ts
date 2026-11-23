@@ -77,6 +77,14 @@ export interface TickDecisionEntry {
   laneHolder?: string | null
   /** 租约到期 epoch-ms（与 laneHolder 同源快照） */
   laneExpiresAt?: number
+  /**
+   * 泳道容量观测（LOCAL-329 泳道容量域，仅容量>1 的 HOLD_LANE_BUSY 决策携带）：
+   * 在册租约全量快照＋容量——多槽下「谁占了几个槽」现场可见。容量 1（含缺省）不注入，
+   * 既有 golden/渲染行为字节不变（golden 精确匹配判据不加字段——docs/quality/lane-capacity.md §4）。
+   */
+  laneHolders?: readonly { ticket: string; expiresAt?: number }[]
+  /** 泳道容量（与 laneHolders 同源；容量>1 时携带） */
+  laneCapacity?: number
 }
 
 /** 动作执行结果（派发/呈批/collect/merge/recycle/stall 面） */
