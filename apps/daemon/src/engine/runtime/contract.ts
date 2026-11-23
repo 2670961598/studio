@@ -34,6 +34,7 @@ import type { HrSyncTickReport } from '../hrsync/hrsync.ts'
 import type { SplitDirectiveInput } from '../split/materialize.ts'
 import type { RoomDuty } from '../rooms/room-duty.ts'
 import type { WorkerKeyDeps } from '../worker-key.ts'
+import type { KimiTokenDeps } from '../dispatch/kimi-token.ts'
 import type { RecordPhaseFactsPort, RecordWirePort } from '../records/index.ts'
 import type { ObservationTickStep } from '../observe/index.ts'
 import type { ConversationTickDeps } from '../conversation/consume.ts'
@@ -84,6 +85,13 @@ export interface EngineDeps extends HarvestRecordingDeps {
    * CLOSE=终局吊销——17-§7；接线件与通道选型裁决见 src/engine/worker-key.ts。
    */
   workerKeys?: WorkerKeyDeps
+  /**
+   * Kimi（kimi-coding provider）token 注入面（可选注入；缺省=纯读模式，行为零变更——
+   * docs/quality/kimi-on-dsh.md §4）：dispatch 相位、dsh 家族执行器选中 kimi-coding 源时
+   * 现读 token 文件（可按需刷新）→ TaskBrief.credentials 注入 KIMI_API_KEY；未路由该源=零行为。
+   * 读取体 src/engine/dispatch/kimi-token.ts；serve 接线 assembly/serve/kimi-token-face.ts。
+   */
+  kimiToken?: KimiTokenDeps
   /**
    * 人事同步消化器（可选注入；缺省不注入=行为零变更——DEV-48 docs/52-§9.2）：
    * 相位 7 尾每拍 drain maxHrSyncPerTick 条 hr_sync_log（补单/挂账/三面执行/重试）。

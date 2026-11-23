@@ -48,7 +48,7 @@ import type { Scheduler } from '../../engine/scheduler.ts'
 import { flowsFromWorkflows } from '../../engine/typeflows.ts'
 import type { MatrixHrFace } from '../../engine/hrsync/hrsync.ts'
 import type { MatrixRoomFace, MatrixRoomFaceContext } from '../../engine/rooms/room-duty.ts'
-import { wireNotifyAssembly } from '../notify/notify.ts'
+import { wireServeNotify } from './notify/notify-face.ts'
 import { conversationAcceptanceOptions, wireServeConversation } from './conversation-face.ts'
 import { wireServeOutboundGate } from '../outbound-gate/wire.ts'
 import type { NotifyBroadcastFace } from '../../engine/notify/broadcast.ts'
@@ -71,6 +71,7 @@ import { wireWorkspaceFace } from './workspace-face.ts'
 import { buildServeEngineConfig } from './engine-config.ts'
 import { loadRootDelegationFace } from './root-delegation/root-face.ts'
 import { wireWorkerKeys } from './root-delegation/worker-key-face.ts'
+import { wireKimiTokenFace } from './kimi-token/kimi-token-face.ts'
 import { wireDerivation } from './derivation.ts'
 import { wireExecutorFace } from './executor-face.ts'
 import { wireServeEvolveSelfCheck } from './evolve-face.ts'
@@ -260,6 +261,9 @@ export function buildServeRuntime(
 
   // worker 级 wkey（17-§7）：按单签发→TaskBrief.credentials env 注入→关单吊销（src/engine/worker-key.ts）
   const workerKeys = wireWorkerKeys(config, identity, clock, log, rootDelegation)
+  // Kimi（kimi-coding）token 注入面（docs/quality/kimi-on-dsh.md §4）：dispatch 前按需刷新＋现读
+  // token 文件→KIMI_API_KEY（v1.4 env 通道）；未路由 kimi-coding 源=零触发零行为（恒装配）。
+  const kimiToken = wireKimiTokenFace({ log })
   // raw platform（未包网关代理的原件）：engine 拿 gated 代理（下）；daemon 自身动作
   //（hr-sync 对账单开单）拿原件——网关收口的是 worker 写路径，非 daemon 自身动作
   const rawPlatform = wirePlatform(config)
@@ -286,27 +290,9 @@ export function buildServeRuntime(
   //    matrixChannels 关=零装配零注入，既有行为字节不变（同 hrSync 纪律）。
   let roomFace: MatrixRoomFace | undefined
   if (config.matrixChannels) roomFace = wireRoomFace(opts?.matrixRoomFace, () => companyState.snapshot)
-  // —— notify 广播中继装配（105-刀B，studio-dev-219；面注入=开，缺省=零装配零行为）：
-  //    装配体拆至 assembly/notify/（三件套：拍边界事件中继+cost 警戒 IM 出口+惊动计量
-  //    PATROL；matrix 挂=IM 副本缺失，面板仍第一落点）。
-  const wrappedNotifyFace = opts?.notifyBroadcast !== undefined ? outbound.wrapNotifyFace(opts.notifyBroadcast) : undefined
-  const wiredNotify =
-    wrappedNotifyFace !== undefined
-      ? wireNotifyAssembly({
-          face: wrappedNotifyFace,
-          company: config.company, companyDir: config.companyDir,
-          heartbeatIssue: engineConfig.heartbeatIssue,
-          actor: engineConfig.actor,
-          deptFallback: engineConfig.deptFallback,
-          ledger,
-          clock,
-          people: companyState.snapshot.people,
-          log,
-        })
-      : undefined
-  if (wiredNotify !== undefined) {
-    log('[serve] notify 广播面已装配：事件中继（拍边界）+cost 警戒即时出口+惊动计量（105-刀B，studio-dev-219）——matrix 挂=IM 副本缺失，面板仍第一落点')
-  }
+  // —— notify 广播中继装配（105-刀B，studio-dev-219）：体=serve/notify-face.ts（20-§十五.三
+  //    先拆再增——面注入=开，缺省=零装配零行为；matrix 挂=IM 副本缺失，面板仍第一落点）。
+  const { face: wrappedNotifyFace, wired: wiredNotify } = wireServeNotify({ face: opts?.notifyBroadcast, outbound, company: config.company, companyDir: config.companyDir, engineConfig, ledger, clock, people: companyState.snapshot.people, log })
   // —— 制作人-岗位持久对话装配（docs/21-§七，studio-dev-646 Phase 1；关=零装配零注入）——
   //    装配体拆至 assembly/serve/conversation-face.ts（先拆后增：runtime 只留一行调用）
   const wiredConversation = wireServeConversation({ config, wrappedNotifyFace, ledger, people: () => companyState.snapshot.people, log })
@@ -329,6 +315,7 @@ export function buildServeRuntime(
     platform: enginePlatform,
     signature: identity.signature, // 署名三值注入（SEC-FC-06/SEC-SIG-01；studio-dev-529）：system＋onBehalfOf=决定人——engine 写路径 actor 取决定人，构造期校验先行
     ...(workerKeys !== undefined ? { workerKeys } : {}),
+    kimiToken, // Kimi via DSH（kimi-on-dsh §4；恒注入——未路由 kimi-coding 源=零行为）
     ...(wiredConversation !== undefined ? { conversation: wiredConversation.tick } : {}),
     ...(hrDigester !== undefined ? { hrSync: hrDigester } : {}),
     ...(config.companyDir !== undefined ? { companyWrite: companyWritePort } : {}), // 公司目录写面（studio-dev-541；DOM-01 唯一写入者）

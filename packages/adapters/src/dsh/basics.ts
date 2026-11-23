@@ -106,21 +106,25 @@ function spawnSyncProbe(bin: string, argv: readonly string[]): { status: number 
  *   - PATH/HOME/TMPDIR/TZ/LANG/LC_*：进程运行必需键与本地化（executor 运行面）
  *   - DSH_*：executor 自有配置命名空间（DSH_PROFILE / DSH_TELEMETRY_MODE 等——dsh 侧
  *     凭证与配置均从该命名空间读，docs/31-§3.5「进程 env 最高层」）
+ *   - GLM_ZCODE_KEY / OPENCODE_GO_API_KEY / KIMI_API_KEY：供应商订阅凭据键（只键名；
+ *     KIMI_API_KEY 为 kimi-coding provider 的 apiKeyEnv——docs/quality/kimi-on-dsh.md §5，
+ *     值由 daemon 经 TaskBrief.credentials 注入，不落 .env/隔离 home 快照）
  * 框架注入键（STUDIO_NEXT_INSTRUCTIONS、TaskBrief.credentials、DSH_TELEMETRY_MODE 覆盖）
  * 不经此集——它们在白名单之后按固定顺序追加（见 spawnHeadless）。
  */
-const ENV_KEY_ALLOWLIST: readonly string[] = ['PATH', 'HOME', 'LANG', 'TZ', 'TMPDIR', 'GLM_ZCODE_KEY', 'OPENCODE_GO_API_KEY']
+const ENV_KEY_ALLOWLIST: readonly string[] = ['PATH', 'HOME', 'LANG', 'TZ', 'TMPDIR', 'GLM_ZCODE_KEY', 'OPENCODE_GO_API_KEY', 'KIMI_API_KEY']
 const ENV_PREFIX_ALLOWLIST: readonly string[] = ['LC_', 'DSH_']
 
 /**
- * credentials 键名封闭枚举（docs/43-附录A-1 凭据键域）：
- *   - DEEPSEEK_API_KEY（类别 model-key）：dsh 的 provider route 凭证（docs/31-A4 真机
- *     错误面指名「export DEEPSEEK_API_KEY in the launching environment」）
+ * credentials 键名封闭枚举（docs/43-附录A-1 凭据键域；provider-key-policy §5 机制保证）：
  *   - STUDIO_TOOLS_WKEY（类别 platform-write）：worker 级平台写凭据（worker-key.ts，17-§7）
+ *   - KIMI_API_KEY（类别 model-key）：kimi-coding provider 订阅凭据（kimi-on-dsh §4/§5；
+ *     daemon dispatch 前现读 token 文件注入——15 分钟 TTL 的 access token，短命按单语义与
+ *     v1.4 通道同构）。DEEPSEEK_*（官方供应商键）照旧拒收——生产者 DSH 专用，不进 worker。
  * 白名单外的键——尤其 PATH / NODE_OPTIONS / LD_* / DYLD_* / SHELL / HOME 类注入键——
  * 结构拒收（CONFIG_INVALID），绝不静默剔除后放行其余。
  */
-const CREDENTIAL_KEY_ENUM: readonly string[] = ['STUDIO_TOOLS_WKEY']
+const CREDENTIAL_KEY_ENUM: readonly string[] = ['STUDIO_TOOLS_WKEY', 'KIMI_API_KEY']
 
 /** 注入高危键点名表（报错信息用——命中即明说这是注入面拒收，不是普通未知键） */
 const INJECTION_KEY_PATTERNS: readonly (readonly [RegExp, string])[] = [

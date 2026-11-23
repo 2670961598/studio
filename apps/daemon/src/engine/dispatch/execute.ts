@@ -33,6 +33,9 @@ import { personDayGateInput } from '../cost-guard/fold.ts'
 import { WORKSPACE_UMASK } from '../jobs/harvest-recon.ts'
 import { sentinelBriefBlock, sentinelDutyForTicket } from '../jobs/sentinel.ts'
 import { instructionsTarget, removeInstructions, writeInstructions } from '../instructions-store.ts'
+// Kimi（kimi-coding）access token 注入面（docs/quality/kimi-on-dsh.md §4）：launch 前现读
+// token 文件（按需刷新）→ TaskBrief.credentials v1.4 env 通道；fail-safe 不抛不阻派发。
+import { kimiTokenCredentials } from './kimi-token.ts'
 // 执行器选择链钩子（studio-dev-620；v2/07 §一）：钩子体驻 work/dispatch-selection.ts，
 // 本文件只留相位 3 一次接线（engine.ts 零改动——#556 拆件后派发体在本文件）。
 import { executionGuardHit, gateDispatchSelection } from '../work/dispatch-selection.ts'
@@ -416,10 +419,20 @@ export async function executeDispatch(
               ...(workerKeys.makeNonce !== undefined ? { makeNonce: workerKeys.makeNonce } : {}),
             })
           : undefined
-      const launchBrief: TaskBrief = {
-        ...taskBrief,
-        ...(minted !== undefined ? { credentials: workerKeyCredentials(minted.token) } : {}),
+      // Kimi via DSH（docs/quality/kimi-on-dsh.md §4）：选中源 provider=kimi-coding 且执行器为
+      // dsh 家族时，launch 前现读（按需刷新）token 文件注入 KIMI_API_KEY（同 v1.4 env 通道；
+      // 凭据值红名单，任何 note/日志/台账永不含）。fail-safe：文件缺失/刷新败=不注入不阻派发
+      //（worker AUTH 失败收场→路由按 auth 类冷却换源，glm-main 兜底）。failover 换源后重建 brief。
+      const buildLaunchBrief = async (): Promise<TaskBrief> => {
+        const kimiCreds = await kimiTokenCredentials(rt.deps.kimiToken, { executorName: adapter.name, provider: routedSource?.provider })
+        return {
+          ...taskBrief,
+          ...(minted !== undefined || kimiCreds !== undefined
+            ? { credentials: { ...(minted !== undefined ? workerKeyCredentials(minted.token) : {}), ...(kimiCreds ?? {}) } }
+            : {}),
+        }
       }
+      const launchBrief: TaskBrief = await buildLaunchBrief()
       // task-135 同 dispatch 内一次换源：launch 抛错=未产生首段输出，且失败类可换源
       //（400/拒答不换——设计 §3）→ 冷却当前源+留痕 MODEL_ROUTING_FAILOVER → 重选下一源
       // → 重绑 overlay/model → 重试 launch 一次（每 dispatch 至多 1 次换源、每源至多 1 次）。
@@ -468,7 +481,7 @@ export async function executeDispatch(
           throw launchErr
         }
         try {
-          launched = await adapter.launch(launchBrief)
+          launched = await adapter.launch(await buildLaunchBrief()) // 换源后重建 brief（新源非 kimi-coding 即不再注入）
         } catch (retryErr) {
           const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr)
           throw new Error(`launch 失败且同 dispatch 换源重试仍失败（${routedSource?.id ?? 'n/a'}；首源错误：${firstMsg}）：${retryMsg}`)
