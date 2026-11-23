@@ -6,6 +6,8 @@
  */
 import type { EventRecord, IssueRecord } from '@studio-next/contract'
 import type { PortalData, PortalStats, TicketDetailView } from './data.ts'
+import type { TicketSortDir, TicketSortKey } from './tickets-view.ts'
+import { ticketRow, ticketsExportName } from './tickets-view.ts'
 import type { SessionIndexRow } from './sessions.ts'
 import { recentSessionsCard, sessionDetailHref } from './pages-sessions.ts'
 import { badge, clip, emptyState, esc, eventBadgeClass, fmtAgo, fmtEpoch, fmtTime, fmtUsd, icon, stateBadgeClass, url } from './html.ts'
@@ -130,46 +132,116 @@ ${quickCard}</div>
 </div>`
 }
 
-/** 单子列表页 body（§1.2：状态 chips＋搜索＋分页＋表格） */
+/** 单子列表页 body（§1.2 状态 chips＋搜索＋分页＋表格；§十.2 多选筛选/负责人/排序/导出） */
 export function ticketsBody(
   data: PortalData,
-  q: { state: string | undefined; search: string; page: number; size: number },
+  q: { states: readonly string[]; assignee: string | undefined; search: string; sort: TicketSortKey; dir: TicketSortDir; page: number; size: number },
 ): string {
-  const result = data.ticketList({ state: q.state, search: q.search })
+  const result = data.ticketQuery({ states: q.states, assignee: q.assignee, search: q.search, sort: q.sort, dir: q.dir })
   const pages = Math.max(1, Math.ceil(result.total / q.size))
   const page = Math.min(q.page, pages)
   const start = (page - 1) * q.size
   const items = result.items.slice(start, start + q.size)
-  const qs = (over: Record<string, string | undefined>): string => {
+  // 参数续传（§十.2：chips/负责人/排序/方向全部进查询串；分页与导出链接同源）
+  const qs = (over: { states?: readonly string[]; assignee?: string; page?: string; sort?: TicketSortKey; dir?: TicketSortDir; q?: string } = {}): string => {
     const params = new URLSearchParams()
-    const state = over['state'] !== undefined ? over['state'] : q.state
-    const search = over['search'] !== undefined ? over['search'] : q.search
-    const pageOver = over['page']
-    if (state !== undefined) params.set('state', state)
+    const states = over.states ?? q.states
+    for (const s of states) params.append('states', s)
+    const assignee = over.assignee !== undefined ? over.assignee : q.assignee
+    if (assignee !== undefined && assignee !== '') params.set('assignee', assignee)
+    const search = over.q !== undefined ? over.q : q.search
     if (search !== '') params.set('q', search)
+    const sort = over.sort ?? q.sort
+    if (sort !== 'updated') params.set('sort', sort)
+    const dir = over.dir ?? q.dir
+    if (dir !== 'desc') params.set('dir', dir)
+    const pageOver = over.page
     if (pageOver !== undefined && pageOver !== '1') params.set('page', pageOver)
     const s = params.toString()
     return s === '' ? '/tickets' : `/tickets?${s}`
   }
+  // 导出链接：与页面同一查询串＋format（§十.2；上限/CSV 转义在端点侧单源）
+  const exportHref = (format: 'csv' | 'json'): string => {
+    const params = new URLSearchParams()
+    for (const s of q.states) params.append('states', s)
+    if (q.assignee !== undefined && q.assignee !== '') params.set('assignee', q.assignee)
+    if (q.search !== '') params.set('q', q.search)
+    if (q.sort !== 'updated') params.set('sort', q.sort)
+    if (q.dir !== 'desc') params.set('dir', q.dir)
+    params.set('format', format)
+    return `/api/tickets/export?${params.toString()}`
+  }
 
+  // 状态 chips：复选（GET 表单 checkbox——无 JS 可用，勾选后「应用」提交；§十.2）
   const chips = `<div class="chips">
-    <a class="chip chip-link${q.state === undefined ? ' active' : ''}" href="${esc(qs({ state: undefined, page: '1' }))}">全部<span class="count num">${result.available ? String(result.total) : '—'}</span></a>
+    <a class="chip chip-link" href="${esc(qs({ states: [], q: '', page: '1', assignee: '' }))}">全部<span class="count num">${result.available ? String(result.total) : '—'}</span></a>
     ${result.states
       .map(
         (s) =>
-          `<a class="chip chip-link${q.state === s.state ? ' active' : ''}" href="${esc(qs({ state: s.state, page: '1' }))}">${esc(s.state)}<span class="count num">${s.count}</span></a>`,
+          `<label class="chip chip-check"><input type="checkbox" name="states" value="${esc(s.state)}"${q.states.includes(s.state) ? ' checked' : ''}>${esc(s.state)}<span class="count num">${s.count}</span></label>`,
       )
       .join('\n    ')}
   </div>`
 
-  const toolbar = `<div class="toolbar">
+  const assigneeOptions = data
+    .org()
+    .people.map((p) => `<option value="${esc(p.id)}"${q.assignee === p.id ? ' selected' : ''}>${esc(p.id)} ${esc(p.name)}</option>`)
+    .join('\n      ')
+
+  const toolbar = `<form class="toolbar tickets-toolbar" method="get" action="/tickets" id="ticketsFilter">
   ${chips}
-  <form class="search" method="get" action="/tickets">
-    ${q.state !== undefined ? `<input type="hidden" name="state" value="${esc(q.state)}">` : ''}
+  <div class="filters">
     <input type="search" name="q" value="${esc(q.search)}" placeholder="搜索单号 / 标题 / 负责人…" aria-label="搜索单子">
-    <button class="btn" type="submit">${icon('search', 14)}搜索</button>
-  </form>
-</div>`
+    <select name="assignee" aria-label="负责人">
+      <option value="">全部负责人</option>
+      ${assigneeOptions}
+    </select>
+    <select name="sort" aria-label="排序字段">
+      <option value="updated"${q.sort === 'updated' ? ' selected' : ''}>按更新时间</option>
+      <option value="id"${q.sort === 'id' ? ' selected' : ''}>按单号</option>
+    </select>
+    <select name="dir" aria-label="排序方向">
+      <option value="desc"${q.dir === 'desc' ? ' selected' : ''}>降序</option>
+      <option value="asc"${q.dir === 'asc' ? ' selected' : ''}>升序</option>
+    </select>
+    <button class="btn" type="submit">${icon('search', 14)}应用</button>
+    <span class="export-btns">
+      <a class="btn ghost" href="${esc(exportHref('csv'))}" data-export="csv" download-name="${esc(ticketsExportName('csv', Date.now()))}" title="导出当前筛选结果（≤5000 行）">${icon('report', 13)}CSV</a>
+      <a class="btn ghost" href="${esc(exportHref('json'))}" data-export="json" download-name="${esc(ticketsExportName('json', Date.now()))}" title="导出当前筛选结果（≤5000 行）">${icon('report', 13)}JSON</a>
+    </span>
+  </div>
+</form>
+<script>
+(function () {
+  'use strict';
+  var form = document.getElementById('ticketsFilter');
+  if (!form) return;
+  // 勾选 chips/换选排序即提交（无 JS 时「应用」按钮兜底；CSP 友好——无内联处理器）
+  form.addEventListener('change', function (ev) {
+    var t = ev.target;
+    if (t && (t.type === 'checkbox' || t.tagName === 'SELECT')) form.submit();
+  });
+  // 导出：fetch → 浏览器端 Blob 落盘（§十.2；无 JS 时同链接原生下载兜底）
+  form.querySelectorAll('a[data-export]').forEach(function (link) {
+    link.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      fetch(link.href).then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + String(res.status));
+        return res.blob();
+      }).then(function (blob) {
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = link.getAttribute('download-name') || 'tickets.' + link.getAttribute('data-export');
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+      }).catch(function () { window.location.assign(link.href); });
+    });
+  });
+})();
+</script>`
 
   const table =
     result.available && result.total > 0
@@ -200,7 +272,7 @@ ${items
 </div>`
       : `<div class="card"><div class="card-body">${
           result.available
-            ? emptyState('search', q.search === '' && q.state === undefined ? '暂无单子' : '没有匹配的单子', '换个关键字或状态试试；清空筛选看全部')
+            ? emptyState('search', q.search === '' && q.states.length === 0 ? '暂无单子' : '没有匹配的单子', '换个关键字或状态试试；清空筛选看全部')
             : emptyState('ticket', '未接单子平台', '启动时加 --platform-root <目录>（缺省 <companyDir>/../platform）——门户只读，不代建平台目录')
         }</div></div>`
 
@@ -259,11 +331,48 @@ ${view.events
   .join('\n')}
 </div>`
 
+  // 操作区（§十.4）：指令台派工 / 聊天询问 / 复制单号与链接——门户零写，
+  // 「让负责人处理」只构造指令台链接（发送仍由确认卡人工确认，经 chatd 唤醒 daemon）
+  const actions = `<div class="ticket-actions">
+  ${r.assignee !== undefined ? `<a class="btn" href="/console?person=${url(r.assignee)}&ticket=${url(r.id)}" title="在指令台给 ${esc(r.assignee)} 发派工指令（经聊天 @唤醒 daemon）">${icon('send', 14)}让负责人处理（指令台）</a>` : ''}
+  <a class="btn ghost" href="/chat?draft=${url(`关于 ${r.id}（${r.title}）：`)}" title="去聊天室询问（预填草稿）">${icon('chat', 14)}在聊天中询问</a>
+  <button class="btn ghost" type="button" data-copy="${esc(r.id)}" title="复制单号">${icon('copy', 13)}复制单号</button>
+  <button class="btn ghost" type="button" data-copy-link="/tickets/${url(r.id)}" title="复制单子链接">${icon('link', 13)}复制链接</button>
+</div>
+<script>
+(function () {
+  'use strict';
+  document.querySelectorAll('button[data-copy], button[data-copy-link]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var text = button.getAttribute('data-copy') !== null
+        ? button.getAttribute('data-copy')
+        : window.location.origin + button.getAttribute('data-copy-link');
+      var done = function () {
+        var old = button.textContent;
+        button.textContent = '已复制 ✓';
+        window.setTimeout(function () { button.textContent = old; }, 1500);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done);
+      else {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+        done();
+      }
+    });
+  });
+})();
+</script>`
+
   return `<a class="back" href="/tickets">${icon('back', 14)}返回单子列表</a>
 <div class="card">
   <div class="detail-head">
     <div class="row"><span class="id">${esc(r.id)}</span>${badge(r.state, stateBadgeClass(r.state))}</div>
     <h1>${esc(r.title)}</h1>
+    ${actions}
   </div>
   ${meta}
 </div>
@@ -313,7 +422,7 @@ export function activityJson(e: EventRecord): Record<string, unknown> {
   return { id: e.id, ts: e.ts, company: e.company, issue: e.issue, event: e.event, actor: e.actor, level: e.level, dept: e.dept, note: e.note }
 }
 
-/** 单据 → /api/tickets 行 */
+/** 单据 → /api/tickets 行（行形状单源在 tickets-view.ts ticketRow——页面/导出/API 三处同源） */
 export function ticketJson(t: IssueRecord): Record<string, unknown> {
-  return { id: t.id, title: t.title, state: t.state, assignee: t.assignee, dept: t.dept, lane: t.lane, level: t.level, parent: t.parent, updated: t.updated }
+  return ticketRow(t)
 }

@@ -8,7 +8,7 @@
  */
 import { maskHostPaths } from '@studio-next/panel/chat'
 import type { AttemptFileResult, SessionArchive, SessionDetailView, SessionIndexRow } from './sessions.ts'
-import { badge, clip, emptyState, esc, fmtBytes, fmtEpoch, icon, url } from './html.ts'
+import { badge, clip, emptyState, esc, fmtBytes, fmtEpoch, fmtEventMs, icon, url } from './html.ts'
 import { pageHead } from './layout.ts'
 
 /** 列表页查询（server 侧已校验/钳位） */
@@ -162,7 +162,7 @@ function timelineEvents(view: SessionDetailView): string {
   for (let i = 0; i < view.events.length; i += 100) groups.push(view.events.slice(i, i + 100))
   const render = (ev: (typeof view.events)[number]): string =>
     `      <div class="ev ev-${esc(ev.kind)}">
-        <span class="ev-time num">${esc(fmtEpoch(ev.time))}</span>
+        <span class="ev-time num">${esc(fmtEventMs(ev.time))}</span>
         ${badge(kindLabel(ev.kind), kindBadge(ev.kind))}
         <div class="ev-main">
           <div class="ev-head"><b>${esc(maskHostPaths(ev.title))}</b>${ev.detail === '' ? '' : `<span class="ev-detail">${esc(maskHostPaths(ev.detail))}</span>`}</div>
@@ -205,6 +205,10 @@ export function sessionsDetailBody(view: SessionDetailView, tab: SessionsTab, re
     <div class="row"><span class="id"><a href="/tickets/${url(view.ticket)}">${esc(view.ticket)}</a></span>${badge(`att${String(view.attempt)}`, 'b-info')}<span class="muted">·</span><a href="/sessions?person=${url(view.person)}">${esc(view.person)}</a><span class="muted">${esc(view.dept)}</span></div>
     <h1>工位会话 · ${esc(view.ticket)} 第 ${String(view.attempt)} 次尝试</h1>
     <div class="sub">岗位 ${esc(view.person)}（${esc(view.dept)}） · 更新 ${esc(fmtEpoch(view.updatedAtMs))}${view.sessionId !== null ? ` · 会话 <code>${esc(view.sessionId)}</code>` : ' · 无会话轨迹'}</div>
+    <div class="ticket-actions">
+      <a class="btn" href="/console?person=${url(view.person)}&ticket=${url(view.ticket)}" title="在指令台给 ${esc(view.person)} 发派工指令（经聊天 @唤醒 daemon）">${icon('send', 14)}让负责人处理（指令台）</a>
+      <a class="btn ghost" href="/chat?draft=${url(`关于 ${view.ticket} 第 ${String(view.attempt)} 次尝试（${view.person}）：`)}" title="去聊天室询问（预填草稿）">${icon('chat', 14)}在聊天中询问</a>
+    </div>
   </div>
   ${chips}
 </div>`

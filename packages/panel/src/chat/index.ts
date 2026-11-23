@@ -36,3 +36,5 @@ export {
 } from './server.ts'
 export { renderChatBody, renderChatPage, type ChatPageOptions } from './page.ts'
 export { HOST_PATH_MASK_SOURCE, maskHostPaths } from './mask.ts'
+export { LINK_RE_SOURCE, isSafeLinkHref, linkifySegments, type LinkSegment } from './linkify.ts'
+export { chatPageScript, type ChatScriptConfig } from './page-script.ts'

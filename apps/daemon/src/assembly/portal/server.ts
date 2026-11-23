@@ -30,6 +30,8 @@ import { activityJson, overviewBody, ticketDetailBody, ticketJson, ticketsBody }
 import { parseSessionsTab, sessionsDetailBody, sessionsFileBody, sessionsListBody } from './pages-sessions.ts'
 import { SESSIONS_PERSON_RE, SESSIONS_TICKET_RE, type AttemptFileResult } from './sessions.ts'
 import { createPortalData, extractMission, type ChatStatsView, type PortalData } from './data.ts'
+import { CONSOLE_SEND_BODY_MAX, consoleBody, consoleTemplate, parseConsoleSendBody, sendConsoleMessage } from './console.ts'
+import { parseDirParam, parseSortParam, parseStatesParam, ticketsCsv, ticketsExportJson, ticketsExportName, TICKETS_EXPORT_MAX_ROWS, type TicketSortDir, type TicketSortKey } from './tickets-view.ts'
 import { emptyState, esc, icon } from './html.ts'
 import { portalShell, type ShellOptions } from './layout.ts'
 
@@ -115,6 +117,37 @@ function errorBody(status: number, code: string, message: string): string {
 <div class="card"><div class="card-body">${emptyState('dot', `HTTP ${String(status)}`, '用浏览器返回上一页，或从左侧导航重新进入。')}</div></div>`
 }
 
+/** 单子查询参解析（§十.2：states 多选＋旧参 state 合并＋assignee＋sort/dir；/tickets 与 API/导出共用单源） */
+function parseTicketQuery(c: { req: { query(name: string): string | undefined; queries(name: string): string[] | undefined } }): {
+  states: string[]
+  assignee: string | undefined
+  search: string
+  sort: TicketSortKey
+  dir: TicketSortDir
+  page: number
+  size: number
+} | null {
+  const legacyState = textParam(c.req.query('state'), 64)
+  const search = textParam(c.req.query('q'), 100)
+  const assignee = textParam(c.req.query('assignee'), 64)
+  const sortRaw = textParam(c.req.query('sort'), 16)
+  const dirRaw = textParam(c.req.query('dir'), 8)
+  const size = intParam(c.req.query('size'), 25, 10, 100)
+  const page = intParam(c.req.query('page'), 1, 1, 1_000_000)
+  if (legacyState === null || search === null || assignee === null || sortRaw === null || dirRaw === null || size === null || page === null) return null
+  // 重复 states= 与旧 state= 合并 → 逗号串 → parseStatesParam（去空段/去重/≤16，宽容不报错）
+  const states = parseStatesParam([...(c.req.queries('states') ?? []), legacyState ?? ''].filter((s) => s !== '').join(','))
+  return {
+    states,
+    assignee: assignee ?? undefined,
+    search: search ?? '',
+    sort: parseSortParam(sortRaw),
+    dir: parseDirParam(dirRaw),
+    page,
+    size,
+  }
+}
+
 /** 门户 Hono app（纯工厂——测试可 app.request() 直打，不占端口） */
 export function createPortalApp(opts: PortalAppOptions): Hono {
   const data = opts.data
@@ -131,6 +164,8 @@ export function createPortalApp(opts: PortalAppOptions): Hono {
       body,
       ...(so ?? {}),
       ...(chatBadge !== undefined ? { chatBadge } : {}),
+      // 全局搜索（§十.4）：在册工号名单 → /sessions?person= 直达；否则落到 /tickets?q=
+      search: { people: data.org().people.map((p) => p.id) },
     }
     return portalShell(shellOpts)
   }
@@ -149,14 +184,11 @@ export function createPortalApp(opts: PortalAppOptions): Hono {
   // —— 页面 ——
   app.get('/', async (c) => c.html(shell('概览', 'overview', overviewBody(data, await data.stats()))))
   app.get('/tickets', (c) => {
-    const state = textParam(c.req.query('state'), 64)
-    const search = textParam(c.req.query('q'), 100)
-    const size = intParam(c.req.query('size'), 25, 10, 100)
-    const page = intParam(c.req.query('page'), 1, 1, 1_000_000)
-    if (state === null || search === null || size === null || page === null) {
-      return c.html(shell('单子', 'tickets', errorBody(400, 'bad-query', '查询参数非法：state/q 过长或含控制字符；page/size 须为整数')), 400)
+    const q = parseTicketQuery(c)
+    if (q === null) {
+      return c.html(shell('单子', 'tickets', errorBody(400, 'bad-query', '查询参数非法：states/assignee/q 过长或含控制字符；page/size 须为整数')), 400)
     }
-    return c.html(shell('单子', 'tickets', ticketsBody(data, { state, search: search ?? '', page, size })))
+    return c.html(shell('单子', 'tickets', ticketsBody(data, q)))
   })
   app.get('/tickets/:id', (c) => {
     const id = c.req.param('id')
@@ -267,14 +299,14 @@ export function createPortalApp(opts: PortalAppOptions): Hono {
     return c.json({ ok: true, count: events.length, events: events.map(activityJson) })
   })
   app.get('/api/tickets', (c) => {
-    const state = textParam(c.req.query('state'), 64)
-    const search = textParam(c.req.query('q'), 100)
+    const q = parseTicketQuery(c)
+    if (q === null) {
+      return c.json(jsonError('bad-query', '查询参数非法：states/assignee/q 过长或含控制字符；limit/offset 须为非负整数'), 400)
+    }
     const limit = intParam(c.req.query('limit'), 50, 1, API_MAX_LIMIT)
     const offset = intParam(c.req.query('offset'), 0, 0, 1_000_000)
-    if (state === null || search === null || limit === null || offset === null) {
-      return c.json(jsonError('bad-query', '查询参数非法：state/q 过长或含控制字符；limit/offset 须为非负整数'), 400)
-    }
-    const r = data.ticketList({ state, search })
+    if (limit === null || offset === null) return c.json(jsonError('bad-query', 'limit/offset 须为非负整数'), 400)
+    const r = data.ticketQuery({ states: q.states, assignee: q.assignee, search: q.search, sort: q.sort, dir: q.dir })
     return c.json({
       ok: true,
       available: r.available,
@@ -284,6 +316,24 @@ export function createPortalApp(opts: PortalAppOptions): Hono {
       states: r.states,
       items: r.items.slice(offset, offset + limit).map(ticketJson),
     })
+  })
+  // 单子导出（§十.2：GET 表单同源筛选；CSV=UFT-8 BOM＋RFC4180，JSON=形状单源 ticketsExportJson；
+  // 5000 行上限 capped 标记——不静默截断）。注册在 /api/tickets/:id 之前（路径段 :id 会吞 export）。
+  app.get('/api/tickets/export', (c) => {
+    const formatRaw = c.req.query('format')
+    const format = formatRaw === 'csv' ? 'csv' : formatRaw === 'json' ? 'json' : null
+    if (format === null) return c.json(jsonError('bad-query', 'format 须为 csv|json'), 400)
+    const q = parseTicketQuery(c)
+    if (q === null) return c.json(jsonError('bad-query', '查询参数非法：states/assignee/q 过长或含控制字符'), 400)
+    const r = data.ticketQuery({ states: q.states, assignee: q.assignee, search: q.search, sort: q.sort, dir: q.dir })
+    const items = r.items.slice(0, TICKETS_EXPORT_MAX_ROWS)
+    if (format === 'csv') {
+      return c.body(ticketsCsv(items), 200, {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="${ticketsExportName('csv', Date.now())}"`,
+      })
+    }
+    return c.json(ticketsExportJson(items, r.total))
   })
   app.get('/api/tickets/:id', (c) => {
     const id = c.req.param('id')
@@ -355,8 +405,43 @@ export function createPortalApp(opts: PortalAppOptions): Hono {
     return c.json({ ok: true, total: matched.length, ...(search !== undefined ? { q: (search ?? '').trim() } : {}), files })
   })
 
+  // —— 指令台（§十.1：可操作页面＋发送编排；唯一写通道仍是 chatd 消息 → @工号 wake → daemon） ——
+  app.get('/console', (c) => {
+    const person = textParam(c.req.query('person'), 64)
+    const ticket = textParam(c.req.query('ticket'), 128)
+    const templateRaw = textParam(c.req.query('template'), 32)
+    const room = textParam(c.req.query('room'), 96)
+    if (person === null || ticket === null || templateRaw === null || room === null) {
+      return c.html(shell('指令台', 'console', errorBody(400, 'bad-query', '查询参数非法：person/ticket/template/room 过长或含控制字符')), 400)
+    }
+    if (person !== undefined && person !== '' && !data.org().people.some((p) => p.id === person)) {
+      return c.html(shell('指令台', 'console', errorBody(400, 'bad-person', `岗位 ${person} 不在组织快照（从 /org 或单子详情按钮进入）`)), 400)
+    }
+    if (ticket !== undefined && ticket !== '' && !TICKET_ID_RE.test(ticket)) {
+      return c.html(shell('指令台', 'console', errorBody(400, 'bad-ticket-id', `单号 ${ticket} 不是票形 id（^[A-Za-z0-9][A-Za-z0-9._-]*$）`)), 400)
+    }
+    // templateId 宽容回落（白名单外落缺省 create——链接可手工改坏不炸页面）；room 缺省空=页面选 room-1
+    const body = consoleBody(data, { person: person ?? '', ticket: ticket ?? '', templateId: consoleTemplate(templateRaw).id, room: room ?? '' })
+    return c.html(shell('指令台', 'console', body))
+  })
+  app.post('/api/console/send', async (c) => {
+    const raw = await c.req.text()
+    if (raw.length > CONSOLE_SEND_BODY_MAX) return c.json(jsonError('bad-json', `请求体过大（>${String(CONSOLE_SEND_BODY_MAX)} 字符）`), 400)
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      return c.json(jsonError('bad-json', '请求体不是合法 JSON'), 400)
+    }
+    const r = parseConsoleSendBody(parsed)
+    if (!r.ok) return c.json(jsonError(r.fail.code, r.fail.message), r.fail.status)
+    const outcome = await sendConsoleMessage({ chat: opts.chat, data, req: r.value })
+    if (!outcome.ok) return c.json(jsonError(outcome.code, outcome.message), outcome.status)
+    return c.json({ ok: true, seq: outcome.seq, roomSeq: outcome.roomSeq, roomId: outcome.roomId, message: outcome.message, chatUrl: outcome.chatUrl })
+  })
+
   // —— 聊天（createChatApp 同端口挂载：GET /chat ＋ /api/chat/*；portal 只注入壳渲染器） ——
-  app.route('/', createChatApp({ ...opts.chat, pageRenderer: chatPageRenderer(shell) }))
+  app.route('/', createChatApp({ ...opts.chat, peopleUrl: '/api/org', pageRenderer: chatPageRenderer(shell) }))
 
   return app
 }

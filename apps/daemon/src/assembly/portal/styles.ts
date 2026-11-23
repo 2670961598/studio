@@ -401,6 +401,65 @@ const SESSIONS_ORG = `
   .ok-dot { color: var(--ok); }
 `
 
+/** §十 v3 第二刀：全局搜索/指令台/单子筛选导出/详情操作区/聊天增强（房间·消息过滤＋@补全＋linkify） */
+const V3 = `
+  /* —— 全局搜索（§十.4：工号 → /sessions?person=；否则 /tickets?q=；/ 聚焦） —— */
+  .gsearch { display: flex; gap: 6px; align-items: center; margin-left: auto; max-width: 340px; flex: 1; }
+  .gsearch input { flex: 1; min-width: 90px; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg2); color: var(--fg); font: inherit; font-size: 13px; }
+  .gsearch input:focus { outline: none; border-color: var(--accent); }
+  .gsearch kbd { border: 1px solid var(--line-strong); border-radius: 5px; padding: 1px 6px; font-size: 11px; color: var(--fg-muted); background: var(--bg2); }
+  /* —— 侧栏脚注（§十.4：写通道归属声明） —— */
+  .foot-note { margin-top: 6px; font-size: 11px; color: var(--fg-subtle); line-height: 1.5; padding: 0 8px; }
+  /* —— 单子筛选：复选 chips＋过滤器行＋导出（§十.2） —— */
+  .chip-check { cursor: pointer; user-select: none; }
+  .chip-check input { margin: 0 2px 0 0; accent-color: var(--accent); vertical-align: -1px; }
+  .chip-check input:checked ~ * { color: var(--accent); }
+  .chip-check:has(input:checked) { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .tickets-toolbar .filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+  .tickets-toolbar .filters input[type="search"] { flex: 1; min-width: 180px; padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg2); color: var(--fg); font: inherit; font-size: 13px; }
+  .tickets-toolbar .filters select { padding: 7px 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg2); color: var(--fg); font: inherit; font-size: 13px; max-width: 190px; }
+  .export-btns { display: inline-flex; gap: 6px; margin-left: auto; }
+  /* —— 详情操作区（§十.4：指令台/聊天/复制——零写、发送经确认卡） —— */
+  .ticket-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 4px; }
+  /* —— 指令台（§十.1：双列栅格＋确认卡＋审计） —— */
+  .console-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; }
+  .console-grid .field span { display: block; font-size: 12px; color: var(--fg-muted); margin-bottom: 4px; }
+  .console-grid .field span:first-child { font-size: 12.5px; color: var(--fg-muted); }
+  .console-grid select, .console-grid input, .console-grid textarea { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg2); color: var(--fg); font: inherit; font-size: 13px; }
+  .console-grid .span-2 { grid-column: span 2; }
+  .console-grid textarea { min-height: 132px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.55; }
+  .field-hint { display: block; font-size: 11px; color: var(--fg-subtle); margin-top: 3px; }
+  .console-confirm { margin-top: 12px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); border-radius: 10px; background: var(--warn-soft); }
+  .console-confirm h3 { margin: 0 0 6px; font-size: 13px; color: var(--warn); }
+  .console-confirm .cc-row { font-size: 12.5px; margin: 3px 0; }
+  .console-confirm .cc-label { color: var(--fg-muted); margin-right: 6px; }
+  .console-confirm .cc-text { white-space: pre-wrap; background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-top: 6px; font-size: 12.5px; line-height: 1.55; word-break: break-word; }
+  .console-confirm .cc-hint { font-size: 11.5px; color: var(--fg-subtle); margin-top: 6px; }
+  .console-confirm .cc-btns { display: flex; gap: 8px; margin-top: 10px; }
+  .console-status { margin-top: 10px; font-size: 13px; min-height: 18px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+  .audit-list { display: flex; flex-direction: column; gap: 0; }
+  .audit-row { display: flex; gap: 10px; align-items: baseline; padding: 7px 10px; border-top: 1px solid var(--line); font-size: 12.5px; }
+  .audit-row:first-child { border-top: 0; }
+  .audit-row .t { color: var(--fg-muted); font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 11px; }
+  .audit-row .grow { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .audit-row .who { color: var(--fg-muted); font-size: 11px; white-space: nowrap; }
+  .audit-row .ok { color: var(--ok); font-size: 11px; white-space: nowrap; }
+  .audit-row .err { color: var(--danger); font-size: 11px; white-space: nowrap; }
+  /* —— 聊天增强（§十.3：房间/消息过滤＋@补全＋linkify——嵌入态同 DOM id） —— */
+  .chat-embed aside input[type="search"], .chat-embed #roomFilter { width: 100%; box-sizing: border-box; margin: 2px 0 6px; padding: 6px 9px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg2); color: var(--fg); font: inherit; font-size: 12.5px; }
+  .chat-embed .msg-tools { display: flex; gap: 8px; align-items: center; padding: 8px 16px 0; }
+  .chat-embed .msg-tools input { flex: 1; max-width: 340px; padding: 5px 9px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg2); color: var(--fg); font: inherit; font-size: 12.5px; }
+  .chat-embed .msg-tools span { color: var(--fg-subtle); font-size: 12px; }
+  .chat-embed mark { background: #fff8c5; color: var(--fg); border-radius: 2px; padding: 0 1px; }
+  :root[data-theme="light"] .chat-embed mark { background: #fff1a8; }
+  .chat-embed .msg .body a { color: var(--accent); word-break: break-all; }
+  .chat-embed form { position: relative; }
+  .chat-embed #mentionBox { position: absolute; bottom: 100%; left: 14px; right: 14px; max-width: 420px; max-height: 240px; overflow: auto; background: var(--bg1); border: 1px solid var(--line-strong); border-radius: 10px; box-shadow: var(--shadow-1); z-index: 5; }
+  .chat-embed .mention-item { display: flex; gap: 8px; align-items: baseline; width: 100%; text-align: left; border: 0; background: transparent; padding: 7px 10px; cursor: pointer; font: inherit; font-size: 13px; }
+  .chat-embed .mention-item.active, .chat-embed .mention-item:hover { background: var(--bg2); }
+  .chat-embed .mention-item span { color: var(--fg-muted); font-size: 12px; }
+`
+
 /** 门户样式表全文（layout.ts 以 <style> 内联——零外链，CSP 友好） */
 export const PORTAL_CSS = `:root {${TOKENS_DARK}}
 :root[data-theme="light"] {${TOKENS_LIGHT}}
@@ -412,4 +471,5 @@ ${LAYOUT}
 ${COMPONENTS}
 ${SESSIONS_ORG}
 ${CHAT}
+${V3}
 ${RESPONSIVE}`

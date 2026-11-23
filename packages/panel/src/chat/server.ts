@@ -43,6 +43,11 @@ export interface ChatAppOptions {
   /** 页面轮询间隔 ms（缺省 2000；非正数落回缺省） */
   readonly pollIntervalMs?: number
   /**
+   * @补全人员源（§十.3，可选：门户传 '/api/org'——页内输入 @ 弹在册工号列表；
+   * 缺省不传=补全关闭，监控面行为零变化。值须以 / 开头，否则注入时丢弃。）
+   */
+  readonly peopleUrl?: string
+  /**
    * 页面渲染器（可选，加法式注入位——docs/plan/11-公司门户-2026-11-23.md §1.2）：
    * 缺省=renderChatPage 独立整页（现行为零变化）；门户装配方传入「门户壳包 renderChatBody」
    * 的渲染器以统一导航与主题——业务脚本/类名/路由仍单源在本包，不改聊天业务逻辑。
@@ -173,7 +178,31 @@ export function createChatApp(opts: ChatAppOptions): Hono {
   const app = new Hono()
   const renderPage = opts.pageRenderer ?? renderChatPage
 
-  app.get('/chat', (c) => c.html(renderPage({ enabled, defaultActorId, pollIntervalMs: pollMs })))
+  /** 查询参净化（§十.3 预填/预选）：控制字符剥离＋长度钳位；空/全空白=未提供。
+   *  宽松过界（不 400）——预填失败无副作用，坏参=回落缺省行为。 */
+  const cleanPageParam = (raw: string | undefined, max: number): string | undefined => {
+    if (raw === undefined) return undefined
+    const cleaned = raw.replaceAll(/[\u0000-\u001f\u007f]/g, '').trim()
+    if (cleaned === '') return undefined
+    return cleaned.slice(0, max)
+  }
+  /** @补全人员源安全面：仅接受站内相对路径（/ 开头），其余丢弃（不外跳） */
+  const peopleUrl = opts.peopleUrl !== undefined && opts.peopleUrl.startsWith('/') ? opts.peopleUrl : undefined
+
+  app.get('/chat', (c) => {
+    const draft = cleanPageParam(c.req.query('draft'), 400)
+    const room = cleanPageParam(c.req.query('room'), 96)
+    return c.html(
+      renderPage({
+        enabled,
+        defaultActorId,
+        pollIntervalMs: pollMs,
+        ...(draft !== undefined ? { draft } : {}),
+        ...(room !== undefined ? { room } : {}),
+        ...(peopleUrl !== undefined ? { peopleUrl } : {}),
+      }),
+    )
+  })
 
   app.get('/api/chat/rooms', async (c) => {
     const transport = opts.transport

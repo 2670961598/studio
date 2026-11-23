@@ -253,15 +253,16 @@ describe('组织架构图（§九.2 树图/子树人数/?dept= 过滤/人员行�
     expect(html).toContain('工程师甲')
     expect(html).toContain('3 人') // 研发部子树＝ENG-1＋QA-1＋OPS-1
     expect(html).toContain('部门树')
-    expect((html.match(/\/sessions\?person=/g) ?? []).length).toBe(3)
+    // href= 精确计数（§十.4 全局搜索脚本含 '/sessions?person=' 字符串——不得计入链接数）
+    expect((html.match(/href="\/sessions\?person=/g) ?? []).length).toBe(3)
   })
 
   it('?dept= 过滤：子树收拢人员表；坏路径 400', async () => {
     const dev = await (await app.request(`/org?dept=${encodeURIComponent('departments/研发部')}`)).text()
     expect(dev).toContain('部门过滤中')
-    expect((dev.match(/\/sessions\?person=/g) ?? []).length).toBe(3) // 含子部门平台组 OPS-1
+    expect((dev.match(/href="\/sessions\?person=/g) ?? []).length).toBe(3) // 含子部门平台组 OPS-1
     const ops = await (await app.request(`/org?dept=${encodeURIComponent('departments/研发部/平台组')}`)).text()
-    expect((ops.match(/\/sessions\?person=/g) ?? []).length).toBe(1)
+    expect((ops.match(/href="\/sessions\?person=/g) ?? []).length).toBe(1)
     expect(ops).toContain('运维乙')
     expect((await app.request('/org?dept=departments/不存在')).status).toBe(400)
   })

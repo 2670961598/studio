@@ -10,10 +10,11 @@ import type { CompanySnapshot } from '@studio-next/contract'
 import { PORTAL_CSS } from './styles.ts'
 import { esc, icon, url } from './html.ts'
 
-/** 导航项（§一.1 五页＋§九.1 会话页——v2 第一刀） */
+/** 导航项（§一.1 五页＋§九.1 会话页＋§十.4 指令台——v2 第一刀/v3 第二刀） */
 const NAV: readonly { href: string; key: string; label: string; ic: string }[] = [
   { href: '/', key: 'overview', label: '概览', ic: 'home' },
   { href: '/tickets', key: 'tickets', label: '单子', ic: 'ticket' },
+  { href: '/console', key: 'console', label: '指令台', ic: 'send' },
   { href: '/chat', key: 'chat', label: '聊天', ic: 'chat' },
   { href: '/org', key: 'org', label: '组织', ic: 'org' },
   { href: '/sessions', key: 'sessions', label: '会话', ic: 'session' },
@@ -45,6 +46,51 @@ const THEME_TOGGLE = `(function(){var b=document.getElementById('themeToggle');i
  */
 const CHAT_UNREAD_BADGE = `(function(){var b=document.getElementById('navChatUnread');if(!b)return;var src=b.getAttribute('data-src');if(!src)return;fetch(src).then(function(r){return r.ok?r.json():null;}).then(function(d){if(!d||d.ok!==true)return;var n=d.totalUnread;if(typeof n==='number'&&n>0){b.textContent=n>999?'999+':String(n);b.removeAttribute('hidden');}}).catch(function(){});})();`
 
+/**
+ * 全局搜索脚本（文档尾；§十.4）：工号（data-people 服务端注入的 org people id 清单，大小写
+ * 不敏感全等）→ /sessions?person=；否则 → /tickets?q=。目标函数 SEARCH_FN 独立可提取
+ * （测试沿用 chat-panel「提取脚本段在 Node 里跑」判例——前端行为非纸面断言）。
+ * 无 JS 时表单原生 GET /tickets?q= 兜底（页面仍可用，只是不区分工号）。
+ */
+const GLOBAL_SEARCH = `(function () {
+  'use strict';
+  var input = document.getElementById('globalSearch');
+  var form = document.getElementById('globalSearchForm');
+  if (!input || !form) return;
+  var people = [];
+  try {
+    var raw = input.getAttribute('data-people');
+    if (raw) people = JSON.parse(raw);
+  } catch (e) {
+    people = [];
+  }
+  var SEARCH_FN = function (value, people) {
+    var v = String(value || '').trim();
+    if (v === '') {
+      return null;
+    }
+    var lower = v.toLowerCase();
+    var isPerson = (people || []).some(function (p) {
+      return String(p).toLowerCase() === lower;
+    });
+    return isPerson ? '/sessions?person=' + encodeURIComponent(v) : '/tickets?q=' + encodeURIComponent(v);
+  } /*SEARCH_FN_END*/;
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var target = SEARCH_FN(input.value, people);
+    if (target !== null) window.location.assign(target);
+  });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key !== '/' || ev.defaultPrevented) return;
+    var t = ev.target;
+    var tag = ((t && t.tagName) || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select' || (t && t.isContentEditable)) return;
+    ev.preventDefault();
+    input.focus();
+    input.select();
+  });
+})();`
+
 export interface ShellOptions {
   readonly company: CompanySnapshot
   readonly title: string
@@ -57,6 +103,8 @@ export interface ShellOptions {
   readonly mainAsDiv?: boolean
   /** 聊天未读徽标（transport 已配才注入）：actor 进查询串（esc 转义），脚本惰性取数 */
   readonly chatBadge?: { readonly actor: string }
+  /** 全局搜索（§十.4）：org 在册工号清单（服务端注入 data-people，脚本零用户数据插值） */
+  readonly search?: { readonly people: readonly string[] }
 }
 
 /** 渲染门户整页（doctype → 壳 → body；pageRenderer 注入位消费同构） */
@@ -95,14 +143,24 @@ export function portalShell(opts: ShellOptions): string {
         ${nav}
     </nav>
     <div class="sidebar-foot">
-      <span class="badge b-neutral plain badge-ro">只读</span>
-      <span class="ver num">${esc(opts.version)}</span>
+      <div class="foot-row">
+        <span class="badge b-neutral plain badge-ro">只读</span>
+        <span class="ver num">${esc(opts.version)}</span>
+      </div>
+      <div class="foot-note">指令台＝经聊天唤醒 · 平台唯一写入者 daemon</div>
     </div>
   </aside>
   <div class="main">
     <header class="topbar">
       <div class="crumb"><span>门户</span><span class="sep">/</span><b>${esc(opts.title)}</b></div>
-      <div class="topbar-right">
+      <div class="topbar-right">${
+        opts.search === undefined
+          ? ''
+          : `<form id="globalSearchForm" class="gsearch" role="search" action="/tickets" method="get">
+          <input id="globalSearch" type="search" name="q" placeholder="单号 / 工号…" autocomplete="off" aria-label="全局搜索（单号/工号）" data-people="${esc(JSON.stringify(opts.search.people))}">
+          <button class="btn ghost icon" type="submit" aria-label="全局搜索" title="全局搜索（按 / 聚焦）">${icon('search', 15)}</button>
+        </form>`
+      }
         <span class="status-pill"><span class="dot${opts.online ? ' on' : ''}"></span>${opts.online ? 'daemon 在线' : 'daemon 静默'}</span>
         <button id="themeToggle" class="btn ghost icon" type="button" aria-label="切换深浅主题" title="切换深浅主题">${icon('sun', 16, 'ic-sun')}${icon('moon', 16, 'ic-moon')}</button>
       </div>
@@ -113,6 +171,7 @@ ${opts.body}
   </div>
 </div>
 <script>${THEME_TOGGLE}</script>
+<script>${GLOBAL_SEARCH}</script>
 ${opts.chatBadge === undefined ? '' : `<script>${CHAT_UNREAD_BADGE}</script>`}
 </body>
 </html>`

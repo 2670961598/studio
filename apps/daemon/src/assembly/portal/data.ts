@@ -20,6 +20,7 @@ import type { CompanySnapshot, EventRecord, IssueRecord, TicketId } from '@studi
 import { getIssue, listIssues, parseIssueEvents, type IssueEvent } from '@studio-next/localplatform'
 import type { Ledger } from '@studio-next/store'
 import { createSessionArchive, type DecompressFn, type SessionArchive } from './sessions.ts'
+import { queryTickets, type TicketQuery, type TicketSortDir, type TicketSortKey } from './tickets-view.ts'
 
 /** 单据事件时间线项（渲染面 view model） */
 export interface TicketEventView {
@@ -141,17 +142,35 @@ export function createPortalData(opts: PortalDataOptions) {
     return [...counts.entries()].map(([state, count]) => ({ state, count })).sort((a, b) => b.count - a.count || a.state.localeCompare(b.state))
   }
 
+  // 筛选/排序单源在 tickets-view.ts（§十.2）——既有单 state 语义逐字节不变（updated 倒序）
   const ticketList = (q: { state?: string | undefined; search?: string | undefined }): TicketListResult => {
-    const all = allTickets()
-    let filtered = all
-    if (q.state !== undefined) filtered = filtered.filter((t) => t.state === q.state)
-    if (q.search !== undefined && q.search !== '') {
-      const needle = q.search.toLowerCase()
-      filtered = filtered.filter(
-        (t) => t.id.toLowerCase().includes(needle) || t.title.toLowerCase().includes(needle) || (t.assignee ?? '').toLowerCase().includes(needle),
-      )
+    const filtered = queryTickets(allTickets(), {
+      states: q.state !== undefined ? [q.state] : [],
+      assignee: undefined,
+      search: q.search ?? '',
+      sort: 'updated',
+      dir: 'desc',
+    })
+    return { available: opts.platformRoot !== null, total: filtered.length, items: filtered, states: stateCounts() }
+  }
+
+  /** 多选筛选＋负责人＋排序（§十.2：/tickets /api/tickets /api/tickets/export 共用） */
+  const ticketQuery = (q: {
+    readonly states?: readonly string[]
+    readonly assignee?: string | undefined
+    readonly search?: string | undefined
+    readonly sort?: TicketSortKey
+    readonly dir?: TicketSortDir
+  }): TicketListResult => {
+    const query: TicketQuery = {
+      states: q.states ?? [],
+      assignee: q.assignee,
+      search: q.search ?? '',
+      sort: q.sort ?? 'updated',
+      dir: q.dir ?? 'desc',
     }
-    return { available: opts.platformRoot !== null, total: filtered.length, items: byUpdatedDesc(filtered), states: stateCounts() }
+    const filtered = queryTickets(allTickets(), query)
+    return { available: opts.platformRoot !== null, total: filtered.length, items: filtered, states: stateCounts() }
   }
 
   const ticketDetail = (id: string): TicketDetailResult => {
@@ -350,6 +369,7 @@ export function createPortalData(opts: PortalDataOptions) {
     companyDir: () => opts.companyDir,
     platformRoot: () => opts.platformRoot,
     ticketList,
+    ticketQuery,
     ticketDetail,
     recentTickets,
     stats,

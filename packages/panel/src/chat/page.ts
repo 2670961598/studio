@@ -11,7 +11,7 @@
  * 未启用态：整页降级「未启用」说明（不报错不白屏），API 面 503（fail-closed 不冒充空列表）。
  */
 
-import { HOST_PATH_MASK_SOURCE } from './mask.ts'
+import { chatPageScript } from './page-script.ts'
 
 /** 页面渲染选项（全部为服务端可信值） */
 export interface ChatPageOptions {
@@ -21,18 +21,34 @@ export interface ChatPageOptions {
   readonly defaultActorId: string
   /** 轮询间隔 ms（缺省 2000；非正数落回缺省） */
   readonly pollIntervalMs?: number
+  /** 输入框预填文案（§十.3：/chat?draft= → route 侧净化后透传；缺省无预填） */
+  readonly draft?: string
+  /** 进入即选房间（§十.3：/chat?room=；缺省=首个实存房间） */
+  readonly room?: string
+  /** @补全人员源（§十.3：门户传 /api/org；缺省不传=补全关闭——监控面行为零变化） */
+  readonly peopleUrl?: string
 }
 
 interface PageConfig {
   readonly enabled: boolean
   readonly actor: string
   readonly pollIntervalMs: number
+  readonly draft?: string
+  readonly room?: string
+  readonly peopleUrl?: string
 }
 
 function pageConfigOf(opts: ChatPageOptions): PageConfig {
   const pollRaw = opts.pollIntervalMs
   const poll = typeof pollRaw === 'number' && Number.isInteger(pollRaw) && pollRaw > 0 ? pollRaw : 2000
-  return { enabled: opts.enabled, actor: opts.defaultActorId, pollIntervalMs: poll }
+  return {
+    enabled: opts.enabled,
+    actor: opts.defaultActorId,
+    pollIntervalMs: poll,
+    ...(opts.draft !== undefined ? { draft: opts.draft } : {}),
+    ...(opts.room !== undefined ? { room: opts.room } : {}),
+    ...(opts.peopleUrl !== undefined ? { peopleUrl: opts.peopleUrl } : {}),
+  }
 }
 
 /**
@@ -48,13 +64,19 @@ export function renderChatBody(opts: ChatPageOptions): string {
     ? `<main>
   <aside>
     <div class="title">房间（未读）</div>
+    <input id="roomFilter" type="search" placeholder="过滤房间…" aria-label="过滤房间">
     <div id="rooms"></div>
   </aside>
   <section>
     <div id="banner"></div>
     <div id="meta">操作者 <input id="actor" value="">（chatd 按房间成员校验）<span id="totalUnread"></span></div>
+    <div class="msg-tools">
+      <input id="msgFilter" type="search" placeholder="在当前房间内搜索…" aria-label="搜索当前房间消息">
+      <span id="msgCount"></span>
+    </div>
     <div id="messages"></div>
     <form id="sendForm">
+      <div id="mentionBox" hidden></div>
       <textarea id="text" maxlength="4000" placeholder="发到当前房间…（Enter 发送，Shift+Enter 换行；@工号 触发唤醒）"></textarea>
       <button id="send" class="primary" type="submit">发送</button>
     </form>
@@ -62,191 +84,7 @@ export function renderChatBody(opts: ChatPageOptions): string {
   </section>
 </main>
 <script>
-(function () {
-  'use strict';
-  var CONFIG = ${JSON.stringify(config).replaceAll('<', '\\u003c')};
-  var state = { roomId: null, actor: CONFIG.actor, rooms: [], unreadTotal: null, sent: {} };
-  var $ = function (id) { return document.getElementById(id); };
-
-  function el(tag, cls, text) {
-    var node = document.createElement(tag);
-    if (cls) node.className = cls;
-    if (text !== undefined && text !== null) node.textContent = text;
-    return node;
-  }
-  function setStatus(text, isError) {
-    var node = $('status');
-    node.textContent = text || '';
-    node.style.color = isError ? 'var(--danger)' : 'var(--muted)';
-  }
-  function setBanner(text) {
-    var node = $('banner');
-    node.textContent = text || '';
-    node.style.display = text ? 'block' : 'none';
-  }
-  function api(path, options) {
-    return fetch(path, options).then(function (res) {
-      return res.json().catch(function () { return {}; }).then(function (data) {
-        if (!res.ok || data.ok === false) {
-          var err = new Error((data && data.error && (data.error.code + ': ' + data.error.message)) || ('HTTP ' + res.status));
-          err.status = res.status;
-          throw err;
-        }
-        return data;
-      });
-    });
-  }
-  function actorParam(extra) {
-    var params = extra || {};
-    params.actor = state.actor;
-    var pairs = [];
-    for (var key in params) { if (params[key] !== undefined && params[key] !== null) pairs.push(encodeURIComponent(key) + '=' + encodeURIComponent(params[key])); }
-    return pairs.length > 0 ? ('?' + pairs.join('&')) : '';
-  }
-  function errCode(err) { return (err && err.message && err.message.split(':')[0]) || ''; }
-
-  // 显示层脱敏（chat/mask.ts 同源注入）：主机绝对路径 → <path>（只改显示，不改数据）
-  var HOST_PATH_RE = new RegExp(${JSON.stringify(HOST_PATH_MASK_SOURCE).replaceAll('<', '\\u003c')}, 'g');
-  function maskHostPaths(text) {
-    return text === undefined || text === null ? text : String(text).replace(HOST_PATH_RE, '<path>');
-  }
-
-  // chatd 侧失效族（未配置/未连接/不可达/超时）：可读降级文案，不当内部错误渲染
-  function isChatdDown(code) {
-    return code === 'CHAT_PANEL_DISABLED' || code === 'WB_NOT_CONNECTED' || code === 'WB_UNAVAILABLE' || code === 'WB_TIMEOUT';
-  }
-
-  // 读面失败 → 降级文案（成员未入/房间缺/chatd 缺三族可读化；其余原样带码）
-  function degradeText(action, err) {
-    var code = errCode(err);
-    if (code === 'WB_INVALID_ARGUMENT') return '操作者 ' + state.actor + ' 不是该房间成员——无法' + action + '（切换房间，或在上方操作者栏改为在册工号）';
-    if (isChatdDown(code)) return action + '不可用：chatd 未配置或不可达（chatd 起后自动恢复）';
-    return action + '失败：' + err.message;
-  }
-
-  function renderRooms() {
-    var box = $('rooms');
-    box.textContent = '';
-    if (state.rooms.length === 0) { box.appendChild(el('div', 'title', '（无房间——chatd rooms.list 为空）')); return; }
-    state.rooms.forEach(function (room) {
-      var unread = room.unread === null || room.unread === undefined ? 0 : room.unread;
-      var button = el('button', 'room' + (room.roomId === state.roomId ? ' active' : ''));
-      button.appendChild(el('span', 'name', room.name || room.roomId));
-      button.appendChild(el('span', 'kind', room.kind || ''));
-      var badge = el('span', 'unread' + (unread > 0 ? '' : ' zero'), String(unread));
-      badge.title = '未读';
-      button.appendChild(badge);
-      button.addEventListener('click', function () { switchRoom(room.roomId); });
-      box.appendChild(button);
-    });
-    $('totalUnread').textContent = state.unreadTotal === null ? '' : ('合计未读 ' + String(state.unreadTotal));
-  }
-
-  function renderMessages(items) {
-    var box = $('messages');
-    box.textContent = '';
-    if (!items || items.length === 0) { box.appendChild(el('div', 'title', '（无消息——选中房间后自动标记已读）')); return; }
-    items.forEach(function (message) {
-      var mine = message.senderId === state.actor;
-      var node = el('div', 'msg' + (mine ? ' mine' : ''));
-      var when = message.createdAt ? new Date(message.createdAt).toLocaleString() : '';
-      node.appendChild(el('div', 'who', (message.senderId || '?') + ' · ' + when + ' · #' + String(message.roomSeq)));
-      node.appendChild(el('div', 'body', maskHostPaths(message.body)));
-      box.appendChild(node);
-    });
-    box.scrollTop = box.scrollHeight;
-  }
-
-  function loadRooms() {
-    return api('/api/chat/rooms' + actorParam()).then(function (data) {
-      state.rooms = data.rooms || [];
-      state.unreadTotal = data.totalUnread === undefined || data.totalUnread === null ? null : data.totalUnread;
-      renderRooms();
-      if (state.roomId === null && state.rooms.length > 0) switchRoom(state.rooms[0].roomId);
-    });
-  }
-
-  function loadMessages() {
-    if (state.roomId === null) return Promise.resolve();
-    return api('/api/chat/messages' + actorParam({ roomId: state.roomId, limit: 100 })).then(function (data) {
-      var items = (data.page && data.page.items) || [];
-      renderMessages(items);
-      var top = 0;
-      items.forEach(function (m) { if (m.roomSeq > top) top = m.roomSeq; });
-      if (top > 0) markRead(top);
-    });
-  }
-
-  function markRead(upToRoomSeq) {
-    return api('/api/chat/read', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roomId: state.roomId, actorId: state.actor, upToRoomSeq: upToRoomSeq })
-    }).then(function (data) {
-      if (data.result && typeof data.result.unread === 'number') {
-        state.rooms.forEach(function (room) { if (room.roomId === state.roomId) room.unread = data.result.unread; });
-        renderRooms();
-      }
-    });
-  }
-
-  function switchRoom(roomId) {
-    state.roomId = roomId;
-    setBanner('');
-    renderRooms();
-    loadMessages().catch(function (err) {
-      setBanner(degradeText('读取消息', err));
-      if (errCode(err) === 'WB_INVALID_ARGUMENT') renderMessages([]);
-    });
-  }
-
-  function sendText(text) {
-    var key = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2);
-    setStatus('发送中…');
-    return api('/api/chat/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roomId: state.roomId, senderId: state.actor, body: text, idempotencyKey: 'panel-' + key })
-    }).then(function (data) {
-      setStatus(data.result && data.result.replayed ? '已存在（幂等回放）' : '已发送');
-      return loadMessages().then(loadRooms);
-    }).catch(function (err) {
-      setStatus(degradeText('发送', err), true);
-      throw err;
-    });
-  }
-
-  $('actor').value = state.actor;
-  $('actor').addEventListener('change', function () {
-    var value = $('actor').value.trim();
-    if (!value) { $('actor').value = state.actor; return; }
-    state.actor = value;
-    loadRooms().catch(function (err) { setBanner(degradeText('读取房间', err)); });
-  });
-
-  $('sendForm').addEventListener('submit', function (event) {
-    event.preventDefault();
-    if (state.roomId === null) { setStatus('未选中房间', true); return; }
-    var input = $('text');
-    var text = input.value.trim();
-    if (!text) return;
-    input.value = '';
-    sendText(text).catch(function () { input.value = text; });
-  });
-
-  $('text').addEventListener('keydown', function (event) {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault();
-      $('sendForm').requestSubmit();
-    }
-  });
-
-  loadRooms().catch(function (err) { setBanner(degradeText('读取房间', err)); });
-  window.setInterval(function () {
-    loadRooms().catch(function () { /* 轮询失败不刷屏；下周期重试 */ });
-    loadMessages().catch(function () { });
-  }, CONFIG.pollIntervalMs);
-})();
+${chatPageScript(config)}
 </script>`
     : `<div class="disabled-card">
   <h2>聊天室未启用</h2>
@@ -287,6 +125,7 @@ export function renderChatPage(opts: ChatPageOptions): string {
   main { display:grid; grid-template-columns:240px 1fr; height:calc(100vh - 49px); }
   aside { border-right:1px solid var(--line); background:var(--card); overflow:auto; padding:8px; }
   aside .title { color:var(--muted); font-size:12px; padding:4px 8px; }
+  aside input[type="search"] { width:100%; margin:0 0 6px; padding:5px 8px; border:1px solid var(--line); border-radius:6px; font:inherit; background:var(--card); color:inherit; }
   .room { display:flex; align-items:center; gap:6px; width:100%; text-align:left; border:0; background:transparent; padding:8px; border-radius:6px; cursor:pointer; }
   .room:hover, .room.active { background:var(--bg); }
   .room .name { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:600; }
@@ -298,6 +137,16 @@ export function renderChatPage(opts: ChatPageOptions): string {
   #meta { display:flex; gap:8px; align-items:center; padding:8px 16px 0; color:var(--muted); font-size:12px; }
   #meta input { width:140px; padding:4px 8px; border:1px solid var(--line); border-radius:6px; font:inherit; }
   #messages { flex:1; overflow:auto; padding:16px; display:flex; flex-direction:column; gap:8px; }
+  .msg-tools { display:flex; gap:8px; align-items:center; padding:8px 16px 0; }
+  .msg-tools input { flex:1; max-width:340px; padding:5px 8px; border:1px solid var(--line); border-radius:6px; font:inherit; background:var(--card); color:inherit; }
+  .msg-tools span { color:var(--muted); font-size:12px; }
+  mark { background:#fff8c5; color:inherit; border-radius:2px; padding:0 1px; }
+  .msg .body a.link { color:var(--accent); word-break:break-all; }
+  form { display:flex; gap:8px; padding:10px 16px; border-top:1px solid var(--line); background:var(--card); position:relative; }
+  #mentionBox { position:absolute; bottom:100%; left:16px; right:16px; max-width:420px; max-height:240px; overflow:auto; background:var(--card); border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.14); z-index:5; }
+  .mention-item { display:flex; gap:8px; align-items:baseline; width:100%; text-align:left; border:0; background:transparent; padding:7px 10px; cursor:pointer; font:inherit; }
+  .mention-item.active, .mention-item:hover { background:var(--bg); }
+  .mention-item span { color:var(--muted); font-size:12px; }
   .msg { max-width:72ch; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--card); }
   .msg.mine { align-self:flex-end; border-color:#0969da55; background:#ddf4ff; }
   .msg .who { color:var(--muted); font-size:11px; margin-bottom:2px; }

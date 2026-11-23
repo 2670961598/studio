@@ -35,6 +35,15 @@ export function fmtEpoch(ms: number | undefined): string {
   return fmtTime(new Date(ms).toISOString())
 }
 
+/**
+ * 轨迹事件时间显示（§十.4：1970 修复）——事件自身无时间（归一化层落 0/NaN）时显
+ * 「时间未知」，绝不渲染 1970。API 事件 time 字段形状不变，只在显示层判空。
+ */
+export function fmtEventMs(ms: number | undefined): string {
+  if (ms === undefined || !Number.isFinite(ms) || ms <= 0) return '时间未知'
+  return fmtEpoch(ms)
+}
+
 /** 相对时间（「3 分钟前」；粒度分级，>30 天落绝对短日） */
 export function fmtAgo(iso: string): string {
   const t = new Date(iso).getTime()
@@ -98,6 +107,8 @@ const ICON_PATHS: Readonly<Record<string, string>> = {
   link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
   people: '<circle cx="9" cy="8" r="4"/><path d="M2 21v-1a6 6 0 0 1 6-6h2"/><circle cx="17" cy="9" r="3"/><path d="M22 21v-1a5 5 0 0 0-5-5"/>',
   session: '<path d="M4 17l6-5-6-5"/><path d="M12 19h8"/>',
+  send: '<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/>',
+  copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
   dot: '<circle cx="12" cy="12" r="5"/>',
 }
 

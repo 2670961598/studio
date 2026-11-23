@@ -148,10 +148,10 @@ describe('页面端面（五页同端口）', () => {
     // 分页：page 越界钳到末页
     const page = await htmlOf(app, '/tickets?page=99&size=10')
     expect(page).toContain('第 1/1 页')
-    // 搜索框保留关键字与隐藏 state
+    // 搜索框保留关键字；state 旧参并入多选 chips（§十.2：checkbox checked 保留勾选）
     const kept = await htmlOf(app, '/tickets?state=Archived&q=旧巡逻')
     expect(kept).toContain('name="q" value="旧巡逻"')
-    expect(kept).toContain('name="state" value="Archived"')
+    expect(kept).toContain('name="states" value="Archived" checked')
   })
 
   it('单子详情：meta 网格、时间线三类事件与状态推进高亮', async () => {
