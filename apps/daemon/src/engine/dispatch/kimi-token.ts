@@ -81,7 +81,7 @@ export function readKimiTokenFile(deps: KimiTokenDeps | undefined): KimiTokenFil
   return { token, ageMs: Math.max(0, now - mtimeMs) }
 }
 
-/** 注入条件（§4）：执行器注册名为 dsh 家族（dsh / dsh-mid / dsh-high / dsh-low）且选中源 provider=kimi-coding。 */
+/** 注入条件（§4）：执行器注册名为 dsh 家族（dsh / dsh-mid / dsh-high / dsh-low）且实际生效 provider=kimi-coding——provider 由 caller 给「实际生效源」：路由选中源优先，无路由面（tier 执行器名下 routingActive 不成立）=tier 解析 provider（见 execute.ts 注入位，事故 2026-11-23）。 */
 export function kimiInjectionActive(executorName: string, provider: string | undefined): boolean {
   return (executorName === 'dsh' || executorName.startsWith('dsh-')) && provider === KIMI_CODING_PROVIDER
 }

@@ -88,8 +88,13 @@ serve/ 直属文件已满阈 25，新面按 §十五.三.1 切子域 `serve/kimi
 施工顺带零行为拆件：runtime.ts 的 notify 装配段（600 满行无余量）迁出
 `apps/daemon/src/assembly/serve/notify/notify-face.ts`（20-§十五.三「先拆再增」，原段零漂移）。
 
-- **触发条件**：本次 dispatch 选中源 `provider === 'kimi-coding'` 且执行器注册名 `dsh` 或
-  `dsh-*`（tierExecutors high→dsh 后成立；现行 high=kimi 时零行为）。
+- **触发条件**：本次 dispatch **实际生效** `provider === 'kimi-coding'` 且执行器注册名 `dsh` 或
+  `dsh-*`（tierExecutors high→dsh 后成立；现行 high=kimi 时零行为）。实际生效 provider 取
+  「路由选中源（routedSource）优先；无路由面时=tier 解析 provider（models.yaml tiers 首源，
+  与 hot-swap 写出的 `var/tmp/dsh-tier-<tier>.yml` 同一事实源）」。**注意：tier 执行器名
+  （`dsh-high`/`dsh-mid`/`dsh-low`）下 routing 面不激活（execute.ts `routingActive` 只认
+  `adapter.name === 'dsh'`，routedSource 恒 undefined），但 tier overlay 仍生效**——注入判定
+  必须落到实际生效 provider，不得只认 routedSource（事故 2026-11-23，见下方注记）。
 - **读取**：dispatch 前**现读** token 文件（每次 launch 前最新，不缓存跨拍）；缺省路径
   `~/Library/Application Support/StudioNext/secrets/kimi-access-token`，env
   `STUDIO_KIMI_TOKEN_FILE` 覆盖（serve 面与刷新器同名 env，保证同一路径源）。
@@ -105,6 +110,16 @@ serve/ 直属文件已满阈 25，新面按 §十五.三.1 切子域 `serve/kimi
 - **不改的面**：judge 微调用面冻结零凭据（judge=low 档 glm，本单不触碰）；dsh 隔离 home
   seed 白名单已含 KIMI_API_KEY（provider-key-policy §6，陈旧值会被本注入的进程 env 覆盖——
   env 优先级最高，docs/31-§3.5）。
+
+**事故注记（2026-11-23 14:00 首测失败）**：生产 `tierExecutors.high=dsh` + models.yaml high
+首源 `kimi-coding/k3.1-pro` 后，14:00 批新单被 tier 覆盖强制 high → 执行器 `dsh-high`；
+tier 执行器名下 routing 面不激活 → `routedSource` 恒 undefined，注入条件却只认 routedSource →
+tier overlay（kimi-coding）生效但零注入 → worker 启动即败
+`llm-pi-ai: no credential for provider route "kimi-coding"; its profile resolves KIMI_API_KEY,
+which is not set` → 连击 4 次 GATE_FAIL → 熔断开 bug 单。处置：即时回滚（high 暂回
+`kimi`——kimi-pro 路由暂撤，无数据损失）；修复=注入 provider 改
+`routedSource?.provider ?? tierProvider`（tier 解析 provider 兜底；fail-safe 不变：不注入
+不阻派发）。测试位：`kimi-token-injection.test.ts`「§4 注入门控 × tier 执行器」(a)-(d)。
 
 ## 5. adapter 白名单改动（`packages/adapters/src/dsh/basics.ts`）
 
@@ -167,7 +182,10 @@ serve/ 直属文件已满阈 25，新面按 §十五.三.1 切子域 `serve/kimi
 - `apps/daemon/test/v2/routing/kimi-token-injection.test.ts`：kimi-coding 源+dsh 执行器 →
   launchBrief.credentials.KIMI_API_KEY=token 值（fake adapter 捕获，不入事件流）；文件缺失/坏形状
   → 不注入不抛；非 kimi-coding 源 → 不注入；陈旧文件+刷新面 → 刷新被调、取新值；全拍事件文本
-  无 token 值。
+  无 token 值；tier 执行器门控（事故 2026-11-23 回归位）：(a) `dsh-high`+tier 解析
+  provider=kimi-coding（无 routedSource）→ 注入；(b) tier provider=glm → 不注入；(c)
+  routedSource=kimi-coding → 仍注入（换源 glm 后 routedSource 优先于 tier provider）；(d)
+  无 tier 解析 → 不注入。
 - `apps/daemon/test/v2/serve/kimi-token-face.test.ts`：serve 面 spawn 刷新器（旗标/env/超时/串行化；
   假 execFile＋一组真子进程端到端）。
 

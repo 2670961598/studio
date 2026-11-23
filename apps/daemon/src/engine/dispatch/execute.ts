@@ -419,12 +419,20 @@ export async function executeDispatch(
               ...(workerKeys.makeNonce !== undefined ? { makeNonce: workerKeys.makeNonce } : {}),
             })
           : undefined
-      // Kimi via DSH（docs/quality/kimi-on-dsh.md §4）：选中源 provider=kimi-coding 且执行器为
+      // Kimi via DSH（docs/quality/kimi-on-dsh.md §4）：实际生效 provider=kimi-coding 且执行器为
       // dsh 家族时，launch 前现读（按需刷新）token 文件注入 KIMI_API_KEY（同 v1.4 env 通道；
       // 凭据值红名单，任何 note/日志/台账永不含）。fail-safe：文件缺失/刷新败=不注入不阻派发
       //（worker AUTH 失败收场→路由按 auth 类冷却换源，glm-main 兜底）。failover 换源后重建 brief。
+      // 注入 provider=「实际生效源」：路由面选中源优先（routedSource，failover 换源随重建刷新）；
+      // 无路由面但 tier overlay 生效时取 tier 解析 provider（models.yaml hot-swap 写
+      // var/tmp/dsh-tier-<tier>.yml 仍生效）——事故 2026-11-23：tier 执行器名（dsh-high/dsh-mid/
+      // dsh-low）下 routingActive 不成立、routedSource 恒 undefined，注入只认 routedSource 致
+      // worker 拿不到 KIMI_API_KEY 必败（GATE_FAIL 连击→熔断）。两者皆无=undefined 不注入。
+      const tierProvider = tierResolve !== undefined
+        ? rt.catalog?.tiers().find((t) => t.tier === tierResolve.tier)?.provider
+        : undefined
       const buildLaunchBrief = async (): Promise<TaskBrief> => {
-        const kimiCreds = await kimiTokenCredentials(rt.deps.kimiToken, { executorName: adapter.name, provider: routedSource?.provider })
+        const kimiCreds = await kimiTokenCredentials(rt.deps.kimiToken, { executorName: adapter.name, provider: routedSource?.provider ?? tierProvider })
         return {
           ...taskBrief,
           ...(minted !== undefined || kimiCreds !== undefined

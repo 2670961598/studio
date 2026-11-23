@@ -2,7 +2,9 @@
  * kimi-on-dsh §4/§8（docs/quality/kimi-on-dsh.md）：dispatch 相位 KIMI_API_KEY 注入面——
  * 闸门（provider=kimi-coding × dsh 家族执行器）、launch 前现读 token 文件、
  * mtime 龄超阈值按需刷新（刷新败回退现值）、文件缺失/坏形状=不注入不阻派发、
- * failover 换源后重建 brief（新源非 kimi-coding 即不再注入）、token 值不落事件/台账。
+ * failover 换源后重建 brief（新源非 kimi-coding 即不再注入）、token 值不落事件/台账、
+ * tier 执行器门控（事故 2026-11-23：dsh-high/dsh-mid/dsh-low 下 routing 面不激活但 tier
+ * overlay 生效——注入按实际生效 provider=routedSource ?? tier 解析 provider 判，见 (a)-(d)）。
  */
 import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -17,6 +19,8 @@ import { createDefaultGateRunner } from '../../../src/engine/gate.ts'
 import { createDefaultAssembler } from '../../../src/engine/prompt-assembly.ts'
 import { DEMO_SNAPSHOT } from '../../../src/assembly/demo/demo-snapshot.ts'
 import { KIMI_API_KEY_ENV, KIMI_TOKEN_FRESH_MAX_AGE_MS_DEFAULT, kimiInjectionActive, kimiTokenCredentials, readKimiTokenFile, type KimiTokenDeps } from '../../../src/engine/dispatch/kimi-token.ts'
+import type { RoutingState } from '../../../src/engine/routing/router.ts'
+import { serializeRoutingState } from '../../../src/engine/routing/router.ts'
 
 /** 夹具 token（fake- 前缀低熵——scan-repo-secrets PLACEHOLDER 豁免；真 token 永不入仓） */
 const TOKEN = 'fake-access-token-standby'
@@ -39,6 +43,27 @@ const MODELS_YAML = `tiers:
         priority: 10
         price: {inputPerM: 1, outputPerM: 2}
         cooldown: {baseMs: 900000, maxMs: 3600000, circuitAfter: 3}
+  mid: {provider: glm, model: GLM-5.3, price: {inputPerM: 1, outputPerM: 2}}
+  low: {provider: glm, model: GLM-5.3-Flash, price: {inputPerM: 0.1, outputPerM: 0.4}}
+roles: {main_worker: high}
+`
+
+/** 事故 2026-11-23 (b) 场景同形：high 首源=glm（tier 解析 provider=glm；kimi-pro 降为备源）。 */
+const MODELS_YAML_GLM_FIRST = `tiers:
+  high:
+    sources:
+      - id: glm-main
+        provider: glm
+        model: GLM-5.3
+        priority: 5
+        price: {inputPerM: 1, outputPerM: 2}
+        cooldown: {baseMs: 900000, maxMs: 3600000, circuitAfter: 3}
+      - id: kimi-pro
+        provider: kimi-coding
+        model: k3.1-pro
+        priority: 10
+        price: {inputPerM: 0, outputPerM: 0}
+        cooldown: {baseMs: 60000, maxMs: 3600000, circuitAfter: 3}
   mid: {provider: glm, model: GLM-5.3, price: {inputPerM: 1, outputPerM: 2}}
   low: {provider: glm, model: GLM-5.3-Flash, price: {inputPerM: 0.1, outputPerM: 0.4}}
 roles: {main_worker: high}
@@ -95,10 +120,13 @@ interface Harness {
   readonly refreshCalls: { count: number }
 }
 
-/** launchFailures[i]=第 i+1 次 launch 抛错（undefined=成功走真 fake）；adapterName/kimi 为注入面参数。 */
-async function harness(root: string, opts: { launchFailures?: Array<unknown | undefined>; adapterName?: string; kimi?: KimiTokenDeps; config?: Partial<EngineConfig> } = {}): Promise<Harness> {
+/** launchFailures[i]=第 i+1 次 launch 抛错（undefined=成功走真 fake）；adapterName/kimi 为注入面参数；modelsYaml/routingState/tierFaceOff 供 tier 门控场景（事故 2026-11-23）换装。 */
+async function harness(root: string, opts: { launchFailures?: Array<unknown | undefined>; adapterName?: string; kimi?: KimiTokenDeps; config?: Partial<EngineConfig>; modelsYaml?: string; routingState?: RoutingState; tierFaceOff?: boolean } = {}): Promise<Harness> {
   const platform = createFakePlatform()
-  const models = parseModelsYaml(MODELS_YAML)
+  const models = parseModelsYaml(opts.modelsYaml ?? MODELS_YAML)
+  const ledger = (await import('@studio-next/store')).openLedger(path.join(root, 'ledger.sqlite'))
+  // 路由态真源=daemon_kv（create-runtime 构造时反序列化重建）——预冷却经 kv 播种，不传内存对象
+  if (opts.routingState !== undefined) ledger.kvSet('model-routing.state', serializeRoutingState(opts.routingState))
   const registry = createRegistry()
   const base = createFakeAdapter({ name: opts.adapterName ?? 'dsh' })
   const launches = { count: 0 }
@@ -123,13 +151,13 @@ async function harness(root: string, opts: { launchFailures?: Array<unknown | un
   registry.register(adapter, { default: true })
   const engine = createEngine({
     platform,
-    ledger: (await import('@studio-next/store')).openLedger(path.join(root, 'ledger.sqlite')),
+    ledger,
     registry,
     assembler: createDefaultAssembler({ fwkVersion: 'v0.5-test', frameworkPrompts: '你是 demo worker：产出 REPORT/summary。', snapshot: DEMO_SNAPSHOT, acceptance: ['true'], docRefs: ['docs/17-§2'] }),
     gateRunner: createDefaultGateRunner(),
     clock: () => 1_800_000_000_000,
     catalog: createModelCatalog(models),
-    modelRouting: { sources: { high: modelSourcesOf(models, 'high') }, rootDir: root },
+    modelRouting: { sources: { high: modelSourcesOf(models, 'high') }, rootDir: root, ...(opts.routingState !== undefined ? { state: opts.routingState } : {}) },
     ...(opts.kimi !== undefined ? { kimiToken: opts.kimi } : {}),
     config: {
       ...ENGINE_CONFIG_DEFAULTS,
@@ -139,8 +167,8 @@ async function harness(root: string, opts: { launchFailures?: Array<unknown | un
       deptFallback: 'departments/工程部',
       defaultLane: 'core',
       mirrorRescanEveryTicks: 1,
-      modelTierByRole: { main_worker: 'high' },
-      modelTierTickets: { 'T-1': 'high', 'T-2': 'mid' },
+      // tierFaceOff：档选位面关（modelTierByRole 缺席→resolveModelTier=undefined）——(d) 无 tier 解析场景
+      ...(opts.tierFaceOff === true ? {} : { modelTierByRole: { main_worker: 'high' }, modelTierTickets: { 'T-1': 'high', 'T-2': 'mid' } }),
       ...opts.config,
     },
     people: DEMO_SNAPSHOT.people,
@@ -248,5 +276,61 @@ describe('kimi-on-dsh §4 注入面（dispatch 集成）', () => {
     const store = (await import('@studio-next/store')).openLedger(h.ledgerRoot)
     const events = store.queryEvents({ issue: ticket })
     expect(JSON.stringify(events).includes(TOKEN)).toBe(false)
+  })
+})
+
+describe('kimi-on-dsh §4 注入门控 × tier 执行器（事故 2026-11-23：tier overlay 生效但 routedSource 缺位）', () => {
+  it('(a) executor=dsh-high + tier 解析 high provider=kimi-coding（routing 面不激活、无 routedSource）→ 注入 KIMI_API_KEY', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'sn-kimi-tier-1')); roots.push(root)
+    const tokenFile = path.join(root, 'kimi-access-token')
+    writeFileSync(tokenFile, `${TOKEN}\n`, { mode: 0o600 })
+    const h = await harness(root, { adapterName: 'dsh-high', kimi: { tokenFile } })
+    const { errors } = await dispatchOnce(h)
+    expect(errors).toHaveLength(0)
+    expect(h.launches.count).toBe(1)
+    expect(h.overlaySets[0]).toBeUndefined() // routing 面确未激活（无 per-source overlay）——生效面是 tier overlay（models.yaml hot-swap）
+    expect(h.briefs[0]?.credentials?.[KIMI_API_KEY_ENV]).toBe(TOKEN) // tier 解析 provider=kimi-coding → 注入（原 bug：只认 routedSource → 恒不注入）
+  })
+
+  it('(b) executor=dsh-high + tier 解析 high provider=glm → 不注入', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'sn-kimi-tier-2')); roots.push(root)
+    const tokenFile = path.join(root, 'kimi-access-token')
+    writeFileSync(tokenFile, `${TOKEN}\n`, { mode: 0o600 })
+    const h = await harness(root, { adapterName: 'dsh-high', kimi: { tokenFile }, modelsYaml: MODELS_YAML_GLM_FIRST })
+    const { errors } = await dispatchOnce(h)
+    expect(errors).toHaveLength(0)
+    expect(h.launches.count).toBe(1)
+    expect(h.briefs[0]?.credentials).toBeUndefined() // tier provider=glm：闸门不开（fail-safe 不改派发语义）
+  })
+
+  it('(c) routedSource=kimi-coding（dsh 路由面）→ 仍注入；换源 glm 后 routedSource 优先于 tier provider → 不注入', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'sn-kimi-tier-3')); roots.push(root)
+    const tokenFile = path.join(root, 'kimi-access-token')
+    writeFileSync(tokenFile, `${TOKEN}\n`, { mode: 0o600 })
+    const h = await harness(root, { kimi: { tokenFile } })
+    const { errors } = await dispatchOnce(h)
+    expect(errors).toHaveLength(0)
+    expect(h.overlaySets[0]).toContain('kimi-pro')
+    expect(h.briefs[0]?.credentials?.[KIMI_API_KEY_ENV]).toBe(TOKEN) // 回归：路由面注入不因 tier 兜底漂移
+    // 镜像面：kimi-pro 预冷却 → 路由选中 glm-main（tier 解析 provider 仍=kimi-coding）→ routedSource 优先 → 不注入
+    const root2 = mkdtempSync(path.join(tmpdir(), 'sn-kimi-tier-3b')); roots.push(root2)
+    const tokenFile2 = path.join(root2, 'kimi-access-token')
+    writeFileSync(tokenFile2, `${TOKEN}\n`, { mode: 0o600 })
+    const h2 = await harness(root2, { kimi: { tokenFile: tokenFile2 }, routingState: { 'kimi-pro': { consecutiveFailures: 1, cooldownUntil: 1_800_000_000_000 + 3_600_000, halfOpen: false } } })
+    await dispatchOnce(h2)
+    expect(h2.overlaySets[0]).toContain('glm-main')
+    expect(h2.briefs[0]?.credentials).toBeUndefined()
+  })
+
+  it('(d) 无 tier 解析（modelTierByRole 面）→ 不注入（routedSource/tierProvider 皆 undefined，不阻派发）', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'sn-kimi-tier-4')); roots.push(root)
+    const tokenFile = path.join(root, 'kimi-access-token')
+    writeFileSync(tokenFile, `${TOKEN}\n`, { mode: 0o600 })
+    const h = await harness(root, { kimi: { tokenFile }, tierFaceOff: true })
+    const { errors } = await dispatchOnce(h)
+    expect(errors).toHaveLength(0)
+    expect(h.launches.count).toBe(1)
+    expect(h.overlaySets[0]).toBeUndefined()
+    expect(h.briefs[0]?.credentials).toBeUndefined()
   })
 })
