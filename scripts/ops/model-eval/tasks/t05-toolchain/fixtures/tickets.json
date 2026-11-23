@@ -1,0 +1,482 @@
+[
+  {
+    "id": "D-201",
+    "title": "日闭报表聚合器重构",
+    "state": "open",
+    "role": "worker",
+    "lane": "S1",
+    "ageDays": 7,
+    "costUsd": 3.5,
+    "model": "glm/GLM-5.4"
+  },
+  {
+    "id": "D-202",
+    "title": "verify:v2 偶发超时定位",
+    "state": "stalled",
+    "role": "verifier",
+    "lane": "S2",
+    "ageDays": 6,
+    "costUsd": 2.2,
+    "model": "kimi-coding/k3.1-pro"
+  },
+  {
+    "id": "D-203",
+    "title": "巡检 REPORT 模板改版",
+    "state": "open",
+    "role": "worker",
+    "lane": "S3",
+    "ageDays": 11,
+    "costUsd": 5.6,
+    "model": "glm/GLM-5.3-Flash"
+  },
+  {
+    "id": "D-204",
+    "title": "台账迁移脚本幂等性补强",
+    "state": "stalled",
+    "role": "worker",
+    "lane": "S1",
+    "ageDays": 12,
+    "costUsd": 8.25,
+    "model": "kimi-coding/k3.1-pro"
+  },
+  {
+    "id": "D-205",
+    "title": "契约用例补齐",
+    "state": "open",
+    "role": "verifier",
+    "lane": "S2",
+    "ageDays": 15,
+    "costUsd": 6.75,
+    "model": "glm/GLM-5.4"
+  },
+  {
+    "id": "D-206",
+    "title": "冷却剩余时间告警",
+    "state": "stalled",
+    "role": "worker",
+    "lane": "S3",
+    "ageDays": 27,
+    "costUsd": 9.9,
+    "model": "opencode-go/deepseek-v4.1-flash"
+  },
+  {
+    "id": "D-207",
+    "title": "ledger 写入批量化",
+    "state": "open",
+    "role": "worker",
+    "lane": "S1",
+    "ageDays": 5,
+    "costUsd": 0.99,
+    "model": "glm/GLM-5.3"
+  },
+  {
+    "id": "D-208",
+    "title": "闸门 flaky 清理",
+    "state": "stalled",
+    "role": "verifier",
+    "lane": "S2",
+    "ageDays": 33,
+    "costUsd": 19.8,
+    "model": "kimi-coding/k3.1-pro"
+  },
+  {
+    "id": "D-209",
+    "title": "日闭窗口边界修正",
+    "state": "open",
+    "role": "worker",
+    "lane": "S1",
+    "ageDays": 21,
+    "costUsd": 12.4,
+    "model": "glm/GLM-5.4"
+  },
+  {
+    "id": "D-210",
+    "title": "lag p90 采样加密",
+    "state": "open",
+    "role": "worker",
+    "lane": "S3",
+    "ageDays": 5,
+    "costUsd": 2.8,
+    "model": "glm/GLM-5.3"
+  },
+  {
+    "id": "D-211",
+    "title": "typecheck 增量缓存",
+    "state": "open",
+    "role": "verifier",
+    "lane": "S2",
+    "ageDays": 4,
+    "costUsd": 1.5,
+    "model": "glm/GLM-5.3"
+  },
+  {
+    "id": "D-212",
+    "title": "停滞单自动升级规则",
+    "state": "stalled",
+    "role": "worker",
+    "lane": "S3",
+    "ageDays": 44,
+    "costUsd": 14.2,
+    "model": "glm/GLM-5.4"
+  },
+  {
+    "id": "D-213",
+    "title": "崩溃注入用例扩展",
+    "state": "open",
+    "role": "verifier",
+    "lane": "S2",
+    "ageDays": 18,
+    "costUsd": 7.3,
+    "model": "glm/GLM-5.4"
+  },
+  {
+    "id": "D-214",
+    "title": "巡检误报过滤",
+    "state": "open",
+    "role": "worker",
+    "lane": "S3",
+    "ageDays": 6,
+    "costUsd": 1.75,
+    "model": "kimi-coding/k3.1-pro"
+  },
+  {
+    "id": "D-215",
+    "title": "成本快照重建脚本加速",
+    "state": "stalled",
+    "role": "worker",
+    "lane": "S1",
+    "ageDays": 9,
+    "costUsd": 4.05,
+    "model": "glm/GLM-5.3-Flash"
+  },
+  {
+    "id": "D-216",
+    "title": "fake YouTrack 行为对齐",
+    "state": "stalled",
+    "role": "verifier",
+    "lane": "S2",
+    "ageDays": 8,
+    "costUsd": 3.1,
+    "model": "opencode-go/deepseek-v4.1-flash"
+  },
+  {
+    "id": "D-217",
+    "title": "报表字段对账修正",
+    "state": "closed",
+    "role": "worker",
+    "lane": "S1",
+    "ageDays": 40,
+    "costUsd": 22.1,
+    "model": "glm/GLM-5.3"
+  },
+  {
+    "id": "D-218",
+    "title": "闸门耗时压降",
+    "state": "open",
+    "role": "verifier",
+    "lane": "S2",
+    "ageDays": 3,
+    "costUsd": 0.45,
+    "model": "kimi-coding/k3.1-pro"
+  },
+  {
+    "id": "D-219",
+    "title": "分档执行者文档更新",
+    "state": "done",
+    "role": "worker",
+    "lane": "S4",
+    "ageDays": 9,
+    "costUsd": 5.2,
+    "model": "glm/GLM-5.3"
+  },
+  {
+    "id": "D-220",
+    "title": "心跳丢失检测",
+    "state": "open",
+    "role": "worker",
+    "lane": "S3",
+    "ageDays": 2,
+    "costUsd": 1.2,
+    "model": "glm/GLM-5.3"
+  },
+  {
+    "id": "D-221",
+    "title": "用例标签整理",
+    "state": "blocked",
+    "role": "verifier",
+    "lane": "S2",
+    "ageDays": 14,
+    "costUsd": 6.6,
+    "model": "glm/GLM-5.3"
+  },
+  {
+    "id": "D-222",
+    "title": "日闭重跑开关",
+    "state": "open",
+    "role": "worker",
+    "lane": "S1",
+    "ageDays": 1,
+    "costUsd": 0.8,
+    "model": "glm/GLM-5.3-Flash"
+  },
+  {
+    "id": "D-223",
+    "title": "并行度调优",
+    "state": "done",
+    "role": "verifier",
+    "lane": "S2",
+    "ageDays": 20,
+    "costUsd": 11.35,
+    "model": "glm/GLM-5.4"
+  },
+  {
+    "id": "D-224",
+    "title": "值班手册修订",
+    "state": "open",
+    "role": "worker",
+    "lane": "S4",
+    "ageDays": 0,
+    "costUsd": 0.3,
+    "model": "glm/GLM-5.3"
+  },
+  {
+    "id": "D-225",
+    "title": "事件尾截断修复",
+    "state": "stalled",
+    "role": "worker",
+    "lane": "S3",
+    "ageDays": 2,
+    "costUsd": 0.95,
+    "model": "kimi-coding/k3.1-pro"
+  },
+  {
+    "id": "D-226",
+    "title": "台账索引梳理",
+    "state": "closed",
+    "role": "worker",
+    "lane": "S1",
+    "ageDays": 31,
+    "costUsd": 17,
+    "model": "opencode-go/deepseek-v4.1-flash"
+  },
+  {
+    "id": "D-227",
+    "title": "闸门日志降噪",
+    "state": "open",
+    "role": "verifier",
+    "lane": "S2",
+    "ageDays": 2,
+    "costUsd": 2.1,
+    "model": "glm/GLM-5.3"
+  },
+  {
+    "id": "D-228",
+    "title": "shard 说明补全",
+    "state": "done",
+    "role": "worker",
+    "lane": "S4",
+    "ageDays": 6,
+    "costUsd": 3.3,
+    "model": "glm/GLM-5.3"
+  },
+  {
+    "id": "D-229",
+    "title": "日闭耗时看板接入",
+    "state": "blocked",
+    "role": "worker",
+    "lane": "S1",
+    "ageDays": 25,
+    "costUsd": 9.1,
+    "model": "glm/GLM-5.3-Flash"
+  },
+  {
+    "id": "D-230",
+    "title": "巡检材料引用规范",
+    "state": "open",
+    "role": "worker",
+    "lane": "S3",
+    "ageDays": 1,
+    "costUsd": 0.6,
+    "model": "glm/GLM-5.3"
+  },
+  {
+    "id": "D-231",
+    "title": "断言错误信息可读性",
+    "state": "done",
+    "role": "verifier",
+    "lane": "S2",
+    "ageDays": 13,
+    "costUsd": 4.45,
+    "model": "glm/GLM-5.3"
+  },
+  {
+    "id": "D-232",
+    "title": " Secrets 刷新指引修订",
+    "state": "closed",
+    "role": "worker",
+    "lane": "S4",
+    "ageDays": 17,
+    "costUsd": 8.8,
+    "model": "kimi-coding/k3.1-pro"
+  },
+  {
+    "id": "D-233",
+    "title": "迁移回滚演练",
+    "state": "open",
+    "role": "worker",
+    "lane": "S1",
+    "ageDays": 0,
+    "costUsd": 0.25,
+    "model": "glm/GLM-5.3"
+  },
+  {
+    "id": "D-234",
+    "title": "集成测试数据固定",
+    "state": "stalled",
+    "role": "verifier",
+    "lane": "S2",
+    "ageDays": 1,
+    "costUsd": 1.05,
+    "model": "opencode-go/deepseek-v4.1-flash"
+  },
+  {
+    "id": "D-235",
+    "title": "告警去重",
+    "state": "done",
+    "role": "worker",
+    "lane": "S3",
+    "ageDays": 8,
+    "costUsd": 2.9,
+    "model": "glm/GLM-5.3"
+  },
+  {
+    "id": "D-236",
+    "title": "新人上手路径梳理",
+    "state": "open",
+    "role": "worker",
+    "lane": "S4",
+    "ageDays": 2,
+    "costUsd": 0.7,
+    "model": "glm/GLM-5.3-Flash"
+  },
+  {
+    "id": "D-237",
+    "title": "闸门超时预算复核",
+    "state": "blocked",
+    "role": "verifier",
+    "lane": "S2",
+    "ageDays": 19,
+    "costUsd": 7.7,
+    "model": "glm/GLM-5.3"
+  },
+  {
+    "id": "D-238",
+    "title": "日巡检闭环抽样复核",
+    "state": "closed",
+    "role": "worker",
+    "lane": "S3",
+    "ageDays": 36,
+    "costUsd": 15.6,
+    "model": "glm/GLM-5.4"
+  },
+  {
+    "id": "D-239",
+    "title": "日闭锁粒度调整",
+    "state": "open",
+    "role": "worker",
+    "lane": "S1",
+    "ageDays": 2,
+    "costUsd": 1.4,
+    "model": "glm/GLM-5.3"
+  },
+  {
+    "id": "D-240",
+    "title": "快照测试稳定化",
+    "state": "done",
+    "role": "verifier",
+    "lane": "S2",
+    "ageDays": 5,
+    "costUsd": 3.05,
+    "model": "glm/GLM-5.3"
+  },
+  {
+    "id": "D-241",
+    "title": "故障演练记录归档",
+    "state": "open",
+    "role": "worker",
+    "lane": "S4",
+    "ageDays": 1,
+    "costUsd": 0.55,
+    "model": "kimi-coding/k3.1-pro"
+  },
+  {
+    "id": "D-242",
+    "title": "聚合器空数据处理",
+    "state": "done",
+    "role": "worker",
+    "lane": "S1",
+    "ageDays": 22,
+    "costUsd": 10.1,
+    "model": "glm/GLM-5.3"
+  },
+  {
+    "id": "D-243",
+    "title": "loopLag 峰值追踪",
+    "state": "closed",
+    "role": "worker",
+    "lane": "S3",
+    "ageDays": 7,
+    "costUsd": 2.35,
+    "model": "glm/GLM-5.3-Flash"
+  },
+  {
+    "id": "D-244",
+    "title": "契约 schema 校验覆盖",
+    "state": "open",
+    "role": "verifier",
+    "lane": "S2",
+    "ageDays": 0,
+    "costUsd": 0.9,
+    "model": "glm/GLM-5.3"
+  },
+  {
+    "id": "D-245",
+    "title": "面板字段说明补全",
+    "state": "blocked",
+    "role": "worker",
+    "lane": "S4",
+    "ageDays": 28,
+    "costUsd": 6.4,
+    "model": "opencode-go/deepseek-v4.1-flash"
+  },
+  {
+    "id": "D-246",
+    "title": "台账压缩策略评估",
+    "state": "done",
+    "role": "worker",
+    "lane": "S1",
+    "ageDays": 10,
+    "costUsd": 5.75,
+    "model": "glm/GLM-5.3"
+  },
+  {
+    "id": "D-247",
+    "title": "巡检岗提示词瘦身",
+    "state": "open",
+    "role": "worker",
+    "lane": "S3",
+    "ageDays": 2,
+    "costUsd": 1.85,
+    "model": "glm/GLM-5.3"
+  },
+  {
+    "id": "D-248",
+    "title": "verify:v2 偶发超时定位",
+    "state": "done",
+    "role": "verifier",
+    "lane": "S2",
+    "ageDays": 16,
+    "costUsd": 7.15,
+    "model": "glm/GLM-5.3"
+  }
+]

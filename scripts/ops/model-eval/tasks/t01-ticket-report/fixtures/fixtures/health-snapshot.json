@@ -1,0 +1,32 @@
+{
+  "capturedAt": "2026-11-23T08:30:00+08:00",
+  "host": "guardian-a",
+  "uptimeHours": 36.4,
+  "loop": {
+    "tickMs": 5000,
+    "lagMs": { "p50": 620, "p90": 4120, "max": 9800 },
+    "noopRatio": 0.71
+  },
+  "counts24h": {
+    "STALL": 1,
+    "JOB_STALE": 3,
+    "GATE_FAIL": 3,
+    "ESCALATE": 2,
+    "REPORT_MISSING": 0
+  },
+  "tiers": {
+    "high": {
+      "available": ["glm/GLM-5.4", "kimi-coding/k3.1-pro"],
+      "cooldown": []
+    },
+    "mid": {
+      "available": ["glm/GLM-5.3"],
+      "cooldown": ["opencode-go/deepseek-v4.1-flash"]
+    },
+    "low": {
+      "available": [],
+      "cooldown": ["glm/GLM-5.3-Flash"]
+    }
+  },
+  "ledger": { "sizeMb": 412, "pendingEvents": 0, "lastDailyClose": "2026-11-22T23:59:58+08:00" }
+}

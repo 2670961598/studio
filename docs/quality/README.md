@@ -81,3 +81,5 @@ studio-next qa-report --db <ledger.sqlite> --company <slug> [--date YYYY-MM-DD] 
 - 输出 `<companyDir>/var/reports/provenance/`（JSON+MD，原子写/幂等同字节/失败零输出）；
   `note` 白名单脱敏、artifact basename+hash 前缀；只读 `node:sqlite`，不写台账/事件/schema、不接主循环。
 - 图模型/置信/脱敏/限制：`docs/quality/provenance.md`。
+
+- [model-eval.md](model-eval.md) —— 自研业务向模型能力评测台（任务集/判分/运行/局限；`scripts/ops/model-eval/`）
