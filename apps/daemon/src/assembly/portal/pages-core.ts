@@ -6,6 +6,8 @@
  */
 import type { EventRecord, IssueRecord } from '@studio-next/contract'
 import type { PortalData, PortalStats, TicketDetailView } from './data.ts'
+import type { SessionIndexRow } from './sessions.ts'
+import { recentSessionsCard, sessionDetailHref } from './pages-sessions.ts'
 import { badge, clip, emptyState, esc, eventBadgeClass, fmtAgo, fmtEpoch, fmtTime, fmtUsd, icon, stateBadgeClass, url } from './html.ts'
 import { pageHead } from './layout.ts'
 
@@ -111,15 +113,18 @@ export function overviewBody(data: PortalData, stats: PortalStats): string {
       <a href="/chat">${icon('chat')}打开聊天</a>
       <a href="/org">${icon('org')}组织与人员</a>
       <a href="/reports">${icon('report')}公司报表</a>
+      <a href="/sessions">${icon('session')}会话档案</a>
     </div>
   </div>
 </div>`
 
+  const sessionsArchive = data.sessions()
   return `${hero}
 ${statsGrid}
 <div class="grid-2">
   <div class="stack">${activityCard}
-${recentCard}</div>
+${recentCard}
+${recentSessionsCard(sessionsArchive.recent(3), sessionsArchive.available())}</div>
   <div class="stack">${orgCard}
 ${quickCard}</div>
 </div>`
@@ -169,7 +174,7 @@ export function ticketsBody(
   const table =
     result.available && result.total > 0
       ? `<div class="card"><div class="table-wrap"><table class="table">
-  <thead><tr><th>单号</th><th>标题</th><th>状态</th><th>负责人</th><th>部门</th><th>泳道</th><th>更新</th></tr></thead>
+  <thead><tr><th>单号</th><th>标题</th><th>状态</th><th>负责人</th><th>部门</th><th>泳道</th><th>会话</th><th>更新</th></tr></thead>
   <tbody>
 ${items
   .map(
@@ -180,6 +185,7 @@ ${items
       <td class="muted">${t.assignee !== undefined ? esc(t.assignee) : '—'}</td>
       <td class="muted">${t.dept !== undefined ? esc(shortDept(t.dept)) : '—'}</td>
       <td class="muted">${t.lane !== undefined ? esc(t.lane) : '—'}</td>
+      <td>${data.sessions().ticketsWithSessions().has(t.id) ? `<a href="/sessions?ticket=${url(t.id)}" title="该单的工位会话">${icon('session', 13)}会话</a>` : '<span class="muted">—</span>'}</td>
       <td class="muted nowrap" title="${esc(fmtTime(t.updated))}">${esc(fmtAgo(t.updated))}</td>
     </tr>`,
   )
@@ -212,8 +218,8 @@ const shortDept = (dept: string): string => {
   return idx === -1 ? dept : dept.slice(idx + 1)
 }
 
-/** 单子详情页 body（§1.2：头部＋meta 网格＋描述＋验收＋事件时间线＋返回） */
-export function ticketDetailBody(view: TicketDetailView): string {
+/** 单子详情页 body（§1.2：头部＋meta 网格＋描述＋验收＋工位尝试/会话＋事件时间线＋返回） */
+export function ticketDetailBody(view: TicketDetailView, sessionsRows: readonly SessionIndexRow[] = []): string {
   const r = view.record
   // 空值行直出「—」的只留有信息量的（父单缺=不渲染该行；类型/负责人等业务字段保留占位）
   const meta = `<dl class="meta-grid">
@@ -275,6 +281,27 @@ ${
 `
     : ''
 }  <div class="card">
+    <div class="card-head"><h2>${icon('session')}工位尝试与会话</h2><span class="link-more"><a href="/sessions?ticket=${url(r.id)}">会话档案 →</a></span></div>
+    <div class="card-body">
+${
+  sessionsRows.length === 0
+    ? `      <div class="prose muted">该单在 .AIWS 工位树暂无尝试记录（派工后自动出现；门户只读不代建）。</div>`
+    : `      <div class="list-compact">
+${sessionsRows
+  .map(
+    (s) => `      <div class="list-row">
+        ${badge(`att${String(s.attempt)}`, s.sessionCount > 0 ? 'b-info' : 'b-neutral')}
+        <div class="grow"><div class="t"><a href="${esc(sessionDetailHref(s))}" title="查看该次尝试的会话">${esc(s.person)} <span class="mono muted">${esc(s.dept)}</span></a></div><div class="s mono">${s.hasReport ? 'REPORT ' : ''}${s.hasSummary ? '摘要 ' : ''}${s.hasBrief ? '任务书' : ''}${s.hasReport || s.hasSummary || s.hasBrief ? '' : '无产物文件'}</div></div>
+        <span class="muted num">${s.sessionCount > 0 ? `${String(s.sessionCount)} 条会话` : '无会话'}</span>
+        <time title="${esc(fmtEpoch(s.updatedAtMs))}">${esc(fmtEpoch(s.updatedAtMs))}</time>
+      </div>`,
+  )
+  .join('\n')}
+      </div>`
+}
+    </div>
+  </div>
+  <div class="card">
     <div class="card-head"><h2>${icon('clock')}事件时间线</h2><span class="link-more num">${view.events.length} 条事件</span></div>
     <div class="card-body">${timeline}</div>
   </div>

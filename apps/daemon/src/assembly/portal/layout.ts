@@ -10,12 +10,13 @@ import type { CompanySnapshot } from '@studio-next/contract'
 import { PORTAL_CSS } from './styles.ts'
 import { esc, icon, url } from './html.ts'
 
-/** 导航项（§1.1——五页；不含监控页） */
+/** 导航项（§一.1 五页＋§九.1 会话页——v2 第一刀） */
 const NAV: readonly { href: string; key: string; label: string; ic: string }[] = [
   { href: '/', key: 'overview', label: '概览', ic: 'home' },
   { href: '/tickets', key: 'tickets', label: '单子', ic: 'ticket' },
   { href: '/chat', key: 'chat', label: '聊天', ic: 'chat' },
   { href: '/org', key: 'org', label: '组织', ic: 'org' },
+  { href: '/sessions', key: 'sessions', label: '会话', ic: 'session' },
   { href: '/reports', key: 'reports', label: '报表', ic: 'report' },
 ]
 

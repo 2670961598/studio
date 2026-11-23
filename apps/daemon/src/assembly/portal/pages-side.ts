@@ -1,27 +1,90 @@
 /**
- * portal/pages-side —— 组织／报表／聊天包装页。
+ * portal/pages-side —— 组织（含 §九.1 架构图＋?dept= 过滤）／报表／聊天包装页。
  *
- * 依据：docs/plan/11-公司门户-2026-11-23.md §1.2（组织树/人员表/报表树/报表查看/聊天）。
+ * 依据：docs/plan/11-公司门户-2026-11-23.md §1.2（组织树/人员表/报表树/报表查看/聊天）
+ * ＋§九.2（v2 第一刀：HTML 部门架构图——节点含名称/负责人/人数/等级，点击经 ?dept=
+ * 过滤人员表；人员行加「会话/单子」快捷入口；缩进部门树保留）。
  * 聊天页：内容片段单源来自 @studio-next/panel/chat 的 renderChatBody（业务脚本零复制），
  * 本文件只做门户壳包装（§三——复用 createChatApp 挂同端口，样式按门户 tokens 覆写）。
  */
 import { renderChatBody, type ChatPageOptions } from '@studio-next/panel/chat'
+import type { DeptNode, PersonRef } from '@studio-next/contract'
 import type { PortalData, ReportFileView, ReportViewResult } from './data.ts'
 import { emptyState, esc, fmtBytes, fmtTime, icon, url } from './html.ts'
 import { pageHead } from './layout.ts'
 
-/** 组织页 body（§1.2：部门树＋人员表） */
-export function orgBody(data: PortalData): string {
+type DeptView = DeptNode & { depth: number; leaderName: string }
+type PersonView = PersonRef & { deptName: string }
+
+/** 部门子树人数（含后代部门；dept 归属=人员 dept 字段的 path 全等） */
+function subtreePeopleCount(depts: readonly DeptView[], people: readonly PersonView[]): Map<string, number> {
+  const children = new Map<string, DeptView[]>()
+  for (const d of depts) {
+    if (d.parent === null) continue
+    const list = children.get(d.parent) ?? []
+    list.push(d)
+    children.set(d.parent, list)
+  }
+  const direct = new Map<string, number>()
+  for (const p of people) direct.set(p.dept, (direct.get(p.dept) ?? 0) + 1)
+  const memo = new Map<string, number>()
+  const count = (d: DeptView): number => {
+    const hit = memo.get(d.path)
+    if (hit !== undefined) return hit
+    const kids = children.get(d.path) ?? []
+    const total = (direct.get(d.path) ?? 0) + kids.reduce((sum, k) => sum + count(k), 0)
+    memo.set(d.path, total)
+    return total
+  }
+  for (const d of depts) count(d)
+  return memo
+}
+
+/** 组织页 body（§1.2 部门树＋人员表；§九.2 架构图＋?dept= 过滤＋人员行会话入口） */
+export function orgBody(data: PortalData, deptFilter?: string): string {
   const org = data.org()
   const company = data.company()
+  const depts = org.departments as readonly DeptView[]
+  const people = org.people as readonly PersonView[]
+  const counts = subtreePeopleCount(depts, people)
 
-  const tree = org.departments
+  // —— §九.2 架构图：根=parent 空/失联；节点=名称·等级·负责人·子树人数；点击 ?dept= 过滤 ——
+  const byPath = new Map(depts.map((d) => [d.path, d]))
+  const childrenOf = new Map<string, DeptView[]>()
+  const roots: DeptView[] = []
+  for (const d of depts) {
+    if (d.parent !== null && byPath.has(d.parent)) {
+      const list = childrenOf.get(d.parent) ?? []
+      list.push(d)
+      childrenOf.set(d.parent, list)
+    } else roots.push(d)
+  }
+  const node = (d: DeptView): string => {
+    const kids = childrenOf.get(d.path) ?? []
+    const active = deptFilter === d.path
+    const dimmed = deptFilter !== undefined && !(d.path === deptFilter || d.path.startsWith(`${deptFilter}/`))
+    return `      <li>
+        <a class="org-node${active ? ' active' : ''}${dimmed ? ' dim' : ''}" href="/org${deptFilter === d.path ? '' : `?dept=${url(d.path)}`}" title="${esc(d.path)}">
+          <span class="org-name">${esc(d.name)}</span>
+          <span class="org-meta"><span class="lvl">L${String(d.level)}</span><span>${esc(d.leaderName)}</span><span class="num">${String(counts.get(d.path) ?? 0)} 人</span></span>
+        </a>${kids.length === 0 ? '' : `\n        <ul>\n${kids.map(node).join('\n')}\n        </ul>`}
+      </li>`
+  }
+  const chart =
+    roots.length === 0
+      ? emptyState('org', '无部门', 'org-config.yaml 未声明部门')
+      : `<ul class="org-chart">
+${roots.map(node).join('\n')}
+      </ul>`
+
+  // —— 缩进部门树（§1.2 保留：负责人/泳道/职能明细） ——
+  const tree = depts
     .map(
       (d) =>
-        `    <div class="tree-row" style="padding-left:${16 + d.depth * 22}px">
+        `    <div class="tree-row${deptFilter !== undefined && d.path === deptFilter ? ' hit' : ''}" style="padding-left:${16 + d.depth * 22}px">
       ${d.depth > 0 ? '<span class="muted">└</span>' : icon('org', 15)}
       <span class="name">${esc(d.name)}</span>
-      <span class="lvl">L${d.level}</span>
+      <span class="lvl">L${String(d.level)}</span>
       <span class="meta">
         <span>负责人 ${esc(d.leaderName)}（${esc(d.leader)}）</span>
         ${d.lanes.length > 0 ? `<span>${icon('link', 12)}${d.lanes.map((l) => esc(l)).join(' / ')}</span>` : ''}
@@ -31,21 +94,37 @@ export function orgBody(data: PortalData): string {
     )
     .join('\n')
 
-  const people = org.people
+  // —— 人员表（?dept= 过滤=该部门及其子部门；行加 会话/单子 快捷入口 §九.2） ——
+  const inSubtree = (deptPath: string): boolean => deptFilter === undefined || deptPath === deptFilter || deptPath.startsWith(`${deptFilter}/`)
+  const shown = people.filter((p) => inSubtree(p.dept))
+  const peopleRows = shown
     .map(
       (p) =>
         `    <tr>
       <td class="id">${esc(p.id)}</td>
       <td>${esc(p.name)}</td>
       <td class="muted">${esc(p.deptName)}</td>
-      <td><span class="lvl">L${p.level}</span></td>
+      <td><span class="lvl">L${String(p.level)}</span></td>
       <td class="muted mono">${esc(p.login)}</td>
+      <td class="nowrap"><a href="/sessions?person=${url(p.id)}" title="该岗位的工位会话">${icon('session', 13)}会话</a> <a href="/tickets?q=${url(p.id)}" title="以工号搜单子">${icon('ticket', 13)}单子</a></td>
     </tr>`,
     )
     .join('\n')
 
-  return `${pageHead('组织', `${org.departments.length} 个部门 · ${org.people.length} 名在册人员 · 公司等级 L${company.level}`)}
+  const filterBar =
+    deptFilter === undefined
+      ? ''
+      : `\n<div class="banner info">${icon('org')}<div class="grow">部门过滤中：<b>${esc(deptFilter)}</b> —— 人员表只看该部门及子部门（${String(shown.length)} 人）。<a href="/org">清除过滤</a></div></div>`
+
+  return `${pageHead('组织', `${depts.length} 个部门 · ${people.length} 名在册人员 · 公司等级 L${String(company.level)}`)}
+${filterBar}
 <div class="stack">
+  <div class="card">
+    <div class="card-head"><h2>${icon('org')}组织架构图</h2><span class="link-more">点击节点按部门过滤人员表</span></div>
+    <div class="card-body chart-scroll">
+${chart}
+    </div>
+  </div>
   <div class="card">
     <div class="card-head"><h2>${icon('org')}部门树</h2><span class="link-more">负责人/等级/泳道/职能</span></div>
     <div class="tree">
@@ -53,11 +132,11 @@ ${tree}
     </div>
   </div>
   <div class="card">
-    <div class="card-head"><h2>${icon('people')}人员名册</h2><span class="link-more num">${org.people.length} 人</span></div>
+    <div class="card-head"><h2>${icon('people')}人员名册</h2><span class="link-more num">${shown.length} 人${deptFilter === undefined ? '' : `（已过滤：${esc(deptFilter)}）`}</span></div>
     <div class="table-wrap"><table class="table">
-      <thead><tr><th>工号</th><th>姓名</th><th>部门</th><th>等级</th><th>登录名</th></tr></thead>
+      <thead><tr><th>工号</th><th>姓名</th><th>部门</th><th>等级</th><th>登录名</th><th>快捷</th></tr></thead>
       <tbody>
-${people}
+${peopleRows === '' ? '        <tr><td colspan="6" class="muted">该部门暂无在册人员</td></tr>' : peopleRows}
       </tbody>
     </table></div>
   </div>

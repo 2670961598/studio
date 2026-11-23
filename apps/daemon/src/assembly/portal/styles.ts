@@ -344,11 +344,61 @@ const RESPONSIVE = `
     .search input { flex: 1; width: auto; }
     .chat-embed main { grid-template-columns: 200px minmax(0, 1fr); height: calc(100vh - 220px); }
     .org-summary, .quick { grid-template-columns: 1fr; }
+    .search-wide { flex-wrap: wrap; }
+    .ev-text { max-height: 220px; }
+    .ev-head { flex-wrap: wrap; }
   }
   @media (max-width: 560px) {
     .chat-embed main { grid-template-columns: 1fr; }
     .chat-embed aside { max-height: 160px; border-right: 0; border-bottom: 1px solid var(--line); }
   }
+`
+
+/** §九.2 组织架构图＋§九.1 会话档案页（v2 第一刀新增组件面） */
+const SESSIONS_ORG = `
+  .org-chart, .org-chart ul { list-style: none; margin: 0; padding: 0; display: flex; justify-content: center; gap: 14px; }
+  .org-chart { padding: 6px 0 2px; }
+  .org-chart ul { position: relative; padding-top: 18px; }
+  .org-chart ul::before { content: ''; position: absolute; top: 0; left: 50%; width: 1px; height: 18px; background: var(--line-strong); }
+  .org-chart li { display: flex; flex-direction: column; align-items: center; position: relative; padding-top: 18px; }
+  .org-chart li::before { content: ''; position: absolute; top: 0; left: 50%; width: 1px; height: 18px; background: var(--line-strong); }
+  .org-chart > li { padding-top: 0; }
+  .org-chart > li::before { display: none; }
+  .org-chart li:only-child > ul::before { display: none; }
+  .org-node { display: flex; flex-direction: column; gap: 4px; min-width: 128px; max-width: 190px; padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--bg2); color: var(--fg); text-decoration: none; box-shadow: var(--shadow-1); }
+  .org-node:hover { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+  .org-node.active { border-color: var(--accent); background: var(--accent-soft); }
+  .org-node.dim { opacity: 0.45; }
+  .org-name { font-weight: 600; font-size: 13px; text-align: center; }
+  .org-meta { display: flex; justify-content: center; gap: 6px; align-items: center; font-size: 11px; color: var(--fg-muted); flex-wrap: wrap; }
+  .chart-scroll { overflow-x: auto; }
+  .tree-row.hit { background: var(--accent-soft); border-radius: 8px; }
+  .search-wide { display: flex; gap: 8px; flex: 1; max-width: 760px; }
+  .search-wide input { flex: 1; min-width: 110px; }
+  .concl { max-width: 380px; }
+  .tabs { display: flex; gap: 4px; margin: 14px 0 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .tab { padding: 8px 14px; font-size: 13px; color: var(--fg-muted); text-decoration: none; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; }
+  .tab:hover { color: var(--fg); }
+  .tab.active { color: var(--fg); background: var(--bg2); border-color: var(--line); }
+  .tab .count { margin-left: 5px; }
+  .doc-pre { margin: 0; padding: 14px 16px; border-radius: 8px; background: var(--bg2); border: 1px solid var(--line); white-space: pre-wrap; word-break: break-word; font-size: 12.5px; line-height: 1.6; max-height: 70vh; overflow: auto; }
+  .doc-pre.clipped::after { content: ''; display: block; }
+  .ev-list { display: flex; flex-direction: column; gap: 4px; }
+  .ev { display: flex; gap: 10px; align-items: flex-start; padding: 7px 10px; border-radius: 8px; border: 1px solid transparent; }
+  .ev:hover { background: var(--bg2); }
+  .ev-time { font-size: 11px; color: var(--fg-muted); white-space: nowrap; margin-top: 2px; }
+  .ev-main { flex: 1; min-width: 0; }
+  .ev-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-size: 12.5px; }
+  .ev-detail { color: var(--fg-muted); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; }
+  .ev-text { margin: 6px 0 0; padding: 8px 10px; border-radius: 6px; background: var(--bg2); border: 1px solid var(--line); white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.55; max-height: 260px; overflow: auto; }
+  .ev-user .badge, .ev-brief .badge { border-color: color-mix(in srgb, var(--info) 50%, transparent); }
+  .ev-assistant .badge { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+  .ev-tool_call .badge { border-color: color-mix(in srgb, var(--warn) 55%, transparent); }
+  .ev-error { border-color: color-mix(in srgb, var(--danger) 35%, transparent); background: color-mix(in srgb, var(--danger) 6%, transparent); }
+  .ev-fold { margin: 8px 0 0; border: 1px dashed var(--line-strong); border-radius: 8px; }
+  .ev-fold summary { cursor: pointer; padding: 8px 12px; color: var(--fg-muted); font-size: 12.5px; user-select: none; }
+  .ev-fold .ev-group { padding: 0 6px 6px; }
+  .ok-dot { color: var(--ok); }
 `
 
 /** 门户样式表全文（layout.ts 以 <style> 内联——零外链，CSP 友好） */
@@ -360,5 +410,6 @@ export const PORTAL_CSS = `:root {${TOKENS_DARK}}
 ${BASE}
 ${LAYOUT}
 ${COMPONENTS}
+${SESSIONS_ORG}
 ${CHAT}
 ${RESPONSIVE}`

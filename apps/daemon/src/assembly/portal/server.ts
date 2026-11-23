@@ -6,8 +6,11 @@
  *
  * 端面（页面全 GET、门户自身零写）：
  *   页面：/ /tickets /tickets/:id /chat /org /reports?q=&limit=&page= /reports/view?path=
+ *         /sessions?person=&ticket=&q= /sessions/:ticket/:attempt?tab=&sessionId=
+ *         /sessions/:ticket/:attempt/file?path=（§九.1 v2 第一刀）
  *   API ：/api/stats /api/activity?limit= /api/tickets?state=&q=&limit=&offset=
  *         /api/tickets/:id /api/org /api/reports?q=&limit=&offset= ＋ /api/chat/*
+ *         /api/sessions?person=&ticket=&q= /api/sessions/:ticket/:attempt?sessionId=
  *         （createChatApp 同端口挂载，其发送/已读写面经 chatd 网关——事实源写入者不变）
  * 聊天复用：/chat 与 /api/chat/* 整体来自 @studio-next/panel/chat 的 createChatApp——
  * portal 显式注入 pageRenderer（非路由排序覆盖），业务脚本/降级卡零复制（§三）。
@@ -24,6 +27,8 @@ import type { CompanySnapshot } from '@studio-next/contract'
 import { openLedger } from '@studio-next/store'
 import { chatPageRenderer, orgBody, REPORTS_DEFAULT_LIMIT, REPORTS_MAX_LIMIT, reportViewBody, reportsBody } from './pages-side.ts'
 import { activityJson, overviewBody, ticketDetailBody, ticketJson, ticketsBody } from './pages-core.ts'
+import { parseSessionsTab, sessionsDetailBody, sessionsFileBody, sessionsListBody } from './pages-sessions.ts'
+import { SESSIONS_PERSON_RE, SESSIONS_TICKET_RE, type AttemptFileResult } from './sessions.ts'
 import { createPortalData, extractMission, type ChatStatsView, type PortalData } from './data.ts'
 import { emptyState, esc, icon } from './html.ts'
 import { portalShell, type ShellOptions } from './layout.ts'
@@ -158,9 +163,16 @@ export function createPortalApp(opts: PortalAppOptions): Hono {
     if (!TICKET_ID_RE.test(id)) return c.html(shell('单子', 'tickets', errorBody(400, 'bad-ticket-id', `单号 ${id} 不是票形 id（^[A-Za-z0-9][A-Za-z0-9._-]*$）`)), 400)
     const r = data.ticketDetail(id)
     if (!r.ok) return c.html(shell('单子', 'tickets', errorBody(r.status, r.code, r.message)), r.status)
-    return c.html(shell(r.view.record.title, 'tickets', ticketDetailBody(r.view)))
+    return c.html(shell(r.view.record.title, 'tickets', ticketDetailBody(r.view, data.sessions().forTicket(id))))
   })
-  app.get('/org', (c) => c.html(shell('组织', 'org', orgBody(data))))
+  app.get('/org', (c) => {
+    const dept = textParam(c.req.query('dept'), 128)
+    if (dept === null) return c.html(shell('组织', 'org', errorBody(400, 'bad-query', '查询参数非法：dept 过长或含控制字符')), 400)
+    if (dept !== undefined && !data.org().departments.some((d) => d.path === dept)) {
+      return c.html(shell('组织', 'org', errorBody(400, 'bad-dept', `部门路径 ${dept} 不在组织快照内（从架构图节点点击进入）`)), 400)
+    }
+    return c.html(shell('组织', 'org', orgBody(data, dept)))
+  })
   app.get('/reports', (c) => {
     const search = textParam(c.req.query('q'), 120)
     const limit = intParam(c.req.query('limit'), REPORTS_DEFAULT_LIMIT, 1, REPORTS_MAX_LIMIT)
@@ -194,6 +206,56 @@ export function createPortalApp(opts: PortalAppOptions): Hono {
     const r = data.reportView(raw)
     if (!r.ok) return c.html(shell('报表', 'reports', errorBody(r.status, r.code, r.message)), r.status)
     return c.html(shell(r.file.relPath, 'reports', reportViewBody(r)))
+  })
+
+  // —— 会话档案（§九.1 v2 第一刀：.AIWS 工位轨迹只读浏览；person 越界 400） ——
+  app.get('/sessions', (c) => {
+    const person = textParam(c.req.query('person'), 64)
+    const ticket = textParam(c.req.query('ticket'), 128)
+    const search = textParam(c.req.query('q'), 120)
+    const size = intParam(c.req.query('size'), 25, 10, 100)
+    const page = intParam(c.req.query('page'), 1, 1, 1_000_000)
+    if (person === null || ticket === null || search === null || size === null || page === null) {
+      return c.html(shell('会话', 'sessions', errorBody(400, 'bad-query', '查询参数非法：person/ticket/q 过长或含控制字符；page/size 须为整数')), 400)
+    }
+    const archive = data.sessions()
+    if (person !== undefined && !SESSIONS_PERSON_RE.test(person)) {
+      return c.html(shell('会话', 'sessions', errorBody(400, 'bad-person', `岗位 ${person} 不是工号形 id（^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$）`)), 400)
+    }
+    if (ticket !== undefined && !SESSIONS_TICKET_RE.test(ticket)) {
+      return c.html(shell('会话', 'sessions', errorBody(400, 'bad-ticket-id', `单号 ${ticket} 不是票形 id（^[A-Za-z0-9][A-Za-z0-9._-]*$）`)), 400)
+    }
+    if (person !== undefined && archive.available() && !archive.persons().includes(person)) {
+      return c.html(shell('会话', 'sessions', errorBody(400, 'bad-person', `岗位 ${person} 不在工位档案树内（先从 /org 或 /sessions 列表选岗位）`)), 400)
+    }
+    return c.html(shell('会话', 'sessions', sessionsListBody(archive, { person: person ?? '', ticket: ticket ?? '', q: (search ?? '').trim(), page, size })))
+  })
+  app.get('/sessions/:ticket/:attempt', async (c) => {
+    const ticket = c.req.param('ticket')
+    const attempt = c.req.param('attempt')
+    const person = textParam(c.req.query('person'), 64)
+    const sessionId = textParam(c.req.query('sessionId'), 96)
+    if (person === null || sessionId === null) {
+      return c.html(shell('会话', 'sessions', errorBody(400, 'bad-query', '查询参数非法：person/sessionId 过长或含控制字符')), 400)
+    }
+    const tab = parseSessionsTab(c.req.query('tab'))
+    const r = await data
+      .sessions()
+      .detail(ticket, attempt, { ...(person !== undefined ? { person } : {}), ...(sessionId !== undefined && sessionId !== '' ? { sessionId } : {}) })
+    if (!r.ok) return c.html(shell('会话', 'sessions', errorBody(r.status, r.code, r.message)), r.status)
+    const { view } = r
+    const readFile = (rel: string): AttemptFileResult => data.sessions().fileView(view.ticket, `att${String(view.attempt)}`, rel)
+    return c.html(shell(`${view.ticket} 会话`, 'sessions', sessionsDetailBody(view, tab, readFile)))
+  })
+  app.get('/sessions/:ticket/:attempt/file', (c) => {
+    const ticket = c.req.param('ticket')
+    const attempt = c.req.param('attempt')
+    const rel = c.req.query('path') ?? ''
+    const r = data.sessions().fileView(ticket, attempt, rel)
+    const attNum = /^att(\d{1,4})$/.exec(attempt)
+    const person = attNum === null ? '' : (data.sessions().forTicket(ticket).find((x) => x.attempt === Number.parseInt(attNum[1] ?? '0', 10))?.person ?? '')
+    const ctx = { ticket, attempt: attNum === null ? 0 : Number.parseInt(attNum[1] ?? '0', 10), person }
+    return c.html(shell(r.ok ? r.file.relPath : '文件预览', 'sessions', sessionsFileBody(ctx, r)), r.ok ? 200 : r.status)
   })
 
   // —— 只读 JSON API（§1.3：统一 {ok,…}；错误码可读） ——
@@ -234,6 +296,49 @@ export function createPortalApp(opts: PortalAppOptions): Hono {
     const o = data.org()
     const company = data.company()
     return c.json({ ok: true, company: { slug: company.slug, name: company.name, level: company.level }, departments: o.departments, people: o.people })
+  })
+  app.get('/api/sessions', (c) => {
+    const person = textParam(c.req.query('person'), 64)
+    const ticket = textParam(c.req.query('ticket'), 128)
+    const search = textParam(c.req.query('q'), 120)
+    const limit = intParam(c.req.query('limit'), 50, 1, API_MAX_LIMIT)
+    const offset = intParam(c.req.query('offset'), 0, 0, 1_000_000)
+    if (person === null || ticket === null || search === null || limit === null || offset === null) {
+      return c.json(jsonError('bad-query', '查询参数非法：person/ticket/q 过长或含控制字符；limit/offset 须为非负整数'), 400)
+    }
+    const archive = data.sessions()
+    if (person !== undefined && !SESSIONS_PERSON_RE.test(person)) return c.json(jsonError('bad-person', `岗位 ${person} 不是工号形 id`), 400)
+    if (ticket !== undefined && !SESSIONS_TICKET_RE.test(ticket)) return c.json(jsonError('bad-ticket-id', `单号 ${ticket} 不是票形 id`), 400)
+    if (person !== undefined && archive.available() && !archive.persons().includes(person)) {
+      return c.json(jsonError('bad-person', `岗位 ${person} 不在工位档案树内`), 400)
+    }
+    const r = archive.list({ ...(person !== undefined ? { person } : {}), ...(ticket !== undefined ? { ticket } : {}), ...(search !== undefined && search !== '' ? { q: search } : {}), limit, offset })
+    return c.json({ ok: true, available: r.available, total: r.total, scanned: r.scanned, capped: r.capped, limit, offset, items: r.items })
+  })
+  app.get('/api/sessions/:ticket/:attempt', async (c) => {
+    const ticket = c.req.param('ticket')
+    const attempt = c.req.param('attempt')
+    const person = textParam(c.req.query('person'), 64)
+    const sessionId = textParam(c.req.query('sessionId'), 96)
+    if (person === null || sessionId === null) return c.json(jsonError('bad-query', '查询参数非法：person/sessionId 过长或含控制字符'), 400)
+    const r = await data.sessions().detail(ticket, attempt, { ...(person !== undefined ? { person } : {}), ...(sessionId !== undefined && sessionId !== '' ? { sessionId } : {}) })
+    if (!r.ok) return c.json(jsonError(r.code, r.message), r.status)
+    const { view } = r
+    const transcript = view.transcript.available ? { available: true, ...(view.transcript.sourceTruncated === true ? { sourceTruncated: true } : {}) } : { available: false, code: view.transcript.code ?? 'unavailable', message: view.transcript.message ?? '' }
+    return c.json({
+      ok: true,
+      ticket: view.ticket,
+      person: view.person,
+      dept: view.dept,
+      attempt: view.attempt,
+      updatedAtMs: view.updatedAtMs,
+      sessionId: view.sessionId,
+      files: view.files,
+      sessions: view.sessions,
+      events: view.events,
+      usage: view.usage,
+      transcript,
+    })
   })
   app.get('/api/reports', (c) => {
     // 可选 q/limit/offset（§1.3 补订）：缺省=全清单（现契约形状零变化）；limit=0 亦=不截断

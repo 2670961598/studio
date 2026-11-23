@@ -19,6 +19,7 @@ import path from 'node:path'
 import type { CompanySnapshot, EventRecord, IssueRecord, TicketId } from '@studio-next/contract'
 import { getIssue, listIssues, parseIssueEvents, type IssueEvent } from '@studio-next/localplatform'
 import type { Ledger } from '@studio-next/store'
+import { createSessionArchive, type DecompressFn, type SessionArchive } from './sessions.ts'
 
 /** 单据事件时间线项（渲染面 view model） */
 export interface TicketEventView {
@@ -83,6 +84,8 @@ export interface PortalDataOptions {
   readonly ledger: Ledger
   /** 聊天统计（best-effort：装配层注入 transport 查询；失败/超时→available:false） */
   readonly chatStats: () => Promise<ChatStatsView>
+  /** 会话轨迹解压面（缺省 zstd CLI；测试注入 fake——§九.1） */
+  readonly sessionDecompress?: DecompressFn
 }
 
 /** 单子列表 TTL（全树派生秒级；人看页面可接受——§三） */
@@ -335,6 +338,12 @@ export function createPortalData(opts: PortalDataOptions) {
     }
   }
 
+  // —— 会话档案面（只读；工位树 = <companyDir>/../.AIWS——§九.1；解压面可注入） ——
+  const sessions: SessionArchive = createSessionArchive({
+    aiwsRoot: path.resolve(opts.companyDir, '..', '.AIWS'),
+    ...(opts.sessionDecompress !== undefined ? { decompress: opts.sessionDecompress } : {}),
+  })
+
   return {
     company: () => opts.company,
     mission: () => opts.mission,
@@ -349,6 +358,7 @@ export function createPortalData(opts: PortalDataOptions) {
     org,
     reports,
     reportView,
+    sessions: () => sessions,
   }
 }
 
