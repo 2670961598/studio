@@ -21,3 +21,12 @@
 ## 五、待办
 - token 源后续由制作人决定（Kimi 买额度/恢复后重评、Go Extra Usage 等）；
 - Kimi 恢复后可做一次 high 档真单 GATE_PASS 验证再决定是否回切。
+
+## 六、制作人最终定档（2026-11-24 16:3x 追加）
+「GLM5.4、GLM5.3、GLM5.3Flash 这样三个档位」——现行生产档位（已热切实证）：
+- **high = GLM-5.4**（主源；GLM-5.3 作故障兜底）
+- **mid = GLM-5.3**
+- **low = GLM-5.3-Flash**
+- 热切日志：`[models-hot-swap] 已热切：high=glm/GLM-5.4、mid=glm/GLM-5.3、low=glm/GLM-5.3-Flash`（daemon 20575，健康）；
+- 备份：`models.yaml.bak-high54-*`（上一步 5.3 版本）/`models.yaml.bak-replacekimi-*`（Kimi 版本）。
+- 备注：5.4 在此前 6 任务评测中曾因 429/529/超时得 2/6（环境干扰为主），high 档真实使用少，先按定档运行；后续用 high 真单观察质量/时延/失败率，异常可回退 5.3。
