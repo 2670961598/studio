@@ -39,7 +39,7 @@ import { parseModelTierTickets } from '../../engine/tier/model-tier.ts'
 import { parseLaneCapacity } from '../../engine/lanes/registry.ts'
 import { parsePersonInflightOverrides } from '../../engine/todoqueue/queue.ts'
 import { parseStallAfterMsByExecutor } from './watchdog-config.ts'
-import { bool, coerceDispatchSelectionChain, coerceSeatbeltGrant, num, rejectRemovedGatewayKey, str, type SeatbeltConfigRaw } from '../serveconfig/coerce.ts'
+import { bool, coerceDispatchSelectionChain, coerceSeatbeltGrant, intInRange, num, rejectRemovedGatewayKey, str, type SeatbeltConfigRaw } from '../serveconfig/coerce.ts'
 import { coerceHrServeKey, validateHrServeCross } from '../hrsync/config.ts'
 import { crossValidateMatrixChannels } from '../channels/channels.ts'
 import { coerceRestartServeKey, isRestartKey, validateRestartCross } from '../serveconfig/restart.ts'
@@ -392,6 +392,8 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         break
       }
       case 'acceptanceEnforceSince': cfg.acceptanceEnforceSince = num(value, key); break
+      case 'acceptanceTimeoutMs': // task-138：验收闸门超时（1000..3600000 整数 ms；非法=拒启 fail-closed，缺省不写=引擎缺省 60s）
+        cfg.acceptanceTimeoutMs = intInRange(value, key, 1000, 3_600_000); break
       case 'directiveProducer': cfg.directiveProducer = str(value, key); break
       case 'directiveWhitelist': {
         const v = str(value, key)

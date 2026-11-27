@@ -44,6 +44,18 @@ export function num(v: unknown, key: string): number {
   return v
 }
 
+/**
+ * 键值须为 [min,max] 闭区间整数（首消费=acceptanceTimeoutMs，task-138：非法值启动即
+ * CONFIG_INVALID 明报 fail-closed，不静默取缺省——与既有「解析即验」键同纪律）。
+ */
+export function intInRange(v: unknown, key: string, min: number, max: number): number {
+  const n = num(v, key)
+  if (!Number.isInteger(n) || n < min || n > max) {
+    throw new Error(`daemon.yaml：${key} 须为 ${min}..${max} 的整数（实得 ${n}）`)
+  }
+  return n
+}
+
 /** 键值须为布尔字面量 */
 export function bool(v: unknown, key: string): boolean {
   if (typeof v !== 'boolean') throw new Error(`daemon.yaml：${key} 须为 true/false`)

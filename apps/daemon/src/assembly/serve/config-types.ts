@@ -93,6 +93,13 @@ export interface ServeConfig extends HrServeConfig, RestartServeConfig, Signatur
   acceptanceEnforce: 'off' | 'observe' | 'enforce'
   /** 存量判定线 epoch ms（缺省=首次启动时间，daemon_kv 持久化） */
   acceptanceEnforceSince?: number
+  /**
+   * 验收闸门超时 ms（task-138，公司级可配；docs/quality/验收超时配置与调优.md）：
+   * 真验收闸门逐条冻结验收命令的执行超时（gate runShell + 合并跑门禁同值——单一生效值双消费）。
+   * 整数 1000..3600000（非法=CONFIG_INVALID 拒启 fail-closed，不静默取缺省）；
+   * 缺省不配=ACCEPTANCE_GATE_TIMEOUT_MS（60s，真源在 engine/gate.ts——本处不复制数值）。
+   */
+  acceptanceTimeoutMs?: number
   /** 批示归一层·制作人账号（studio-dev-171，docs/18-§2.5）：批示豁免位（§2.3 任意
    * 介入不受限——含派单律）；缺省=未知 actor 面 fail-closed 拒 */
   directiveProducer?: string

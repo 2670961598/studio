@@ -331,11 +331,18 @@ export function buildServeRuntime(
     registry,
     ...(judgeHook !== undefined ? { judge: judgeHook } : {}), // 160-B 两址精序（缺省不注入=规则缺省档）
     assembler: makeAssembler(),
-    // 闸门双形态（v0.5 真单刀）：真单=逐条真执行冻结验收命令；demo=exit0 模拟占位
+    // 闸门双形态（v0.5 真单刀）：真单=逐条真执行冻结验收命令；demo=exit0 模拟占位。
+    // 验收闸门超时透传（task-138）：daemon.yaml acceptanceTimeoutMs 单一生效值双消费
+    // （收割闸门+合并跑门禁——缺省 undefined 由 gate.ts/default-deps.ts 兜底 60s，不复制真源）。
     gateRunner: realGate
-      ? createAcceptanceGateRunner(acceptance, conversationAcceptanceOptions(wiredConversation))
+      ? createAcceptanceGateRunner(acceptance, {
+        ...conversationAcceptanceOptions(wiredConversation),
+        ...(config.acceptanceTimeoutMs !== undefined ? { timeoutMs: config.acceptanceTimeoutMs } : {}),
+      })
       : createDefaultGateRunner(),
-    ...(realGate ? { mergeRun: createDefaultMergeRunDeps({ gateCommand: acceptance }) } : {}), // 202-P2 相位 5 合并跑（面关=v0 模拟轨）
+    ...(realGate
+      ? { mergeRun: createDefaultMergeRunDeps({ gateCommand: acceptance, ...(config.acceptanceTimeoutMs !== undefined ? { timeoutMs: config.acceptanceTimeoutMs } : {}) }) }
+      : {}), // 202-P2 相位 5 合并跑（面关=v0 模拟轨）
     clock,
     config: engineConfig,
     people: snapshot.people, departments: snapshot.departments, // 130-P2（studio-dev-173）：部门索引随快照注入——父单立案 leader 解析

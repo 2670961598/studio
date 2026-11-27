@@ -24,6 +24,7 @@ import { writeExitMarkOnStop } from '../../control/restart/checkpoint.ts'
 import { orphanSweepDue, type OrphanRecoveryResult } from '../../engine/recovery/orphan-recovery.ts'
 import type { TickReport } from '../../engine/tick-report/types.ts'
 import { takeOverRunningWorkRecords } from '../../engine/harvest/inflight-takeover.ts'
+import { ACCEPTANCE_GATE_TIMEOUT_MS } from '../../engine/gate.ts'
 import { holdLaneBusyLinesOf, noopAggregatedLinesOf, renderTick } from '../render/tick.ts'
 import { DEMO_SNAPSHOT } from '../demo/demo-snapshot.ts'
 import { loadCompanyAtBoot } from '../assets/boot.ts'
@@ -227,6 +228,11 @@ export async function runServe(
   const execMode = config.agentYaml !== undefined ? `真 executor（agent.yaml=${config.agentYaml}）` : 'fake executor（demo）'
   const gateMode = realGateMode(config) ? '真验收闸门（冻结验收命令真执行）' : '占位闸门（exit0 模拟）'
   console.log(`[serve] 栈形态：${stackMode} + ${execMode} + ${gateMode}（边界见 src/assembly/serve.ts 头注）`)
+  // 验收闸门超时（task-138）：公司级生效值一行可核对——值面单源（缺省=engine/gate.ts 常量，
+  // 配置=daemon.yaml acceptanceTimeoutMs；装配面 runtime.ts 双消费，见 docs/quality/验收超时配置与调优.md）
+  console.log(
+    `[serve] 验收闸门超时=${config.acceptanceTimeoutMs ?? ACCEPTANCE_GATE_TIMEOUT_MS}ms（来源=${config.acceptanceTimeoutMs !== undefined ? 'daemon.yaml' : '缺省'}）`,
+  )
   // —— liveness 探针状态（studio-dev-697，docs/17-§2）：tick 前进＋events 哈希链摘要 ——
   //    链摘要按 TTL 节流复算（16 万行全量校验不随每次探测跑；过期=不健康，防旧摘要冒充）。
   let ticks = 0
