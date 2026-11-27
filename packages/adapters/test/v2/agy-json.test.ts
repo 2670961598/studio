@@ -14,13 +14,24 @@
  *      finished_reason 在场（print_timeout/interrupted/error/未知/形状坏）＝残稿不计完成且
  *      CLI 上报 usage 照记；status=ERROR 按 error 文本分类并并入 stderr 结构化行；
  *      stdout 空＋AGY_ERROR 行＝失败面；坏 JSON / 非对象 / status 未知如实落 bad-*（不猜）
+ *   ⑤ task-149 真机回放：ERROR＋finished_reason=print_timeout＋残稿＋usage 全 0 → timeout 面
+ *      partial=true、usage 按未上报不落键（usageUnreported）；agyOutcomeHasModelTurn＝有效模型
+ *      回合证据判据（turns 记账）；decodeAgyStdout＝多字节 UTF-8 跨分片统一解码
  *
  * 依据：docs/17-§6（收割口径：不伪造成功）、docs/25-§二（凭据不入日志）、contract
- *   schemas/errors.ts EXECUTOR_ERROR_CODES；样本＝task-140 实测事实单的结构回放（非保证面）。
+ *   schemas/errors.ts EXECUTOR_ERROR_CODES；样本＝task-140/149 实测事实单的结构回放（非保证面）。
  *   夹具凭据一律 fake- 前缀低熵值（无真实凭证）。本文件 <600 行阈内。
  */
+import { Buffer } from 'node:buffer'
 import { describe, expect, it } from 'vitest'
-import { agyErrorSummary, classifyAgyError, parseAgyJson, sanitizeAgyText } from '../../src/agy-json.ts'
+import {
+  agyErrorSummary,
+  agyOutcomeHasModelTurn,
+  classifyAgyError,
+  decodeAgyStdout,
+  parseAgyJson,
+  sanitizeAgyText,
+} from '../../src/agy-json.ts'
 
 const AUTH_SAMPLE = 'authentication failed or timed out'
 const ELIGIBILITY_SAMPLE =
@@ -239,5 +250,108 @@ describe('parseAgyJson（终稿解析：成功只认 SUCCESS＋非空 response�
       kind: 'bad-shape',
       reason: 'status=SUCCESS 但 response 非 string',
     })
+  })
+})
+
+/** task-149 真机回放（T3 结构样本，文本占位）：超时终稿挂 status=ERROR＋finished_reason，有残稿而 usage 全 0 */
+const PRINT_TIMEOUT_OBJ = {
+  status: 'ERROR',
+  error: 'print timeout after 1m0s with the turn still in progress; the response is partial',
+  response: '长文残稿：结论未收尾。',
+  duration_seconds: 9,
+  num_turns: 1,
+  usage: { input_tokens: 0, output_tokens: 0, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 0 },
+  finished_reason: 'print_timeout',
+}
+const DEADLINE_STDERR = 'noise line\nAGY_ERROR: {"status":"DEADLINE_EXCEEDED","reason":"print_timeout","retryable":false}'
+const OTHER = { kind: 'other', detail: 'x' } as const
+
+describe('parseAgyJson · print 超时真机形（task-149②：finished_reason 先于 status 采信；usage 全 0＝未上报）', () => {
+  it('ERROR＋print_timeout＋残稿＋usage 全 0 → timeout 面：partial=true、usage 不落键、usageUnreported、文本标注', () => {
+    const out = parseAgyJson(JSON.stringify(PRINT_TIMEOUT_OBJ), DEADLINE_STDERR)
+    expect(out).toEqual({
+      kind: 'error',
+      errorClass: { kind: 'timeout', detail: expect.stringContaining('print 超时（--print-timeout 到点') },
+      numTurns: 1,
+      usageUnreported: true,
+      partial: true,
+    })
+    expect(out).not.toHaveProperty('usage') // 全 0 不是「CLI 上报的用量」：不伪造零账
+    if (out.kind !== 'error') throw new Error('期望 error 面')
+    expect(out.errorClass).not.toHaveProperty('code') // timeout 在 EXECUTOR_ERROR_CODES 词表外：文本承载
+    expect(out.errorClass.detail).toContain(`残稿 ${String(PRINT_TIMEOUT_OBJ.response.length)} 字符不作输出`)
+    expect(out.errorClass.detail).toContain('partial=true')
+    expect(out.errorClass.detail).toContain('usage 未上报（CLI 未上报（超时）')
+    expect(out.errorClass.detail).toContain('AGY_ERROR status=DEADLINE_EXCEEDED reason=print_timeout retryable=false')
+  })
+
+  it('print_timeout 面 usage 缺席同样按未上报；无残稿 → partial 不落、文本标注 partial=false＋无残稿', () => {
+    const noUsage = { ...PRINT_TIMEOUT_OBJ }
+    delete (noUsage as { usage?: unknown }).usage
+    const absent = parseAgyJson(JSON.stringify(noUsage))
+    expect(absent).toMatchObject({ kind: 'error', numTurns: 1, usageUnreported: true, partial: true })
+    expect(absent).not.toHaveProperty('usage')
+    const bare = parseAgyJson(JSON.stringify({ ...noUsage, response: '' }))
+    expect(bare).toMatchObject({ kind: 'error', usageUnreported: true })
+    expect(bare).not.toHaveProperty('partial')
+    expect(bare).not.toHaveProperty('usage')
+    if (bare.kind === 'error') {
+      expect(bare.errorClass.detail).toContain('partial=false；usage 未上报')
+      expect(bare.errorClass.detail).toContain('无残稿')
+    }
+  })
+
+  it('print_timeout 面 CLI 如实上报非零 usage → 照记真账（不按未上报）；非超时面 usage 全 0 口径不变（上报即落键）', () => {
+    const reported = parseAgyJson(JSON.stringify({ ...SUCCESS_OBJ, response: '残稿首段', finished_reason: 'print_timeout' }))
+    expect(reported).toMatchObject({ kind: 'error', usage: USAGE, numTurns: 1, partial: true })
+    expect(reported).not.toHaveProperty('usageUnreported')
+    const zeroOnOtherFace = parseAgyJson(JSON.stringify({ status: 'ERROR', error: 'boom', usage: { input_tokens: 0, output_tokens: 0 } }))
+    expect(zeroOnOtherFace).toMatchObject({ kind: 'error', usage: { input: 0, output: 0 } })
+    expect(zeroOnOtherFace).not.toHaveProperty('usageUnreported')
+  })
+
+  it('ERROR＋finished_reason=error/interrupted：先按 finished_reason 分支（残稿标注 partial=true）', () => {
+    const failed = parseAgyJson(JSON.stringify({ status: 'ERROR', error: 'Usage limit exceeded', response: '残', finished_reason: 'error' }))
+    expect(failed).toMatchObject({ kind: 'error', errorClass: { kind: 'quota', code: 'EXTERNAL_RATE_LIMIT' }, partial: true })
+    const interrupted = parseAgyJson(JSON.stringify({ status: 'ERROR', error: 'interrupted', response: '残', finished_reason: 'interrupted' }))
+    expect(interrupted).toMatchObject({ kind: 'error', errorClass: { kind: 'other' }, partial: true })
+  })
+})
+
+describe('agyOutcomeHasModelTurn（task-149③：turns 记账的有效模型回合证据）', () => {
+  it('成功恒真；失败面须有残稿或非零 usage（全 0 不是证据）；坏稿面为假', () => {
+    expect(agyOutcomeHasModelTurn({ kind: 'success', response: 'ok' })).toBe(true)
+    expect(agyOutcomeHasModelTurn({ kind: 'error', errorClass: OTHER, numTurns: 1 })).toBe(false) // 自报 num_turns 不算证据
+    expect(agyOutcomeHasModelTurn({ kind: 'error', errorClass: OTHER, numTurns: 1, usage: { input: 0, output: 0 } })).toBe(false)
+    expect(agyOutcomeHasModelTurn({ kind: 'error', errorClass: OTHER, numTurns: 0, usage: { input: 31, output: 2 } })).toBe(true)
+    expect(agyOutcomeHasModelTurn({ kind: 'error', errorClass: OTHER, partial: true })).toBe(true)
+    expect(agyOutcomeHasModelTurn({ kind: 'bad-json', reason: 'stdout 为空' })).toBe(false)
+    expect(agyOutcomeHasModelTurn({ kind: 'bad-shape', reason: 'status 缺失' })).toBe(false)
+    // 经解析面的三张真机形：超时残稿面＝有回合；旗标拒收（stdout 空）＝无回合；斜杠命令 num_turns=0 如实
+    expect(agyOutcomeHasModelTurn(parseAgyJson(JSON.stringify(PRINT_TIMEOUT_OBJ), DEADLINE_STDERR))).toBe(true)
+    expect(agyOutcomeHasModelTurn(parseAgyJson('', DEADLINE_STDERR))).toBe(false)
+    expect(agyOutcomeHasModelTurn(parseAgyJson(JSON.stringify({ ...SUCCESS_OBJ, num_turns: 0 })))).toBe(true)
+  })
+})
+
+describe('decodeAgyStdout（task-149④：多字节 UTF-8 跨分片统一解码）', () => {
+  it('CJK 3 字节 / emoji 4 字节字符被分片边界拆开 → 逐字还原无 U+FFFD（逐片 String() 则必坏）', () => {
+    const text = `{"status":"SUCCESS","response":"可用🎉结论如下：${'长'.repeat(200)}"}`
+    const bytes = Buffer.from(text, 'utf8')
+    const head = Buffer.byteLength(text.slice(0, text.indexOf('可')), 'utf8')
+    const emoji = Buffer.byteLength(text.slice(0, text.indexOf('🎉')), 'utf8')
+    const cuts = [head + 1, head + 2, emoji + 1, emoji + 2, emoji + 3] // 全部落在多字节字符内部
+    for (const at of cuts) {
+      expect(`${String(bytes.subarray(0, at))}${String(bytes.subarray(at))}`, String(at)).not.toBe(text) // 逐片解码的坏法（对照）
+      expect(decodeAgyStdout([bytes.subarray(0, at), bytes.subarray(at)]), String(at)).toBe(text)
+      expect(decodeAgyStdout([bytes.subarray(0, at), bytes.subarray(at, at + 5), bytes.subarray(at + 5)]), String(at)).toBe(text)
+    }
+    expect(decodeAgyStdout([bytes])).toBe(text)
+    expect(decodeAgyStdout([])).toBe('')
+  })
+
+  it('string 片（上游已按边界解码）与 Buffer 片混入原样拼接', () => {
+    // 「可」整片；「结」（E7 BB 93）拆成两片夹在 string 片之间
+    expect(decodeAgyStdout(['{"response":"', Buffer.from('可', 'utf8'), Buffer.from([0xe7, 0xbb]), Buffer.from([0x93]), '"}'])).toBe('{"response":"可结"}')
   })
 })

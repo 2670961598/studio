@@ -20,6 +20,10 @@
  *   ⑦ detect 三态＋未安装＋版本地板；estimate v0 拟稿模型；resume fail-closed；二进制缺席
  *      ENOENT 面；构造选项形状闸；注册面 patches→argv；AGENTS_MD 通道（append 拼接进 -p /
  *      native 不拼 / user_level 拒收）；stream 单消费；SUCCESS 空输出不伪造成功
+ *   ⑧ task-149 真机回放（agy v1.5.18 实测事实的结构回放，文本为占位）：--print-timeout 带单位
+ *      `30s`（裸数字 exit 2）；print 超时真机形（status=ERROR＋finished_reason=print_timeout＋残稿
+ *      ＋usage 全 0）→ partial=true、usage 不落键（CLI 未上报（超时））、turns=1；无有效模型回合
+ *      的失败面 turns=0；stdout 多字节 UTF-8 跨分片不坏；watchdog 宽放盖住 CLI 自管计时窗口
  *
  * 依据：docs/18-§一（六原语+detect 不达标明报）、docs/25-§二（v1.4 credentials）、
  *   docs/43-附录A-1 同型 env 白名单纪律、contract schemas/errors.ts EXECUTOR_ERROR_CODES
@@ -27,11 +31,13 @@
  * 边界：fake 场景=实测样本的**结构回放**（非保证面）；真机探钢单另行立（头注 agy.ts 拟稿段）；
  *   本文件 <600 行阈内自查（scripts/guards/boundary-rules.mjs）。
  */
+import { Buffer } from 'node:buffer'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { setTimeout as realTimeout } from 'node:timers/promises' // 不受 vi.useFakeTimers 影响：真实时钟落定窗口
 import { fileURLToPath } from 'node:url'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import { AgyAdapter } from '../../src/agy.ts'
 import type { AgyAdapterOptions } from '../../src/agy.ts'
 import { builtinResolver } from '../../src/agentconfig.ts'
@@ -53,6 +59,21 @@ const SUCCESS_JSON = JSON.stringify({
   num_turns: 1,
   usage: { input_tokens: 12297, output_tokens: 121, thinking_tokens: 119, cache_read_tokens: 0, total_tokens: 12418 },
 })
+
+/** task-149 真机回放（T3 结构样本，文本占位）：超时终稿挂 status=ERROR＋finished_reason，有残稿而 usage 全 0 */
+const TIMEOUT_RESIDUAL = '长文残稿：结论未收尾。'.repeat(6)
+const PRINT_TIMEOUT_JSON = JSON.stringify({
+  status: 'ERROR',
+  error: 'print timeout after 1m0s with the turn still in progress; the response is partial',
+  response: TIMEOUT_RESIDUAL,
+  duration_seconds: 9,
+  num_turns: 1,
+  usage: { input_tokens: 0, output_tokens: 0, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 0 },
+  finished_reason: 'print_timeout',
+})
+const PRINT_TIMEOUT_STDERR = 'noise line\nAGY_ERROR: {"status":"DEADLINE_EXCEEDED","reason":"print_timeout","retryable":false}'
+/** task-149 真机回放（T1）：裸数字 --print-timeout 被旗标包拒收——stdout 空、exit 2 */
+const FLAG_REJECTED_STDERR = 'invalid value "60" for flag -print-timeout: time: missing unit in duration "60"'
 
 interface FakeReport {
   pid: number
@@ -158,8 +179,9 @@ describe('② launch argv · 实测建议形（task-140 事实单）', () => {
       '--dangerously-skip-permissions',
       '--model', MODEL,
       '--add-dir', workdir,
-      '--print-timeout', '30',
+      '--print-timeout', '30s', // Go duration 旗标：值带单位 s（task-149①；裸数字被拒 exit 2——夹具形状闸同形）
     ])
+    expect(report.argv).not.toContain('30')
     expect(report.argv.some((arg) => arg === '--mode' || arg.startsWith('--mode='))).toBe(false) // --mode 与 --mode= 两形都不下发
     expect(report.argv).not.toContain('auto') // --mode auto 不可用（回退 default，实测 warning）
   })
@@ -265,6 +287,7 @@ describe('④ 失败分类 · EXECUTOR_ERROR_CODES 冻结词表（词表外无�
     expect(adapter().exitCode(handle)).toBe(1)
     const stats = await adapter().resultStats(handle)
     expect(stats.tokens).toEqual({ input: 0, output: 0 }) // 失败面零账（不编造）
+    expect(stats.turns).toBe(0) // 无 response/非零 usage＝无有效模型回合证据（task-149③）
   })
 
   it('quota（"Usage limit exceeded"）→ errorCode=EXTERNAL_RATE_LIMIT；CLI 上报的 usage 失败面照记', async () => {
@@ -319,9 +342,49 @@ describe('④ 失败分类 · EXECUTOR_ERROR_CODES 冻结词表（词表外无�
     expect('errorCode' in (turnEnd as Record<string, unknown>)).toBe(false)
     expect(adapter().isCompleted(handle)).toBe(false)
     expect(adapter().exitCode(handle)).toBe(3)
+    expect((await adapter().resultStats(handle)).turns).toBe(1) // usage 真账＝有效模型回合证据
     const interrupted = await errorFace(JSON.stringify({ status: 'SUCCESS', response: '写到一半', finished_reason: 'interrupted' }), 130)
     expect(interrupted.turnEnd).toMatchObject({ type: 'turn_end', completed: false })
     expect((interrupted.turnEnd as { error?: string }).error).toContain('interrupted')
+  })
+
+  it('print 超时真机形（status=ERROR＋finished_reason=print_timeout＋残稿＋usage 全 0，exit 3）→ partial=true、usage 不落键、turns=1', async () => {
+    const { turnEnd, logs, handle } = await errorFace(PRINT_TIMEOUT_JSON, 3, PRINT_TIMEOUT_STDERR)
+    expect(turnEnd).toMatchObject({ type: 'turn_end', completed: false })
+    expect('usage' in (turnEnd as Record<string, unknown>)).toBe(false) // 全 0＝未上报：不伪造零账（task-149②）
+    expect('errorCode' in (turnEnd as Record<string, unknown>)).toBe(false) // timeout 在词表外：文本承载
+    const error = (turnEnd as { error?: string }).error ?? ''
+    expect(logs).toEqual([`agy ERROR(timeout): ${error}`])
+    expect(error).toContain('print 超时（--print-timeout 到点')
+    expect(error).toContain(`残稿 ${String(TIMEOUT_RESIDUAL.length)} 字符不作输出`)
+    expect(error).toContain('partial=true')
+    expect(error).toContain('usage 未上报（CLI 未上报（超时）')
+    expect(error).toContain('AGY_ERROR status=DEADLINE_EXCEEDED reason=print_timeout retryable=false')
+    expect(adapter().exitCode(handle)).toBe(3)
+    const stats = await adapter().resultStats(handle)
+    expect(stats.turns).toBe(1) // 残稿＝有效模型回合证据：采信 CLI num_turns（task-149③）
+    expect(stats.tokens).toEqual({ input: 0, output: 0 }) // 契约 tokens 必填的结构零；「未上报」由事件不落 usage 键＋文本标注承载
+  })
+
+  it('旗标拒收面（真机回放：裸数字 --print-timeout，stdout 空、exit 2）→ 退出码面如实；turns=0（模型没跑过）', async () => {
+    const { turnEnd, handle } = await errorFace('', 2, FLAG_REJECTED_STDERR)
+    const error = (turnEnd as { error?: string }).error ?? ''
+    expect(error).toContain('进程退出码 2')
+    expect(error).toContain('time: missing unit in duration "60"')
+    expect(adapter().isCompleted(handle)).toBe(false)
+    expect(await adapter().resultStats(handle)).toMatchObject({ turns: 0, tokens: { input: 0, output: 0 } })
+  })
+
+  it('turns 记账判据＝有效模型回合证据（task-149③）：有证据而缺 num_turns 记 1；无证据即使 CLI 自报 num_turns=1 也记 0', async () => {
+    const success = await errorFace(JSON.stringify({ status: 'SUCCESS', response: 'ok' }), 0)
+    expect(await adapter().resultStats(success.handle)).toMatchObject({ turns: 1 })
+    const residual = await errorFace(JSON.stringify({ status: 'ERROR', finished_reason: 'interrupted', response: '写到一半' }), 130)
+    expect(await adapter().resultStats(residual.handle)).toMatchObject({ turns: 1 })
+    const unauthed = await errorFace(JSON.stringify({ status: 'ERROR', error: 'authentication failed or timed out', num_turns: 1 }), 1)
+    expect(unauthed.turnEnd).toMatchObject({ type: 'turn_end', completed: false, errorCode: 'AUTH' })
+    expect(await adapter().resultStats(unauthed.handle)).toMatchObject({ turns: 0 })
+    const slash = await errorFace(JSON.stringify({ status: 'SUCCESS', response: 'Gemini weekly remaining 76%', num_turns: 0 }), 0)
+    expect(await adapter().resultStats(slash.handle)).toMatchObject({ turns: 0 }) // 真机 /usage 形：斜杠命令不起模型回合
   })
 
   it('JSON 但 status 缺失 / 退出码 0 的坏稿 → bad-shape / bad-json 明报（不猜成功）', async () => {
@@ -334,28 +397,65 @@ describe('④ 失败分类 · EXECUTOR_ERROR_CODES 冻结词表（词表外无�
   })
 })
 
-describe('⑤ 超时 watchdog · print 超时整组回收', () => {
-  it('挂起不退 + printTimeoutSec → timeout 面终态（completed=false 明报，非静默挂死）', { timeout: 20_000 }, async () => {
+describe('⑤ 超时 watchdog · print 超时整组回收（宽放＝缺省真值；时钟推进在本进程，子进程真挂）', () => {
+  /** watchdog 定时器落在本进程：只假 setTimeout/clearTimeout（Date/IO 真跑），用例不必真等 76s */
+  async function underFakeClock<T>(fn: () => Promise<T>): Promise<T> {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      return await fn()
+    } finally {
+      vi.useRealTimers()
+    }
+  }
+
+  it('挂起不退 + printTimeoutSec → timeout 面终态（completed=false 明报，非静默挂死）；宽放盖住 CLI 自退窗口', { timeout: 20_000 }, async () => {
     makeScenario({ stdout: '', exit: 0, hang: true }) // 挂起：CLI 不自管超时也不自退
-    const a = adapter({ printTimeoutSec: 1 }) // 最小合法值：watchdog=1s+4s 宽放后整组回收（真值口径不变）
-    const h = await a.launch(makeBrief())
-    const events: StreamEvent[] = []
-    for await (const ev of a.stream(h)) events.push(ev)
-    const turnEnd = events.filter((e) => e.type === 'turn_end')[0] as { completed?: boolean; error?: string }
-    expect(turnEnd?.completed).toBe(false)
-    expect(turnEnd?.error).toContain('print 超时')
-    expect(a.exitCode(h)).toBeNull() // 被信号杀死：退出码 null（证据价值面）
-    expect(a.isCompleted(h)).toBe(false)
-    expect((await a.resultStats(h)).tokens).toEqual({ input: 0, output: 0 }) // 超时面零账（不编造）
+    await underFakeClock(async () => {
+      const a = adapter({ printTimeoutSec: 1 }) // 最小合法值：watchdog=1s+宽放后整组回收
+      const h = await a.launch(makeBrief())
+      const events: StreamEvent[] = []
+      const consuming = (async () => {
+        for await (const ev of a.stream(h)) events.push(ev)
+      })()
+      // task-149 真机校准：旧宽放 4s 在 print 截止前 2.7s（spawn+63.6s）杀掉（残稿面丢失）；鉴权回退另有 60s 交互等待
+      await vi.advanceTimersByTimeAsync(5_000) // 旧宽放到点：不得抢杀
+      await realTimeout(150) // 真实 IO 落定的窗口（假时钟不走）：若此刻已被抢杀，终态事件必已到达
+      expect(events).toEqual([])
+      await vi.advanceTimersByTimeAsync(64_000) // P+69s（鉴权回退 60s＋启动开销内）：仍不得抢杀
+      await realTimeout(150)
+      expect(events).toEqual([])
+      await vi.advanceTimersByTimeAsync(7_000) // P+76s：CLI 仍不自退 → 整组回收
+      await consuming
+      const turnEnd = events.filter((e) => e.type === 'turn_end')[0] as { completed?: boolean; error?: string }
+      expect(turnEnd?.completed).toBe(false)
+      expect(turnEnd?.error).toContain('print 超时')
+      expect(events).toHaveLength(2) // log＋turn_end 各一：无重复终态
+      expect(a.exitCode(h)).toBeNull() // 被信号杀死：退出码 null（证据价值面）
+      expect(a.isCompleted(h)).toBe(false)
+      const stats = await a.resultStats(h)
+      expect(stats.tokens).toEqual({ input: 0, output: 0 }) // 超时面零账（不编造）
+      expect(stats.turns).toBe(0) // 无终稿＝无有效模型回合证据（task-149③）
+    })
   })
 
-  it('CLI 自管 --print-timeout 到点自退（残稿面）→ watchdog 不干预，按 stdout 终稿分类', { timeout: 20_000 }, async () => {
-    // 夹具按时自退（非挂起）：watchdog 宽限内进程已落定——走 finished_reason=print_timeout 残稿面
-    makeScenario({ stdout: JSON.stringify({ status: 'SUCCESS', response: '残', finished_reason: 'print_timeout' }), exit: 3 })
-    const { events } = await run(adapter({ printTimeoutSec: 1 }), makeBrief())
-    expect(events[0]).toMatchObject({ type: 'log' })
-    expect(events[1]).toMatchObject({ type: 'turn_end', completed: false })
-    expect((events[1] as { error?: string }).error).toContain('print 超时（--print-timeout 到点')
+  it('CLI 启动开销后到点自退（真机形残稿终稿）→ watchdog 不抢杀，按 stdout 终稿分类（旧宽放 4s 此刻已误杀）', { timeout: 20_000 }, async () => {
+    makeScenario({ stdout: PRINT_TIMEOUT_JSON, exit: 3, stderr: PRINT_TIMEOUT_STDERR, delayMs: 400 }) // 启动开销：CLI 真睡后自退
+    await underFakeClock(async () => {
+      const a = adapter({ printTimeoutSec: 1 })
+      const h = await a.launch(makeBrief())
+      const events: StreamEvent[] = []
+      const consuming = (async () => {
+        for await (const ev of a.stream(h)) events.push(ev)
+      })()
+      await vi.advanceTimersByTimeAsync(5_900) // 假时钟越过 1s+4s（旧宽放点）时 CLI 仍在启动：旧值此刻已抢杀
+      await consuming // 子进程真实 400ms 后自退
+      expect(events).toHaveLength(2)
+      expect((events[1] as { error?: string }).error).toContain('print 超时（--print-timeout 到点')
+      expect((events[1] as { error?: string }).error).toContain('partial=true')
+      expect('usage' in (events[1] as Record<string, unknown>)).toBe(false)
+      expect(a.exitCode(h)).toBe(3) // CLI 自退（非被杀）：退出码如实
+      expect((await a.resultStats(h)).turns).toBe(1)
+    })
   })
 })
 
@@ -441,7 +541,7 @@ describe('⑦ detect / estimate / resume / AGENTS_MD / stream 单消费', () => 
     const { handle } = await run(a, makeBrief())
     const { argv } = readReport()
     expect(argv[argv.indexOf('--model') + 1]).toBe(MODEL)
-    expect(argv[argv.indexOf('--print-timeout') + 1]).toBe('900')
+    expect(argv[argv.indexOf('--print-timeout') + 1]).toBe('900s')
     expect((await a.resultStats(handle)).model).toBe(MODEL)
   })
 
@@ -464,5 +564,22 @@ describe('⑦ detect / estimate / resume / AGENTS_MD / stream 单消费', () => 
     const a = adapter()
     const { handle } = await run(a, makeBrief())
     await expect(a.stream(handle).next()).rejects.toThrow(/已消费/)
+  })
+})
+
+describe('⑧ stdout 多字节 UTF-8 跨分片（task-149④）', () => {
+  it('CJK 字符被管道边界拆开 → 统一解码无 U+FFFD，response 逐字还原', async () => {
+    const response = '可用。结论如下：'.repeat(40) // 长终稿：夹具按字节偏移切在「结」的第 1/2 字节之间
+    const stdout = JSON.stringify({ ...(JSON.parse(SUCCESS_JSON) as Record<string, unknown>), response })
+    const splitAt = Buffer.byteLength(stdout.slice(0, stdout.indexOf('结')), 'utf8') + 1
+    const bytes = Buffer.from(stdout, 'utf8')
+    expect(bytes.subarray(splitAt - 1, splitAt + 1)).toEqual(Buffer.from([0xe7, 0xbb])) // 「结」= E7 BB 93：切在其第 1/2 字节间
+    makeScenario({ stdout, exit: 0, stdoutSplit: splitAt })
+    const { events } = await run(adapter(), makeBrief())
+    expect(events).toEqual([
+      { type: 'log', text: response },
+      { type: 'turn_end', completed: true, usage: { input: 12297, output: 121, cache_read: 0 } },
+    ])
+    expect(JSON.stringify(events)).not.toContain('\uFFFD')
   })
 })

@@ -12,6 +12,10 @@
  *     `interrupted`（被取消）/ `error`（其他失败）；失败时 stderr 另打结构化 `AGY_ERROR: {…}`
  *     行（canonical status / HTTP 或 gRPC 码 / retryability / error ID），退出码 3。
  *     两者与 stdout JSON 的同屏组合未实测——解析按「在场即采信」处理，不依赖组合假设
+ *   - 真机实测（task-149，v1.5.18）：--print-timeout 到点的终稿形是 `{status:"ERROR",
+ *     finished_reason:"print_timeout",error,response 残稿,num_turns,usage 全 0}`＋stderr
+ *     AGY_ERROR 行（status=DEADLINE_EXCEEDED,reason=print_timeout）＋退出码 3——finished_reason
+ *     先于 status 分支采信（挂 ERROR 不挂 SUCCESS）
  *
  * 口径：
  *   - 成功只认 status=SUCCESS + response 非空 + finished_reason 不在场（17-§6 收割口径的
@@ -22,8 +26,11 @@
  *   - 脱敏：错误文本/诊断片段进事件前过一道（凭据永不入日志——docs/25-§二红名单）
  *   - usage：input/output/cache_read 三桶（CLI 上报即落键、含 0——streams.ts 同口径；未上报或
  *     形状坏不落键）；thinking_tokens 无契约桶不折算不编造（实测样本 12297+121=12418=
- *     total_tokens——thinking 已含在 output 内）
+ *     total_tokens——thinking 已含在 output 内）。**print_timeout 面例外**（task-149 真机：3338
+ *     字残稿而 usage 全 0——回合未收尾、用量未结算）：usage 缺席/全 0 一律按未上报，不落键、
+ *     不伪造零账，文本注明 `CLI 未上报（超时）`
  */
+import { Buffer } from 'node:buffer'
 import type { TokenCounts } from '@studio-next/contract'
 
 /** agy 失败分类（task-140 口径 auth/eligibility/quota/network/timeout/other ＋ region 地区限制） */
@@ -56,9 +63,34 @@ export type AgyOutcome =
       readonly usage?: TokenCounts
       readonly conversationId?: string
       readonly numTurns?: number
+      /** 残稿面：终稿带非空 response 但不计完成（有效模型回合的证据位，task-149②） */
+      readonly partial?: true
+      /** 用量未上报标注（print_timeout 面 usage 缺席/全 0；与 usage 互斥） */
+      readonly usageUnreported?: true
     }
   | { readonly kind: 'bad-shape'; readonly reason: string }
   | { readonly kind: 'bad-json'; readonly reason: string }
+
+/**
+ * 有效模型回合证据（turns 记账判据，task-149③）：成功面恒真；失败面须有残稿（partial）或 CLI
+ * 上报的非零 usage（三桶全 0＝模型没跑过或未结算，不是证据）。旗标解析失败/鉴权失败/watchdog
+ * 抢杀等「status=ERROR 而无 response/usage」的面不计回合（不采信 CLI num_turns）。
+ */
+export function agyOutcomeHasModelTurn(outcome: AgyOutcome): boolean {
+  if (outcome.kind === 'success') return true
+  return outcome.kind === 'error' && (outcome.partial === true || (outcome.usage !== undefined && !isZeroTokens(outcome.usage)))
+}
+
+/**
+ * stdout 字节分片 → 文本（task-149④：多字节 UTF-8 跨分片）。stdout 以 pipe 拉起、未设 encoding，
+ * 逐片给 Buffer——逐片 `String(chunk)` 各自解码时，被管道边界拆开的多字节字符（CJK 3 字节、
+ * emoji 4 字节）两头都成 U+FFFD（长终稿超 64KB 管道缓冲必现）。全片拼回一个 Buffer 再统一
+ * 解码；string 片（上游已按边界解码）原样拼接。纯函数，字节不变。
+ */
+export function decodeAgyStdout(chunks: readonly (Buffer | string)[]): string {
+  if (chunks.length === 0) return ''
+  return Buffer.concat(chunks.map((c) => (typeof c === 'string' ? Buffer.from(c, 'utf8') : c))).toString('utf8')
+}
 
 /** 进事件/日志前的片段上限（字符） */
 const SNIPPET_MAX = 400
@@ -191,11 +223,14 @@ export function parseAgyJson(stdoutText: string, stderrText: string = ''): AgyOu
   }
   const obj = parsed as Record<string, unknown>
   const status = obj['status']
+  const finished = obj['finished_reason']
+  // finished_reason 在场即采信、先于 status 分支（真机超时终稿挂 status=ERROR，task-149）
+  if ((status === 'SUCCESS' || status === 'ERROR') && finished !== undefined && finished !== null) {
+    return cutShortOutcome(finished, obj, stderrSummary)
+  }
   if (status === 'SUCCESS') {
     const response = obj['response']
     if (typeof response !== 'string') return { kind: 'bad-shape', reason: 'status=SUCCESS 但 response 非 string' }
-    const finished = obj['finished_reason']
-    if (finished !== undefined && finished !== null) return cutShortOutcome(finished, obj, stderrSummary)
     if (response.trim() === '') {
       return {
         kind: 'error',
@@ -212,17 +247,25 @@ export function parseAgyJson(stdoutText: string, stderrText: string = ''): AgyOu
   return { kind: 'bad-shape', reason: `status 缺失/未知（收到 ${JSON.stringify(status)}）` }
 }
 
-/** finished_reason 在场＝非正常收尾：残稿不计完成（fail-closed）；CLI 上报的用量/会话 id 照记 */
+/**
+ * finished_reason 在场＝非正常收尾：残稿不计完成（fail-closed）；CLI 上报的会话 id/num_turns 照记。
+ * 残稿面标注（文本承载）：`partial=true`；print_timeout 面恒打 `partial=<bool>`，且 usage 缺席/
+ * 全 0 按「未上报」处理（头注 usage 口径例外，task-149②）。
+ */
 function cutShortOutcome(
   finished: unknown,
   obj: Record<string, unknown>,
   stderrSummary: string | undefined,
 ): AgyOutcome {
   const response = obj['response']
-  const residue =
-    typeof response === 'string' && response.trim() !== ''
-      ? `；残稿 ${String(response.length)} 字符不作输出（首段：${sanitizeAgyText(response, 120)}）`
+  const residual = typeof response === 'string' && response.trim() !== '' ? response : undefined
+  const partial = residual !== undefined
+  const residue = residual === undefined
+    ? finished === 'print_timeout'
+      ? '；无残稿'
       : ''
+    : `；残稿 ${String(residual.length)} 字符不作输出（首段：${sanitizeAgyText(residual, 120)}）`
+  const partialMark = partial ? '；partial=true' : finished === 'print_timeout' ? '；partial=false' : ''
   const stderrPart = stderrSummary === undefined ? '' : `；${stderrSummary}`
   const meta = resultMeta(obj)
   if (typeof finished !== 'string' || finished === '') {
@@ -233,31 +276,39 @@ function cutShortOutcome(
     }
   }
   switch (finished) {
-    case 'print_timeout':
+    case 'print_timeout': {
+      // 超时面用量：缺席/全 0＝未上报（不落 usage 键、不伪造零账）
+      const timeoutMeta = resultMeta(obj, true)
+      const usageNote = timeoutMeta.usageUnreported === true ? '；usage 未上报（CLI 未上报（超时）：终稿 usage 缺席或全 0，不伪造零账）' : ''
       return {
         kind: 'error',
         errorClass: {
           kind: 'timeout',
-          detail: `agy print 超时（--print-timeout 到点，response 为残稿不计完成；加大 print-timeout-sec 或拆小任务）${residue}${stderrPart}`,
+          detail: `agy print 超时（--print-timeout 到点，response 为残稿不计完成；加大 print-timeout-sec 或拆小任务）${residue}${partialMark}${usageNote}${stderrPart}`,
         },
-        ...meta,
+        ...timeoutMeta,
+        ...(partial ? { partial: true as const } : {}),
       }
+    }
     case 'interrupted':
       return {
         kind: 'error',
         errorClass: {
           kind: 'other',
-          detail: `agy 运行被中断（finished_reason=interrupted）——残稿不计完成，按新会话重派${residue}${stderrPart}`,
+          detail: `agy 运行被中断（finished_reason=interrupted）——残稿不计完成，按新会话重派${residue}${partialMark}${stderrPart}`,
         },
         ...meta,
+        ...(partial ? { partial: true as const } : {}),
       }
     case 'error': {
       const text = [errorTextOf(obj['error']), stderrSummary].filter((t) => t !== undefined && t !== '').join(' ')
+      const cls: AgyErrorClass =
+        text === '' ? { kind: 'other', detail: 'agy 失败（finished_reason=error，无错误文本）' } : classifyAgyError(text)
       return {
         kind: 'error',
-        errorClass:
-          text === '' ? { kind: 'other', detail: 'agy 失败（finished_reason=error，无错误文本）' } : classifyAgyError(text),
+        errorClass: residue === '' && partialMark === '' ? cls : { ...cls, detail: `${cls.detail}${residue}${partialMark}` },
         ...meta,
+        ...(partial ? { partial: true as const } : {}),
       }
     }
     default:
@@ -265,25 +316,39 @@ function cutShortOutcome(
         kind: 'error',
         errorClass: { kind: 'other', detail: `agy finished_reason 未知（收到 ${JSON.stringify(finished)}）——不计完成（fail-closed）` },
         ...meta,
+        ...(partial ? { partial: true as const } : {}),
       }
   }
 }
 
-/** 终稿公共位：conversation_id / num_turns / usage（三桶；缺则不落键） */
-function resultMeta(obj: Record<string, unknown>): AgyResultMeta {
+/**
+ * 终稿公共位：conversation_id / num_turns / usage（三桶；缺则不落键）。
+ * zeroUsageUnreported（print_timeout 面）：usage 缺席或全 0 一律按未上报——不落 usage 键，改落 usageUnreported。
+ */
+function resultMeta(obj: Record<string, unknown>, zeroUsageUnreported = false): AgyResultMeta {
   const conversationId = obj['conversation_id']
   const numTurns = obj['num_turns']
+  const reported = agyUsageOf(obj['usage']).usage
+  const unreported = zeroUsageUnreported && (reported === undefined || isZeroTokens(reported))
   return {
     ...(typeof conversationId === 'string' && conversationId !== '' ? { conversationId } : {}),
     ...(typeof numTurns === 'number' && Number.isFinite(numTurns) ? { numTurns } : {}),
-    ...agyUsageOf(obj['usage']),
+    ...(reported !== undefined && !unreported ? { usage: reported } : {}),
+    ...(unreported ? { usageUnreported: true as const } : {}),
   }
+}
+
+/** 三桶全 0（cache_read 缺省视同 0） */
+function isZeroTokens(u: TokenCounts): boolean {
+  return u.input === 0 && u.output === 0 && (u.cache_read ?? 0) === 0
 }
 
 interface AgyResultMeta {
   readonly conversationId?: string
   readonly numTurns?: number
   readonly usage?: TokenCounts
+  /** 用量未上报标注（与 usage 互斥；turn_end 不落 usage 键的依据） */
+  readonly usageUnreported?: true
 }
 
 /** error 字段取文（string 直取；对象/其他 JSON 化——分类前脱敏在 classifyAgyError 内做） */

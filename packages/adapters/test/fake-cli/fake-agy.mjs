@@ -13,7 +13,12 @@
  *     "stderr":  "<stderr 文本>",
  *     "exit":    0,             // 退出码
  *     "hang":    true,          // 写完 stdout 后挂起直到被杀（watchdog/kill 升级链测试）
- *     "ignoreTerm": true }      // 吞 SIGTERM（软杀无效只可硬杀——宽限后 SIGKILL 面测试）
+ *     "ignoreTerm": true,       // 吞 SIGTERM（软杀无效只可硬杀——宽限后 SIGKILL 面测试）
+ *     "delayMs": 200,           // 启动开销：写 stdout 前先睡（真机 CLI 计时自 sending message 起，task-149）
+ *     "stdoutSplit": 4096 }     // stdout 按字节偏移分两片写（多字节 UTF-8 跨片面，task-149④）
+ *
+ * --print-timeout 形状闸（task-149① 真机实测回放）：真 CLI 是 Go duration 旗标——值无单位
+ * （如裸 "60"）即 `invalid value … time: missing unit in duration` exit 2、stdout 空、不起回合。
  *
  * 启动即落盘 `agy-fake-report.json`（同目录）——测试的 argv/env 断言面：
  *   { pid, argv: [收到的 agy 参数（不含 node/脚本名）], cwd,
@@ -38,6 +43,13 @@ if (argv.includes('--version')) {
   process.exit(0)
 }
 
+const timeoutFlag = argv.indexOf('--print-timeout')
+const timeoutValue = timeoutFlag === -1 ? undefined : argv[timeoutFlag + 1]
+if (timeoutValue !== undefined && !/^\d+(?:\.\d+)?(?:ns|us|µs|ms|s|m|h)$/.test(timeoutValue)) {
+  process.stderr.write(`invalid value "${String(timeoutValue)}" for flag -print-timeout: time: missing unit in duration "${String(timeoutValue)}"\nUsage of antigravity:\n`)
+  process.exit(2) // 旗标解析失败：不起回合、无终稿（真机 exit 2 同形）
+}
+
 if (typeof scenario.stderr === 'string' && scenario.stderr !== '') {
   process.stderr.write(scenario.stderr)
 }
@@ -46,10 +58,25 @@ if (scenario.ignoreTerm === true) {
   process.on('SIGTERM', () => undefined)
 }
 // stdout 写完（回调到点）再定去向：挂起不退 / 按场景退出码退——先 exit 会截断管道写（已知坑）
-if (typeof scenario.stdout === 'string' && scenario.stdout !== '') {
-  process.stdout.write(scenario.stdout, settle)
-} else {
-  settle()
+const delayMs = typeof scenario.delayMs === 'number' && scenario.delayMs > 0 ? scenario.delayMs : 0
+setTimeout(() => {
+  if (typeof scenario.stdout === 'string' && scenario.stdout !== '') {
+    writeStdout(scenario.stdout, scenario.stdoutSplit, settle)
+  } else {
+    settle()
+  }
+}, delayMs)
+
+/** 分片写：给了字节偏移就按它切两片（片间让出事件循环 20ms——两片各自到达管道，必成两次读），
+ * 否则一次写完 */
+function writeStdout(text, splitAt, done) {
+  if (typeof splitAt !== 'number') {
+    process.stdout.write(text, done)
+    return
+  }
+  const bytes = Buffer.from(text, 'utf8')
+  const at = Math.min(Math.max(0, Math.trunc(splitAt)), bytes.length)
+  process.stdout.write(bytes.subarray(0, at), () => setTimeout(() => process.stdout.write(bytes.subarray(at), done), 20))
 }
 
 function settle() {

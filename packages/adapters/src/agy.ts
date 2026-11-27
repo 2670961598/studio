@@ -10,13 +10,15 @@
  *
  * 形态（实测）：headless 单对象终稿——`agy -p <任务串> --output-format json
  * --dangerously-skip-permissions` 正常收尾在 stdout 打一份 JSON（成功 {status:"SUCCESS",response,
- * conversation_id,duration_seconds,num_turns,usage}；失败 {status:"ERROR",error}）；非流式，无 step
- * 级事件。usage 桶 input/output/thinking/cache_read（契约三新键映射见 agy-json.ts）。
+ * conversation_id,duration_seconds,num_turns,usage}；失败 {status:"ERROR",error[,response,
+ * finished_reason]}）；非流式，无 step 级事件。usage 桶 input/output/thinking/cache_read（契约三新键
+ * 映射见 agy-json.ts）。
  * 分片（BC-S2 尺寸阈「先拆后加」）：argv/env 纯函数在 agy-argv.ts，终稿解析/失败分类在 agy-json.ts。
  *
  * 已知坑与取舍：
  *   - 无流：stream() 全量缓冲 stdout 至 EOF、等子进程落定后一次性 yield（终局前消费方看不到事件
- *     ——agy 形态固有，不伪造 step 事件）；stdout 读取异常不吞，记入终态文本
+ *     ——agy 形态固有，不伪造 step 事件）；stdout 读取异常不吞，记入终态文本；分片统一解码
+ *     （decodeAgyStdout——逐片 String() 会把跨片的多字节 UTF-8 拆成 U+FFFD，task-149④）
  *   - 凭据走本机 OAuth（安装后 `agy` 交互登录一次），无已证 env 凭据面；子进程 env 只经
  *     buildAgyEnv 合成（宿主封闭允许集＋proxyEnv/credentials 封闭枚举＋高危键拒收，大小写不敏感
  *     ——task-147 三道闸，agy-argv.ts）；他家凭据键不交叉，注入通道出现即结构拒收、不起子进程
@@ -25,9 +27,14 @@
  *   - AGENTS.md：append_system_prompt 通道＝全文拼进 -p 任务串（唯一已证通道）；native 未证（CLI
  *     自行发现）、user_level 无 env 面 → 传入即 CONFIG_INVALID 明报（不静默降级）
  *   - headless 缺省超时＝无上限（v1.5.18 内嵌 changelog：5min→unlimited）→ 建议钉
- *     print-timeout-sec：下发 --print-timeout ＋适配器 watchdog（+4s 宽放后软杀→2s→硬杀整组）
+ *     print-timeout-sec：下发 --print-timeout `<n>s`（Go duration 旗标，裸数字 exit 2 拒收——
+ *     task-149①）＋适配器 watchdog（＋75s 宽放后软杀→2s→硬杀整组；宽放依据见 WATCHDOG_SLACK_MS）
  *   - 成功只认 status=SUCCESS＋response 非空＋finished_reason 不在场；finished_reason 在场
- *     （print_timeout/interrupted/error）＝残稿不计完成，CLI 上报的 usage 照记（真账，claude 同口径）
+ *     （print_timeout/interrupted/error，先于 status 采信）＝残稿不计完成，CLI 上报的 usage 照记
+ *     （真账，claude 同口径）；print_timeout 面 usage 缺席/全 0＝未上报——不落键、文本标注
+ *     `partial=`/`CLI 未上报（超时）`（task-149②）
+ *   - turns 只记有效模型回合（agyOutcomeHasModelTurn：成功/残稿/非零 usage）——旗标拒收、鉴权失败、
+ *     watchdog 等无证据的面记 0，不采信 CLI num_turns（task-149③）
  *   - 失败分类 auth/eligibility/region/quota/network/timeout/other（实测样本归纳，非保证面）：
  *     auth→AUTH、quota→EXTERNAL_RATE_LIMIT（EXECUTOR_ERROR_CODES 冻结词表；词表外无码）
  *   - resume 未接线（session_resume=false）：调度侧按能力声明不派续跑；task.resume 传入即抛（fail-closed）
@@ -38,6 +45,7 @@
  *   - stream() 一会话只许消费一次（一单一命、一流一收）；resultStats() 只汇总已消费的事件；
  *     被杀会话不合成终态（aborted，四家同口径）
  */
+import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { execa } from 'execa'
@@ -58,18 +66,27 @@ import {
   AGY_DEFAULT_CMD,
   AGY_MIN_VERSION,
   assertAgyInjectKeys,
+  assertAgyPrintTimeoutSec,
   buildAgyArgv,
   buildAgyEnv,
 } from './agy-argv.ts'
-import { parseAgyJson, sanitizeAgyText } from './agy-json.ts'
+import type { AgyOutcome } from './agy-json.ts'
+import { parseAgyJson, agyOutcomeHasModelTurn, decodeAgyStdout, sanitizeAgyText } from './agy-json.ts'
 
 export { AGY_DEFAULT_CMD, AGY_MIN_VERSION }
 
 /** detect() 版本探测超时（毫秒）：挂死的 CLI 不许挡调度 */
 const DETECT_TIMEOUT_MS = 5_000
 
-/** watchdog 宽放：agy 自管 --print-timeout 后留的自杀余量（毫秒） */
-const WATCHDOG_SLACK_MS = 4_000
+/**
+ * watchdog 宽放（毫秒）＝CLI 自管计时之外的余量（task-149 真机校准，旧值 4s 实测抢杀）：
+ *   - --print-timeout 自「sending message」起计，启动开销（静默鉴权+配额刷新+建会话）实测 3.9–6.4s；
+ *     到点后收尾 ≈1.5s——旧宽放 4s 使 watchdog 在 print 截止前 2.7s（spawn+63.6s）整组回收，残稿终稿丢失
+ *   - 鉴权回退交互等待 60s（stderr「Waiting for authentication (timeout 60s)」）后 CLI 自报 auth 失败
+ *     ——宽放须盖住，否则 auth 面被 watchdog 面遮蔽
+ * CLI 自退面永远先于 watchdog 落定；watchdog 只兜「不自退」（挂死/吞 timer）。
+ */
+const WATCHDOG_SLACK_MS = 75_000
 /** watchdog 软杀后硬杀宽限（毫秒）——与 kill() 升级链同构的整组回收节奏 */
 const WATCHDOG_GRACE_MS = 2_000
 
@@ -84,7 +101,8 @@ interface SessionState {
   readonly events: StreamEvent[]
   /** stdout 全文缓冲（终稿证据留痕；台账落盘归 daemon） */
   stdoutText: string
-  /** CLI 上报 num_turns（ResultStats.turns 优先源；未上报 undefined） */
+  /** CLI 上报 num_turns（未上报 undefined）；ResultStats.turns 优先源——经有效模型回合判据入账：
+   *  有证据面＝num_turns（缺省记 1），无证据失败面＝0（task-149③） */
   cliNumTurns?: number
   /** stdout JSON 捕获的 conversation_id（Handle.executorSessionId 对账面） */
   conversationId?: string
@@ -124,8 +142,9 @@ export interface AgyAdapterOptions {
   /** 模型名（实测可用自然语言串如 "Gemini 4 Neon (High)"）；透传 --model，回填 ResultStats.model */
   readonly model?: string
   /**
-   * print 超时（正整数秒；单位按秒是未证假设——CLI 侧未实测，见 docs/quality/agy-adapter.md §八）：
-   * 下发 --print-timeout + 适配器 watchdog（+4s 宽放后软杀→2s→硬杀整组）
+   * print 超时（正整数秒＝配置语义；task-149①真机实测 CLI 旗标是 Go duration，下发 `<n>s`，
+   * 裸数字 exit 2「missing unit in duration」）：下发 --print-timeout + 适配器 watchdog
+   * （＋WATCHDOG_SLACK_MS 宽放后软杀→2s→硬杀整组）
    */
   readonly printTimeoutSec?: number
   /**
@@ -159,9 +178,7 @@ export class AgyAdapter implements ExecutorAdapter {
     if (opts.model !== undefined && (opts.model.trim() === '' || /[\r\n]/.test(opts.model))) {
       configInvalid('agy/option-invalid', `agy: model 须为非空单行串（收到 ${JSON.stringify(opts.model)}）`)
     }
-    if (opts.printTimeoutSec !== undefined && !(Number.isInteger(opts.printTimeoutSec) && opts.printTimeoutSec > 0)) {
-      configInvalid('agy/option-invalid', `agy: printTimeoutSec 须为正整数秒（收到 ${String(opts.printTimeoutSec)}）`)
-    }
+    if (opts.printTimeoutSec !== undefined) assertAgyPrintTimeoutSec(opts.printTimeoutSec) // 构造与下发同一判据
     if (opts.proxyEnv !== undefined) {
       const proxyEnv: unknown = opts.proxyEnv
       if (typeof proxyEnv !== 'object' || proxyEnv === null || Array.isArray(proxyEnv)) {
@@ -326,17 +343,19 @@ export class AgyAdapter implements ExecutorAdapter {
       // spawn 即失败：无 stdout 通道——如实抛出（detect 前置漏网时在此明报）
       throw state.spawnError ?? new Error('agy: 子进程 stdout 不可用（launch 失败）')
     }
-    let text = ''
+    const chunks: (Buffer | string)[] = []
     let readError: string | undefined
     try {
       for await (const chunk of stdout as AsyncIterable<unknown>) {
-        text += typeof chunk === 'string' ? chunk : String(chunk)
+        // 逐片缓存原始字节（不逐片解码——多字节 UTF-8 跨片会坏，EOF 后 decodeAgyStdout 统一解码）
+        chunks.push(typeof chunk === 'string' ? chunk : Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array))
       }
     } catch (e) {
       readError = `stdout 读取中断：${errMsg(e)}` // 不吞：记入终态文本（坏稿面如实呈报）
     } finally {
       state.endedAt = Date.now()
     }
+    const text = decodeAgyStdout(chunks)
     state.stdoutText = text
     const result = await state.subprocess // reject:false：退出码/信号不抛错
     state.exitCode = result.exitCode ?? null // 被信号杀死时 undefined → null
@@ -351,8 +370,9 @@ export class AgyAdapter implements ExecutorAdapter {
   /**
    * 账目汇总（只统计伴生状态里已消费的事件）：
    *   tokens：CLI 上报的 usage 三桶（input/output/cache_read；thinking 无桶不折算）——成功面与
-   *           上报了用量的失败面都记真账；未上报（被杀/超时/watchdog）零值（不编造）
-   *   turns：CLI num_turns 优先（未上报回退 turn_end 计数）
+   *           上报了用量的失败面都记真账；未上报（被杀/watchdog/print_timeout 面 usage 缺席或全 0）
+   *           零值＝契约 tokens 必填的结构零（「未上报」由事件不落 usage 键＋文本标注承载）
+   *   turns：有效模型回合数（agyOutcomeHasModelTurn；无证据的面＝0，task-149③）
    *   duration：launch→流收尾（未收尾取 now）；cost：恒 {usd:0}——待价目表折算
    */
   async resultStats(h: Handle): Promise<ResultStats> {
@@ -361,7 +381,7 @@ export class AgyAdapter implements ExecutorAdapter {
       cost: { usd: 0 },
       tokens: lastTurnEndUsage(state.events) ?? { input: 0, output: 0 },
       duration: (state.endedAt ?? Date.now()) - state.startedAt,
-      turns: state.cliNumTurns ?? state.events.filter((e) => e.type === 'turn_end').length,
+      turns: state.cliNumTurns ?? 0, // 未捕获终稿的面（watchdog/坏稿/被杀）＝无回合证据：适配器自合成的失败终态不算回合
       ...(this.opts.model !== undefined && this.opts.model !== '' ? { model: this.opts.model } : {}),
     }
   }
@@ -416,7 +436,7 @@ function terminateTree(state: SessionState, graceMs: number): void {
   escalate.unref()
 }
 
-/** print 超时 watchdog：agy 自管 --print-timeout（+4s 宽放）后仍存活 → 软杀→2s→硬杀整组 */
+/** print 超时 watchdog：agy 自管 --print-timeout（＋WATCHDOG_SLACK_MS 宽放）后仍存活 → 软杀→2s→硬杀整组 */
 function armWatchdog(state: SessionState, printTimeoutSec: number | undefined): void {
   if (printTimeoutSec === undefined || printTimeoutSec <= 0) return
   const watchdog = setTimeout(() => {
@@ -486,13 +506,16 @@ function terminalEvents(
   ]
 }
 
-/** 终稿公共位入账：conversation_id → 伴生状态 + Handle.executorSessionId；num_turns → turns 优先源 */
-function captureResultMeta(state: SessionState, h: Handle, outcome: { conversationId?: string; numTurns?: number }): void {
+/**
+ * 终稿公共位入账：conversation_id → 伴生状态 + Handle.executorSessionId；num_turns → turns
+ * （有效模型回合判据 agyOutcomeHasModelTurn：无证据的失败面记 0，不采信 CLI num_turns——task-149③）
+ */
+function captureResultMeta(state: SessionState, h: Handle, outcome: Extract<AgyOutcome, { kind: 'success' | 'error' }>): void {
   if (outcome.conversationId !== undefined) {
     state.conversationId = outcome.conversationId
     ;(h as { executorSessionId?: string }).executorSessionId = outcome.conversationId
   }
-  if (outcome.numTurns !== undefined) state.cliNumTurns = outcome.numTurns
+  state.cliNumTurns = agyOutcomeHasModelTurn(outcome) ? (outcome.numTurns ?? 1) : 0
 }
 
 /** 最后一个带 usage 的 turn_end（agy 终稿单 turn——即 CLI 上报 usage 直录） */

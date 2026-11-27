@@ -7,7 +7,8 @@
  *
  * 依据：
  *   - task-140 实测事实单（本机 agy v1.5.18）：headless=`agy -p <任务串> --output-format json
- *     --dangerously-skip-permissions [--model <名>] [--add-dir <dir>] [--print-timeout <秒>]`；
+ *     --dangerously-skip-permissions [--model <名>] [--add-dir <dir>] [--print-timeout <n>s]`
+ *     （--print-timeout 值形 task-149 真机实测：带单位，裸数字被拒）；
  *     `--mode auto` 当前账号不可用（warning 后回退 default）——本适配器**永不下发 --mode**
  *   - docs/43-附录A-1 同型纪律：宿主 env 收封闭允许集（deny-by-default，不是黑名单剔除）
  *     ＋代理键放行（本机 Google 域直连被拦，agy 必须经代理——实测无代理即 auth 失败）；
@@ -219,9 +220,12 @@ export interface AgyArgvInput {
 /**
  * argv 基座（task-140 实测建议形）：
  * `agy -p <任务串> --output-format json --dangerously-skip-permissions [--model <名>]
- * [--add-dir <dir>] [--print-timeout <秒>]`——永不下发 --mode（auto 不可用回退 default，
+ * [--add-dir <dir>] [--print-timeout <n>s]`——永不下发 --mode（auto 不可用回退 default，
  * 实测 warning；只读方案 mode=plan 留探钢单，不在派工面默认启用）。
- * --print-timeout 只在正数时下发：0/负数/缺省不下发（CLI 自管缺省）。
+ * --print-timeout 只在配置了正整数秒时下发，值形 `${n}s`（task-149 真机实测：该旗标是 Go
+ * time.Duration 形，裸数字被拒 `time: missing unit in duration "60"` → exit 2 零模型回合）；
+ * 非正整数 fail-closed（CONFIG_INVALID/agy/option-invalid）——不静默丢弃、不下发 `0s`
+ * （0＝等到完成，等于悄悄撤掉钉下的超时）。未配置不下发（CLI 缺省 0s＝等到完成）。
  */
 export function buildAgyArgv(input: AgyArgvInput): readonly string[] {
   const prompt =
@@ -231,8 +235,19 @@ export function buildAgyArgv(input: AgyArgvInput): readonly string[] {
   const argv = [...input.base, '-p', prompt, '--output-format', 'json', '--dangerously-skip-permissions']
   if (input.model !== undefined && input.model !== '') argv.push('--model', input.model)
   if (input.addDir !== undefined && input.addDir !== '') argv.push('--add-dir', input.addDir)
-  if (input.printTimeoutSec !== undefined && input.printTimeoutSec > 0) {
-    argv.push('--print-timeout', String(input.printTimeoutSec))
+  if (input.printTimeoutSec !== undefined) {
+    assertAgyPrintTimeoutSec(input.printTimeoutSec)
+    argv.push('--print-timeout', `${input.printTimeoutSec}s`)
   }
   return argv
+}
+
+/**
+ * printTimeoutSec 形状闸（构造期与 argv 组装期共用，fail-closed）：正整数秒（安全整数——
+ * 0/负数/小数/NaN/∞/指数形大数一律 CONFIG_INVALID/agy/option-invalid）。
+ */
+export function assertAgyPrintTimeoutSec(sec: number): void {
+  if (!Number.isSafeInteger(sec) || sec <= 0) {
+    configInvalid('agy/option-invalid', `agy: printTimeoutSec 须为正整数秒（收到 ${String(sec)}）`)
+  }
 }

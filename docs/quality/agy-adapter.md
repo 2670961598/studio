@@ -6,12 +6,17 @@
 > daemon `tierExecutors` / `primaryExecutor` 校验改引契约值集（§七）。两单**均未改** models.yaml / daemon.yaml /
 > agent.yaml 任何生产文件，未新增依赖，未发起任何真实 agy 调用。
 >
+> **task-149（2026-11-28）真机 E2E 回放修复四处**（v1.5.18，经代理出口，纯生产路径——`--print-timeout` 下发带单位
+> `<n>s`：裸数字被 Go duration 解析拒收 exit 2；print 超时面用量口径：残稿面标 `partial=true`、usage 全 0 按「未上报」
+> 不伪造零账；无有效模型回合的失败面 `turns=0`；stdout 多字节 UTF-8 跨分片统一解码）。watchdog 宽放 4s→75s（§六）。
+> 仍**登记不启用**；未改契约 / 事件词表 / models.yaml / daemon.yaml。
+>
 > 依据：docs/18-§一（executor 四原语＋detect 三态）、docs/17-§6（收割口径：终态事件＋非空输出）、
 > docs/25-§二/§3.1（TaskBrief.credentials 短命按单凭据；usage 归一）、docs/43-附录A-1（env 白名单）、
 > docs/20-§十五（BC-S2 尺寸阈「先拆后加」）、docs/v2/07 §一（选择链：选择不是授权）。
 >
-> **证据边界**：本页「行为」一栏全部由 fake agy 夹具测试背书（§八）；「真 CLI 面」只有 task-140 事实单的
-> 实测样本与对 v1.5.18 安装包的**只读静态核对**——两者分层列在 §二，未证面见 §九。
+> **证据边界**：本页「行为」一栏全部由 fake agy 夹具测试背书（§八）；「真 CLI 面」有三层——task-140 事实单的
+> 实测样本、对 v1.5.18 安装包的**只读静态核对**、task-149 真机 E2E（§二）——分层列在 §二，未证面见 §九。
 
 ## 一、目的与定位
 
@@ -46,7 +51,8 @@
 | --- | --- |
 | **实测**（task-140 真机探针，v1.5.18） | headless 正常收尾在 stdout 打一份 JSON：成功 `{status:"SUCCESS", response, conversation_id, duration_seconds, num_turns, usage}`，失败 `{status:"ERROR", error}`；样本 usage：input 12297 / output 121 / thinking 119 / cache_read 0 / total 12418（thinking 已含在 output 内）；`--model "Gemini 4 Neon (High)"` 可用；`--mode auto` 当前账号不可用（warning 后回退 default）；无代理即 auth 失败；错误样本见 §五 |
 | **静态核对**（v1.5.18 安装包字符串表，未调用） | headless 缺省超时由 5min 改为无上限，除非给 `--print-timeout`；到点自退＝退出码 3 ＋ stderr `AGY_ERROR` 行（点名被终止任务）＋ `[agy] print timeout after …` 行；结果带可选 `finished_reason`（`print_timeout` / `interrupted` / `error`）；`--mode` 在 headless 不受支持；二进制引用 `GEMINI_API_KEY` 路由与 `ALL_PROXY`/`all_proxy` |
-| **未证** | 见 §九 探钢单（`--version` 输出形态、`--print-timeout` 单位、残稿 JSON 同屏组合、env 白名单充分性、API-key 路由、`--add-dir` 幂等、续跑链路、额度数值） |
+| **真机 E2E**（task-149，v1.5.18 经代理出口） | `--print-timeout` 是 Go duration：裸数字 `60` 被拒（exit 2、stdout 空、stderr `invalid value "60" for flag -print-timeout: time: missing unit in duration "60"`），`60s` / `900s` 接受。print 到点自退＝exit 3 ＋ stdout `{status:"ERROR", finished_reason:"print_timeout", response:<残稿>, num_turns:1, usage 全 0, duration_seconds}` ＋ stderr `AGY_ERROR:{"status":"DEADLINE_EXCEEDED","reason":"print_timeout","retryable":false}`（静态核对的到点形属实；残稿形与 ERROR 同屏）；print 计时器自「sending message」起算，落在 spawn 后约 5.3–6.4s，到点后约 1.5s 自退。斜杠命令 `/usage`＝`status=SUCCESS`＋`num_turns:0`＋usage 全 0（配额文案：周/五小时窗口剩余百分比＋重置时刻）。鉴权过期且令牌刷新偶发网络失败时，CLI 落入 60s 交互等待后报 `authentication failed or timed out`（实测一次；无旗标可关）。短问答与工作区写文件（`append_system_prompt` 通道）各 1 回合收终稿，usage 含 `cache_read` |
+| **未证** | 见 §九 探钢单（`--version` 输出形态、env 白名单充分性、API-key 路由、`--add-dir` 幂等、续跑链路、额度数值） |
 
 ## 三、鉴权 · 代理 · 模型 · 额度
 
@@ -69,7 +75,7 @@
 ```
 agy -p '<任务书全文>' '\n\n--- AGENTS.md ---\n<AGENTS.md 全文>'   # append 通道时拼接
     --output-format json --dangerously-skip-permissions
-    [--model '<名>'] [--add-dir <task.workspace>] [--print-timeout <秒>]
+    [--model '<名>'] [--add-dir <task.workspace>] [--print-timeout <n>s]
 ```
 
 - 位置参数序固定：`-p` 任务串 → `--output-format json` → `--dangerously-skip-permissions` → `--model` →
@@ -91,7 +97,9 @@ agy -p '<任务书全文>' '\n\n--- AGENTS.md ---\n<AGENTS.md 全文>'   # appen
     核对仍是宿主原值（漏传基准按空基准判——HOME/PATH 在场即拒）。verifier 12 例探针（含大小写变体）三道闸全拒。
   - ⚠ 子进程是全权（`--dangerously-skip-permissions`）：任务书 credentials 注入即对模型工具可见——agy 缺省无
     env 凭据面，**生产不应向 agy 任务注入 credentials**。
-- 构造选项（`AgyAdapterOptions`）：`model`（非空单行）、`printTimeoutSec`（正整数）、`proxyEnv`（形状坏＝非对象/
+- 构造选项（`AgyAdapterOptions`）：`model`（非空单行）、`printTimeoutSec`（**正整数秒**：下发 `--print-timeout <n>s`；
+  0 / 负数 / 小数 / 非安全整数 → `CONFIG_INVALID/agy/option-invalid`，构造期与 argv 组装期双检——不静默丢弃，
+  `0s`＝等到完成，等于悄悄撤掉钉下的超时）、`proxyEnv`（形状坏＝非对象/
   数组/值非字符串 → `CONFIG_INVALID/agy/option-invalid`，报文只带键名与类型不带值；非代理键 → 构造期即
   `agy/env-key-rejected`，不起子进程）。agent.yaml
   `patches` 只认 `model` 与 `print-timeout-sec`，形状坏即 `CONFIG_INVALID/agentconfig/agy-patch-shape`
@@ -105,11 +113,15 @@ agy -p '<任务书全文>' '\n\n--- AGENTS.md ---\n<AGENTS.md 全文>'   # appen
 | 终稿 | 归一事件 | `completed` | 备注 |
 | --- | --- | --- | --- |
 | `status=SUCCESS`＋response 非空＋无 `finished_reason` | `log(response)` ＋ `turn_end(completed, usage)` | true | `conversation_id` → `Handle.executorSessionId`（对账面，续跑未接线）；`num_turns` → `ResultStats.turns` |
-| `finished_reason` 在场（残稿） | `log` ＋ `turn_end(completed:false)` | false | **不计完成**；CLI 上报的 usage 照记（真账） |
+| `finished_reason` 在场（残稿） | `log` ＋ `turn_end(completed:false)` | false | **不计完成**；残稿不作输出，只报长度与脱敏首段，文本标注 `partial=true`；`print_timeout` 面 usage 缺席或全 0＝**未上报**——不落 `usage` 键、文本标注「CLI 未上报（超时）」，不伪造零账（其余面 CLI 上报的 usage 照记，含 0） |
 | `status=ERROR` | `log("agy ERROR(kind): …")` ＋ `turn_end(error, errorCode?, usage?)` | false | 分类见下表；并入 stderr `AGY_ERROR` 行摘要 |
 | stdout 空而 stderr 有 `AGY_ERROR` 行 | 按结构化行分类 | false | CLI 未产终稿但报了结构化错 |
 | 坏 JSON / 形状坏 | `log` ＋ `turn_end(completed:false)` | false | 非零退出 → `进程退出码 N（…；stderr: <脱敏片段>）`；退出码 0 → `stdout 终稿不可解析（…）` |
 | 被杀（kill） | 无事件 | — | aborted 口径，四家同构；tokens 零值不编造 |
+
+`ResultStats.turns`＝**有效模型回合数**（证据判据，task-149）：成功面、残稿面、非零 usage 面取 CLI `num_turns`
+（缺席记 1）；旗标拒收 / 鉴权失败 / 坏稿 / watchdog 整组回收等无回合证据的面记 **0**——CLI 自报 `num_turns` 不作证据。
+stdout 一律按 Buffer 攒齐后统一 UTF-8 解码（多字节字符跨管道分片不坏）。
 
 失败分类（**实测样本归纳，非保证面**；匹配次序 region → eligibility → auth → quota → network → timeout → other，
 未知文本落 other 不猜）。`errorCode` 只用 `EXECUTOR_ERROR_CODES` 冻结词表，词表外无码、文本承载：
@@ -130,10 +142,14 @@ JSON token 值 / URL 口令 / 长 hex·base64 一律打码，剥 ANSI、折叠�
 
 ## 六、超时：`--print-timeout` 与 watchdog
 
-- CLI 侧 headless 缺省**无上限**（静态核对）→ 建议钉 `print-timeout-sec`。适配器下发 `--print-timeout <秒>`，
-  并自带兜底 watchdog：`printTimeoutSec + 4s` 仍存活 → SIGTERM 整组 → 2s → SIGKILL 整组；触发即 timeout 面
-  （`turn_end(completed:false)`，零账）。CLI 若按 `--print-timeout` 自退（残稿面），watchdog 不干预。
-- **`--print-timeout` 的单位按「整数秒」处理是未证假设**；`0`/负数/缺省不下发。真机探针未做（§九）。
+- CLI 侧 headless 缺省**无上限**（静态核对）→ 建议钉 `print-timeout-sec`。适配器下发 `--print-timeout <n>s`
+  （**单位已实证**＝Go duration，裸数字被拒 exit 2；未配置则不下发＝CLI 缺省等到完成），并自带兜底 watchdog：
+  `printTimeoutSec + 75s` 仍存活 → SIGTERM 整组 → 2s → SIGKILL 整组；触发即 timeout 面（`turn_end(completed:false)`，
+  零账，`turns=0`）。CLI 若按 `--print-timeout` 自退（残稿面），watchdog 不干预。
+- **宽放 75s 的依据**（task-149 真机校准）：print 计时器自「sending message」起算，落在 spawn 后约 5.3–6.4s（静默
+  鉴权＋配额刷新＋会话创建），到点后约 1.5s 自退——旧宽放 4s 在 print 截止前 2.7s（spawn+63.6s）整组回收，残稿面丢失
+  （修复后同一任务 wall 67.3s，由 CLI 自退）。
+  鉴权过期且令牌刷新偶发网络失败时 CLI 另有 60s 交互等待（无旗标可关），75s 一并盖住。
 - `kill(h, graceMs)`：SIGTERM 整组 → `graceMs` → SIGKILL 整组；幂等；已退出的会话无可杀（不标 killed，
   终态事件如实保留）。`budget_cap=false`：单任务预算靠框架断路，不靠 CLI。
 
@@ -165,14 +181,17 @@ kill/超时面收口，未收终稿不记完成。凭据/代理值不进 agent.y
 
 ## 八、测试面与门禁
 
-全部走 fake agy 夹具（`--fake-agy-scenario <场景文件>`；场景=`stdout/stderr/exit/hang/ignoreTerm/version`），
-夹具落 `agy-fake-report.json`（argv、cwd、env 键名、代理值）供直证；**不 skip / only / todo / retry**。
+全部走 fake agy 夹具（`--fake-agy-scenario <场景文件>`；场景=`stdout/stderr/exit/hang/ignoreTerm/version/delayMs/stdoutSplit`；
+`stdoutSplit`＝按字节偏移把 stdout 切两片、片间 20ms，`delayMs`＝启动开销；夹具自 `--print-timeout` 值过 Go duration
+形状闸——裸数字回放真机 exit 2 面），夹具落 `agy-fake-report.json`（argv、cwd、env 键名、代理值）供直证；
+**不 skip / only / todo / retry**。watchdog 用例只假 `setTimeout/clearTimeout`（子进程真起真杀），单例 <1s。
 
 | 文件 | 覆盖 |
 | --- | --- |
-| `packages/adapters/test/v2/agy-adapter.test.ts` | 成功面归一；argv 全量直证（含「永不 `--mode`」）；env 白名单正反断言＋宿主密钥值不入任何事件；credentials 封闭枚举键透传与枚举外键拒收；七类失败分类与残稿面；watchdog 与自退；kill 升级链；detect 三态；ENOENT 面；选项形状闸；patches → argv；AGENTS_MD 三通道；stream 单消费 |
+| `packages/adapters/test/v2/agy-adapter.test.ts` | 成功面归一；argv 全量直证（含「永不 `--mode`」、`--print-timeout <n>s`）；env 白名单正反断言＋宿主密钥值不入任何事件；credentials 封闭枚举键透传与枚举外键拒收；七类失败分类与残稿面；task-149 真机形回放（print 超时残稿面 `partial=true`／usage 不落键／`turns=1`、旗标拒收 exit 2 与鉴权失败 `turns=0`、回合证据判据）；watchdog 不抢杀与整组回收；kill 升级链；detect 三态；ENOENT 面；选项形状闸；patches → argv；AGENTS_MD 三通道；stream 单消费；stdout 多字节 UTF-8 跨分片 |
 | `packages/adapters/test/v2/agy-env.test.ts` | env 三道闸纯函数直证（task-147）：允许集收录/不透传；两条注入通道的封闭枚举（verifier 12 例探针逐例＋大小写变体＋拒收表逐条至少一例纯前缀/纯后缀键——规则逐条变异即有用例红）；合并后终检（HOME/PATH 宿主原值核对、漏传基准 fail-closed）；报文只带键名不带值；适配器面构造期 `proxyEnv` 键闸与形状闸（非对象/数组/值非字符串）、launch 注入非法键 spawn 前拒收无报告落盘 |
-| `packages/adapters/test/v2/agy-json.test.ts` | 分类正则（实测样本、优先次序、脱敏）、`sanitizeAgyText`、`AGY_ERROR` 摘要、`parseAgyJson` 全分支 |
+| `packages/adapters/test/v2/agy-json.test.ts` | 分类正则（实测样本、优先次序、脱敏）、`sanitizeAgyText`、`AGY_ERROR` 摘要、`parseAgyJson` 全分支；task-149：print 超时真机形（usage 全 0＝未上报、`partial` 标注、非零 usage 照记）、`agyOutcomeHasModelTurn` 回合证据判据、`decodeAgyStdout` 多字节跨分片 |
+| `packages/adapters/test/v2/agy-argv.test.ts` | `buildAgyArgv` 纯函数直证（task-149①）：`printTimeoutSec=60` → `--print-timeout 60s`（无裸数字）；未配置旗标缺席；0 / 负数 / 小数 / NaN / ∞ / 非安全整数 fail-closed `agy/option-invalid` |
 | `packages/adapters/test/v2/agy-registry.test.ts` | 零行为漂移（恰四家）、overrides 拒收、resolver 可达、wireRegistry 登记、cap-drift、seatbelt 拒收、patches 形状闸、ENU-88 与选择链 |
 | `apps/daemon/test/v2/serve/tier-executors.test.ts`、`primary-executor.test.ts` | daemon.yaml 两键校验以契约 `EXECUTOR_VALUES` 为唯一源（逐个合法值可解析、非法值/大小写变体拒启、报文列出值集） |
 
@@ -195,18 +214,18 @@ kill/超时面收口，未收终稿不记完成。凭据/代理值不进 agent.y
    `ae231de7…`（generatedAt / sourceCommit 随写）；与批前仓外预演差异逐字节一致（仅 generatedAt 时点）。
    `bun run contract:check` exit 0。`index.sourceCommit`＝重冻结时的 HEAD（落地提交的父提交，与既往工件同约定）。
 
-**探钢单（真机一次性验证；Gemini 在施工机受代理出口地区限制而不可用，故本单全程 fake 夹具）**
+**探钢单（真机一次性验证；task-140 时 Gemini 在施工机受代理出口地区限制而不可用故全程 fake 夹具——task-149 经代理出口完成 ② ③ ⑧ 三项真机验证）**
 
 | # | 未证面 | 当前处置 |
 | --- | --- | --- |
 | ① | `--version` 输出形态 | 取首个点分数字串；解析不到 → `agy-version-unparsed`（不静默放行） |
-| ② | `--print-timeout` 单位/格式、`0` 语义 | 按正整数秒下发；非正整数不下发 |
-| ③ | print 超时的残稿 JSON 形态（`finished_reason` 与 stdout/stderr 的同屏组合） | 「在场即采信」，不依赖组合假设 |
+| ② | ~~`--print-timeout` 单位/格式、`0` 语义~~ | **已证**（task-149）：Go duration——下发 `<n>s`，裸数字拒收 exit 2；非正整数 / 非安全整数 `CONFIG_INVALID/agy/option-invalid`；未配置不下发（CLI 缺省无上限） |
+| ③ | ~~print 超时的残稿 JSON 形态（`finished_reason` 与 stdout/stderr 的同屏组合）~~ | **已证**（task-149）：`status=ERROR`＋`finished_reason=print_timeout`＋残稿＋usage 全 0，stderr 同屏 `AGY_ERROR` 行，exit 3；解析仍「在场即采信」，不依赖组合假设 |
 | ④ | env 白名单真机充分性 | 不够用时改 `filterAgyEnv` 允许集（代码面，带测试）；`proxyEnv` 自 task-147 起只收代理键，无补键旁门 |
 | ⑤ | `GEMINI_API_KEY` 路由 | 不透传宿主值；未启用 |
 | ⑥ | `--add-dir` 与 cwd 同目录是否幂等 | 两项都下发 |
 | ⑦ | `--conversation` / `--continue` 续跑链路 | `session_resume=false` |
-| ⑧ | 额度数值与 quota 文案样本 | 约 1500 次/日待实测；分类靠正则 |
+| ⑧ | 额度数值与 quota 文案样本 | 文案样本已采（task-149 `/usage`：周 / 五小时窗口剩余百分比＋重置时刻；数值随账号与时点变，不固化）；「约 1500 次/日」仍待实测；分类靠正则 |
 | ⑨ | eligibility / region 的稳定处置 | 只给提示，不自动重试 |
 | ⑩ | 代理钉扎的配置面（patches 是否收 `proxy-env`） | 未开放——代理 URL 可内嵌口令，待密钥政策裁决 |
 | ⑪ | `--mode plan` 只读模式、seatbelt 端子（sandbox-exec 包装） | 永不下发 `--mode`；显式放宽 → `agentconfig/seatbelt-unenforceable` |
