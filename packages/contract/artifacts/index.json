@@ -3,8 +3,8 @@
   "artifactVersion": "1.0.0",
   "specVersion": "2.0.0",
   "domain": "v2/11 运行记录 13 AREA / 74 类（冻结记录形状）",
-  "generatedAt": "2026-10-28T09:28:33.000Z",
-  "sourceCommit": "0c90aee0bd74ad496af51775a37c96c0b3ff1b7c",
+  "generatedAt": "2026-11-27T11:31:50.001Z",
+  "sourceCommit": "98c56b20c417bbe753bed566e05ec609c02e5d9f",
   "sourceFiles": [
     "packages/contract/src/records/index.ts",
     "packages/contract/src/records/envelope.ts",
@@ -284,8 +284,8 @@
         "REC-ASSET-01",
         "REC-ASSET-02"
       ],
-      "bytes": 17440,
-      "sha256": "730a1225dedc2d2d94443d248cc94d4ef5f7aae5fc1256bbbc38e6a8c8535135"
+      "bytes": 17494,
+      "sha256": "ae231de7b0b9d8af8e6bd4c07f2b00d180193fd08e5687172cdf76c7be13143c"
     },
     {
       "file": "records/obs.schema.json",

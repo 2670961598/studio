@@ -16,6 +16,7 @@
  *   claude 版本门槛（AGENTS.md 原生读取需 ≥ 指定版本）；killpg TERM→KILL
  *   codex  无成本字段，成本按价目表折算
  *   kimi   usage 不在 stdout 而在 session wire.jsonl；`-p` 与 yolo/auto/plan 互斥
+ *   agy    stdout=单对象 JSON 终稿（非流）；--mode auto 不可用（回退 default）；必须经代理（Google 域直连被拦）
  *   通用   续跑（resume）各家机制不同，适配器必须声明是否支持；不支持则明报并降级为新派
  *
  * 纪律：一单一命，禁止嵌套转包；生产泳道禁运行时自装插件；每次派发的分层指纹照常记账。
@@ -28,6 +29,7 @@
  *   [x] claude 适配器（参考实现，含预算帽 --max-budget-usd、版本门槛 2.1.277 降级、原生 cost 账目）
  *   [x] codex 适配器首刀（对 fake harness 全绿；续跑旗标 + 通道 env 映射为拟稿，真 CLI 行为留探针单）
  *   [x] kimi 适配器（对 fake harness 全绿；wire 路径约定 + `-S` 旗标形为拟稿，真 CLI 行为留探针单）
+ *   [x] agy 适配器（team task-140：单对象 JSON 终稿 + 代理必经 + 错误分类；先登记不自动启用——未进 BUILTIN_ORDER，agent.yaml executors 段启用）
  *   [x] 注册表 registry.ts + agent.yaml 装载 agentconfig.ts（能力路由零名单硬编码；17-§2/§4，18-§1.2）
  *   [ ] 探针 runner：适配器写完先过探针集才允许注册
  */
@@ -52,6 +54,9 @@ export * from "./codex.ts";
 
 /** kimi 适配器：stdout claude 同构无 usage、会话结束后读 session wire.jsonl 合流总账，头注见 docs/17-§6 kimi 行 */
 export * from "./kimi.ts";
+
+/** agy 适配器（Antigravity CLI / Gemini 源，task-140）：单对象 JSON 终稿、错误分类、代理必经；头注见 docs/quality/agy-adapter.md */
+export * from "./agy.ts";
 
 /** 注册表：agent.yaml 驱动注册 + 能力路由 pick/pickAll（调度零 if executor，docs/17-§2） */
 export * from "./registry.ts";

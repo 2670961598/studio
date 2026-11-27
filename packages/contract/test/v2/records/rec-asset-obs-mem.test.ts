@@ -180,6 +180,18 @@ describe('ASSET 两类正例（§十一）', () => {
     expect(validateAssetRegistration(envelope('REC-ASSET-01', assetPayload()))).toEqual({ ok: true })
   })
 
+  it('ENU-88 值集含 agy（task-140 先登记后启用）：target_executor=agy 放行，词表外名拒', () => {
+    const ok = validateAssetRegistration(
+      envelope('REC-ASSET-01', assetPayload({ exclusivity: { marker: 'exclusive', target_executor: 'agy', unexpressed_items: [] } })),
+    )
+    expect(ok.ok).toBe(true)
+    const bad = validateAssetRegistration(
+      envelope('REC-ASSET-01', assetPayload({ exclusivity: { marker: 'exclusive', target_executor: 'nope', unexpressed_items: [] } })),
+    )
+    expect(bad.ok).toBe(false)
+    expect(issuePaths(bad)).toContain('payload.exclusivity.target_executor')
+  })
+
   it('02 绑定损失：逐项「明示不可用」＋替代或「不能」＋证据缺口 → 放行', () => {
     expect(validateBindingLoss(envelope('REC-ASSET-02', bindingLossPayload()))).toEqual({ ok: true })
   })

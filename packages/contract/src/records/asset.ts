@@ -46,8 +46,8 @@ export type AssetKind = (typeof ASSET_KINDS)[number]
 export const ASSET_EXCLUSIVITY_MARKERS = ['generic', 'exclusive'] as const
 export const AssetExclusivitySchema = z.enum(ASSET_EXCLUSIVITY_MARKERS)
 
-/** ENU-88 执行器值集（绑定事实源 v2/12 四家；新增执行器先登记） */
-export const EXECUTOR_VALUES = ['dsh', 'claude', 'codex', 'kimi'] as const
+/** ENU-88 执行器值集（绑定事实源 v2/12 四家；新增执行器先登记——task-140 登记 agy/Antigravity，启用与否归装配面） */
+export const EXECUTOR_VALUES = ['dsh', 'claude', 'codex', 'kimi', 'agy'] as const
 export const ExecutorSchema = z.enum(EXECUTOR_VALUES)
 export type Executor = (typeof EXECUTOR_VALUES)[number]
 

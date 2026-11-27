@@ -20,9 +20,10 @@
  *   - version / patches / plugins 属「人事档案」字段：解析进记录，version 的运行时核实归
  *     detect()（18-§一 launch 前必跑），plugins 归 L5 工具层（17-§5 executor 能力声明+
  *     插件 manifest）。patches 值形状文档未定义（17-§4 示例原样省略号）——按 unknown
- *     透传不解释；**唯一例外**（132-§6.1 单A，studio-dev-168）：dsh 家工厂消费
- *     `agent-default-model` 声明注入 ResultStats.model（dshModelFromPatches——家族专属
- *     消费，cmd 同位先例；generic 层仍不解释，其余家不读）。
+ *     透传不解释；**家族专属例外**（cmd 同位先例，generic 层仍不解释）：dsh 家消费
+ *     `agent-default-model` 声明注入 ResultStats.model（132-§6.1 单A，studio-dev-168，
+ *     dshModelFromPatches）；agy 家消费 `model` / `print-timeout-sec`（task-140，
+ *     agyOptionsFromPatches）。两解析落 ./patches.ts（BC-S2 尺寸阈分片），本文件 re-export。
  *   - capabilities 各键**可部分提供**（只比对提供的字段）；agents_md 词汇=contract
  *     冻结枚举（native/user_level/append_system_prompt）。
  *   - 缺 executors 段 / 空段 / yaml 语法错 / 形状错 → CONFIG_INVALID 明报（subcause
@@ -73,10 +74,16 @@ import { CodexAdapter } from './codex.ts'
 import { DshAdapter } from './dsh.ts'
 import type { DshAdapterOptions, DshSeatbeltOptions } from './dsh.ts'
 import { KimiAdapter } from './kimi.ts'
+import { AgyAdapter } from './agy.ts'
 import { failClosedCapabilities, unprovenProbeIdOf } from './bindcard/index.ts'
 import { DEFAULT_SEATBELT_PLAN, resolveSeatbeltGrant } from './seatbelt.ts'
 import type { SeatbeltGrant, SeatbeltPlan } from './seatbelt.ts'
 import type { ExecutorRegistry } from './registry.ts'
+import { agyOptionsFromPatches, dshModelFromPatches } from './patches.ts'
+
+// patches 家族专属消费（dshModelFromPatches / agyOptionsFromPatches）已迁 ./patches.ts（BC-S2
+// 尺寸阈「先拆后加」）；此处 re-export 保持既有引用路径零变（包 index 与相对路径引用方）
+export { agyOptionsFromPatches, dshModelFromPatches } from './patches.ts'
 
 // ---------------------------------------------------------------------------
 // zod schema（17-§4 agent.yaml 口径；capabilities 词汇=contract 冻结枚举）
@@ -256,6 +263,14 @@ export function registerBuiltins(
   registry: ExecutorRegistry,
   overrides: BuiltinOverrides = {},
 ): ExecutorRegistry {
+  // agy 不在 BUILTIN_ORDER（先登记不自动启用，task-140）：override 若点名 agy 会被静默
+  // 跳过——结构拒收明报（fail-closed），启用走 agent.yaml executors 段
+  if (Object.hasOwn(overrides, 'agy')) {
+    configInvalid(
+      'agentconfig/agy-override-ignored',
+      'overrides 点名 agy——agy 未进 BUILTIN_ORDER（task-140 先登记不自动启用，registerBuiltins 保持四家）；启用走 agent.yaml executors 段（wireRegistry→builtinResolver）',
+    )
+  }
   for (const name of BUILTIN_ORDER) {
     const o = overrides[name]
     // 档位解析=构造期守门：非法档/未授权放宽在此抛（不等到 launch 才败）
@@ -269,7 +284,10 @@ export function registerBuiltins(
   return registry
 }
 
-/** 内置注册序：dsh 首位（default）——与 docs/18-§1.2 文件列举序一致 */
+/** 内置注册序：dsh 首位（default）——与 docs/18-§1.2 文件列举序一致。
+ * agy **刻意不在序内**（task-140 先登记不自动启用）：registerBuiltins 保持四家
+ * （`registerBuiltins(createRegistry())` 零行为漂移）；agy 经 agent.yaml executors 段
+ * （wireRegistry→builtinResolver）解析启用——工厂表有键即 resolver 可达。 */
 const BUILTIN_ORDER: readonly ExecutorFamily[] = ['dsh', 'claude', 'codex', 'kimi']
 
 /**
@@ -282,7 +300,9 @@ type BuiltinFactory = (
   seatbelt: SeatbeltPlan,
 ) => ExecutorAdapter
 
-/** 四家工厂表（cmd=undefined 时各自落缺省命令，17-§6；seatbelt 计划=构造期已解析） */
+/** 工厂表（cmd=undefined 时各自落缺省命令，17-§6；seatbelt 计划=构造期已解析）——
+ * dsh/claude/codex/kimi 四家 + agy（task-140 登记；值在场=resolver 可解析，启用与否
+ * 归 BUILTIN_ORDER/agent.yaml，见序表注） */
 const BUILTIN_FACTORIES: Readonly<Record<ExecutorFamily, BuiltinFactory>> = {
   dsh: (cmd, patches, seatbelt) => {
     const plan = seatbelt ?? DEFAULT_SEATBELT_PLAN
@@ -303,46 +323,17 @@ const BUILTIN_FACTORIES: Readonly<Record<ExecutorFamily, BuiltinFactory>> = {
     // task-104：KimiAdapter 补 seatbelt 端子（sandbox-exec 包线）；read-only 缺省照绑，workspace-write 由 plan 携带授权
     return new KimiAdapter(cmd, undefined, seatbelt ?? DEFAULT_SEATBELT_PLAN)
   },
+  // task-140：agy 无 seatbelt 端子（argv 包线未接线）——与 claude/codex 同处置：
+  // 显式放宽拒收，read-only 缺省照过（PRB-04 同登记）；patches 家族专属消费见
+  // agyOptionsFromPatches（model / print-timeout-sec，dsh 家族专属先例同位）
+  agy: (cmd, patches, seatbelt) => {
+    assertSeatbeltTerminal('agy', seatbelt ?? DEFAULT_SEATBELT_PLAN)
+    return new AgyAdapter(cmd, agyOptionsFromPatches(patches))
+  },
 }
 
 /**
- * dsh 家 patches['agent-default-model'] 声明解析（132-§6.1 单A·C3）：dsh 无 `--model` 旗标，
- * 模型=profile 插件配置（provider+model）——daemon 直读机器全局态与 per-company 隔离相抵，
- * agent.yaml patches 段是部署对该 patch 的**声明镜像**（非新增第三事实源）。形状照录
- * `{config: {provider, model}}`（两非空串且不含 `/`）；缺键=undefined（如实缺席），键在而
- * 形状坏 → CONFIG_INVALID（不静默不猜）。generic 层「patches 透传不解释」维持：本解析是 dsh
- * 家族专属消费（cmd 同位先例），其余家不读 patches。
- */
-export function dshModelFromPatches(patches: Readonly<Record<string, unknown>> | undefined): string | undefined {
-  if (patches === undefined || !Object.hasOwn(patches, 'agent-default-model')) return undefined
-  const entry = patches['agent-default-model']
-  const detail = (why: string): never =>
-    configInvalid(
-      'agentconfig/dsh-model-patch',
-      `executors.dsh.patches['agent-default-model'] ${why}——形状须为 {config: {provider, model}}（profile patch 条目的声明镜像，132-§6.1 单A）`,
-    )
-  if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
-    detail(`形状不合（收到 ${Array.isArray(entry) ? '数组' : typeof entry}）`)
-  }
-  const config = (entry as Record<string, unknown>)['config']
-  if (typeof config !== 'object' || config === null || Array.isArray(config)) {
-    detail('缺 config 映射段')
-  }
-  const c = config as Record<string, unknown>
-  const provider = c['provider']
-  const model = c['model']
-  if (typeof provider !== 'string' || provider === '') detail('config.provider 须为非空字符串')
-  if (typeof model !== 'string' || model === '') detail('config.model 须为非空字符串')
-  const p = provider as string
-  const m = model as string
-  if (p.includes('/') || m.includes('/')) {
-    detail(`provider/model 不得含 '/'（归一形 ${JSON.stringify(`${p}/${m}`)} 有歧义）`)
-  }
-  return `${p}/${m}`
-}
-
-/**
- * 内置解析器：四家名 → 工厂；未知名 undefined（wireRegistry 明报）；daemon 装载 agent.yaml
+ * 内置解析器：五家名（四家+agy）→ 工厂；未知名 undefined（wireRegistry 明报）；daemon 装载 agent.yaml
  * 时作缺省 resolver。seatbelt（第二参，SEC-FC-05）：**省略=read-only 最严**（全权缺省已删）；
  * 放宽须显式 `{tier:'workspace-write', writeRoots:[绝对路径…], authorization:'…'}`，非法档/
  * 未授权放宽在**解析期**即 CONFIG_INVALID（构造期守门，不等到 launch 才败）。
@@ -369,6 +360,7 @@ const BUILTIN_DEFAULT_FACTORIES: Readonly<Record<ExecutorFamily, AdapterFactory>
   claude: (cmd, patches) => BUILTIN_FACTORIES.claude(cmd, patches, DEFAULT_SEATBELT_PLAN),
   codex: (cmd, patches) => BUILTIN_FACTORIES.codex(cmd, patches, DEFAULT_SEATBELT_PLAN),
   kimi: (cmd, patches) => BUILTIN_FACTORIES.kimi(cmd, patches, DEFAULT_SEATBELT_PLAN),
+  agy: (cmd, patches) => BUILTIN_FACTORIES.agy(cmd, patches, DEFAULT_SEATBELT_PLAN),
 }
 
 // ---------------------------------------------------------------------------
@@ -385,7 +377,8 @@ export function isJudgeExecutorName(name: string): boolean {
 
 /**
  * judge 注册位 → 家族名（`dsh-judge`→`dsh`）；非 judge 形态或家族不存在 → undefined。
- * 家族表=BUILTIN_FACTORIES 键（四家）——未配置家族的 judge 位由 resolver 明报，不静默。
+ * 家族表=BUILTIN_FACTORIES 键（四家+agy——task-140 登记；agy-judge 位经 agent.yaml 可解析）——
+ * 未配置家族的 judge 位由 resolver 明报，不静默。
  */
 export function judgeFamilyOf(name: string): ExecutorFamily | undefined {
   if (!name.endsWith(JUDGE_EXECUTOR_SUFFIX)) return undefined

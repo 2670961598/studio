@@ -4,8 +4,8 @@
  */
 import type { Money, ResultStats, StreamEvent, TaskBrief } from './kernel.ts'
 
-/** executor 家族（17-§6 四原语表；CLI 泳道首刀反馈补入 docs/25-§3.1） */
-export type ExecutorFamily = 'dsh' | 'claude' | 'codex' | 'kimi'
+/** executor 家族（17-§6 四原语表；CLI 泳道首刀反馈补入 docs/25-§3.1；task-140 补 agy——先登记后启用，登记本身零行为） */
+export type ExecutorFamily = 'dsh' | 'claude' | 'codex' | 'kimi' | 'agy'
 
 export interface ExecutorCapabilities {
   budget_cap: boolean

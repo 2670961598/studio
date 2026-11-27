@@ -33,6 +33,7 @@ import { existsSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import type { SeatbeltGrant } from '@studio-next/adapters'
+import { EXECUTOR_VALUES } from '@studio-next/contract/records' // ENU-88 值集唯一源（v2/09 §二）——本文件不再手写枚举
 import { parseWhitelistSpec } from '../../engine/directive/index.ts'
 import { parseJudgeSites } from '../../engine/judge/sites129.ts'
 import { parseModelTierTickets } from '../../engine/tier/model-tier.ts'
@@ -289,7 +290,6 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       }
       case 'company': cfg.company = str(value, key); break
       case 'tierExecutors': {
-        const EXECUTOR_NAMES = ['dsh', 'claude', 'codex', 'kimi'] as const
         const rawText = str(value, key)
         let parsed: unknown
         try { parsed = JSON.parse(rawText) } catch { throw new Error(`daemon.yaml：tierExecutors 须为 JSON 对象（如 '{"high":"kimi","mid":"dsh"}'；实得 ${rawText}）`) }
@@ -297,7 +297,7 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
         const out: Partial<Record<'high' | 'mid' | 'low', string>> = {}
         for (const [tier, exec] of Object.entries(parsed as Record<string, unknown>)) {
           if (!['high', 'mid', 'low'].includes(tier)) throw new Error(`daemon.yaml：tierExecutors 档位仅 high|mid|low（实得 ${tier}）`)
-          if (typeof exec !== 'string' || !EXECUTOR_NAMES.includes(exec as (typeof EXECUTOR_NAMES)[number])) throw new Error(`daemon.yaml：tierExecutors.${tier} 须为 ENU-88 执行器（实得 ${String(exec)}）`)
+          if (typeof exec !== 'string' || !(EXECUTOR_VALUES as readonly string[]).includes(exec)) throw new Error(`daemon.yaml：tierExecutors.${tier} 须为 ENU-88 执行器（实得 ${String(exec)}）`)
           out[tier as 'high' | 'mid' | 'low'] = exec
         }
         cfg.tierExecutors = out
@@ -305,7 +305,7 @@ function coerceServeConfig(raw: Record<string, string | number | boolean>): Serv
       }
       case 'primaryExecutor': {
         const v = str(value, key)
-        if (!['dsh', 'claude', 'codex', 'kimi'].includes(v)) throw new Error(`daemon.yaml：primaryExecutor 须为 ENU-88 执行器（dsh|claude|codex|kimi；实得 ${v}）`)
+        if (!(EXECUTOR_VALUES as readonly string[]).includes(v)) throw new Error(`daemon.yaml：primaryExecutor 须为 ENU-88 执行器（${EXECUTOR_VALUES.join('|')}；实得 ${v}）`)
         cfg.primaryExecutor = v
         break
       }

@@ -1,7 +1,8 @@
-/** task-106：主绑定执行器可配置（缺省 dsh 零漂移；primaryExecutor=kimi 放行/拒 dsh；非法值拒启）。 */
+/** task-106：主绑定执行器可配置（缺省 dsh 零漂移；primaryExecutor=kimi 放行/拒 dsh；非法值拒启）。task-147：值集改引契约。 */
 import { describe, expect, it } from 'vitest'
 import { EMPTY_SELECTION_CHAIN, resolveDispatchTarget } from '@studio-next/adapters/bindcard'
 import { EMPTY_SELECTION_CHAIN as EMPTY } from '@studio-next/adapters/bindcard'
+import { EXECUTOR_VALUES } from '@studio-next/contract/records'
 import { parseDaemonConfig } from '../../../src/assembly/serve/config.ts'
 import { resolveDispatchSelection, type DispatchSelectionDeps } from '../../../src/engine/work/dispatch-selection.ts'
 
@@ -69,5 +70,18 @@ describe('task-106 primaryExecutor', () => {
   it('非法 primaryExecutor 拒启', () => {
     expect(() => parseDaemonConfig(`${BASE}\nprimaryExecutor: nope`)).toThrow(/ENU-88|primaryExecutor/)
     expect(() => parseDaemonConfig(`${BASE}\nprimaryExecutor: off`)).toThrow(/primaryExecutor/)
+  })
+
+  it('task-147 ENU-88 值集以契约为唯一源（含 agy）：合法值逐个可解析；非法值拒启且报文列出契约值集', () => {
+    // 合法面不手写枚举；agy 可解析＝登记面放行，启用仍归 agent.yaml 注册与装配批示
+    for (const name of EXECUTOR_VALUES) {
+      expect(parseDaemonConfig(`${BASE}\nprimaryExecutor: ${name}`).primaryExecutor, name).toBe(name)
+    }
+    let caught: unknown
+    try { parseDaemonConfig(`${BASE}\nprimaryExecutor: gemini`) } catch (e) { caught = e }
+    expect(caught).toBeInstanceOf(Error)
+    expect(String((caught as Error).message)).toContain(`ENU-88 执行器（${EXECUTOR_VALUES.join('|')}；实得 gemini）`) // 报文口径兼容：自称 ENU-88＋列合法值
+    expect(() => parseDaemonConfig(`${BASE}\nprimaryExecutor: AGY`)).toThrow(/ENU-88/) // 大小写敏感（码值只认正写）
+    expect(() => parseDaemonConfig(`${BASE}\nprimaryExecutor: agy-judge`)).toThrow(/ENU-88/) // 岗位后缀名不是值集成员
   })
 })

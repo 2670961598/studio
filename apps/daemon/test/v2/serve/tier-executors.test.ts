@@ -1,6 +1,7 @@
-/** task-100：tierExecutors 跨家族档位映射 + 配置校验；缺省/未注册回退零漂移。 */
+/** task-100：tierExecutors 跨家族档位映射 + 配置校验；缺省/未注册回退零漂移。task-147：值集改引契约。 */
 import { describe, expect, it } from 'vitest'
 import { createRegistry } from '@studio-next/adapters'
+import { EXECUTOR_VALUES } from '@studio-next/contract/records'
 import { createFakeAdapter } from '../../../src/engine/fakes.ts'
 import { modelTierDispatchFace } from '../../../src/engine/tier/model-tier.ts'
 import { parseDaemonConfig } from '../../../src/assembly/serve/config.ts'
@@ -41,5 +42,17 @@ describe('task-100 tierExecutors', () => {
     expect(() => parseDaemonConfig(`${BASE}\ntierExecutors: '{"high":"nope"}'`)).toThrow(/ENU-88/)
     expect(() => parseDaemonConfig(`${BASE}\ntierExecutors: '{"ultra":"kimi"}'`)).toThrow(/high\|mid\|low/)
     expect(() => parseDaemonConfig(`${BASE}\ntierExecutors: 'not-json'`)).toThrow(/JSON/)
+  })
+
+  it('task-147 ENU-88 值集以契约为唯一源（含 agy）：每个合法值可解析；非法值/大小写变体拒启', () => {
+    // 合法面不手写枚举：契约 EXECUTOR_VALUES 逐个过（agy 登记不启用——可解析≠已注册，派工仍看 agent.yaml）
+    for (const name of EXECUTOR_VALUES) {
+      const quoted = JSON.stringify({ high: name })
+      expect(parseDaemonConfig(`${BASE}\ntierExecutors: '${quoted}'`).tierExecutors).toEqual({ high: name })
+    }
+    for (const bad of ['nope', 'gemini', 'AGY', 'Kimi', 'kimi-code', '']) {
+      const quoted = JSON.stringify({ high: bad })
+      expect(() => parseDaemonConfig(`${BASE}\ntierExecutors: '${quoted}'`), `tierExecutors high=${bad}`).toThrow(/ENU-88/)
+    }
   })
 })

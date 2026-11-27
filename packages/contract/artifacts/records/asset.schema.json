@@ -111,7 +111,8 @@
                     "dsh",
                     "claude",
                     "codex",
-                    "kimi"
+                    "kimi",
+                    "agy"
                   ]
                 },
                 "unexpressed_items": {
@@ -401,7 +402,8 @@
                     "dsh",
                     "claude",
                     "codex",
-                    "kimi"
+                    "kimi",
+                    "agy"
                   ]
                 },
                 "binding_ref": {
