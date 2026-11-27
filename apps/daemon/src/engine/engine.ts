@@ -170,6 +170,7 @@ import type { CompanyRuntimeUpdate, Engine, EngineDeps } from './runtime/contrac
 import { recoverDispatchedOrphans, type OrphanRecoveryResult } from './recovery/orphan-recovery.ts'
 import type { DispatchPreflight, EngineCrashSeams, EngineRuntime } from './runtime/types.ts'
 import { resolveWorkerDispatchSeatbelt, seatbeltNote } from './work/dispatch-seatbelt.ts'
+import { routingHealthRow } from './routing/source-executor.ts'
 
 // 契约面（EngineDeps／Engine／CompanyRuntimeUpdate）迁驻 runtime/contract.ts——本文件仍是
 // 唯一出口：导出名与旧导入路径（.../engine/engine.ts）零变更，serve/cli/测试无需改行。
@@ -274,10 +275,7 @@ export function createEngine(deps: EngineDeps): Engine {
       const now = Date.now()
       return {
         sources: Object.entries(rt.modelRouting.sources).flatMap(([tier, sources]) =>
-          (sources ?? []).map((source) => {
-            const st = rt.modelRouting?.state[source.id]
-            return { tier, id: source.id, available: (st?.cooldownUntil ?? 0) <= now, cooldownUntil: st?.cooldownUntil ?? 0, ...(st?.lastFailureClass !== undefined ? { lastFailureClass: st.lastFailureClass } : {}), ...(st?.lastSuccessAt !== undefined ? { lastSuccessAt: st.lastSuccessAt } : {}) }
-          }),
+          (sources ?? []).map((source) => routingHealthRow(tier, source, rt.modelRouting?.state[source.id], now)),
         ),
       }
     },

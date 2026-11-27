@@ -12,6 +12,19 @@
 - `resolveDispatchSelection`：请求执行器非主绑定、该单**无任何选择链登记**、且 ∈ tierExecutors 集合 → 放行，`source='tier-config'`、`chainId='tier-config:default'`，note 明示“公司 tierExecutors 配置=显式登记面（非 ticket/岗位登记）”。
 - 单登记/岗位登记优先级与 mismatch 拒派不变；未配置执行器仍 `dispatch/selection-unregistered`（NEG-RUN-05 不变）。
 
+## 选择登记面扩展：模型源 executor（task-141；默认不启用）
+
+- 允许集合 = tierExecutors ∪ 本档 models.yaml `sources[].executor` 家族（`DispatchSelectionDeps.sourceExecutors`；
+  engine 每次派发自 `rt.modelRouting.sources[<派发档位>]` 现算注入——**按派发档位取，他档 executor 不放行**
+  （回归：`apps/daemon/test/v2/routing/execute-bound-stage.test.ts` F2）；未配=空集零漂移）。语义与配置见
+  docs/quality/model-routing.md §10。
+- 命中源 executor 登记面 → `source='model-source'`、`chainId='model-source:default'`，DISPATCH 锚
+  `;selection=model-source:default@<executor>`，note 明示“models.yaml sources[].executor 配置=显式选择登记面”。
+- 前提不变：请求执行器非主绑定、该单无任何选择链登记；单据/岗位登记优先；未登记家族仍
+  `dispatch/selection-unregistered`（NEG-RUN-05 不变）。续跑指名（同家硬约束）不受影响。
+- 绑定段位置：解析点仍是 `engine/work/dispatch-selection.ts`（唯一解析点），调用位在
+  `engine/dispatch/bound-stage.ts`（task-141 自 execute.ts 抽件；换绑=绑定段重跑，闸随之重判）。
+
 
 ## 2026-11-23 变更：Kimi 默认模型 = 3.1 Pro；Kimi 接入 DSH（制作人令）
 

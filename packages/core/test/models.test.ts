@@ -394,3 +394,36 @@ roles: { main_worker: high, verifier: mid, summarizer: low, precheck: low, patro
     expect(fingerprint(changed)).not.toBe(fingerprint(cfg))
   })
 })
+
+// task-141：模型源 per-source executor（docs/quality/model-routing.md §10）——同档可混用；
+// 缺省源不带 executor 键（归一保留显式值；未配=档位既有逻辑零漂移）
+//       1 tiers:
+//       2   high:
+//       3     sources:
+//       4       - {id: a, provider: glm, model: GLM-5.3, price: {inputPerM: 1, outputPerM: 2}, executor: agy}
+//       5       - {id: b, provider: opencode-go, model: kimi-k3.1-pro, price: {inputPerM: 2, outputPerM: 10}}
+const SOURCES_YAML = [
+  'tiers:',
+  '  high:',
+  '    sources:',
+  '      - {id: a, provider: glm, model: GLM-5.3, price: {inputPerM: 1, outputPerM: 2}, executor: agy}',
+  '      - {id: b, provider: opencode-go, model: kimi-k3.1-pro, price: {inputPerM: 2, outputPerM: 10}}',
+  '  mid: {provider: glm, model: GLM-5.3, price: {inputPerM: 1, outputPerM: 2}}',
+  '  low: {provider: glm, model: GLM-5.3-Flash, price: {inputPerM: 0.1, outputPerM: 0.4}}',
+  'roles: {main_worker: high}',
+].join('\n')
+
+describe('sources[].executor（task-141）', () => {
+  it('显式 executor 原样保留；缺省源归一后不带 executor 键（同档混用）', () => {
+    const sources = parseModelsYaml(SOURCES_YAML).sources?.high ?? []
+    expect(sources.map((s) => s.id)).toEqual(['a', 'b'])
+    expect(sources[0]?.executor).toBe('agy')
+    expect('executor' in (sources[1] ?? {})).toBe(false)
+  })
+
+  it('executor 空串拒（CONFIG_INVALID，行号回爬到该源行第 4 行）；未登记判定不在 core（serve 校验面）', () => {
+    const err = expectInvalid(SOURCES_YAML.replace('executor: agy', "executor: ''"))
+    const issue = err.issues?.find((i) => i.rule.includes('executor'))
+    expect(issue?.line).toBe(4)
+  })
+})

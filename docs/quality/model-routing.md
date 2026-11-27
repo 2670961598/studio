@@ -3,6 +3,7 @@
 > 状态：**设计 + 核心切片已落**（models.yaml `sources[]` 解析/归一、优先级/预算/冷却/half-open
 > 纯逻辑、状态持久化序列化、单测）。task-135 收尾批 1 已落：quota 池化打分、
 > `allowBudgetDowngrade` 配置面、同 dispatch 内一次换源、热切即时补种 price snapshot（§9）。
+> task-141 已落（**默认不启用**）：`sources[].executor` per-source 执行器 + 跨执行器换源（§10）。
 > 不新增契约/schema/事件词；不引外部依赖。
 
 ## 1. 配置（models.yaml）
@@ -24,6 +25,7 @@ tiers:
         quota: {kind: monthly, limitUsd: 500, remainingUsd: 120.5, resetAt: 1799000000000, weight: 2}
         cooldown: {baseMs: 60000, maxMs: 28800000, circuitAfter: 3}
         enabled: true
+        # executor: agy            # 可选（task-141，§10）：该源由哪个已登记执行器跑；缺省=现档位链
       - id: go-kimi
         provider: opencode-go
         model: kimi-k3.1-pro
@@ -170,3 +172,106 @@ roles: {main_worker: mid, verifier: high}
 4. fingerprint 纳入 sources、热切原子替换；
 5. healthz/面板源状态、真机 E2E（两源/耗尽/全失败）。
 未完成这些前不宣称 task-51 完成；建议另立「路由 dispatch 接线」实现单，或本单续作第二切片。
+
+## 10. 源 executor 与跨执行器换源（task-141；默认不启用）
+
+> `sources[].executor` 为可选键；**不配=既有行为逐位回归**（档位链 tierExecutors → `<family>-<tier>`
+> → pick；overlay/model/锚形不变）。启用只需在 models.yaml 源上写 `executor`，**不改** daemon.yaml /
+> agent.yaml 生产配置；agy 等执行器是否可解析仍由 agent.yaml 登记与装配批示决定（task-140/147）。
+
+### 10.1 配置与校验（fail-closed）
+
+- `tiers.<t>.sources[].executor`（非空字符串）：该源由哪个**已登记**执行器跑；同档可混用
+  dsh / kimi / agy 等（示例 §10.5）。缺省 → 现档位链（零漂移）。
+- 判据唯一源 `apps/daemon/src/engine/routing/source-executor.ts` `sourceExecutorIssues`——启动与
+  热切同引，不双源漂移：
+  - **启动**（`assembly/serve/executor-face.ts`）：每档每个 `sources[].executor` 须在注册表
+    （agent.yaml 装载后的 `registry.list()`）登记，否则 `CONFIG_INVALID/models/source-executor-unknown`
+    拒启，报文列档位/源/已登记名：`models.yaml sources[].executor 未登记（task-141）：
+    high/sources[a].executor=agy 未登记（已登记：dsh、dsh-high）`。
+  - **热切**（`assembly/serve/models-hot-swap.ts`）：同一判据在**落盘前**校验；未登记 →
+    `kind='invalid'`、不调 apply、旧配置/旧 overlay 字节不动，ESCALATE
+    `MODELS_RELOAD_INVALID：models.yaml sources[].executor 未登记，保持旧配置：<同上判据行>`；
+    修正后下次热切照常应用（拒绝不锁死）。
+- **非 dsh 执行器的源**：`provider/model/price` 只作**价目与身份归属**（预算估算、
+  `work_records.model=provider/model`、price snapshot）；不生成/不套 dsh overlay、不调 `setModel`
+  ——模型由该执行器自身配置决定（models.yaml 不冒充它的模型开关）。
+
+### 10.2 派发（`engine/dispatch/execute.ts` + `bound-stage.ts`）
+
+1. 路由选出 source 后按 `source.executor` 解析 adapter（`adapterForSource`：缺省→档位候选原样）。
+   显式 executor 未登记 → `MODEL_ROUTING_FAIL;tier=<t>;reason=EXECUTOR_UNKNOWN;源 <id> 的
+   executor=<name> 未在注册表登记（已登记：…）（task-141 fail-closed 不降档）`——零 launch，与 task-56
+   路由拒派同形（启动校验已拦，此为运行期兜底：如热切后注册表变化）。
+2. **换绑**：候选 adapter ≠ 选中源的 executor 位（预算预检改选他执行器的源；或 launch 失败换源
+   且新源 executor 不同）→ 绑定段（选择闸 → overlay → preflight → launch）在目标 adapter 上整段重跑。
+   **每个收敛轮至多换绑一次**（首绑一轮、launch 失败换源路由一轮）；换绑后精确选源仍指向他执行器
+   → `reason=EXECUTOR_REBIND_UNSTABLE`（fail-closed，不降档、不循环）。选择闸改派（单据/岗位指向
+   别家）= 链锁定，本 dispatch 不再按源 executor 换绑（锚注明）。
+   - **链锁定不归因**：链锁定（选择闸改派/续跑锁定）且链执行器**非选中源家族**（`sameExecutorFamily`
+     判假）→ 源未在该执行位实际生效，本 dispatch 不归因路由源：不写 `;routing=`、不冷却、不记
+     FAILOVER，launch 失败=原始 launch 错（档位改派锚仍在）。同族（含续跑锁定）照常归因。
+   - **换绑前撤登记**：launch **未尝试**的换绑=被弃段未 spawn → 宿主先经 `retireDispatchDerivation`
+     撤其派生登记行（`<单号>:att<N>:<adapter>`）；登记面无撤销口/撤销被拒 → 不换绑，
+     `reason=EXECUTOR_REBIND_UNREVOKED`（fail-closed，错误含被弃段 id）。launch 失败后的换源换绑=
+     被弃段已 spawn → 登记行如实留痕不撤。**启用前余量**：生产持久登记网关
+     （`assembly/serve/derivation.ts`）现只有 `register`、无单行撤销口——生产配置
+     `sources[].executor` 后，预算预检改选跨执行器的单会因此拒派，直到网关补撤销口（后续提案）。
+3. **选择闸**（docs/quality/tier-executors.md）：允许集合 = tierExecutors ∪ **本档** `sources[].executor`
+   家族（engine 每次派发自 `rt.modelRouting.sources[<派发档位>]` 现算注入——他档 executor 不放行）；
+   命中 → `source='model-source'`、`chainId='model-source:default'`、锚
+   `;selection=model-source:default@<executor>`。未登记家族仍 `dispatch/selection-unregistered`
+   拒派（NEG-RUN-05 不变）。
+4. **续跑面**：上次工位执行器与首选源的 executor **同族** → 续跑位优先（不换绑、不换源；
+   `;resume=<session>@<executor>（续自第 N 誓）`）；**不同族** → 不强行续跑（session 归属执行位，
+   docs/v2/12 §2.1-③），按新派处理并明报：`;resume=降级新派（路由源 <id@executor> 非续跑同族
+   <上次执行器>——task-141 跨执行器不强行续跑——F1-15）`；`causation_id` 仍挂上次工时单。
+5. **指令文件**（默认路径）：bridge 通道临时指令文件 `<rootDir>/tmp/instructions/<单号>.md` 在绑定段
+   落盘前即上报路径；派发未成（段内抛错、PRM rejected、launch 失败、拒派、换绑未成）→ finally
+   一处即删（无收割会来收本 attempt，留着即泄漏）；launch 成功后仍由收割回收。launch 之后的后续步
+   抛错 → 已启动 worker 被 kill。
+
+### 10.3 审计（不新增事件名；既有锚只追加字段）
+
+- DISPATCH note `;routing=<id>[@executor]`（显式配置才带 `@executor`）；`routing-fallbackFrom` 同形；
+  `routing-skipped` 仍 id 制（`a:cooldown(until=N)`）。
+- 档位锚：源 executor 与档位候选同一位 → 既有 `;tier=<tier>` 不变；不同 →
+  `;tier=<tier>@<adapter>（源 executor=<id@executor>，task-141）`。
+- 跨执行器换源：`MODEL_ROUTING_FAILOVER;tier=…;source=…;class=…;cooldownMs=…（task-135 同dispatch换源）;
+  from=<id@executor>;to=<id@executor>`（`from/to` 仅显式 executor 时带 `@`）。
+- healthz `routing.sources[]`（`routingHealthRow`，加法扩展）：常驻 `provider/model/priority/enabled`
+  ＋可选 `executor`（显式配置才带该键）、`cooldown`（源配了冷却才带）；既有键
+  `tier/id/available/cooldownUntil/lastFailureClass?/lastSuccessAt?` 口径不变。面板专用视图仍未接（同 §9）。
+
+### 10.4 不做 / 回退
+
+- 不做：per-ticket executor override、lane/收割改动、契约/schema/事件词/四要件改动、agy 启用
+  （不改生产 models.yaml / daemon.yaml / agent.yaml）、真调 agy（验证一律 fake adapter）。
+- 回退：删去全部 `executor` 键即零漂移（无需改代码）。
+
+### 10.5 示例：同档混用（仅示例，生产未启用）
+
+```yaml
+tiers:
+  high:
+    sources:
+      - {id: glm-zcode, provider: glm, model: GLM-5.3, priority: 10, price: {inputPerM: 1.1111, outputPerM: 3.8889}, executor: agy}
+      - {id: go-kimi, provider: opencode-go, model: kimi-k3.1-pro, priority: 20, price: {inputPerM: 2, outputPerM: 10}}   # 缺省=现档位链
+```
+
+首源 `glm-zcode`（agy）launch 429 → 冷却 + `MODEL_ROUTING_FAILOVER;…;from=glm-zcode@agy;to=go-kimi`
+→ 换绑到档位位（dsh）→ launch；DISPATCH `routing=go-kimi`。无故障时派发落 agy，
+`;selection=model-source:default@agy;tier=high@agy（源 executor=glm-zcode@agy，task-141）`。
+
+### 10.6 验证（定向）
+
+- `apps/daemon/test/v2/routing/source-executor.test.ts`（纯函数：家族集合/校验行/adapter 解析/
+  续跑对账/源锚/health 行）；`execute-source-executor.test.ts`（派发级：跨执行器换源、全灭、
+  未登记、闸放行/仍拒、同执行器回归、预算改选换绑）；`execute-source-executor-resume.test.ts`
+  （引擎级：续跑跨族降级 / 同族续跑位优先）；
+- `apps/daemon/test/v2/serve/models-source-executor.test.ts`（拒启 / 热切拒绝保持旧配置）；
+  `packages/core/test/models.test.ts`（schema/归一：executor 保留、缺省不造键、空串拒——task-141 新增
+  2 个 `it`）。
+- `apps/daemon/test/v2/routing/execute-bound-stage.test.ts`（复核返工回归，11 例：默认路径指令文件
+  清理/不漏 kill ×3、放行集合按派发档位、链锁定不归因 ×2、换绑前撤登记/无撤销口与撤销被拒/抛错
+  fail-closed/launch 后换源留痕、`EXECUTOR_REBIND_UNSTABLE` 可达）。

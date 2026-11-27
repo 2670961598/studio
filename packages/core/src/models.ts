@@ -73,6 +73,12 @@ export interface ModelSourceSpec {
   cooldown?: { baseMs?: number | undefined; maxMs?: number | undefined; circuitAfter?: number | undefined } | undefined
   /** 是否启用（缺省 true） */
   enabled?: boolean | undefined
+  /**
+   * 源 executor 注册名（task-141 per-source executor；缺省=档位既有逻辑：tierExecutors/
+   * 家族-档位位名）。同档可混用（如 agy + dsh）；名字须在注册表登记——serve 启动/热切
+   * 校验拒收未登记名，派发面 registry.resolve 未登记即 fail-closed（docs/quality/model-routing.md §10）。
+   */
+  executor?: string | undefined
 }
 
 /** models.yaml 装载结果（parseModelsYaml 的返回形；createModelCatalog/fingerprint 的入参） */
@@ -135,6 +141,8 @@ const ModelSourceSchema = z.strictObject({
     circuitAfter: z.number().int().positive().optional(),
   }).optional(),
   enabled: z.boolean().optional(),
+  // task-141：源 executor 注册名（可选；未配置=零额外键，既有断言不受扰）
+  executor: z.string().min(1).optional(),
 })
 
 const TierSpecSchema = z.strictObject({

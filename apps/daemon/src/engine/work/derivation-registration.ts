@@ -32,4 +32,31 @@ export interface DispatchDerivationRegistration {
 /** 派发登记口（缺省不注入＝不登记；注入即 fail-closed） */
 export interface DispatchDerivationRegistry {
   register(record: DispatchDerivationRegistration): PortResult<unknown>
+  /**
+   * 单行撤销口（task-141 换绑：launch 前被弃段未 spawn，其登记行须撤）。可选——生产持久登记面
+   * （assembly/serve/derivation.ts → persistent-gateway）尚无此原语，缺省=launch 前跨执行器换绑
+   * fail-closed（engine/dispatch/execute.ts `reason=EXECUTOR_REBIND_UNREVOKED`；docs/quality/
+   * model-routing.md §10.2）。
+   */
+  revoke?(derivationId: string): PortResult<unknown>
+}
+
+/** 派发派生登记 id（稳定：同 attempt 同执行器只登记一次；绑定段登记与换绑撤销共用同一拼法） */
+export function derivationIdOf(ticket: string, attempt: number, executor: string): string {
+  return `${ticket}:att${attempt}:${executor}`
+}
+
+/**
+ * 撤销一次派发派生登记（launch 前换绑用）：成功 / 本段未登记（未注入登记面）→ undefined；
+ * 登记面无撤销口或撤销被拒 → 拒因文案（调用方据此不换绑，不留「未发生的派生」行）。
+ */
+export function retireDispatchDerivation(registry: DispatchDerivationRegistry | undefined, derivationId: string): string | undefined {
+  if (registry === undefined) return undefined
+  if (registry.revoke === undefined) return '登记面无撤销口'
+  try {
+    const retired = registry.revoke(derivationId)
+    return retired.kind === 'ok' ? undefined : `撤销被拒 ${retired.error.category}/${retired.error.subcause}`
+  } catch (err) {
+    return `撤销异常 ${err instanceof Error ? err.message : String(err)}` // 撤销口抛错同样按拒因处理（不换绑）
+  }
 }

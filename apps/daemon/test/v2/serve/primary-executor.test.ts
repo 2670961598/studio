@@ -1,4 +1,4 @@
-/** task-106：主绑定执行器可配置（缺省 dsh 零漂移；primaryExecutor=kimi 放行/拒 dsh；非法值拒启）。task-147：值集改引契约。 */
+/** task-106：主绑定执行器可配置（缺省 dsh 零漂移；primaryExecutor=kimi 放行/拒 dsh；非法值拒启）。task-147：值集改引契约。task-141：sources[].executor 登记面（sourceExecutors）。 */
 import { describe, expect, it } from 'vitest'
 import { EMPTY_SELECTION_CHAIN, resolveDispatchTarget } from '@studio-next/adapters/bindcard'
 import { EMPTY_SELECTION_CHAIN as EMPTY } from '@studio-next/adapters/bindcard'
@@ -83,5 +83,25 @@ describe('task-106 primaryExecutor', () => {
     expect(String((caught as Error).message)).toContain(`ENU-88 执行器（${EXECUTOR_VALUES.join('|')}；实得 gemini）`) // 报文口径兼容：自称 ENU-88＋列合法值
     expect(() => parseDaemonConfig(`${BASE}\nprimaryExecutor: AGY`)).toThrow(/ENU-88/) // 大小写敏感（码值只认正写）
     expect(() => parseDaemonConfig(`${BASE}\nprimaryExecutor: agy-judge`)).toThrow(/ENU-88/) // 岗位后缀名不是值集成员
+  })
+
+  it('task-141 sourceExecutors=模型源 executor 登记面：agy+空链放行（source=model-source）；未配仍拒；值域外名不入集合（fake 仍 not-applicable）', () => {
+    const configured: DispatchSelectionDeps = { chain: EMPTY, personExecutors: {}, primaryExecutor: 'dsh', sourceExecutors: new Set(['agy']) }
+    const selected = resolveDispatchSelection({ deps: configured, ticket: 'T-1', personId: 'AGENT-1', candidateName: 'agy' })
+    expect(selected.kind).toBe('selected')
+    if (selected.kind === 'selected') {
+      expect(selected.selection.executor).toBe('agy')
+      expect(selected.selection.source).toBe('model-source')
+      expect(selected.selection.chainId).toBe('model-source:default')
+      expect(selected.selection.note).toContain('models.yaml sources[].executor 配置=显式选择登记面（task-141')
+    }
+    const notConfigured: DispatchSelectionDeps = { chain: EMPTY, personExecutors: {}, primaryExecutor: 'dsh' }
+    const rejected = resolveDispatchSelection({ deps: notConfigured, ticket: 'T-1', personId: 'AGENT-1', candidateName: 'agy' })
+    expect(rejected.kind).toBe('rejected')
+    if (rejected.kind === 'rejected') expect(rejected.error.subcause).toBe('dispatch/selection-unregistered')
+    const custom = resolveDispatchSelection({ deps: configured, ticket: 'T-1', personId: 'AGENT-1', candidateName: 'fake' })
+    expect(custom.kind).toBe('not-applicable')
+    // 续跑面：同家照旧放行（登记面扩展不改续跑 hard constraint）
+    expect(resolveDispatchSelection({ deps: configured, ticket: 'T-1', personId: 'AGENT-1', candidateName: 'agy', resumeActive: true }).kind).toBe('selected')
   })
 })

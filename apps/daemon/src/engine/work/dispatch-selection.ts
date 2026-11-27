@@ -11,13 +11,16 @@
  *   - 上游件：`packages/adapters/src/bindcard/selection.ts`（registerSelection /
  *     resolveDispatchTarget 的规则唯一源——本件不复制判定，只做「登记→解析→适配器解析」接线）。
  *
- * 本件是**派发路径的唯一选择解析点**（`engine/dispatch/execute.ts` 相位 3 调用），三面：
+ * 本件是**派发路径的唯一选择解析点**（`engine/dispatch/bound-stage.ts` 绑定段相位 3 调用；
+ * execute.ts 每轮绑定调用一次——task-141 跨执行器换源=绑定段重跑，闸随之重判），三面：
  *   1. 登记面 `buildSelectionChain`：把启动期登记的条目折成不可变选择链账本——任一条目
  *      非法（未知执行器/缺登记人/自相矛盾）即 CONFIG_INVALID 拒收（fail-closed 拒启，不静默忽略）。
  *   2. 解析面 `resolveDispatchSelection`：请求执行器解析序——
  *        续跑指名（同一家硬约束；v2/12 §2.1-③ 换宿主=新段）＞单据指定（source=ticket 登记）
  *        ＞岗位绑定（org-config people[].executor；缺岗位面时取 source=position 登记）＞
  *        候选适配器家族（tier/pick 既有链）。解析失败/未登记/指向别家 → rejected（不降级）。
+ *        配置登记面（task-114/141）：公司 tierExecutors ∪ models.yaml **本派发档位** `sources[].executor`
+ *        家族=显式登记面（source=tier-config／model-source；未配零漂移——非主绑定仍须登记）。
  *   3. 适配面 `adapterForSelection`：选定家族 ≠ 候选适配器家族 → 按注册表换同家族执行位
  *      （无该家=拒派：无解不派工）；同家族保留候选（模型档/续跑位不丢）。
  *
@@ -58,6 +61,12 @@ export interface DispatchSelectionDeps {
   readonly primaryExecutor?: ExecutorFamily
   /** task-114：公司级 tierExecutors 配置=显式选择登记面（执行器家族集合；未配=空集零漂移） */
   readonly tierExecutors?: ReadonlySet<ExecutorFamily>
+  /**
+   * task-141：models.yaml `sources[].executor`=显式选择登记面（执行器家族集合；派发相位由
+   * engine 自 rt.modelRouting.sources[<派发档位>] 现算注入——**只取本档**，他档 executor 不放行
+   * （docs/quality/tier-executors.md）。未配=空集零漂移。
+   */
+  readonly sourceExecutors?: ReadonlySet<ExecutorFamily>
 }
 
 /** 解析结果三态（selected=放行；not-applicable=选择链值域外；rejected=fail-closed 拒派） */
@@ -103,19 +112,40 @@ function reject(subcause: string, detail: string): DispatchSelectionOutcome {
   return { kind: 'rejected', error: { category: 'CONFIG_INVALID', subcause, detail } }
 }
 
+/** 配置登记面共用前提（task-114/141 同纪律）：非主绑定 + 该单无任何选择链登记（不得伪称 ticket 登记） */
+function registeredByConfig(chain: SelectionChain, ticket: TicketId, executor: string, primaryExecutor?: ExecutorFamily): boolean {
+  return executor !== (primaryExecutor ?? 'dsh') && !chain.entries.some((e) => e.ticket === ticket)
+}
+
 /** 选择链规则唯一源在 adapters（resolveDispatchTarget）——本件只把失败包成三态 */
-function resolveFor(chain: SelectionChain, ticket: TicketId, executor: string, primaryExecutor?: ExecutorFamily, tierExecutors?: ReadonlySet<ExecutorFamily>): DispatchSelectionOutcome {
-  // task-114：公司 tierExecutors 配置=显式登记面（仅当该单无任何选择链登记；不得伪称 ticket 登记）
-  if (tierExecutors?.has(executor as ExecutorFamily) && executor !== (primaryExecutor ?? 'dsh') && !chain.entries.some((e) => e.ticket === ticket)) {
-    return {
-      kind: 'selected',
-      selection: {
-        executor: executor as ExecutorFamily,
-        chainId: 'tier-config:default',
-        source: 'tier-config',
-        authorization: 'not-granted-here',
-        note: '公司 tierExecutors 配置=显式选择登记面（非 ticket/岗位登记；选择不是授权，权与禁配另判 v2/03/04）',
-      },
+function resolveFor(chain: SelectionChain, ticket: TicketId, executor: string, primaryExecutor?: ExecutorFamily, tierExecutors?: ReadonlySet<ExecutorFamily>, sourceExecutors?: ReadonlySet<ExecutorFamily>): DispatchSelectionOutcome {
+  const family = executor as ExecutorFamily
+  if (registeredByConfig(chain, ticket, executor, primaryExecutor)) {
+    // task-114：公司 tierExecutors 配置=显式登记面
+    if (tierExecutors?.has(family)) {
+      return {
+        kind: 'selected',
+        selection: {
+          executor: family,
+          chainId: 'tier-config:default',
+          source: 'tier-config',
+          authorization: 'not-granted-here',
+          note: '公司 tierExecutors 配置=显式选择登记面（非 ticket/岗位登记；选择不是授权，权与禁配另判 v2/03/04）',
+        },
+      }
+    }
+    // task-141：models.yaml sources[].executor=显式登记面（放行集合=tierExecutors ∪ **本档** sources executor 家族）
+    if (sourceExecutors?.has(family)) {
+      return {
+        kind: 'selected',
+        selection: {
+          executor: family,
+          chainId: 'model-source:default',
+          source: 'model-source',
+          authorization: 'not-granted-here',
+          note: 'models.yaml sources[].executor 配置=显式选择登记面（task-141；非 ticket/岗位登记；选择不是授权，权与禁配另判 v2/03/04）',
+        },
+      }
     }
   }
   const resolved = resolveDispatchTarget(chain, { ticket, executor }, undefined, primaryExecutor)
@@ -151,7 +181,7 @@ export function resolveDispatchSelection(input: DispatchSelectionInput): Dispatc
         `单据 ${JSON.stringify(input.ticket)} 选择链指定 ${ticketEntry.executor}，续跑指名 ${candidateFamily}——续跑须同一家（session id 为 executor 本地命名空间，v2/12 §2.1-③ 换宿主=新段），不得静默改派`,
       )
     }
-    return resolveFor(chain, input.ticket, candidateFamily, input.deps.primaryExecutor, input.deps.tierExecutors)
+    return resolveFor(chain, input.ticket, candidateFamily, input.deps.primaryExecutor, input.deps.tierExecutors, input.deps.sourceExecutors)
   }
 
   const requested = ticketEntry?.executor ?? (positionExecutor !== '' ? positionExecutor : undefined) ?? candidateFamily
@@ -161,7 +191,7 @@ export function resolveDispatchSelection(input: DispatchSelectionInput): Dispatc
       reason: `候选执行器 ${input.candidateName} 不在 ENU-88 值集（自定义/fake 名——选择链不覆盖）`,
     }
   }
-  return resolveFor(chain, input.ticket, requested, input.deps.primaryExecutor, input.deps.tierExecutors)
+  return resolveFor(chain, input.ticket, requested, input.deps.primaryExecutor, input.deps.tierExecutors, input.deps.sourceExecutors)
 }
 
 // ---------------------------------------------------------------------------

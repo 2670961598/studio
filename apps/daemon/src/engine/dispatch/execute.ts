@@ -7,6 +7,12 @@
  * 20-§六.8 不落即不派）** → registry 选适配器 → launch → work_records 落在途
  * → 平台迁已派发 → events 落 DISPATCH（note 携分层指纹与 intentKey——幂等索引依据）。
  *
+ * task-141 抽件：适配器绑定段（选择闸→preflight→派生登记→读面→装配→脚手架→定价附件→
+ * 指令文件→PRM→任务书）迁 engine/dispatch/bound-stage.ts（语句逐字；段内每步依赖具体适配器，
+ * 故按源 executor 换绑=整段重跑）；本文件留段前候选预绑、段后精确选源收敛（routeAndBind）、
+ * 预算闸、launch/换源重试与在途落账。未配置 models.yaml sources[].executor 时与抽件前
+ * 逐字节一致（docs/quality/model-routing.md §10）。
+ *
  * 两个顺序锚仍在 engine.ts（源侧锚测试钉死：`resolveWorkerDispatchSeatbelt({ ticket` 先于
  * `const detect = await adapter.detect()`，且 DISPATCH note 的 seatbelt 审计段同源）：
  *   - seatbelt→detect 前置：rt.dispatchPreflight（engine.ts）
@@ -20,33 +26,31 @@
  * executor 明报并降级为新派」，不静默）。续跑不重置 attempt 计数（attemptOf 天然续号
  * ——断路器连击口径不被续跑洗白）；DISPATCH 事件挂 causation_id=上次工时单 id（F1-15
  * 「新工时单挂 causation_id 链到上次」——EventRecord 既有可选列填列非加列）。
+ * task-141：路由源 executor 非续跑同族 → 同样降级新派（不强行跨执行器续跑）；同族则续跑位
+ * 优先于源 executor 位（session 归属执行位）。
  */
 import { createHash } from 'node:crypto'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { rmSync } from 'node:fs'
 import path from 'node:path'
-import type { EventRecord, Handle, TaskBrief, TicketId } from '@studio-next/contract'
+import type { EventRecord, ExecutorAdapter, Handle, IssueRecord, TaskBrief, TicketId } from '@studio-next/contract'
 import type { Action } from '@studio-next/core'
 import { resolveDispatchPerson, type AutoAssignCarry } from '../assign/auto-assign.ts'
 import { gateDispatch } from '../budget-gate.ts'
 import { makeDispatchFail } from '../capability/index.ts'
 import { personDayGateInput } from '../cost-guard/fold.ts'
-import { WORKSPACE_UMASK } from '../jobs/harvest-recon.ts'
-import { sentinelBriefBlock, sentinelDutyForTicket } from '../jobs/sentinel.ts'
-import { instructionsTarget, removeInstructions, writeInstructions } from '../instructions-store.ts'
 // Kimi（kimi-coding）access token 注入面（docs/quality/kimi-on-dsh.md §4）：launch 前现读
 // token 文件（按需刷新）→ TaskBrief.credentials v1.4 env 通道；fail-safe 不抛不阻派发。
 import { kimiTokenCredentials } from './kimi-token.ts'
+// 适配器绑定段（task-141 抽件：选择闸→…→任务书；语义源见 bound-stage.ts 头注）
+import { runBoundStage, type BoundDispatch, type BoundStageInput } from './bound-stage.ts'
 // 执行器选择链钩子（studio-dev-620；v2/07 §一）：钩子体驻 work/dispatch-selection.ts，
-// 本文件只留相位 3 一次接线（engine.ts 零改动——#556 拆件后派发体在本文件）。
-import { executionGuardHit, gateDispatchSelection } from '../work/dispatch-selection.ts'
-import { resumeDispatchFace } from '../intents/relay-resume-faces.ts'
+// 本文件只留执行类单据监控调用（775/C3）；选择闸随绑定段（bound-stage.ts）。
+import { executionGuardHit } from '../work/dispatch-selection.ts'
+import { retireDispatchDerivation } from '../work/derivation-registration.ts'
+import { resumeDispatchFace, type ResumeDispatchFace } from '../intents/relay-resume-faces.ts'
 import type { ResumeDispatchPlan } from '../intents/relay-resume.ts'
-import { applyDispatchProjection } from '../prm/dispatch-projection.ts'
-// 定价发布生成缝（studio-dev-554/rework-584）：附件生成＋失败告警收在 pricing/publish.ts，
-// 本文件只留一次调用（engine.ts 298 行不增——#556 拆件后派发体在本文件）。
-import { preparePricingAttachment } from '../pricing/publish.ts'
+import { removeInstructions } from '../instructions-store.ts'
 import { aiwsWorkspaceOf } from '../prompt-assembly.ts'
-import { blindArtifactPaths, createView, resolveReadTier, roleOfAssignee } from '../read-tiers.ts'
 import { recordStartChain } from '../records/hooks.ts'
 import { dispatchRoomDuty } from '../rooms/room-duty.ts'
 import type { EventIndex } from '../sentinel/events-index.ts'
@@ -54,15 +58,28 @@ import { modelTierDispatchFace, resolveModelTier } from '../tier/model-tier.ts'
 import type { TickActionResult, TickPhaseDispatchBudget } from '../tick-report/types.ts'
 import { dropQueueCarry, queueDispatchAnchor } from '../todoqueue/queue.ts'
 import { startSessionArchive } from '../sessions/archive.ts' // 会话归档接线（studio-dev-551）
-import { mintWorkerKey, workerKeyCredentials, workerKeyGuidance, WORKER_WKEY_ENV_KEY } from '../worker-key.ts'
+import { mintWorkerKey, workerKeyCredentials, WORKER_WKEY_ENV_KEY } from '../worker-key.ts'
 import type { EngineRuntime } from '../runtime/types.ts'
-import type { IssueRecord } from '@studio-next/contract'
 import { releaseWithEpoch } from '../lanes/release.ts'
-import { CONVERSATION_ACCEPTANCE } from '../conversation/protocol.ts'
 import { evaluateDispatchAcceptance } from '../acceptance/index.ts'
 import { selectModelSource, classifyFailure, isFailoverClass, recordSourceFailure, serializeRoutingState, type SelectOutcome } from '../routing/router.ts'
 import { provisionSourceOverlay } from '../routing/overlay.ts'
+import { adapterForSource, reconcileSourceResume, sameExecutorFamily, sourceExecutorFamilies, sourceRef } from '../routing/source-executor.ts'
 import { budgetView, createModelCatalog, foldBudgets, type ModelsConfig, type ModelSourceSpec } from '@studio-next/core'
+
+/** 精确选源收敛步（routeAndBind 回传；unavailable=换源重选无源可用，调用方定 HOLD/fail 口径） */
+type RouteStep =
+  | { readonly kind: 'off' }
+  | { readonly kind: 'bound' }
+  | { readonly kind: 'unavailable'; readonly outcome: Extract<SelectOutcome, { ok: false }> }
+  | { readonly kind: 'failed'; readonly result: TickActionResult }
+/** 同 dispatch 换源步（routeFailoverOn 回传；failed=换绑段失败——result 已含首源错误） */
+type FailoverStep =
+  | { readonly kind: 'switched' }
+  | { readonly kind: 'not' }
+  | { readonly kind: 'failed'; readonly result: TickActionResult }
+/** dsh 家族 overlay/model 端子（结构能力——零 if executor，缺端子即不套 overlay） */
+type OverlayFace = { setSourceOverlay?: (p: string | undefined) => void; setModel?: (m: string | undefined) => void; getSourceOverlay?: () => string | undefined; getModel?: () => string | undefined }
 
 export async function executeDispatch(
   rt: EngineRuntime,
@@ -79,7 +96,6 @@ export async function executeDispatch(
   // 逐字迁移的宿主别名（闭包名不变，语义=同一实例/同一绑定）
   const { platform, ledger, registry, config, lanes, inflight, budgetDeps, now, makeId, records, workerKeys, rooms, queueCarry } = rt
   const people = rt.people
-  const assembler = rt.assembler
   const costGuard = rt.costGuard
   const seq = rt.seq
   const makeEvent = rt.makeEvent
@@ -163,134 +179,69 @@ export async function executeDispatch(
     // resume 面（129-E 单E）：指名解析优先（同一家原生续跑），不可续=明报降级走 pick 新派
     //（resumeDispatchFace 一次取齐适配器/观测锚/装配入参——faces 件，语义源 relay-resume.ts；
     // fallback=档位适配器——tier 面选位先于 resume 判定，见上）
-    const resumeFace =
+    let resumeFace: ResumeDispatchFace | undefined =
       resumePlan !== undefined ? resumeDispatchFace(registry, resumePlan, tierFace?.adapter ?? registry.pick()) : undefined
-    const candidate =
-      resumeFace !== undefined && resumeFace.adapter !== undefined
-        ? resumeFace.adapter
-        : (tierFace?.adapter ?? registry.pick())
-    if (candidate === undefined) return fail('注册表无存活 executor（registry.pick 空）', { kind: 'missing', capabilityRef: 'executor:registry.pick' })
+    // 档位既有候选（resume＞tier＞pick；未配 sources[].executor 时与 task-141 前同序同值）
+    const tierCandidate: ExecutorAdapter | undefined =
+      resumeFace !== undefined && resumeFace.adapter !== undefined ? resumeFace.adapter : (tierFace?.adapter ?? registry.pick())
+    if (tierCandidate === undefined) return fail('注册表无存活 executor（registry.pick 空）', { kind: 'missing', capabilityRef: 'executor:registry.pick' })
     const attempt = index.attemptOf(ticket)
-    // 执行器选择链（studio-dev-620；v2/07 §一）：单据指定＞岗位绑定＞默认；拒派不降级
-    //（ESCALATE 每单每因一次——去重账 rt.selectionRejections）。解析/适配/留痕体在
-    // work/dispatch-selection.ts，本文件只留相位 3 一次调用（docs/17-§2 派发；docs/17-§6
-    // 拒派=不启动——fail 后不 transition/不 launch/不落工时单）。
-    const selection = gateDispatchSelection(
-      rt.deps.dispatchSelection,
-      { registry, ticket, personId: person.id, candidate, resumeActive: resumeFace?.active === true },
-      rt.selectionRejections,
-      (note) => makeEvent('ESCALATE', fresh, attempt, tickEvents, { note }),
-    )
-    if (selection.kind === 'err') return fail(selection.message)
-    const { adapter, anchor: selectionAnchor } = selection
-    // workspace 落点（DEV-28，docs/43-§五 派发权限圈①cwd）：aiwsRoot 给定 → 员工家
-    // .AIWS/<部门路径>/<工号>/tickets/<单号>/att<N>（收割四要件与 deliverables 收账经
-    // dirname(briefPath) 随迁——闸门/台账引用零改动）；缺省 → 旧一次性布局（引擎直连
-    // 测试回退面，serve 恒注入 aiwsRoot——正式链路一律员工家）
-    const workspace =
-      config.aiwsRoot !== undefined
-        ? aiwsWorkspaceOf(config.aiwsRoot, person, ticket, attempt)
-        : path.join(config.rootDir, 'workspaces', ticket, `att${attempt}`)
-    const briefPath = path.join(workspace, 'brief.md')
-    // AGENTS.md 落点按 adapter 通道能力路由（04-§六 B5 + docs/25-§3.1 v1.5#1，零 if executor——
-    // 只读 capabilities）：native=workspace 根（原生发现，P-07）；user_level/append=bridge
-    // 插件通道——每任务指令临时文件（workspace 外，<rootDir>/tmp/instructions/<单号>.md，
-    // 0600），launch env STUDIO_NEXT_INSTRUCTIONS 指向它、由宿主插件注入系统提示 persona 段
-    const agentsChannelKind = adapter.capabilities.agents_md
-    const nativeAgents = agentsChannelKind === 'native'
-    const agentsTarget = nativeAgents
-      ? path.join(workspace, 'AGENTS.md')
-      : instructionsTarget(config.rootDir, ticket)
-    let instructionsPath: string | undefined // bridge 通道临时文件（收割/派发失败后清理）
-    const at = now()
+    // —— task-141 源 executor 面（docs/quality/model-routing.md §10）：本档 sources[].executor 在场=面开 ——
+    //   ① 选择闸放行集合=tierExecutors ∪ **本档** sources executor 家族（按派发档位取、他档不放行；空集=原 deps，零漂移）；
+    //   ② 预绑：零 token、无预算预检探源（排序与精确选源同序——差额只在预算预检，由绑定段后的
+    //      精确选源 routeAndBind 收敛换绑）→ 显式 executor=registry.resolve 指名，缺省=档位候选原样；
+    //   ③ 续跑：路由源 executor 非续跑同族 → 不强行续跑，降级新派（F1-15 明报锚，不静默）。
+    const tierSources = tierResolve !== undefined ? rt.modelRouting?.sources[tierResolve.tier] : undefined
+    const sourceFamilies = sourceExecutorFamilies(tierSources)
+    const selectionDeps =
+      sourceFamilies.size > 0 && rt.deps.dispatchSelection !== undefined
+        ? { ...rt.deps.dispatchSelection, sourceExecutors: sourceFamilies }
+        : rt.deps.dispatchSelection
+    const executorArmed = (tierSources ?? []).some((source) => source.executor !== undefined)
+    let resumeLocked = false // 续跑同族位优先于源 executor 位（对账 reconcileSourceResume——routing/source-executor.ts）
+    let candidate = tierCandidate
+    if (executorArmed && tierResolve !== undefined && rt.modelRouting !== undefined && tierSources !== undefined) {
+      const probe = selectModelSource({ tier: tierResolve.tier, sources: tierSources, state: rt.modelRouting.state, now: now(), tokens: { input: 0, output: 0 } })
+      if (probe.ok) {
+        const picked = adapterForSource(probe.source, registry, tierCandidate)
+        if (picked.kind === 'err') return fail(`MODEL_ROUTING_FAIL;tier=${tierResolve.tier};reason=EXECUTOR_UNKNOWN;${picked.error}（task-141 fail-closed 不降档）`)
+        const reconciled = reconcileSourceResume(resumeFace, probe.source, picked.value)
+        candidate = reconciled.adapter
+        resumeFace = reconciled.face
+        resumeLocked = reconciled.resumeLocked
+      }
+      // 探源不可用（全源冷却/额度耗尽）→ 候选沿档位既有链；精确选源在绑定段后如实 HOLD/fail
+    }
     let launched: Handle | undefined
     let prevUmask: number | undefined
+    let boundLive: BoundDispatch | undefined // 当前绑定的适配器（catch 段 kill 用；launched 在 ⇒ 必在）——首绑即登记，不依赖换绑
+    let pendingInstructions: string | undefined // bridge 通道指令文件（绑定段落盘前登记；派发未成即删——首绑/换绑同口径）
+    let dispatched = false // 终局成功标志：finally 据此清指令文件（段内抛错/launch 失败/拒派/换绑未成一处收口）
+    let launchTried = false // launch 已尝试=被弃段已 spawn（登记行留痕）；未尝试=换绑前须撤其派生登记
     try {
-      // 派发域 seatbelt 圈定→detect 前置（SEC-FC-05 后半 / 18-§一）：顺序锚在 engine.ts
-      // dispatchPreflight——圈定失败即抛 → 本 catch → DISPATCH_FAIL（detect/装配/launch 零
-      // 调用）；detect 前置 launch 前必跑，不达标明报不静默降级
-      const { detect, seatbeltSegment } = await rt.dispatchPreflight(adapter, ticket, workspace)
-      if (!detect.ok) return fail(`executor ${adapter.name} detect 不达标：${detect.gaps.join('；')}`, { kind: 'degraded', capabilityRef: `executor:${adapter.name}`, probe: { executor: adapter.name, version: detect.version, ok: false, gaps: detect.gaps } })
-      // 派生即登记（v2/07 §四规则 1；GAP-V2-04 S6）：detect 通过后、任何 spawn/预算/落盘之前落登记，
-      // 失败即不派（EXEC-01 fail-closed）。只记身份/后端/能力子集/时点；wkey 是 local-mint 例外，
-      // 不进静态 catalogue（78-§7.4.1），凭据继承默认无（v2/07 §四规则 3）。
-      const registration = rt.deps.derivationRegistry?.register({
-        derivationId: `${ticket}:att${attempt}:${adapter.name}`,
-        ticket,
-        executor: adapter.name,
-        backend: 'external-cli',
-        capabilitySubset: `executor:${adapter.name}@${detect.version}`,
-        derivedAt: new Date(at).toISOString(),
-      })
-      if (registration !== undefined && registration.kind !== 'ok') {
-        return fail(
-          `derivation-registration ${registration.error.category}/${registration.error.subcause}：${registration.error.detail ?? ''}`,
-        )
+      // workspace 落点（DEV-28，docs/43-§五 派发权限圈①cwd）：aiwsRoot 给定 → 员工家
+      // .AIWS/<部门路径>/<工号>/tickets/<单号>/att<N>（收割四要件与 deliverables 收账经
+      // dirname(briefPath) 随迁——闸门/台账引用零改动）；缺省 → 旧一次性布局（引擎直连
+      // 测试回退面，serve 恒注入 aiwsRoot——正式链路一律员工家）
+      const workspace =
+        config.aiwsRoot !== undefined
+          ? aiwsWorkspaceOf(config.aiwsRoot, person, ticket, attempt)
+          : path.join(config.rootDir, 'workspaces', ticket, `att${attempt}`)
+      const briefPath = path.join(workspace, 'brief.md')
+      const stageBase = {
+        rt, ticket, fresh, person, attempt, tickEvents, workspace, briefPath, selectionDeps, fail,
+        setPrevUmask: (prev: number): void => { prevUmask ??= prev }, // 首次登记生效（换绑重跑不覆盖原 mask）
+        noteInstructions: (target: string): void => { pendingInstructions = target },
+      } satisfies Omit<BoundStageInput, 'candidate' | 'resumeFace'>
+      const first = await runBoundStage({ ...stageBase, candidate, resumeFace })
+      if (first.kind === 'failed') return first.result
+      let bound: BoundDispatch = first.bound
+      boundLive = bound
+      const adopt = (next: BoundDispatch): void => {
+        bound = next
+        boundLive = next
       }
-      // 读面分级（17-§7）：dispatch 装配时按岗选档（装配期选择非运行期闸——daemon 自身
-      // 读不拦，见 src/engine/read-tiers.ts 头注与写闸的区别）。Blind 档在此补齐冻结验收命令
-      //（config 同源）+ 本工位证据面路径；缺验收 → CONFIG_INVALID fail-closed（无验收
-      // 不派工）——异常走本 catch=DISPATCH_FAIL 明报，不静默降档。
-      const readTier = resolveReadTier(roleOfAssignee(fresh.assignee, people), config.readTierByRole)
-      const readView = await createView(platform, readTier, ticket, {
-        ...(readTier === 'blind'
-          ? { blind: { acceptance: config.readBlindAcceptance ?? [], artifacts: blindArtifactPaths(workspace) } }
-          : {}),
-      })
-      // 装配（L0-L5 → AGENTS.md + 任务书首版/续跑版，17-§5）与落盘（daemon 是 prompt 落盘者）。
-      // resume 面（129-E）：face.assembleCtx 在场=续跑版（前情摘要注入）；降级面缺席=首版新派
-      const assembled = assembler({
-        issue: fresh,
-        attempt,
-        person,
-        adapterName: adapter.name,
-        adapterVersion: detect.version,
-        capabilities: adapter.capabilities,
-        workspace,
-        briefPath,
-        agentsTarget,
-        agentsChannel: { channel: adapter.capabilities.agents_md, target: agentsTarget },
-        readView,
-        // 持久对话轮次（docs/21-§七.4）：任务书/闸门用 `test -s REPORT.md`，不用工程单验收
-        ...(rt.deps.conversation?.store.turnOf(ticket) !== undefined ? { acceptanceOverride: CONVERSATION_ACCEPTANCE } : {}),
-        ...(resumeFace?.assembleCtx !== undefined ? { resume: resumeFace.assembleCtx } : {}),
-      })
-      // —— P3-② 权限前移（studio-dev-100 提案 §4.3-2，治 E12 于干预窗内）：工位脚手架
-      //    落盘与 worker 子进程（umask 随 fork 继承）统一 0o022——产物默认 ≥0644，收割/
-      //    收账面（异用户部署）可达；finally 恢复原 mask（process.umask 进程全局态，
-      //    窗口=脚手架落盘→launch 返回；engine 单线程逐派发，窗内 await 无并发落盘面）——
-      //    【拟稿：executor 工具面硬编码 0600 的写入不受 umask 影响，残面由收割 stat
-      //    兜底（HARVEST_DENIED）如实暴露，不静默】
-      prevUmask = process.umask(WORKSPACE_UMASK)
-      mkdirSync(workspace, { recursive: true })
-      // 定价发布附件（studio-dev-554，docs/17-§2 派发相位）：type='pricing' 单在 launch 前由
-      // daemon 从 models.yaml 三档确定性生成 deliverables/pricing.yaml；坏价目源头即拒
-      // （抛错→DISPATCH_FAIL，不 transition 不 launch）并同前缀去重发 DAILY_ALARM。
-      const pricingBrief = preparePricingAttachment({ ledger, company: config.company, issueType: fresh.type, ticket, workspace, at,
-        tiers: rt.catalog !== undefined ? rt.catalog.tiers() : undefined, emitAlarm: (note) => makeEvent('DAILY_ALARM', fresh, attempt, tickEvents, { note }) })
-      if (nativeAgents) {
-        writeFileSync(agentsTarget, assembled.agentsMd.text, 'utf8')
-      } else {
-        // bridge 通道（v1.5#1）：组装文本落每任务临时文件（0600，「生成物勿手改」横幅
-        // 由组装产物自带）——TaskBrief.AGENTS_MD.target 指向它，dsh 适配器注 env 交插件消费
-        instructionsPath = agentsTarget
-        writeInstructions(agentsTarget, assembled.agentsMd.text)
-      }
-      // 任务书追加 wkey 指引行（workerKeys 启用面；追加在六层组装产物之外、任务书是
-      // per-attempt 操作面——指引行只指路不含凭据值，env 通道定调见 worker-key.ts 头注）
-      // ＋定时岗产出哨兵段（127-A R1 批示③：工单型岗单注入三元组回写义务——per-attempt
-      // 操作面同位；patrol 工件/普通单结构性不注入）
-      const sentinelDuty = sentinelDutyForTicket(ledger, ticket)
-      // 策略投影通道（SEC-SIG-04 信封闸／GAP-V2-02）：生成→签名→落盘→**回读验签**→消费；失败＝不 launch、不降级（NEG-RUN-01；体=prm/dispatch-projection.ts，字段拼装收口在接线体，本处只留调用）。
-      const prm = applyDispatchProjection({ company: config.company, ticket, attempt, personId: person.id, personDept: person.dept, executor: adapter.name, executorVersion: detect.version, capabilities: adapter.capabilities, workspace, rootDir: config.rootDir, atMs: at })
-      if (prm.kind === 'rejected') return fail(`PRM_FAIL：${prm.detail}`)
-      const briefParts = [assembled.brief.text, prm.briefBlock]
-      if (workerKeys !== undefined) briefParts.push(`${workerKeyGuidance()}\n`)
-      if (sentinelDuty !== undefined) briefParts.push(sentinelBriefBlock(sentinelDuty))
-      if (pricingBrief !== '') briefParts.push(pricingBrief)
-      const briefText = briefParts.join('\n')
-      writeFileSync(briefPath, briefText, 'utf8')
-      const taskBrief = assembled.brief.taskBrief
+      const at = bound.at // 段内时点（选择闸后、preflight 前——与 task-141 前同位；换绑不改，reserve/工时单同一钟）
       // 预算闸（TaskBrief 构造后、launch 前——20-§六.8 机制点）：估算（两态）→ reserve
       // 判定 → 过闸=双行落账（issue 先 person 后；落账与 launch 之间失败=不派，异常
       // 上抛本 catch→DISPATCH_FAIL）；超帽=refusal 行落账+不派；duplicate=沿用未结预留
@@ -300,11 +251,13 @@ export async function executeDispatch(
       //    task-135 收尾：① allowBudgetDowngrade 读引擎配置（daemon.yaml；缺省 false=现状
       //    HOLD 不降档）；② 同 dispatch 内一次换源（launch 失败且无首段输出→冷却+留痕→
       //    对下一源重试一次；见下方 launch 段 routeFailoverOn）。
+      //    task-141：本档显式 sources[].executor 在场=路由面开（不限 dsh 名）；选中源 executor
+      //    与绑定不同→换绑适配器（routeAndBind）。
       let routedSource: ModelSourceSpec | undefined
       let routedCatalog: ReturnType<typeof createModelCatalog> | undefined
       let routingNote = ''
-      let routedBinding: { dsh: { setSourceOverlay?: (p: string | undefined) => void; setModel?: (m: string | undefined) => void; getSourceOverlay?: () => string | undefined; getModel?: () => string | undefined }; overlay: string | undefined; model: string | undefined } | undefined
-      const routingActive = rt.modelRouting !== undefined && tierResolve !== undefined && rt.catalog !== undefined && adapter.name === 'dsh'
+      let routedBinding: { dsh: OverlayFace; overlay: string | undefined; model: string | undefined } | undefined
+      const routingActive = rt.modelRouting !== undefined && tierResolve !== undefined && rt.catalog !== undefined && (bound.adapter.name === 'dsh' || executorArmed)
       // 最近一次选源的预算上下文（HOLD 事件 note 复用；每次选源（含换源重选）刷新）
       let heldTicketCap: number | undefined
       let heldTicketRemaining: number | undefined
@@ -314,10 +267,10 @@ export async function executeDispatch(
         if (!routingActive || rt.modelRouting === undefined || tierResolve === undefined || rt.catalog === undefined) return undefined
         const sources = rt.modelRouting.sources[tierResolve.tier]
         if (sources === undefined || sources.length === 0) return undefined
-        const briefChars = assembled.brief.text.length
+        const briefChars = bound.assembled.brief.text.length
         const inputTokens = Math.ceil(briefChars / 4)
         const tokens = { input: inputTokens, output: Math.ceil(inputTokens * 0.5) }
-        const ticketCap = taskBrief.budgetCap?.usd ?? config.budgetTicketCapUsd
+        const ticketCap = bound.taskBrief.budgetCap?.usd ?? config.budgetTicketCapUsd
         // task-66 F3：remaining = cap − settled − reserved（沿用 budget-gate 的 issue/person/company 行折叠口径）
         const budgetState = foldBudgets([
           ...ledger.queryBudgets({ scope_kind: 'issue', scope_id: ticket }),
@@ -358,32 +311,95 @@ export async function executeDispatch(
           note: `MODEL_ROUTING_BUDGET_HOLD;tier=${tierResolve?.tier ?? 'n/a'};cap=${heldTicketCap !== undefined ? `ticket=$${String(heldTicketCap)}` : 'ticket=none'};remaining=ticket=$${heldTicketRemaining !== undefined ? heldTicketRemaining.toFixed(4) : 'n/a'};company=$${heldCompanyRemaining !== undefined ? heldCompanyRemaining.toFixed(4) : 'n/a'};estimated=$${outcome.estimatedUsd?.toFixed(4) ?? 'n/a'};source=${outcome.source?.id ?? 'n/a'}${config.allowBudgetDowngrade === true ? '（task-135 budget HOLD；allowBudgetDowngrade=true 全源超帽）' : '（task-66 budget HOLD；不降档）'}`,
         })
       }
-      /** 选中源 → per-source 价目目录 + DISPATCH note 段（换源时 fallbackFrom 留痕） */
-      const applyRoutedSource = (source: ModelSourceSpec, skipped: readonly string[], fallbackFrom?: string): void => {
+      /** 选中源 → per-source 价目目录 + DISPATCH note 段（换源时 fallbackFrom 留痕；源锚=id[@executor]） */
+      const applyRoutedSource = (source: ModelSourceSpec, skipped: readonly string[], fallbackFrom?: ModelSourceSpec): void => {
         if (rt.catalog === undefined || tierResolve === undefined) return
         const tiers = Object.fromEntries(rt.catalog.tiers().map((t) => [t.tier, { provider: t.provider, model: t.model, price: t.price }])) as ModelsConfig['tiers']
         tiers[tierResolve.tier] = { provider: source.provider, model: source.model, price: source.price }
         routedCatalog = createModelCatalog({ tiers, roles: rt.config.modelTierByRole ?? { main_worker: 'mid' } })
-        routingNote = `;routing=${source.id}${fallbackFrom !== undefined ? `;routing-fallbackFrom=${fallbackFrom}` : ''};routing-price=in$${String(source.price.inputPerM)}/out$${String(source.price.outputPerM)}${skipped.length > 0 ? `;routing-skipped=${skipped.join('|')}` : ''}`
+        routingNote = `;routing=${sourceRef(source)}${fallbackFrom !== undefined ? `;routing-fallbackFrom=${sourceRef(fallbackFrom)}` : ''};routing-price=in$${String(source.price.inputPerM)}/out$${String(source.price.outputPerM)}${skipped.length > 0 ? `;routing-skipped=${skipped.join('|')}` : ''}`
       }
-      const routingOutcome = selectRouted()
-      if (routingOutcome !== undefined && !routingOutcome.ok) {
-        emitBudgetHold(routingOutcome)
-        const note = `MODEL_ROUTING_FAIL;tier=${tierResolve?.tier};reason=${routingOutcome.reason};${routingOutcome.detail}（task-56 fail-closed 不降档）`
+      /** 换绑前清理上一适配器的指令文件/AGENTS.md（通道不同=旧产物成孤儿；同通道由重跑段覆写） */
+      const discardBound = (next: ExecutorAdapter): void => {
+        const nextNative = next.capabilities.agents_md === 'native'
+        if (bound.nativeAgents && !nextNative) rmSync(bound.agentsTarget, { force: true })
+        if (!bound.nativeAgents && nextNative && bound.instructionsPath !== undefined) removeInstructions(bound.instructionsPath)
+      }
+      /**
+       * 精确选源并收敛到源 executor 的适配器（task-141）：选中源 executor 与当前绑定不同 → 换绑
+       * （清理上一适配器产物→绑定段整段重跑→以新装配重选）；选择闸改派（chainLocked）/续跑同族位
+       * =链与会话优先，不换绑——链执行器非选中源家族时源未实际执行，不归因（无源锚/冷却/FAILOVER）。
+       * 每轮收敛（首绑收敛／launch 失败换源收敛各一轮）至多换绑一次；换绑后重选仍指向他执行器
+       * =不稳定，fail-closed 明报。launch 未尝试的换绑先撤被弃段派生登记（无撤销口=不换绑）。
+       */
+      const routeAndBind = async (fallbackFrom?: ModelSourceSpec): Promise<RouteStep> => {
+        let rebinds = 0
+        for (;;) {
+          const outcome = selectRouted()
+          if (outcome === undefined) return { kind: 'off' }
+          if (!outcome.ok) return { kind: 'unavailable', outcome }
+          const want = executorArmed ? adapterForSource(outcome.source, registry, tierCandidate) : undefined
+          if (want?.kind === 'err') return { kind: 'failed', result: fail(`MODEL_ROUTING_FAIL;tier=${tierResolve?.tier};reason=EXECUTOR_UNKNOWN;${want.error}（task-141 fail-closed 不降档）`) }
+          if (want?.kind === 'ok' && want.value !== bound.adapter && !bound.chainLocked && !resumeLocked) {
+            if (rebinds >= 1) return { kind: 'failed', result: fail(`MODEL_ROUTING_FAIL;tier=${tierResolve?.tier};reason=EXECUTOR_REBIND_UNSTABLE;换绑后重选仍指向他执行器 ${want.value.name}（已绑 ${bound.adapter.name}）——task-141 每轮收敛至多换绑一次，fail-closed 不降档`) }
+            rebinds += 1
+            if (!launchTried) {
+              // 被弃段未 spawn：先撤其派生登记（登记面无撤销口/撤销被拒=不换绑 fail-closed——不留「未发生的派生」行）
+              const refusal = retireDispatchDerivation(rt.deps.derivationRegistry, bound.derivationId)
+              if (refusal !== undefined) return { kind: 'failed', result: fail(`MODEL_ROUTING_FAIL;tier=${tierResolve?.tier};reason=EXECUTOR_REBIND_UNREVOKED;换绑前撤销被弃段派生登记未成（${bound.derivationId}：${refusal}）——不换绑，task-141 fail-closed`) }
+            }
+            discardBound(want.value)
+            const rerun = await runBoundStage({ ...stageBase, candidate: want.value, resumeFace })
+            if (rerun.kind === 'failed') return { kind: 'failed', result: rerun.result }
+            adopt(rerun.bound)
+            continue // 以新装配重选（任务书长度随适配器变——预算预检以新装配为准）
+          }
+          if (want?.kind === 'ok' && want.value !== bound.adapter && !sameExecutorFamily(want.value, bound.adapter)) return { kind: 'bound' } // 链执行器非源家族：源未实际执行，不归因
+          routedSource = outcome.source
+          applyRoutedSource(routedSource, outcome.skipped, fallbackFrom)
+          return { kind: 'bound' }
+        }
+      }
+      const restoreRoutedBinding = (): void => {
+        // task-66 F2：launch 后清回；argv 已在 spawn 时快照，在途子进程不受影响；失败也清
+        if (routedBinding === undefined) return
+        routedBinding.dsh.setSourceOverlay?.(routedBinding.overlay)
+        routedBinding.dsh.setModel?.(routedBinding.model)
+      }
+      /**
+       * 源 overlay/model 绑定到当前适配器：dsh 家族=per-source overlay + setModel（task-56）；非 dsh
+       * 执行器不套 overlay（task-141：适配器无 overlay 端子，源 provider/model 只作价目/身份）。
+       * 首绑记回滚值；换绑到新适配器=先清回旧适配器再记新回滚值（finally 只清回当前绑定）。
+       */
+      const bindRoutedOverlay = (): void => {
+        if (routedSource === undefined || rt.modelRouting === undefined || tierResolve === undefined) return
+        const dsh = bound.adapter as OverlayFace
+        if (executorArmed && typeof dsh.setSourceOverlay !== 'function' && typeof dsh.setModel !== 'function') {
+          restoreRoutedBinding()
+          routedBinding = undefined
+          return
+        }
+        const overlayPath = provisionSourceOverlay(rt.modelRouting.rootDir, tierResolve.tier, routedSource)
+        if (routedBinding === undefined || routedBinding.dsh !== dsh) routedBinding = { dsh, overlay: dsh.getSourceOverlay?.(), model: dsh.getModel?.() }
+        dsh.setSourceOverlay?.(overlayPath)
+        dsh.setModel?.(`${routedSource.provider}/${routedSource.model}`)
+        // task-59：success 归 harvest 收口（launch 成功≠收割成功），此处不写 success/状态
+      }
+      const routingOutcome = await routeAndBind()
+      if (routingOutcome.kind === 'failed') return routingOutcome.result
+      if (routingOutcome.kind === 'unavailable') {
+        emitBudgetHold(routingOutcome.outcome)
+        const note = `MODEL_ROUTING_FAIL;tier=${tierResolve?.tier};reason=${routingOutcome.outcome.reason};${routingOutcome.outcome.detail}（task-56 fail-closed 不降档）`
         return fail(note)
-      }
-      if (routingOutcome !== undefined) {
-        routedSource = routingOutcome.source
-        applyRoutedSource(routedSource, routingOutcome.skipped)
       }
       const personDay = personDayGateInput(costGuard, person, ledger, at) // 闸四·人日 hard 线（R6）：段声明且有 gate 档才带
       const gateDeps = routedCatalog !== undefined ? { ...budgetDeps, catalog: routedCatalog } : budgetDeps
       const gate = await gateDispatch(gateDeps, {
         ticket,
         personId: person.id,
-        adapter,
-        taskBrief,
-        briefChars: assembled.brief.text.length,
+        adapter: bound.adapter,
+        taskBrief: bound.taskBrief,
+        briefChars: bound.assembled.brief.text.length,
         ...(config.budgetTicketCapUsd !== undefined ? { fallbackTicketCapUsd: config.budgetTicketCapUsd } : {}),
         ...(config.budgetPersonCapUsd !== undefined ? { personCapUsd: config.budgetPersonCapUsd } : {}),
         ...(personDay !== undefined ? { personDay } : {}),
@@ -391,7 +407,7 @@ export async function executeDispatch(
       })
       if (gate.kind === 'refused') {
         budget.budgetRefused += 1
-        if (instructionsPath !== undefined) removeInstructions(instructionsPath) // 拒派即删（无收割会来收本 attempt）
+        if (bound.instructionsPath !== undefined) removeInstructions(bound.instructionsPath) // 拒派即删（无收割会来收本 attempt）
         return fail(
           `budget-refusal:${gate.reason}：估算 $${gate.estimated} + 在途 $${gate.inflight} 超帽 $${gate.cap}` +
             `——refusal 行已落账（可查，F1-09），不派（20-§六.8 预留不落即不派的镜像面）`,
@@ -399,14 +415,7 @@ export async function executeDispatch(
         )
       }
       if (gate.kind === 'reserved') budget.budgetReserved += 1
-      if (routedSource !== undefined && rt.modelRouting !== undefined && tierResolve !== undefined) {
-        const overlayPath = provisionSourceOverlay(rt.modelRouting.rootDir, tierResolve.tier, routedSource)
-        const dsh = adapter as { setSourceOverlay?: (p: string | undefined) => void; setModel?: (m: string | undefined) => void; getSourceOverlay?: () => string | undefined; getModel?: () => string | undefined }
-        routedBinding = { dsh, overlay: dsh.getSourceOverlay?.(), model: dsh.getModel?.() }
-        dsh.setSourceOverlay?.(overlayPath)
-        dsh.setModel?.(`${routedSource.provider}/${routedSource.model}`)
-        // task-59：success 归 harvest 收口（launch 成功≠收割成功），此处不写 success/状态
-      }
+      bindRoutedOverlay()
       rt.crash.dispatchReserved() // 崩溃注入①（F3-11）：reserve 双行已落账、launch 前——受控测试缝，默认零行为（src/engine/crash-points.ts）
       // worker wkey 签发+注入（17-§7：预算过闸后、launch 前——超帽拒派不签发凭据）：
       // mint（scope=六动词全集、一 attempt 一 key）→ TaskBrief.credentials（v1.4 env 通道，
@@ -432,9 +441,9 @@ export async function executeDispatch(
         ? rt.catalog?.tiers().find((t) => t.tier === tierResolve.tier)?.provider
         : undefined
       const buildLaunchBrief = async (): Promise<TaskBrief> => {
-        const kimiCreds = await kimiTokenCredentials(rt.deps.kimiToken, { executorName: adapter.name, provider: routedSource?.provider ?? tierProvider })
+        const kimiCreds = await kimiTokenCredentials(rt.deps.kimiToken, { executorName: bound.adapter.name, provider: routedSource?.provider ?? tierProvider })
         return {
-          ...taskBrief,
+          ...bound.taskBrief,
           ...(minted !== undefined || kimiCreds !== undefined
             ? { credentials: { ...(minted !== undefined ? workerKeyCredentials(minted.token) : {}), ...(kimiCreds ?? {}) } }
             : {}),
@@ -446,60 +455,60 @@ export async function executeDispatch(
       // → 重绑 overlay/model → 重试 launch 一次（每 dispatch 至多 1 次换源、每源至多 1 次）。
       // 预算闸不重跑：本次 reserve 未结，gateDispatch adopt 语义「一笔预留服务 N 次尝试」
       // 覆盖重试；重选预检按落账后折叠（已含 reserve）判新源是否超帽。
+      // task-141：下一源 executor 不同=换绑适配器（绑定段重跑）；留痕带 from/to=<id@executor>。
       let failoverUsed = false
       let failoverNote = ''
-      const routeFailoverOn = (err: unknown): boolean => {
-        if (!routingActive || rt.modelRouting === undefined || tierResolve === undefined || routedSource === undefined || failoverUsed) return false
-        if (!isFailoverClass(classifyFailure(err))) return false
+      const routeFailoverOn = async (err: unknown, firstMsg: string): Promise<FailoverStep> => {
+        if (!routingActive || rt.modelRouting === undefined || tierResolve === undefined || routedSource === undefined || failoverUsed) return { kind: 'not' }
+        if (!isFailoverClass(classifyFailure(err))) return { kind: 'not' }
         failoverUsed = true
         // 失败登记：冷却+持久化（daemon_kv 与 harvest 回填同键同口径）
         const rec = recordSourceFailure(rt.modelRouting.state, routedSource, err, at)
         rt.modelRouting.state = rec.state
         ledger.kvSet('model-routing.state', serializeRoutingState(rt.modelRouting.state))
-        // 留痕（task-66 F4 同口径去重：同票同源一次）
+        // 重选（状态已含冷却→当前源自然跳过；预算按落账后折叠重算）
+        const outcome = selectRouted()
+        // 留痕（task-66 F4 同口径去重：同票同源一次；task-141 面开时带 from/to 源锚）
         const warnKey = `${ticket}|${routedSource.id}|launch-failover`
         if (!rt.routingWarnings.has(warnKey)) {
           rt.routingWarnings.add(warnKey)
           makeEvent('ESCALATE', fresh, index.attemptOf(ticket), tickEvents, {
-            note: `MODEL_ROUTING_FAILOVER;tier=${tierResolve.tier};source=${routedSource.id};class=${rec.class};cooldownMs=${String(rec.cooldownMs)}（task-135 同dispatch换源）`,
+            note: `MODEL_ROUTING_FAILOVER;tier=${tierResolve.tier};source=${executorArmed ? sourceRef(routedSource) : routedSource.id};class=${rec.class};cooldownMs=${String(rec.cooldownMs)}${executorArmed && outcome !== undefined && outcome.ok ? `;from=${sourceRef(routedSource)};to=${sourceRef(outcome.source)}` : ''}（task-135 同dispatch换源）`,
           })
         }
-        // 重选（状态已含冷却→当前源自然跳过；预算按落账后折叠重算）
-        const outcome = selectRouted()
         if (outcome === undefined || !outcome.ok) {
           if (outcome !== undefined) emitBudgetHold(outcome)
           failoverNote = outcome !== undefined && !outcome.ok ? `换源不可用（${outcome.reason};${outcome.detail}）` : '换源不可用（无路由源）'
-          return false
+          return { kind: 'not' }
         }
-        const from = routedSource
-        routedSource = outcome.source
-        applyRoutedSource(routedSource, outcome.skipped, from.id)
-        const overlayPath = provisionSourceOverlay(rt.modelRouting.rootDir, tierResolve.tier, routedSource)
-        const dsh = routedBinding !== undefined ? routedBinding.dsh : (adapter as NonNullable<typeof routedBinding>['dsh'])
-        dsh.setSourceOverlay?.(overlayPath)
-        dsh.setModel?.(`${routedSource.provider}/${routedSource.model}`)
-        return true
+        const step = await routeAndBind(routedSource)
+        if (step.kind === 'failed') return { kind: 'failed', result: { ...step.result, detail: `launch 失败且跨执行器换源未成（首源错误：${firstMsg}）：${step.result.detail}` } }
+        if (step.kind !== 'bound') {
+          failoverNote = '换源不可用（无路由源）'
+          return { kind: 'not' }
+        }
+        bindRoutedOverlay()
+        return { kind: 'switched' }
       }
+      launchTried = true
       try {
-        launched = await adapter.launch(launchBrief)
+        launched = await bound.adapter.launch(launchBrief)
       } catch (launchErr) {
         const firstMsg = launchErr instanceof Error ? launchErr.message : String(launchErr)
-        if (!routeFailoverOn(launchErr)) {
+        const step = await routeFailoverOn(launchErr, firstMsg)
+        if (step.kind === 'failed') return step.result
+        if (step.kind === 'not') {
           if (failoverNote !== '') throw new Error(`${firstMsg}；${failoverNote}`)
           throw launchErr
         }
         try {
-          launched = await adapter.launch(await buildLaunchBrief()) // 换源后重建 brief（新源非 kimi-coding 即不再注入）
+          launched = await bound.adapter.launch(await buildLaunchBrief()) // 换源后重建 brief（新源非 kimi-coding 即不再注入；跨执行器=新适配器新任务书）
         } catch (retryErr) {
           const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr)
-          throw new Error(`launch 失败且同 dispatch 换源重试仍失败（${routedSource?.id ?? 'n/a'}；首源错误：${firstMsg}）：${retryMsg}`)
+          throw new Error(`launch 失败且同 dispatch 换源重试仍失败（${executorArmed && routedSource !== undefined ? sourceRef(routedSource) : (routedSource?.id ?? 'n/a')}；首源错误：${firstMsg}）：${retryMsg}`)
         }
       } finally {
-        // task-66 F2：launch 后清回；argv 已在 spawn 时快照，在途子进程不受影响；失败也清
-        if (routedBinding !== undefined) {
-          routedBinding.dsh.setSourceOverlay?.(routedBinding.overlay)
-          routedBinding.dsh.setModel?.(routedBinding.model)
-        }
+        restoreRoutedBinding()
       }
       rt.crash.dispatchLaunched() // 崩溃注入②（F3-11）：launch 已返回、work_records 在途落账前——受控测试缝，默认零行为
       startSessionArchive(ledger, { ticket, personId: person.id, sessionId: launched.sessionId, at }) // 相位 3 会话归档 start 行（写失败抛→DISPATCH_FAIL，无归档不派）
@@ -510,7 +519,7 @@ export async function executeDispatch(
         id: workRecordId,
         issue: ticket,
         person_id: person.id,
-        executor: adapter.name,
+        executor: bound.adapter.name,
         session_id: launched.sessionId,
         lane: action.lane,
         started_at: at,
@@ -520,7 +529,7 @@ export async function executeDispatch(
       inflight.set(ticket, {
         ticket,
         workRecordId,
-        executor: adapter.name,
+        executor: bound.adapter.name,
         handle: launched,
         workspace,
         briefPath,
@@ -531,7 +540,7 @@ export async function executeDispatch(
         ...(routedSource !== undefined && tierResolve !== undefined ? { routedSourceId: routedSource.id, routedTier: tierResolve.tier } : {}),
         startedAt: at,
         dispatchedAtSeq: seq,
-        ...(instructionsPath !== undefined ? { instructionsPath } : {}),
+        ...(bound.instructionsPath !== undefined ? { instructionsPath: bound.instructionsPath } : {}),
       })
       syncMirror(transitioned)
       // 记录族生产写面·相位 3 派发（docs/17-§2）：迁移→REC-WORK-06（前置不齐即拒，不臆造）
@@ -542,35 +551,40 @@ export async function executeDispatch(
       // 队列等待锚（129-§6.2-R4）：DISPATCH note 尾携 wait/prio/boost（锚形冻结；
       // 计算体拆入 todoqueue/queue.ts queueDispatchAnchor——轨2 R1① 本单「先拆再增」行基线清偿）
       const queueAnchorInfo = queueDispatchAnchor(queueCarry, ticket, at)
+      // 档位锚：未配 executor / 绑定即档位候选=档位既有锚；源 executor 换绑（适配器≠档位候选）
+      //=改述为源 executor 绑定，不冒称档位位名（task-141）
+      const tierAnchor = (): string => {
+        if (!executorArmed || bound.adapter === tierCandidate) return tierFace?.noteAnchor ?? ''
+        return `;tier=${tierResolve?.tier}@${bound.adapter.name}（${bound.chainLocked ? '选择链改派，不按源 executor 换绑' : `源 executor=${routedSource !== undefined ? sourceRef(routedSource) : 'n/a'}`}，task-141）`
+      }
       // resume 观测锚（129-E，F1-15「续跑派发不静默」）：note 尾锚+causation_id=上次工时单 id
       //（两形都带——因果链不因降级断；锚形见 faces 件 resumeDispatchFace 头注）
       makeEvent('DISPATCH', transitioned, attempt, tickEvents, {
-        size: Buffer.byteLength(assembled.agentsMd.text, 'utf8'),
-        payload_hash: `sha256:${createHash('sha256').update(assembled.agentsMd.text, 'utf8').digest('hex')}`,
+        size: Buffer.byteLength(bound.assembled.agentsMd.text, 'utf8'),
+        payload_hash: `sha256:${createHash('sha256').update(bound.assembled.agentsMd.text, 'utf8').digest('hex')}`,
         ...(resumeFace !== undefined ? { causation_id: resumeFace.causationId } : {}),
-        note: `fp=${assembled.agentsMd.fingerprint};intent=${intentKey};executor=${adapter.name}@${detect.version}${tierFace?.noteAnchor ?? ''};read=${readTier};agents=${agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${minted !== undefined ? `;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=${minted.nonce}` : ''}${action.breakerProbe === true ? `;breaker=half-open-probe（冷却窗过——单次试探：成功即复位，失败回全开续冷却，DEV-46）` : ''}${seatbeltSegment}${selectionAnchor}${prm.noteAnchor}${resolved.autoAssignNote ?? ''}${queueAnchorInfo.waitAnchor}${resumeFace?.noteAnchor ?? ''}${routingNote}`,
+        note: `fp=${bound.assembled.agentsMd.fingerprint};intent=${intentKey};executor=${bound.adapter.name}@${bound.detect.version}${tierAnchor()};read=${bound.readTier};agents=${bound.agentsTarget};brief=${briefPath};budget=${gate.kind === 'reserved' ? `reserve$${gate.estimated.toFixed(4)}` : `adopt$${gate.estimated.toFixed(4)}`}${minted !== undefined ? `;wkey=env:${WORKER_WKEY_ENV_KEY}:nonce=${minted.nonce}` : ''}${action.breakerProbe === true ? `;breaker=half-open-probe（冷却窗过——单次试探：成功即复位，失败回全开续冷却，DEV-46）` : ''}${bound.seatbeltSegment}${bound.selectionAnchor}${bound.prm.noteAnchor}${resolved.autoAssignNote ?? ''}${queueAnchorInfo.waitAnchor}${resumeFace?.noteAnchor ?? ''}${routingNote}`,
       })
       // 派发成功即出队（129-§6.2）：携带条删——GATE_FAIL 回滚再入队走 touchQueueCarry
       // 新钟（attempt 轮次可区分，队列等待观测口径=每誓一钟，不跨轮累计）。
       if (queueAnchorInfo.entry !== undefined) dropQueueCarry(queueCarry, [ticket])
       // 单据房间供给（130-P3/DEV-20 P9）：ensureTicketRoom；失败 ESCALATE 不阻派发（幂等重跑收敛）
       if (rooms !== undefined) await dispatchRoomDuty(rooms, { ticket, title: fresh.title, dept: fresh.dept ?? person.dept, assignee: person.id }, (note) => makeEvent('ESCALATE', transitioned, attempt, tickEvents, { note }))
+      dispatched = true
       return {
         ticket,
         actionType: action.type,
         ok: true,
         detail:
-          `attempt=${attempt} executor=${adapter.name} lane=${action.lane}` +
+          `attempt=${attempt} executor=${bound.adapter.name} lane=${action.lane}` +
           `;budget=${gate.kind === 'reserved' ? `reserve $${gate.estimated.toFixed(4)}` : `adopt（沿用未结预留）$${gate.estimated.toFixed(4)}`}` +
           (resumeFace?.detailSegment ?? ''),
       }
     } catch (err) {
       // 派发失败如实分类上报（DISPOSITIONS: DISPATCH_FAIL/retry）；v0 不计断路连击（拟稿）
       const msg = err instanceof Error ? err.message : String(err)
-      if (launched !== undefined) await adapter.kill(launched, config.killGraceMs).catch(() => undefined)
-      // bridge 通道临时指令文件即删：launch 失败=无收割会来收本 attempt，留着即泄漏
-      //（清理策略见 instructions-store.ts 头注；重派会重写同路径）
-      if (instructionsPath !== undefined) removeInstructions(instructionsPath)
+      if (launched !== undefined && boundLive !== undefined) await boundLive.adapter.kill(launched, config.killGraceMs).catch(() => undefined)
+      // bridge 临时指令文件的清理归 finally（pendingInstructions：首绑即登记，不依赖换绑）
       // 已签发的 worker wkey 随失败撤离（env 通道：launch 失败=凭据未进任何存活子进程，
       // token 只活在本次调用栈——丢弃即离场；不吊销 ticket——重试重签同 ticket，ticket 级
       // 吊销是终局动作，见 worker-key.ts 头注拟稿；失效兜底=TTL+nonce 单次）。
@@ -579,5 +593,7 @@ export async function executeDispatch(
       // P3-② 权限前移窗收口：恢复派发前 umask（早退面——detect 不达标/预算拒派/launch
       // 异常——同样不泄漏全局态）
       if (prevUmask !== undefined) process.umask(prevUmask)
+      // 派发未成（段内抛错/launch 失败/拒派/换绑未成）：bridge 临时指令文件即删——无收割会来收本 attempt，留着即泄漏
+      if (!dispatched && pendingInstructions !== undefined) removeInstructions(pendingInstructions)
     }
   }

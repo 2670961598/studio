@@ -31,6 +31,20 @@ export interface ResumeDispatchFace {
 }
 
 /**
+ * 降级新派面（两处消费：pickResumeAdapter 落空/能力位不支撑；task-141 派发期路由源 executor
+ * 非续跑同族——续跑位让位时不强行续跑）。因果链不断：causation_id 仍挂上次工时单。
+ */
+export function degradedResumeFace(causationId: string, adapter: ExecutorAdapter | undefined, reason: string): ResumeDispatchFace {
+  return {
+    active: false,
+    adapter,
+    noteAnchor: `;resume=降级新派（${reason}——F1-15）`,
+    detailSegment: `;resume=降级新派（${reason}——F1-15）`,
+    causationId,
+  }
+}
+
+/**
  * 续跑派发面一次算齐：registry.resolve 指名解析（落空 catch 成降级因——降级是业务结果
  * 不外抛炸派发）→ session_resume 能力判别 → note/detail 观测锚 + 装配入参 + causation。
  * registry 形参=结构面 `{ resolve() }`（ExecutorRegistry 结构满足；本文件不 import 适配器包，
@@ -57,14 +71,7 @@ export function resumeDispatchFace(
       causationId: plan.causationId,
     }
   }
-  const reason = selection.degradedReason ?? '未知'
-  return {
-    active: false,
-    adapter: selection.adapter ?? fallback,
-    noteAnchor: `;resume=降级新派（${reason}——F1-15）`,
-    detailSegment: `;resume=降级新派（${reason}——F1-15）`,
-    causationId: plan.causationId,
-  }
+  return degradedResumeFace(plan.causationId, selection.adapter ?? fallback, selection.degradedReason ?? '未知')
 }
 
 /** drain 段消费件装配产物（两 handler + 拍作用域计划登记面的读口） */

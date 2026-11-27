@@ -41,6 +41,7 @@ import type { ConversationTickDeps } from '../conversation/consume.ts'
 import type { DispatchDerivationGuard } from '../work/dispatch-seatbelt.ts'
 import type { DispatchDerivationRegistry } from '../work/derivation-registration.ts'
 import type { DispatchSelectionDeps } from '../work/dispatch-selection.ts'
+import type { RoutingHealthSource } from '../routing/source-executor.ts'
 import type { EngineConfig, MergeRunDeps } from '../tick/types.ts'
 import type { TickReport } from '../tick-report/types.ts'
 import type { CompanyWriteFace } from '../company-write/runtime.ts'
@@ -208,8 +209,8 @@ export interface Engine extends HarvestRecordingObservation {
   /** 到期强收：整树杀在途 + running 收口 interrupted（不判四要件；返回如实清单） */
   forceSettleTimeout(): Promise<DrainSettleResult>
   readonly config: EngineConfig
-  /** task-56 路由源只读健康面（未接线=undefined） */
-  modelRoutingHealth?(): { sources: readonly { tier: string; id: string; available: boolean; cooldownUntil: number; lastFailureClass?: string; lastSuccessAt?: number }[] } | undefined
+  /** task-56 路由源只读健康面（未接线=undefined；行形 task-141 扩 executor/provider/model/priority/enabled/cooldown） */
+  modelRoutingHealth?(): { sources: readonly RoutingHealthSource[] } | undefined
   /** 收割批次簿观测面（IMPL-06-03 / REC-EVD-01）：只读视图；写口仅收割相位（batch.ts） */
   readonly harvestBatches: HarvestBatchLedger
 }

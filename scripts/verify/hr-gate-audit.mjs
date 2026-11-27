@@ -14,7 +14,8 @@
 //      ＋core decide.ts 引用它且 HOLD_NOT_IN_SERVICE 在理由码/ HoldAction 联合里；
 //   ③ 决策位接线：tick/state-diff.ts 的 WorkCandidateHost 带 employmentOf 事实入参
 //      （work/intake.ts 把事实装进 decide 入参——判定面零复制）；
-//   ④ 执行位兜底：dispatch/execute.ts 在装配/launch 前调 rt.hrGate.refusalOf(person.id)；
+//   ④ 执行位兜底：dispatch/execute.ts 在绑定段调用（runBoundStage：装配/launch 所在段）前调
+//      rt.hrGate.refusalOf(person.id)；
 //   ⑤ 生产装配恒 strict：assembly/serve/runtime.ts 注入 `hrGate: { mode: 'strict' }` 且启动
 //      日志含「任职闸门已装配」（真机验证据此 grep）；
 //   ⑥ 观测/留痕面在：tick/run.ts 拍首 beginTick ＋汇报 hrGate（TickReport）且台账留痕走
@@ -72,11 +73,14 @@ must("apps/daemon/src/engine/tick/state-diff.ts", ["employmentOf: rt.hrGate.empl
 must("apps/daemon/src/engine/work/intake.ts", ["host.employmentOf?.(personId)", "...(employment !== undefined ? { employment } : {})"], "开工门装配任职事实入参");
 
 // ④ 执行位兜底（装配/launch 之前）——顺序断言
+//    task-141 抽件后：装配首步=runBoundStage 调用（适配器绑定段），preflight→detect 顺序锚
+//    随段迁 engine/dispatch/bound-stage.ts——两件分别断言，不弱化（兜底行须先于段调用）。
 must("apps/daemon/src/engine/dispatch/execute.ts", ["const employmentRefusal = rt.hrGate.refusalOf(person.id)"], "执行位兜底（launch 前）");
+must("apps/daemon/src/engine/dispatch/bound-stage.ts", ["await rt.dispatchPreflight("], "适配器绑定段 preflight 调用在位");
 const execText = fs.readFileSync(path.join(ROOT, "apps/daemon/src/engine/dispatch/execute.ts"), "utf8");
 const backstopAt = execText.indexOf("const employmentRefusal = rt.hrGate.refusalOf(person.id)");
-const launchAt = execText.indexOf("await rt.dispatchPreflight(", backstopAt);
-if (backstopAt < 0 || launchAt < 0 || backstopAt > launchAt) failures.push("执行位兜底不在装配/launch 之前（顺序断言失败）");
+const stageAt = execText.indexOf("await runBoundStage(", backstopAt);
+if (backstopAt < 0 || stageAt < 0 || backstopAt > stageAt) failures.push("执行位兜底不在绑定段调用（runBoundStage：装配/launch）之前（顺序断言失败）");
 
 // ⑤ 生产装配 strict ＋ 启动日志
 must("apps/daemon/src/assembly/serve/runtime.ts", ["hrGate: { mode: 'strict' }", "任职闸门已装配"], "serve 生产装配 strict/启动日志");

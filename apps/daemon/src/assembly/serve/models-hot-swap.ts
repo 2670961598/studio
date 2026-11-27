@@ -26,6 +26,7 @@ import { createModelCatalog, parseModelsYaml, type TierId } from '@studio-next/c
 import type { Ledger } from '@studio-next/store'
 import { provisionModelTierOverlays } from '../../engine/tier/model-tier.ts'
 import { seedRoutingPriceSnapshots } from '../../engine/routing/seed.ts'
+import { sourceExecutorIssues, type SourceRegistryFace } from '../../engine/routing/source-executor.ts'
 
 /** models.yaml tier → executor 位名（与 executor-face TIER_EXECUTOR / 885 自动挂载同源） */
 const TIER_EXECUTORS: Readonly<Record<string, TierId>> = { dsh: 'mid', 'dsh-mid': 'mid', 'dsh-high': 'high', 'dsh-low': 'low' }
@@ -54,6 +55,12 @@ export interface ModelsHotSwapDeps {
   readonly log: (line: string) => void
   /** 应用面（serve 层：engine.applyModelsUpdate + adapter.setModel；抛错=回滚旧 overlay/旧内存） */
   readonly apply: (input: ModelsHotSwapApplyInput) => void
+  /**
+   * task-141：源 executor 登记校验面（serve 恒注入 executor 注册表；缺省=校验面关——仅
+   * 测试直连可省，派发面 adapterForSource 仍 fail-closed 兜底）。热切先校验后落盘：
+   * sources[].executor 未登记 → 拒绝热切、保持旧配置（kind='invalid'）。
+   */
+  readonly registry?: SourceRegistryFace
   /** 内容稳定窗（半写防护；缺省 500ms） */
   readonly debounceMs?: number
 }
@@ -178,6 +185,20 @@ export function createModelsHotSwap(deps: ModelsHotSwapDeps): ModelsHotSwap {
       lastHash = hash
       pendingSince = null
       return { kind: 'invalid', models: [], detail, eventId }
+    }
+    // ②′ task-141：源 executor 登记校验（先校验后落盘——未登记名拒绝热切、保持旧配置；
+    //    与 serve 启动校验同判据 engine/routing/source-executor.ts；校验面随 registry 注入）
+    if (deps.registry !== undefined) {
+      const issues = sourceExecutorIssues(parsed.sources, deps.registry.list().map((e) => e.name))
+      if (issues.length > 0) {
+        stats.failures += 1
+        const detail = `sources[].executor 未登记（task-141）：${issues.join('；')}`
+        const eventId = emit('ESCALATE', `MODELS_RELOAD_INVALID：models.yaml sources[].executor 未登记，保持旧配置：${issues.join('；')}`, 1)
+        deps.log(`[models-hot-swap] 热切拒绝（保持旧配置）：${detail}——ESCALATE ${eventId}`)
+        lastHash = hash
+        pendingSince = null
+        return { kind: 'invalid', models: [], detail, eventId }
+      }
     }
     const tierModels: Record<string, string | undefined> = {}
     for (const [executor, tier] of Object.entries(TIER_EXECUTORS)) {

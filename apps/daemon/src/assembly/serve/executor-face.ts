@@ -37,6 +37,7 @@ import { checkTierPositionDeclarations, parseModelTierTickets, provisionModelTie
 import { createFakeAdapter } from '../../engine/fakes.ts'
 import { provisionDshBridgeOverlay } from '../../engine/instructions-store.ts'
 import { seedRoutingPriceSnapshots } from '../../engine/routing/seed.ts'
+import { sourceExecutorIssues } from '../../engine/routing/source-executor.ts'
 import { dispatchAdapterResolver } from '../../engine/work/dispatch-seatbelt.ts'
 import type { DispatchSelectionDeps } from '../../engine/work/dispatch-selection.ts'
 import { wireCapabilitySupply } from './capability-face.ts'
@@ -282,6 +283,13 @@ export function wireExecutorFace(config: ServeConfig, deps: ExecutorFaceDeps): E
     catalog = createModelCatalog(parsed)
     modelRoles = parsed.roles
     modelSourcesEarly = parsed.sources
+    // task-141：源 executor 登记校验（fail-closed 拒启）——每档 sources[].executor 须在注册表
+    //    （agent.yaml 已于上方 wireRegistry 装载）；未登记=配置引用了不存在的执行位，拒启并
+    //    列出已登记名。与 models.yaml 热切（models-hot-swap.ts）共用同一判据，不双源漂移。
+    const executorIssues = sourceExecutorIssues(parsed.sources, registry.list().map((e) => e.name))
+    if (executorIssues.length > 0) {
+      configInvalid('models/source-executor-unknown', `models.yaml sources[].executor 未登记（task-141）：${executorIssues.join('；')}`)
+    }
     // task-56：per-source price snapshot 播种（实际源价目归属；同日幂等；异常只告警不拒启）
     //    ——口径收口 engine/routing/seed.ts（task-135 热切即时补种共用同一件，不双源漂移）
     const seededCount = seedRoutingPriceSnapshots({ ledger, company: config.company, clock, log, origin: 'task-56' }, parsed).candidates

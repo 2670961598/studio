@@ -382,6 +382,7 @@ export function buildServeRuntime(
     clock,
     makeId: makeUlid,
     log,
+    registry, // task-141：热切先校验 sources[].executor 登记（未登记=拒绝热切保持旧配置）
     apply: ({ catalog, modelTierByRole, tierModels, sources }) => {
       engine.applyModelsUpdate({ catalog, ...(modelTierByRole !== undefined ? { modelTierByRole } : {}), ...(sources !== undefined ? { sources } : {}) })
       // adapter model 声明镜像刷新：仅影响**后续** launch（DshAdapter 在途用 launch 捕获值）
