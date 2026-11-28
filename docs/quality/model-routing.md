@@ -169,6 +169,8 @@ roles: {main_worker: mid, verifier: high}
 - host E2E 未在 builder 会话跑（嵌套 seatbelt 阻塞 dsh detect），需 Lead/verifier 宿主复跑脚本
   （launch-failover 与 harvest 路径互斥：脚本 fail-all 断言仍恰两条 harvest-path FAILOVER，不受影响）。
 
+> **历史切片失效区间（2026-11-28，GOV-01）**：以下 `task-51` 段为早期第一切片快照（已被上文 `task-56/66/135` 与 §10 `task-141`、以及 `docs/quality/supply-quota-gating.md` FIX-03 覆盖）；不作现行「未落」依据，现行实现状态以机读表 `docs/quality/governance/implementation-registry.json` 为准。
+
 本切片（task-51）已落：
 - `packages/core/src/models.ts`：sources schema/归一/fingerprint 待补；`modelSourcesOf`；
 - `apps/daemon/src/engine/routing/router.ts`：选择/预算预检/失败分类/冷却/half-open/序列化；

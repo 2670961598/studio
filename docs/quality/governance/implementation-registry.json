@@ -1,0 +1,214 @@
+{
+  "schemaVersion": "1.0.0",
+  "updatedAt": "2026-11-28",
+  "note": "实现状态唯一机读表（GOV-01 / task-160）。与 spec-registry.json 逐条对齐，禁止无证据宣称 implemented。",
+  "entries": [
+    {
+      "specId": "SPEC-DOM-05-RECORDS",
+      "state": "implemented",
+      "recordsAuthorityModel": "projection-of-dom03",
+      "evidence": {
+        "commits": ["9b8651d"],
+        "files": [
+          "apps/daemon/src/engine/records/projection.ts",
+          "packages/store/src/records.ts"
+        ],
+        "tests": [
+          "scripts/verify/spec-admission.mjs"
+        ],
+        "note": "records 统一落于 DOM-03 投影口径，由 projection.ts 双向对账；旧文档互斥句已加失效注记。"
+      }
+    },
+    {
+      "specId": "SPEC-V2-VOLUMES",
+      "state": "implemented",
+      "evidence": {
+        "commits": ["a9e15f1"],
+        "files": [
+          "docs/v2/09-技术细节-总纲与工程决策·主表总册.md",
+          "docs/v2/17-验证矩阵与追溯.md"
+        ],
+        "tests": [
+          "scripts/verify/v0-doc-check.mjs",
+          "packages/contract/test/v2/verify-docs.test.ts"
+        ],
+        "note": "V2 全 18 卷经 DSF-REVIEW-02/03 与制作人签认定稿；v0-doc-check 6/6 通过。"
+      }
+    },
+    {
+      "specId": "SPEC-V2-F8",
+      "state": "partial",
+      "evidence": {
+        "commits": ["9b8651d"],
+        "files": [
+          "docs/v2/17-验证矩阵与追溯.md",
+          "scripts/verify/v2-suite-manifest.mjs",
+          "scripts/verify/old-test-ledger.mjs"
+        ],
+        "tests": [
+          "scripts/verify/v0-doc-check.mjs",
+          "scripts/verify/v2-suite-manifest.mjs"
+        ],
+        "note": "F2/F3/F6/F8 通过，F1/F4/F5/F7 仍为条件通过（抽测/声明面），不可冒充全链部署准入。"
+      }
+    },
+    {
+      "specId": "SPEC-V2-RECORDS-CHAIN",
+      "state": "partial",
+      "recordsAuthorityModel": "projection-of-dom03",
+      "evidence": {
+        "commits": ["9b8651d"],
+        "files": [
+          "apps/daemon/src/engine/records/wire.ts",
+          "apps/daemon/src/engine/records/state-map.ts",
+          "packages/contract/artifacts/index.json"
+        ],
+        "tests": [
+          "packages/contract/src/artifacts/cli.ts"
+        ],
+        "note": "74 类契约工件已冻结；CAP-02/AUTH-02/接受回执/回退返工桥生产者尚未全闭环，由 FIX-05 承接；当前维持 shadow 观察不启 enforce。"
+      }
+    },
+    {
+      "specId": "SPEC-HR-GATE",
+      "state": "implemented",
+      "evidence": {
+        "commits": ["7f289d9"],
+        "files": [
+          "packages/core/src/employment/gate.ts",
+          "apps/daemon/src/engine/hr-gate/employment-gate.ts",
+          "apps/daemon/src/assembly/serve/runtime.ts"
+        ],
+        "tests": [
+          "scripts/verify/hr-gate-audit.mjs",
+          "apps/daemon/test/v2/engine/hr-gate-audit.test.ts"
+        ],
+        "note": "派发前与执行位双兜底已接入生产 strict 装配，且接线审计断言已入 verify:v2 冻结链。"
+      }
+    },
+    {
+      "specId": "SPEC-MODEL-ROUTING",
+      "state": "implemented",
+      "evidence": {
+        "commits": ["0556d5c3", "ffb8c63967c26e185054c5b1f5450f0c74eff8d0"],
+        "files": [
+          "packages/core/src/models.ts",
+          "apps/daemon/src/engine/routing/router.ts",
+          "apps/daemon/src/engine/routing/seed.ts"
+        ],
+        "tests": [
+          "apps/daemon/test/v2/routing/model-routing.test.ts",
+          "apps/daemon/test/v2/routing/execute-failover.test.ts"
+        ],
+        "note": "路由选源、预算预检、launch 换源、热切补种及可选跨执行器 fallback 均已落仓（默认面关零漂移）。"
+      }
+    },
+    {
+      "specId": "SPEC-QUOTA-GATING",
+      "state": "implemented",
+      "evidence": {
+        "commits": ["ffb8c63967c26e185054c5b1f5450f0c74eff8d0"],
+        "files": [
+          "docs/quality/supply-quota-gating.md",
+          "docs/sentinel-logs/部署-FIX03-2026-11-28.md"
+        ],
+        "tests": [
+          "apps/daemon/test/v2/routing/model-routing.test.ts"
+        ],
+        "note": "FIX-03 错误分类与供给级配额门控已落仓并滚动部署至 studio-dev（ffb8c639），healthz routing.quota 已生效。"
+      }
+    },
+    {
+      "specId": "SPEC-IDEMPOTENT-CLOSEOUT",
+      "state": "implemented",
+      "evidence": {
+        "commits": ["91fc1580adf8608a1a2d80e4eb6d1cac978cff03"],
+        "files": [
+          "docs/quality/idempotent-closeout.md"
+        ],
+        "tests": [
+          "apps/daemon/test/v2/engine/orphan-recovery.test.ts"
+        ],
+        "note": "FIX-04（task-158）已合入 dev（91fc1580），待后续独立部署窗口滚动至部署树。"
+      }
+    },
+    {
+      "specId": "SPEC-WRITER-FENCING",
+      "state": "partial",
+      "evidence": {
+        "commits": ["9b8651d"],
+        "files": [
+          "packages/store/src/writer-lease.ts"
+        ],
+        "tests": [],
+        "note": "仅实现同机锁文件互斥（openLedgerWriter）；无单调 FenceToken/TTL 及平台网关/公司 git 写口围栏，由 ARCH-01 承接。"
+      }
+    },
+    {
+      "specId": "SPEC-DOM-04-COST-RECON",
+      "state": "not_implemented",
+      "evidence": {
+        "commits": [],
+        "files": [
+          "packages/store/src/drill.ts",
+          "packages/store/src/rebuild.ts"
+        ],
+        "tests": [],
+        "note": "历史 cost_daily 只备份不重放已实现限域保护，但对账规则（DEC-OPEN-14）尚未裁决，成本导出修复归 ARCH-03。"
+      }
+    },
+    {
+      "specId": "SPEC-AUTH-EVIDENCE",
+      "state": "partial",
+      "evidence": {
+        "commits": ["9b8651d"],
+        "files": [
+          "docs/v2/15-技术细节-安全面.md"
+        ],
+        "tests": [
+          "apps/daemon/test/v2/security/authority-evidence.test.ts"
+        ],
+        "note": "SEC-FC-08 契约与负测已落，生产处于 shadow 观察，enforce 切换与全链权责收口协同推进。"
+      }
+    },
+    {
+      "specId": "SPEC-V6-PROBES",
+      "state": "partial",
+      "evidence": {
+        "commits": ["9b8651d"],
+        "files": [
+          "scripts/verify/probe-ledger.mjs"
+        ],
+        "tests": [],
+        "note": "探针台账机械校验已落，但 PB-3/PB-5（含 PRB-14 双进程单写）未全执行，由 ARCH-01/FIX-06/GOV-04 销账。"
+      }
+    },
+    {
+      "specId": "SPEC-NODE-RUNTIME",
+      "state": "partial",
+      "evidence": {
+        "commits": ["0663a74e"],
+        "files": [
+          "package.json",
+          ".mise.toml",
+          "docs/sentinel-logs/部署-FIX03-2026-11-28.md"
+        ],
+        "tests": [],
+        "note": "engines 声明 >=24，.mise.toml 钉 24.21.0，studio-dev daemon 实测 v26.13.1、8791/8789 旧实例 v25.6.1；矩阵收口归 task-146。"
+      }
+    },
+    {
+      "specId": "SPEC-ENU-88-AGY",
+      "state": "partial",
+      "evidence": {
+        "commits": ["98c56b20c417bbe753bed566e05ec609c02e5d9f", "ffb8c63967c26e185054c5b1f5450f0c74eff8d0"],
+        "files": [
+          "docs/quality/agy-adapter.md",
+          "packages/contract/artifacts/index.json"
+        ],
+        "tests": [],
+        "note": "ENU-88 已登记且契约工件重冻结，但生产默认禁用；真机负测与认证机制由 FIX-06 / task-150/154 承接。"
+      }
+    }
+  ]
+}

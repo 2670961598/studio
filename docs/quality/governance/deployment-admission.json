@@ -1,0 +1,251 @@
+{
+  "schemaVersion": "1.0.0",
+  "updatedAt": "2026-11-28",
+  "targetProfile": "studio-dev",
+  "note": "部署准入与当前部署记录机读表（GOV-01 / task-160）。任何 open/partial 规范或未全落实现进入准入面，必须具备未过期且具名批准的豁免，否则 fail-closed。",
+  "requiredSpecIds": [
+    "SPEC-DOM-05-RECORDS",
+    "SPEC-V2-VOLUMES",
+    "SPEC-V2-F8",
+    "SPEC-V2-RECORDS-CHAIN",
+    "SPEC-HR-GATE",
+    "SPEC-MODEL-ROUTING",
+    "SPEC-QUOTA-GATING",
+    "SPEC-WRITER-FENCING",
+    "SPEC-DOM-04-COST-RECON",
+    "SPEC-AUTH-EVIDENCE",
+    "SPEC-V6-PROBES",
+    "SPEC-NODE-RUNTIME"
+  ],
+  "fingerprints": {
+    "frameworkCommit": "ffb8c63967c26e185054c5b1f5450f0c74eff8d0",
+    "treeDigest": "4732b40f370480a7abb315181f00163700ed8262",
+    "rollbackCommit": "8c4d719",
+    "nodeRuntime": {
+      "enginesRange": ">=24",
+      "toolchainPinned": "24.21.0",
+      "productionObserved": "v26.13.1",
+      "previousProduction": "v25.6.1",
+      "driftTrackingTask": "task-146"
+    },
+    "cliAdapters": {
+      "dsh": {
+        "version": "0.2.0-rc.2",
+        "status": "production"
+      },
+      "kimi": {
+        "status": "production-fallback"
+      },
+      "agy": {
+        "specId": "SPEC-ENU-88-AGY",
+        "status": "registered-disabled",
+        "policy": "未过真机负测与认证禁开生产（SPEC-ENU-88-AGY）"
+      }
+    },
+    "storeSchema": {
+      "currentVersion": 17,
+      "latestMigrationFile": "packages/store/src/derivation/derivation-migrations.ts"
+    },
+    "contractArtifacts": {
+      "indexFile": "packages/contract/artifacts/index.json",
+      "indexSha256": "2a3bffdfc579a763200d6018bd8d1b9d4f5f0aee505d50cdf38c7b1656730602",
+      "schemaCount": 74,
+      "areaCount": 13,
+      "specVersion": "2.0.0"
+    },
+    "lockfile": {
+      "file": "bun.lock",
+      "sha256": "cdc509be4ba798767c9959a3f325cf4a406c58503e1c772fbce997ae4e203b09"
+    },
+    "configDigest": {
+      "policy": "external-config-home-not-in-repo",
+      "productionYamlModified": false,
+      "yamlDigests": [
+        {
+          "file": "ops/multicompany/daemon.example.yaml",
+          "sha256": "63582c1aa5d739b52db3f6de9a3fda747f90044a91cda8678cb99c9050e8d154"
+        },
+        {
+          "file": "ops/multicompany/companies.registry.example.yaml",
+          "sha256": "4f97a6671dd77a23f2edb6f32ab95b5d7a0dd107b35fb1b3c0758c604311f5eb"
+        },
+        {
+          "file": "packages/core/models.example.yaml",
+          "sha256": "a3736c98bf361f9d113db68de4e9d519c7e04ddc966fd1d31dd7388cee95079d"
+        },
+        {
+          "file": "packages/core/pricing.example.yaml",
+          "sha256": "b97c963fe07f03e1d06983a80290e05bb62072b133263c51641091cce34dc328"
+        }
+      ],
+      "note": "生产 yaml 不入库、不由框架仓改写；仓内配置模板 yaml 摘要与 git 跟踪状态纳入机检，部署窗口由 deploy.mjs preflight 与独立旁证核验外部生产配置未漂移。"
+    }
+  },
+  "checklist": [
+    {
+      "id": "CHK-COMMIT",
+      "category": "commit",
+      "title": "目标 commit 与部署树 tree digest 一致且工作树 clean",
+      "machineCheckable": true,
+      "command": "node scripts/ops/deploy.mjs status --deploy <部署树> --json",
+      "passCriteria": "head.commit === state.targetCommit && head.tree === state.tree && dirtyEntries === 0",
+      "deployScriptAnchor": "scripts/ops/deploy.mjs#cmdCheck"
+    },
+    {
+      "id": "CHK-NODE",
+      "category": "node",
+      "title": "Node 运行时符合 package.json engines 并登记实测版本",
+      "machineCheckable": true,
+      "command": "node -v",
+      "passCriteria": "满足 package.json engines (>=24) 且与 fingerprints.nodeRuntime 登记一致",
+      "deployScriptAnchor": "scripts/ops/deploy.mjs#cmdDeploy"
+    },
+    {
+      "id": "CHK-CLI",
+      "category": "cli",
+      "title": "执行器 CLI 绑定版本与启用范围核验（agy 保持禁用）",
+      "machineCheckable": true,
+      "command": "node scripts/verify/spec-admission.mjs --json",
+      "passCriteria": "生产启用列表仅含已认证执行器，blocked 项（agy）未入准入面",
+      "deployScriptAnchor": "docs/quality/规范效力与部署准入.md"
+    },
+    {
+      "id": "CHK-SCHEMA",
+      "category": "schema",
+      "title": "SQLite store schema 版本与迁移文件匹配且可兼容回滚",
+      "machineCheckable": true,
+      "command": "node scripts/verify/spec-admission.mjs --json",
+      "passCriteria": "latestMigrationFile 声明版本等于 fingerprints.storeSchema.currentVersion（17）",
+      "deployScriptAnchor": "packages/store/src/derivation/derivation-migrations.ts"
+    },
+    {
+      "id": "CHK-CONTRACT",
+      "category": "contract",
+      "title": "冻结契约工件零漂移且索引 sha256 一致",
+      "machineCheckable": true,
+      "command": "node packages/contract/src/artifacts/cli.ts",
+      "passCriteria": "contract:check PASS（74/74、13 AREA）且 index.json sha256 命中",
+      "deployScriptAnchor": "packages/contract/artifacts/index.json"
+    },
+    {
+      "id": "CHK-CONFIG",
+      "category": "config",
+      "title": "外部生产配置未漂移、依赖锁文件摘要匹配",
+      "machineCheckable": true,
+      "command": "node scripts/verify/spec-admission.mjs --json",
+      "passCriteria": "bun.lock sha256 命中且 productionYamlModified=false（生产配置由部署旁证核对）",
+      "deployScriptAnchor": "scripts/ops/deploy-deps.mjs"
+    },
+    {
+      "id": "CHK-HEALTH",
+      "category": "health",
+      "title": "重启后新 pid 替换且 /healthz ok=true、chain.ok=true",
+      "machineCheckable": false,
+      "command": "node scripts/ops/deploy.mjs deploy --repo <主仓> --deploy <部署树> --ref <commit> --json",
+      "passCriteria": "pid !== previousPid && healthz 200 && ok=true && chain.ok=true",
+      "deployScriptAnchor": "scripts/ops/deploy-health.mjs"
+    },
+    {
+      "id": "CHK-SMOKE",
+      "category": "smoke",
+      "title": "首拍派发/收割冒烟、无新 FATAL/SQLITE 错、独立只读旁证落盘",
+      "machineCheckable": false,
+      "command": "独立 verifier 按部署单复核 healthz/日志/deploy status",
+      "passCriteria": "errors=0、tick advancing、新特性观测面出现、部署记录与回滚目标落盘",
+      "deployScriptAnchor": "docs/quality/部署-FIX03-2026-11-28.md"
+    }
+  ],
+  "currentDeployments": [
+    {
+      "company": "studio-dev",
+      "status": "active",
+      "deployedCommit": "ffb8c63967c26e185054c5b1f5450f0c74eff8d0",
+      "treeDigest": "4732b40f370480a7abb315181f00163700ed8262",
+      "rollbackCommit": "8c4d719",
+      "deployedAt": "2026-11-28T09:50:00Z",
+      "nodeObserved": "v26.13.1",
+      "runbookDoc": "docs/quality/部署-FIX03-2026-11-28.md",
+      "evidenceDoc": "docs/sentinel-logs/部署-FIX03-2026-11-28.md",
+      "note": "FIX-03 / 141 / 149 滚动部署已通过独立 verifier 只读旁证；8791/8789 旧实例版本偏斜已登记待后续重启窗口统一。"
+    }
+  ],
+  "exemptions": [
+    {
+      "id": "EXM-2026-11-28-01",
+      "specId": "SPEC-V2-F8",
+      "scope": "studio-dev",
+      "reason": "F1/F4/F5/F7 为条件通过（抽测/声明面），已由 verify:v2、verify:docs 与 contract:check 承接现行门禁",
+      "approver": "producer",
+      "approvedAt": "2026-11-28",
+      "expiresAt": "2026-12-31",
+      "trackingTask": "GOV-01",
+      "mitigation": "部署准入不再以 spec-final 冒充 deployment-eligible，改由本表与独立旁证把关"
+    },
+    {
+      "id": "EXM-2026-11-28-02",
+      "specId": "SPEC-V2-RECORDS-CHAIN",
+      "scope": "studio-dev",
+      "reason": "制作人 2026-11-28 裁决：V2 enforce 暂缓，先以 legacy->shadow 观察，待 FIX-05 生产者与状态边闭环后切换",
+      "approver": "producer",
+      "approvedAt": "2026-11-28",
+      "expiresAt": "2026-12-31",
+      "trackingTask": "FIX-05",
+      "mitigation": "四要件收割闸与 acceptanceEnforce 继续 enforce；records 拒写可观测且不伪造记录"
+    },
+    {
+      "id": "EXM-2026-11-28-03",
+      "specId": "SPEC-WRITER-FENCING",
+      "scope": "studio-dev",
+      "reason": "跨进程 FenceToken 与平台/git 写口围栏待 ARCH-01 提案与实现；当前执行单写者禁扩令与同机锁文件互斥",
+      "approver": "producer",
+      "approvedAt": "2026-11-28",
+      "expiresAt": "2026-12-31",
+      "trackingTask": "ARCH-01",
+      "mitigation": "制作人 2026-11-28 扩量禁令：V2 闭环前禁止新增 daemon 写者/泳道/多写拓扑"
+    },
+    {
+      "id": "EXM-2026-11-28-04",
+      "specId": "SPEC-DOM-04-COST-RECON",
+      "scope": "studio-dev",
+      "reason": "DEC-OPEN-14 历史 cost_daily 对账规则待制作人裁决与 ARCH-03 成本遥测修复",
+      "approver": "producer",
+      "approvedAt": "2026-11-28",
+      "expiresAt": "2026-12-31",
+      "trackingTask": "ARCH-03",
+      "mitigation": "cost_daily 只备份不重放保护已生效，空导出/未定价项一律标未知不写零"
+    },
+    {
+      "id": "EXM-2026-11-28-05",
+      "specId": "SPEC-AUTH-EVIDENCE",
+      "scope": "studio-dev",
+      "reason": "授权判定证据面处于 shadow 观察，与 V2 权责记录链（FIX-05）协同推进 enforce",
+      "approver": "producer",
+      "approvedAt": "2026-11-28",
+      "expiresAt": "2026-12-31",
+      "trackingTask": "FIX-05",
+      "mitigation": "既有 wkey 网关隔离与 fail-closed 密钥扫描持续生效"
+    },
+    {
+      "id": "EXM-2026-11-28-06",
+      "specId": "SPEC-V6-PROBES",
+      "scope": "studio-dev",
+      "reason": "PB-3/PB-5 与 PRB-14 尚未全执行，按批 2/3 随 ARCH-01、FIX-06 与 GOV-04 销账",
+      "approver": "producer",
+      "approvedAt": "2026-11-28",
+      "expiresAt": "2026-12-31",
+      "trackingTask": "GOV-04",
+      "mitigation": "未证能力（agy/跨进程双写）一律禁生产启用"
+    },
+    {
+      "id": "EXM-2026-11-28-07",
+      "specId": "SPEC-NODE-RUNTIME",
+      "scope": "studio-dev",
+      "reason": "生产 daemon 运行 Node v26.13.1、工具链钉 24.21.0、面板旧实例 v25.6.1，基线升级待 task-146 实测收口",
+      "approver": "producer",
+      "approvedAt": "2026-11-28",
+      "expiresAt": "2026-12-15",
+      "trackingTask": "task-146",
+      "mitigation": "部署窗口已实测 v26.13.1 启动与首拍健康，未在收口前修改文档基线"
+    }
+  ]
+}

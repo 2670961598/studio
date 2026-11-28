@@ -1,0 +1,147 @@
+{
+  "schemaVersion": "1.0.0",
+  "updatedAt": "2026-11-28",
+  "authorityDoc": "docs/quality/规范效力与部署准入.md",
+  "note": "规范效力唯一机读表（GOV-01 / task-160）。明确分离 spec 效力（final/draft/partial/open）与部署准入资格（eligible/conditional/blocked）。",
+  "entries": [
+    {
+      "id": "SPEC-DOM-05-RECORDS",
+      "title": "分域权威表 DOM-05：records 为 DOM-03 事件投影，非第四事实源",
+      "status": "final",
+      "versionTag": "v2.1-final",
+      "authorityDoc": "docs/v2/05-技术抽象-总规范与框架总装.md",
+      "authoritySection": "v2/05 §三 DOM-05",
+      "authorityRole": "projection",
+      "deployEligibility": "eligible",
+      "supersededNote": "docs/17-整体技术设计.md:79 历史首刀句「records 为事实源」已加失效注记并由本条废弃。"
+    },
+    {
+      "id": "SPEC-V2-VOLUMES",
+      "title": "V2 全 18 卷（00-17）定稿效力与版本轴",
+      "status": "final",
+      "versionTag": "v2.1-final",
+      "authorityDoc": "docs/v2/17-验证矩阵与追溯.md",
+      "authoritySection": "v2/17 §十一",
+      "deployEligibility": "eligible",
+      "supersededNote": "docs/v2/09 §四版本表保留 2026-10-28 draft 历史快照，已加失效区间注记；现行效力以本表为准。"
+    },
+    {
+      "id": "SPEC-V2-F8",
+      "title": "V2 冻结门 F1-F8 诚实版（F2/F3/F6/F8 通过；F1/F4/F5/F7 条件通过）",
+      "status": "partial",
+      "versionTag": "v2.1-final",
+      "authorityDoc": "docs/v2/17-验证矩阵与追溯.md",
+      "authoritySection": "v2/17 §七",
+      "deployEligibility": "conditional",
+      "supersededNote": "spec-final 不等于 deployment-eligible；F1/F4/F5/F7 条件通过项受豁免与独立验证链约束。"
+    },
+    {
+      "id": "SPEC-V2-RECORDS-CHAIN",
+      "title": "V2 运行记录 74 类与跨记录不变量（权责记录生产链）",
+      "status": "partial",
+      "versionTag": "v2.1-final",
+      "authorityDoc": "docs/v2/11-技术细节-运行记录与行为契约.md",
+      "authoritySection": "v2/11 §十五",
+      "authorityRole": "projection",
+      "deployEligibility": "conditional",
+      "supersededNote": "制作人 2026-11-28 裁决：V2 enforce 暂缓，先 legacy->shadow 观察，待 FIX-05/ARCH-01 闭环后切 enforce。"
+    },
+    {
+      "id": "SPEC-HR-GATE",
+      "title": "任职闸门：非在岗态不得发起出工",
+      "status": "final",
+      "versionTag": "v2.1-final",
+      "authorityDoc": "docs/v2/02-员工册.md",
+      "authoritySection": "v2/02 §3.4",
+      "deployEligibility": "eligible",
+      "supersededNote": "v2/17 §4.5 GAP-V2-06 历史目标态已加实况注记；接线断言 hr-gate-audit.mjs 在 verify:v2 链内。"
+    },
+    {
+      "id": "SPEC-MODEL-ROUTING",
+      "title": "多源模型路由、热切、预算预检与跨执行器换源",
+      "status": "final",
+      "versionTag": "v1-active",
+      "authorityDoc": "docs/quality/model-routing.md",
+      "authoritySection": "§9-§10",
+      "deployEligibility": "eligible",
+      "supersededNote": "model-routing.md §9 末段 task-51 早期未落清单已加历史切片失效区间注记。"
+    },
+    {
+      "id": "SPEC-QUOTA-GATING",
+      "title": "错误分类与供给级配额门控（FIX-03）",
+      "status": "final",
+      "versionTag": "v1-active",
+      "authorityDoc": "docs/quality/supply-quota-gating.md",
+      "authoritySection": "全文",
+      "deployEligibility": "eligible"
+    },
+    {
+      "id": "SPEC-IDEMPOTENT-CLOSEOUT",
+      "title": "幂等收口、已有证据原位复验与 Archived 终态（FIX-04）",
+      "status": "final",
+      "versionTag": "v1-active",
+      "authorityDoc": "docs/quality/idempotent-closeout.md",
+      "authoritySection": "全文",
+      "deployEligibility": "eligible"
+    },
+    {
+      "id": "SPEC-WRITER-FENCING",
+      "title": "唯一写入者跨进程围栏（fencing token）与安全接管",
+      "status": "partial",
+      "versionTag": "v2.1-final",
+      "authorityDoc": "docs/v2/05-技术抽象-总规范与框架总装.md",
+      "authoritySection": "v2/05 §三 通则2",
+      "deployEligibility": "conditional",
+      "supersededNote": "当前仅同机锁文件互斥，缺单调 FenceToken 与平台/git 写口代次校验（ARCH-01 跟踪）。"
+    },
+    {
+      "id": "SPEC-DOM-04-COST-RECON",
+      "title": "DOM-04 历史 cost_daily 与新成本事件账对账规则",
+      "status": "open",
+      "versionTag": "v2.1-final",
+      "authorityDoc": "docs/v2/09-技术细节-总纲与工程决策·主表总册.md",
+      "authoritySection": "v2/09 §5.3 DEC-OPEN-14",
+      "deployEligibility": "conditional",
+      "supersededNote": "制作人待裁未决项（GAP-V2-01）；当前按只备份不重放与限域重建口径运行。"
+    },
+    {
+      "id": "SPEC-AUTH-EVIDENCE",
+      "title": "授权判定证据落账与 shadow 期限约束（SEC-FC-08）",
+      "status": "final",
+      "versionTag": "v2.1-final",
+      "authorityDoc": "docs/v2/15-技术细节-安全面.md",
+      "authoritySection": "v2/15 §一 SEC-FC-08",
+      "deployEligibility": "conditional"
+    },
+    {
+      "id": "SPEC-V6-PROBES",
+      "title": "V6 真机探针批次（PB-1..PB-6 / PRB-01..26）",
+      "status": "partial",
+      "versionTag": "v2.1-final",
+      "authorityDoc": "docs/v2/17-验证矩阵与追溯.md",
+      "authoritySection": "v2/17 §五",
+      "deployEligibility": "conditional",
+      "supersededNote": "PB-3/PB-5 与 PRB-14 尚未全闭环；生产部署受豁免与单写拓扑约束。"
+    },
+    {
+      "id": "SPEC-NODE-RUNTIME",
+      "title": "Node 运行时基线（engines >=24；工具链 24.21.0；生产漂移实测矩阵）",
+      "status": "partial",
+      "versionTag": "v1-active",
+      "authorityDoc": "docs/20-工程总规程.md",
+      "authoritySection": "第一章 §5",
+      "deployEligibility": "conditional",
+      "supersededNote": "生产 daemon 已实测运行 Node v26.13.1（8791/8789 旧实例仍 v25.6.1），基线升级待 task-146 实测收口。"
+    },
+    {
+      "id": "SPEC-ENU-88-AGY",
+      "title": "ENU-88 执行器枚举新增 agy（登记不启用，生产禁开）",
+      "status": "final",
+      "versionTag": "v2.1-final",
+      "authorityDoc": "docs/v2/09-技术细节-总纲与工程决策·主表总册.md",
+      "authoritySection": "v2/09 §二 ENU-88",
+      "deployEligibility": "blocked",
+      "supersededNote": "制作人 2026-11-28 裁决：扩量禁令与 agy 生产启用暂缓（待 task-150/154 与真机负测）。"
+    }
+  ]
+}

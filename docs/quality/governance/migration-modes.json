@@ -1,0 +1,91 @@
+{
+  "schemaVersion": "1.0.0",
+  "updatedAt": "2026-11-28",
+  "productionYamlModified": false,
+  "decisionRef": "docs/sentinel-logs/全面Review拆分-2026-11-28.md §7（制作人 2026-11-28 10:30 裁决）",
+  "note": "逐公司/逐面迁移模式治理登记表（legacy|shadow|enforce）。本表只作治理登记与门禁校验，不改动任何生产 yaml。",
+  "modeDefinitions": {
+    "legacy": "旧轨运行：仅以既有收割四要件与运行规则为准，不产生新面强阻断。",
+    "shadow": "影子观察：新面记录/判定伴随运行并产出完备性报告与可观测指标，缺失或拒写留痕但不阻断主链路。",
+    "enforce": "强态阻断：新面必备记录/不变量缺失直接 fail-closed 拒迁移/拒收口，需前置生产者与验证闭环后方可开启。"
+  },
+  "companies": [
+    {
+      "company": "studio-dev",
+      "defaultV2Transition": "legacy->shadow",
+      "surfaces": [
+        {
+          "surface": "v2-records",
+          "mode": "shadow",
+          "transition": "legacy->shadow",
+          "targetMode": "enforce",
+          "specIds": [
+            "SPEC-DOM-05-RECORDS",
+            "SPEC-V2-RECORDS-CHAIN"
+          ],
+          "upgradeCriteria": [
+            "FIX-05 补齐 CAP-02/AUTH-02/接受回执/LIFE-01/04/EVD-01 生产者与回退返工重开状态边",
+            "ARCH-01 跨进程写者 fencing 闭环且 PRB-14 当前 commit 取证通过",
+            "shadow 期连续观测每条 CLOSE 记录完备性报告可核且无未解释阻断",
+            "制作人显式批准 studio-dev 切换至 enforce"
+          ],
+          "note": "制作人 2026-11-28 裁决：暂缓 V2 enforce，严禁把 acceptanceEnforce 混同为 V2 records enforce。"
+        },
+        {
+          "surface": "authority-evidence",
+          "mode": "shadow",
+          "transition": "legacy->shadow",
+          "targetMode": "enforce",
+          "specIds": [
+            "SPEC-AUTH-EVIDENCE"
+          ],
+          "upgradeCriteria": [
+            "与 FIX-05 权责记录链协同验证授权判定落账零遗漏",
+            "制作人批准切 enforce 并更新到期日"
+          ],
+          "note": "shadow 期落账与拒写统计可观测；不改生产 yaml。"
+        },
+        {
+          "surface": "acceptance-gate",
+          "mode": "enforce",
+          "transition": "enforce",
+          "targetMode": "enforce",
+          "enforcementApproval": {
+            "ticket": "task-158",
+            "approvedBy": "producer",
+            "approvedAt": "2026-11-17",
+            "note": "验收四要件与任职闸门 strict 自 2026-11-17 起由制作人批准 enforce"
+          },
+          "specIds": [
+            "SPEC-HR-GATE",
+            "SPEC-IDEMPOTENT-CLOSEOUT"
+          ],
+          "upgradeCriteria": [
+            "已生效（2026-11-17 起），保持四要件与任职闸门 strict 不放宽"
+          ],
+          "note": "验收四要件与任职闸门 enforce 独立于 V2 records enforce。"
+        },
+        {
+          "surface": "quota-gating",
+          "mode": "enforce",
+          "transition": "enforce",
+          "targetMode": "enforce",
+          "enforcementApproval": {
+            "ticket": "FIX-03",
+            "approvedBy": "producer",
+            "approvedAt": "2026-11-28",
+            "note": "FIX-03（ffb8c639）供给级配额门控由制作人批准随部署生效"
+          },
+          "specIds": [
+            "SPEC-MODEL-ROUTING",
+            "SPEC-QUOTA-GATING"
+          ],
+          "upgradeCriteria": [
+            "FIX-03（ffb8c639）已滚动部署至 studio-dev，routing.quota 生效"
+          ],
+          "note": "共享池配额门控持续生效，不回退为盲目重试。"
+        }
+      ]
+    }
+  ]
+}
