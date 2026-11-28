@@ -170,6 +170,7 @@ import type { CompanyRuntimeUpdate, Engine, EngineDeps } from './runtime/contrac
 import { recoverDispatchedOrphans, type OrphanRecoveryResult } from './recovery/orphan-recovery.ts'
 import type { DispatchPreflight, EngineCrashSeams, EngineRuntime } from './runtime/types.ts'
 import { resolveWorkerDispatchSeatbelt, seatbeltNote } from './work/dispatch-seatbelt.ts'
+import { quotaHealthRows } from './routing/quota-gate.ts'
 import { routingHealthRow } from './routing/source-executor.ts'
 
 // 契约面（EngineDeps／Engine／CompanyRuntimeUpdate）迁驻 runtime/contract.ts——本文件仍是
@@ -277,6 +278,8 @@ export function createEngine(deps: EngineDeps): Engine {
         sources: Object.entries(rt.modelRouting.sources).flatMap(([tier, sources]) =>
           (sources ?? []).map((source) => routingHealthRow(tier, source, rt.modelRouting?.state[source.id], now)),
         ),
+        // task-157：供给级配额池行（引擎钟——阻塞/恢复/探针态与决策级门控同帧）
+        quota: quotaHealthRows(rt, rt.now()),
       }
     },
     get harvestBatches() {

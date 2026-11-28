@@ -25,7 +25,7 @@ import { orphanSweepDue, type OrphanRecoveryResult } from '../../engine/recovery
 import type { TickReport } from '../../engine/tick-report/types.ts'
 import { takeOverRunningWorkRecords } from '../../engine/harvest/inflight-takeover.ts'
 import { ACCEPTANCE_GATE_TIMEOUT_MS } from '../../engine/gate.ts'
-import { holdLaneBusyLinesOf, noopAggregatedLinesOf, renderTick } from '../render/tick.ts'
+import { holdLaneBusyLinesOf, holdQuotaLinesOf, noopAggregatedLinesOf, renderTick } from '../render/tick.ts'
 import { DEMO_SNAPSHOT } from '../demo/demo-snapshot.ts'
 import { loadCompanyAtBoot } from '../assets/boot.ts'
 import { wirePlatform } from '../platform/wire.ts'
@@ -413,6 +413,7 @@ export async function runServe(
 
   // 泳道 hold 观测去重表（studio-dev-713；跨拍持有：同单同租约快照只落一行，防刷屏）
   const holdLaneSeen = new Map<string, string>()
+  const holdQuotaSeen = new Map<string, string>() // task-157 供给级配额 hold 观测去重表（supply-quota-gating.md §3）
   const noopSeen = new Map<string, string>() // noop 聚合签名去重（跨拍持有）
 
   while (!stopped) {
@@ -429,6 +430,8 @@ export async function runServe(
       for (const line of noopAggregatedLinesOf(report, noopSeen)) console.log(line)
       // 泳道租约 hold 观测面（见 renderHoldLaneBusy 头注；签名去重）
       for (const line of holdLaneBusyLinesOf(report, holdLaneSeen)) console.log(line)
+      // 供给级配额 hold 观测面（task-157；见 renderHoldQuota 头注；签名去重）
+      for (const line of holdQuotaLinesOf(report, holdQuotaSeen)) console.log(line)
       for (const err of report.errors) console.error(`[serve] tick#${report.seq} 错误：${err}`)
       // —— 运行期孤儿周期扫描（studio-dev-838 缺口 B / 858）：每 60 拍一次（boot 扫描保留）；
       //    复用 engine.recoverOrphans()（maxRecover=10/幂等/审计），单飞防重叠；fire-and-forget

@@ -13,6 +13,7 @@
 import type { TicketId } from '@studio-next/contract'
 import type { TickActionResult, TickPhaseDispatchBudget, TickPhaseHarvest } from '../tick-report/types.ts'
 import { executeDispatch } from '../dispatch/execute.ts'
+import { settleQuotaProbe } from '../routing/quota-gate.ts'
 import { runHarvestAttempt } from '../harvest/batch.ts'
 import { runHarvestReconStep } from '../jobs/harvest-archive-wire.ts'
 import type { HarvestReconResult } from '../jobs/harvest-recon.ts'
@@ -61,6 +62,8 @@ export async function runPhases(
       }
       const result = await executeDispatch(rt, action, intentKey, index, tickEvents, budget, resumePlan, autoAssign, dispatchPersons, laneEpoch)
       actionResults.push(result)
+      // task-157（supply-quota-gating.md §2.4）：派发未成 → 释放本单恢复期探针认领（不得占位）
+      settleQuotaProbe(rt, action.ticket, result.ok)
       if (result.ok) {
         dispatched += 1
         ctx.mutations += 1
@@ -115,6 +118,8 @@ export async function runPhases(
         }),
       )
       actionResults.push(result)
+      // task-157（supply-quota-gating.md §2.4）：探针单被看门狗咬合（kill/消亡面）=探针作废 → 释放认领（下拍可再认领；续租面不动）
+      if (result.ok && result.detail !== undefined && result.detail.startsWith('咬合（')) settleQuotaProbe(rt, action.ticket, false)
       if (result.ok) {
         ctx.mutations += 1
       } else {

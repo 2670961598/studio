@@ -134,6 +134,11 @@ export * from './prm/compile-projection.ts'
 // 策略投影签名封套与验签（SEC-SIG-04 机制腿；v2/15 §二；纯逻辑零 IO）
 export * from './prm/channel.ts'
 
+// 供给错误分类与供给级配额池状态机（task-157 / FIX-03；docs/quality/supply-quota-gating.md §1/§2；
+// 子域落位 supply/：core/src 根平面已满 25 件阈，BC-S1 要求切子域）
+export * from './supply/error-kind.ts'
+export * from './supply/supply-quota.ts'
+
 /** 包名常量 */
 export const PACKAGE_NAME = '@studio-next/core'
 

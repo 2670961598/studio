@@ -62,7 +62,8 @@ import { mintWorkerKey, workerKeyCredentials, WORKER_WKEY_ENV_KEY } from '../wor
 import type { EngineRuntime } from '../runtime/types.ts'
 import { releaseWithEpoch } from '../lanes/release.ts'
 import { evaluateDispatchAcceptance } from '../acceptance/index.ts'
-import { selectModelSource, classifyFailure, isFailoverClass, recordSourceFailure, serializeRoutingState, type SelectOutcome } from '../routing/router.ts'
+import { selectModelSource, classifyFailure, isFailoverClass, type SelectOutcome } from '../routing/router.ts'
+import { quotaProbeNote, recordRoutedFailure } from '../routing/quota-gate.ts'
 import { provisionSourceOverlay } from '../routing/overlay.ts'
 import { adapterForSource, reconcileSourceResume, sameExecutorFamily, sourceExecutorFamilies, sourceRef } from '../routing/source-executor.ts'
 import { budgetView, createModelCatalog, foldBudgets, type ModelsConfig, type ModelSourceSpec } from '@studio-next/core'
@@ -201,7 +202,7 @@ export async function executeDispatch(
     let resumeLocked = false // 续跑同族位优先于源 executor 位（对账 reconcileSourceResume——routing/source-executor.ts）
     let candidate = tierCandidate
     if (executorArmed && tierResolve !== undefined && rt.modelRouting !== undefined && tierSources !== undefined) {
-      const probe = selectModelSource({ tier: tierResolve.tier, sources: tierSources, state: rt.modelRouting.state, now: now(), tokens: { input: 0, output: 0 } })
+      const probe = selectModelSource({ tier: tierResolve.tier, sources: tierSources, state: rt.modelRouting.state, now: now(), tokens: { input: 0, output: 0 }, quota: rt.modelRouting.quota, probeTicket: ticket })
       if (probe.ok) {
         const picked = adapterForSource(probe.source, registry, tierCandidate)
         if (picked.kind === 'err') return fail(`MODEL_ROUTING_FAIL;tier=${tierResolve.tier};reason=EXECUTOR_UNKNOWN;${picked.error}（task-141 fail-closed 不降档）`)
@@ -291,7 +292,7 @@ export async function executeDispatch(
         return selectModelSource({
           tier: tierResolve.tier,
           sources,
-          state: rt.modelRouting.state,
+          state: rt.modelRouting.state, quota: rt.modelRouting.quota, probeTicket: ticket, // task-157：供给级配额池（supply-quota-gating.md §2.5）
           now: at,
           tokens,
           budget: {
@@ -317,7 +318,7 @@ export async function executeDispatch(
         const tiers = Object.fromEntries(rt.catalog.tiers().map((t) => [t.tier, { provider: t.provider, model: t.model, price: t.price }])) as ModelsConfig['tiers']
         tiers[tierResolve.tier] = { provider: source.provider, model: source.model, price: source.price }
         routedCatalog = createModelCatalog({ tiers, roles: rt.config.modelTierByRole ?? { main_worker: 'mid' } })
-        routingNote = `;routing=${sourceRef(source)}${fallbackFrom !== undefined ? `;routing-fallbackFrom=${sourceRef(fallbackFrom)}` : ''};routing-price=in$${String(source.price.inputPerM)}/out$${String(source.price.outputPerM)}${skipped.length > 0 ? `;routing-skipped=${skipped.join('|')}` : ''}`
+        routingNote = `;routing=${sourceRef(source)}${fallbackFrom !== undefined ? `;routing-fallbackFrom=${sourceRef(fallbackFrom)}` : ''};routing-price=in$${String(source.price.inputPerM)}/out$${String(source.price.outputPerM)}${skipped.length > 0 ? `;routing-skipped=${skipped.join('|')}` : ''}${quotaProbeNote(rt, source, ticket, now())}`
       }
       /** 换绑前清理上一适配器的指令文件/AGENTS.md（通道不同=旧产物成孤儿；同通道由重跑段覆写） */
       const discardBound = (next: ExecutorAdapter): void => {
@@ -462,18 +463,16 @@ export async function executeDispatch(
         if (!routingActive || rt.modelRouting === undefined || tierResolve === undefined || routedSource === undefined || failoverUsed) return { kind: 'not' }
         if (!isFailoverClass(classifyFailure(err))) return { kind: 'not' }
         failoverUsed = true
-        // 失败登记：冷却+持久化（daemon_kv 与 harvest 回填同键同口径）
-        const rec = recordSourceFailure(rt.modelRouting.state, routedSource, err, at)
-        rt.modelRouting.state = rec.state
-        ledger.kvSet('model-routing.state', serializeRoutingState(rt.modelRouting.state))
+        // 失败登记：冷却+持久化（daemon_kv 与 harvest 回填同键同口径）；quota 类另记供给池（task-157 §2.2）
+        const rec = recordRoutedFailure(rt, routedSource, err, at)
         // 重选（状态已含冷却→当前源自然跳过；预算按落账后折叠重算）
         const outcome = selectRouted()
-        // 留痕（task-66 F4 同口径去重：同票同源一次；task-141 面开时带 from/to 源锚）
-        const warnKey = `${ticket}|${routedSource.id}|launch-failover`
+        // 留痕（task-66 F4 同口径去重：同票同源一次；task-141 面开时带 from/to 源锚；task-157 去重键加 resetAt=探针再败另留一条）
+        const warnKey = `${ticket}|${routedSource.id}|launch-failover|${rec.cls.resetAt ?? 'none'}`
         if (!rt.routingWarnings.has(warnKey)) {
           rt.routingWarnings.add(warnKey)
           makeEvent('ESCALATE', fresh, index.attemptOf(ticket), tickEvents, {
-            note: `MODEL_ROUTING_FAILOVER;tier=${tierResolve.tier};source=${executorArmed ? sourceRef(routedSource) : routedSource.id};class=${rec.class};cooldownMs=${String(rec.cooldownMs)}${executorArmed && outcome !== undefined && outcome.ok ? `;from=${sourceRef(routedSource)};to=${sourceRef(outcome.source)}` : ''}（task-135 同dispatch换源）`,
+            note: `MODEL_ROUTING_FAILOVER;tier=${tierResolve.tier};source=${executorArmed ? sourceRef(routedSource) : routedSource.id};class=${rec.class};cooldownMs=${String(rec.cooldownMs)}${executorArmed && outcome !== undefined && outcome.ok ? `;from=${sourceRef(routedSource)};to=${sourceRef(outcome.source)}` : ''}（task-135 同dispatch换源）${rec.note}`,
           })
         }
         if (outcome === undefined || !outcome.ok) {

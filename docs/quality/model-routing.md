@@ -77,6 +77,14 @@ roles: {main_worker: mid, verifier: high}
 
 在途 worker 不换源；只有新 attempt/新派发重新选择。`400/拒答` 不消耗冷却。
 
+> **task-157 修订（分类矩阵与供给池门控的唯一口径=`docs/quality/supply-quota-gating.md` §1/§2）**：
+> 字符串启发式改为 core `classifySupplyError` 显式分类（`ErrorKind`→本表失败类）。与本表的差异：
+> ① 429 带 `[overloaded]` 证据改判 `server`（不再按 quota 冷 15m）；② `rate limit`/GLM `1302` 判
+> `rate_limit`（冷却同 quota 档、**不入池**）；③ 缺凭据/缺 adapter/地区限制判 `config`（新增类，
+> 可换源，冷却走 60s/8h 档+告警）；④ 429 窗口/reset 证据判 `quota`，除源冷却外**另登记供给池级
+> 阻塞**（同 provider 源 reset 前不再被派发，恢复期单探针）。`MODEL_ROUTING_FAILOVER` 去重键含
+> resetAt；note 尾段新增 `errorKind/retryable/resetAt/…` 段；healthz `routing.quota[]` 加法列。
+
 ## 4. 冷却/半开/持久化
 
 - 每源状态：`consecutiveFailures / cooldownUntil / lastFailureClass / lastFailureAt / lastSuccessAt / halfOpen`。

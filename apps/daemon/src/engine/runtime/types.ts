@@ -117,6 +117,9 @@ export interface EngineRuntime {
     sources: Partial<Record<import('@studio-next/core').TierId, readonly import('@studio-next/core').ModelSourceSpec[]>>
     readonly rootDir: string
     state: import('../routing/router.ts').RoutingState
+    /** 供给级配额池（task-157；docs/quality/supply-quota-gating.md §2.1；kv `model-routing.quota`，
+     * 唯一写口=routing/quota-gate.ts；跨单共享） */
+    quota: import('@studio-next/core').SupplyQuotaState
   }
   /** task-34 模型热切：拍边界替换价目表/角色路由（实现 clamp 在 createRuntime 闭包内） */
   applyModelsUpdate(update: import('./contract.ts').ModelRuntimeUpdate): void

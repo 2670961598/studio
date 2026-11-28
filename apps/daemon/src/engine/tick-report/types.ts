@@ -63,10 +63,17 @@ export interface TickPhaseCollect {
 export interface TickDecisionEntry {
   ticket: TicketId
   intentKey: string
-  code: DecisionCode
+  /** daemon 本地码 `HOLD_QUOTA_WAIT`（task-157；docs/quality/supply-quota-gating.md §2.3）——不加 core DecisionCode */
+  code: DecisionCode | 'HOLD_QUOTA_WAIT'
   actionType: Action['type']
   /** 决策时单据平台态（noop 观测面载荷：NOOP_UNKNOWN_STATE 等原因码须配单号+态可见） */
   state: string
+  /**
+   * 供给级配额 hold 载荷（task-157，仅 HOLD_QUOTA_WAIT 决策携带）：池/窗口/resetAt/探针票——
+   * hold 无台账事件、不占泳道不烧 attempt，渲染行（签名去重）为唯一逐拍观测面；既有决策不带
+   * 该字段（golden 精确匹配不加字段）。
+   */
+  quota?: import('../routing/quota-gate.ts').QuotaHoldPayload
   /**
    * 泳道 hold 观测载荷（studio-dev-713，仅 HOLD_LANE_BUSY 决策携带）：
    * 决策时该单泳道的租约快照——holder/expiresAt 让「派而不发」现场可见（hold 无台账事件，

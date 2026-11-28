@@ -209,8 +209,9 @@ export interface Engine extends HarvestRecordingObservation {
   /** 到期强收：整树杀在途 + running 收口 interrupted（不判四要件；返回如实清单） */
   forceSettleTimeout(): Promise<DrainSettleResult>
   readonly config: EngineConfig
-  /** task-56 路由源只读健康面（未接线=undefined；行形 task-141 扩 executor/provider/model/priority/enabled/cooldown） */
-  modelRoutingHealth?(): { sources: readonly RoutingHealthSource[] } | undefined
+  /** task-56 路由源只读健康面（未接线=undefined；行形 task-141 扩 executor/provider/model/priority/enabled/cooldown；
+   *  task-157 加法列 `quota`：供给级配额池 blocked/recovering/probe 行，见 docs/quality/supply-quota-gating.md §3） */
+  modelRoutingHealth?(): { sources: readonly RoutingHealthSource[]; quota?: readonly import('../routing/quota-gate.ts').QuotaHealthRow[] } | undefined
   /** 收割批次簿观测面（IMPL-06-03 / REC-EVD-01）：只读视图；写口仅收割相位（batch.ts） */
   readonly harvestBatches: HarvestBatchLedger
 }

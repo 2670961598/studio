@@ -52,8 +52,10 @@ export interface HealthzInput {
   readonly maxTickAgeMs?: number
   /** 链摘要最大可接受陈旧度（缺省 10min；过期=不健康，防「拿旧摘要冒充」） */
   readonly chainMaxAgeMs?: number
-  /** task-56 路由源只读状态（缺省不出现于 body；task-141 加法列 executor/provider/model/priority/enabled/cooldown） */
-  readonly routing?: { readonly sources: readonly { readonly tier: string; readonly id: string; readonly executor?: string; readonly provider: string; readonly model: string; readonly priority: number; readonly enabled: boolean; readonly cooldown?: { readonly baseMs?: number | undefined; readonly maxMs?: number | undefined; readonly circuitAfter?: number | undefined }; readonly available: boolean; readonly cooldownUntil: number; readonly lastFailureClass?: string; readonly lastSuccessAt?: number }[] } | undefined
+  /** task-56 路由源只读状态（缺省不出现于 body；task-141 加法列 executor/provider/model/priority/enabled/cooldown；
+   *  task-157 加法列 `quota`——供给级配额池行 provider/state(blocked|recovering|probe)/window/blockedUntil[/resetAt][/probeTicket]/sources，
+   *  见 docs/quality/supply-quota-gating.md §3） */
+  readonly routing?: { readonly sources: readonly { readonly tier: string; readonly id: string; readonly executor?: string; readonly provider: string; readonly model: string; readonly priority: number; readonly enabled: boolean; readonly cooldown?: { readonly baseMs?: number | undefined; readonly maxMs?: number | undefined; readonly circuitAfter?: number | undefined }; readonly available: boolean; readonly cooldownUntil: number; readonly lastFailureClass?: string; readonly lastSuccessAt?: number }[]; readonly quota?: readonly { readonly provider: string; readonly state: 'blocked' | 'recovering' | 'probe'; readonly window: string; readonly blockedUntil: number; readonly resetAt?: number | undefined; readonly probeTicket?: string | undefined; readonly sources: readonly string[] }[] } | undefined
   /** 事件循环延迟观测（studio-dev-785 加法字段；缺省不出现于 body） */
   readonly loop?: { readonly lagMs: number; readonly windowMs: number }
   /** @唤醒源选型（M4-1 task-136 加法观测；缺省不出现于 body——旧探针忽略未知字段） */

@@ -12,7 +12,7 @@
  * exit=0——前两要件由引擎消费 adapter.stream() 判定，后两要件由可注入 gateRunner 执行。
  */
 import type { EventRecord, ExecutorAdapter } from '@studio-next/contract'
-import { flowAnchors, onSuccess } from '@studio-next/core'
+import { classifyHarvestFailure, errorKindNote, flowAnchors, onSuccess } from '@studio-next/core'
 import { settleDispatch } from '../budget-gate.ts'
 import { foldHarvestCost, writeThroughHarvestUsage } from '../cost-guard/harvest.ts'
 import { deliverablesOf, statHarvestDenial } from '../jobs/harvest-recon.ts'
@@ -34,7 +34,8 @@ import { closeSessionArchive } from '../sessions/archive.ts' // 会话归档接�
 import type { EngineRuntime } from '../runtime/types.ts'
 import type { Inflight } from '../tick/types.ts'
 import { applyWorkTransition } from '../work/transition.ts'
-import { recordSourceFailure, recordSourceSuccess, serializeRoutingState } from '../routing/router.ts'
+import { recordSourceSuccess, serializeRoutingState } from '../routing/router.ts'
+import { recordRoutedFailure, resolveRoutedPool, routedProviderOf } from '../routing/quota-gate.ts'
 
 /** 判定体（原收割后半零改动迁移）：折算态（要件 1/2）→ gateRunner（要件 3/4）→ 收口 */
 export async function finalizeHarvest(
@@ -86,20 +87,24 @@ export async function finalizeHarvest(
     terminalObserved: entry.foldCompleted !== undefined,
     terminalError,
   })
-  // —— task-56 多源路由回填：按本次在途单选中的源记录成功/失败（冷却下一 attempt 选下一源） ——
+  // —— task-56 多源路由回填：按本次在途单选中的源记录成功/失败（冷却下一 attempt 选下一源）——
+  //    task-157（docs/quality/supply-quota-gating.md §2.2/§2.4/§3）：成功=探针放开池；失败=quota 类另记
+  //    池阻塞、非 quota 释放本单探针认领；FAILOVER 尾段携 errorKind 审计段。
   if (rt.modelRouting !== undefined && entry.routedSourceId !== undefined && entry.routedTier !== undefined) {
     const sources = rt.modelRouting.sources[entry.routedTier]
     const source = sources?.find((s) => s.id === entry.routedSourceId)
     if (source !== undefined) {
       if (requirements.fourOk) {
         rt.modelRouting.state = recordSourceSuccess(rt.modelRouting.state, source, now())
+        // 成功态同落 kv（task-56 持久化；docs/quality/model-routing.md §4「重启不清健康状态」）：失败路的落盘在
+        // recordRoutedFailure 内（quota-gate.ts）——两面各写一次，互不覆盖
+        ledger.kvSet('model-routing.state', serializeRoutingState(rt.modelRouting.state))
+        resolveRoutedPool(rt, source, now())
       } else {
         const err = entry.foldTerminalError !== undefined ? { message: entry.foldTerminalError } : { status: 0, message: 'harvest-not-four' }
-        const rec = recordSourceFailure(rt.modelRouting.state, source, err, now())
-        rt.modelRouting.state = rec.state
-        makeEvent('ESCALATE', fresh, entry.attempt, tickEvents, { note: `MODEL_ROUTING_FAILOVER;tier=${entry.routedTier};source=${source.id};class=${rec.class};cooldownMs=${String(rec.cooldownMs)}（task-56）` })
+        const rec = recordRoutedFailure(rt, source, err, now(), ticket)
+        makeEvent('ESCALATE', fresh, entry.attempt, tickEvents, { note: `MODEL_ROUTING_FAILOVER;tier=${entry.routedTier};source=${source.id};class=${rec.class};cooldownMs=${String(rec.cooldownMs)}（task-56）${rec.note}` })
       }
-      ledger.kvSet('model-routing.state', serializeRoutingState(rt.modelRouting.state))
     }
   }
   // 收割批次登记（IMPL-06-03 / REC-EVD-01 观察面）：区间幂等键/证据项草案/gaps/结构位——
@@ -266,9 +271,10 @@ export async function failHarvest(
   // 迁移与触发记录单一出口＝work/transition.ts（等级未登记流=无迁移面：只落 GATE_FAIL 留痕）
   const rollbackAnchor = flow !== undefined ? flowAnchors(flow).fresh : undefined
   const wkeyNote = wkeyDiscarded ? ';wkey=env-离场（凭据随子进程终结；重派重签新 credentials）' : ''
+  // task-157（supply-quota-gating.md §1.2/§3）：GATE_FAIL 尾段携错误分类——四要件/回滚/断路语义不动
   const gateFailEvent = {
     name: 'GATE_FAIL' as const,
-    extra: { note: `${detail};rollback=${rollbackAnchor ?? '跳过（等级未登记流）'}${wkeyNote}${sessionClose.noteSegment}` },
+    extra: { note: `${detail};rollback=${rollbackAnchor ?? '跳过（等级未登记流）'}${wkeyNote}${sessionClose.noteSegment}${errorKindNote(classifyHarvestFailure({ detail, terminalError: entry.foldTerminalError, now: now() }), { provider: routedProviderOf(rt, entry) })}` },
   }
   await (rollbackAnchor !== undefined
     ? applyWorkTransition(transitionHostOf(tickEvents), { ticket, attempt: entry.attempt, toState: rollbackAnchor, event: gateFailEvent })

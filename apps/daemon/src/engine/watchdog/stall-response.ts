@@ -28,7 +28,7 @@
  * 未达阈/刀关/本拍刚派发=只叫（STALL 告警照落，零处置）。
  */
 import type { EventRecord, IssueRecord, TicketId } from '@studio-next/contract'
-import { flowAnchors, type Action, type StateFlow } from '@studio-next/core'
+import { classifyHarvestFailure, errorKindNote, flowAnchors, type Action, type StateFlow } from '@studio-next/core'
 import type { ExecutorRegistry } from '@studio-next/adapters'
 import type { Ledger } from '@studio-next/store'
 import type { LaneRegistry } from '../lanes/registry.ts'
@@ -203,7 +203,8 @@ export async function executeStallResponse(
     ? applyWorkTransition(host.transitionHostOf(tickEvents), { ticket, attempt: workAttempt, toState: freshAnchor, event: { name: 'STALL', extra: { note: deadNote } } })
     : applyWorkTransition(host.transitionHostOf(tickEvents), { ticket, attempt: workAttempt, carrier: fresh, event: { name: 'STALL', extra: { note: deadNote } } }))
   host.makeEvent('GATE_FAIL', deadStall.issue, workAttempt, tickEvents, {
-    note: `${detail};rollback=${deadRollback}${host.workerKeysEnabled ? ';wkey=env-离场（无活进程；重派重签新 credentials）' : ''}`,
+    // task-157（supply-quota-gating.md §1.2/§3）：尾段携 errorKind=worker_dead（消亡面无路由源=provider/-）
+    note: `${detail};rollback=${deadRollback}${host.workerKeysEnabled ? ';wkey=env-离场（无活进程；重派重签新 credentials）' : ''}${errorKindNote(classifyHarvestFailure({ detail, now: host.now() }))}`,
   })
   // 遗留 running 工位收口（进程内正常链路不产生 running 无 inflight——此面来自 dispose 后
   // 继续推拍等；R-B 启动接管已收口过的查无即跳过。判定面收口=failed，与 failHarvest 同款）

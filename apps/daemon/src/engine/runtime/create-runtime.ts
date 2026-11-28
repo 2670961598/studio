@@ -11,7 +11,7 @@
  * 依赖方向：本件是**唯一**把域函数绑上宿主的装配点；域件之间不互相 import 实现。
  */
 import type { InvokeIntent, TicketId } from '@studio-next/contract'
-import { emptyBreakerState } from '@studio-next/core'
+import { deserializeSupplyQuotaState, emptyBreakerState } from '@studio-next/core'
 import type { BudgetGateDeps } from '../budget-gate.ts'
 import { buildDirectiveAuthorizer } from '../directive/index.ts'
 import type { DirectiveGateDeps } from '../directive/index.ts'
@@ -36,6 +36,7 @@ import type { EngineDeps } from './contract.ts'
 import { harvestHostOf, stallHostOf } from './hosts.ts'
 import type { EngineRuntime, EngineSeams } from './types.ts'
 import { createCompanyWriteQueue } from '../company-write/runtime.ts'
+import { SUPPLY_QUOTA_KV_KEY } from '../routing/quota-gate.ts'
 import { deserializeRoutingState } from '../routing/router.ts'
 
 /** 装配引擎运行时宿主（构造期一次性；零拍内副作用） */
@@ -213,7 +214,8 @@ export function createRuntime(deps: EngineDeps, seams: EngineSeams): EngineRunti
     catalog: deps.catalog,
     acceptance,
     routingWarnings: new Set<string>(),
-    ...(deps.modelRouting !== undefined && routingState !== undefined ? { modelRouting: { ...deps.modelRouting, state: routingState } } : {}),
+    // task-157（supply-quota-gating.md §2.1）：供给级配额池随拍持久化——重启续接阻塞窗（坏值=空=全开）
+    ...(deps.modelRouting !== undefined && routingState !== undefined ? { modelRouting: { ...deps.modelRouting, state: routingState, quota: deserializeSupplyQuotaState(ledger.kvGet(SUPPLY_QUOTA_KV_KEY)) } } : {}),
     applyModelsUpdate: (update) => {
       // task-34：拍边界一次性替换内存价目表/角色路由；在途 worker 不停；adapter model
       // 声明刷新归 serve 层（DshAdapter.setModel——in-flight 用 launch 捕获值不串档）

@@ -37,6 +37,7 @@ import type {
   WorkTransitionHost,
 } from '../work/transition.ts'
 import { revokeWorkerKey } from '../worker-key.ts'
+import { claimProbeFor, noteQuotaHold, quotaGateVerdict } from '../routing/quota-gate.ts'
 import type { ResumeDispatchPlan } from '../intents/relay-resume.ts'
 import { effectiveStallAfterMs, livenessOfActivity, probeInflightActivity, recordLiveness } from '../watchdog/liveness.ts'
 import type { TickReport } from '../tick-report/types.ts'
@@ -286,6 +287,18 @@ export async function stateDiffPhase(
       if (decision.reboundSuppressed) {
         decisions.push({ ticket, intentKey, code: 'WAIT_APPROVAL', actionType: 'noop', state: issue.state })
         continue
+      }
+      // task-157 供给级配额门控（docs/quality/supply-quota-gating.md §2.3/§2.4）：dispatch 决策后、占泳道前——
+      // 同池窗口未到=hold（daemon 本地码，不占泳道/不计动作/不烧 attempt；阻塞期 ESCALATE 逐池一条）；
+      // 恢复期首单认领探针放行（claimed 计一次变体）；路由面未开/拿不准=不拦，交 execute 级兜底。
+      if (action.type === 'dispatch') {
+        const quotaGate = quotaGateVerdict(rt, ticket, issue, personId, relayResume.planOf(ticket), index, startedAt)
+        if (quotaGate?.hold !== undefined) {
+          decisions.push({ ticket, intentKey, code: 'HOLD_QUOTA_WAIT', actionType: 'hold', state: issue.state, quota: quotaGate.hold })
+          ctx.mutations += noteQuotaHold(rt, issue, quotaGate.hold, index.attemptOf(ticket), tickEvents)
+          continue
+        }
+        if (quotaGate?.claimed === true) ctx.mutations += claimProbeFor(rt, ticket, startedAt, quotaGate.claimPool) ? 1 : 0
       }
       // 泳道 hold 观测载荷（studio-dev-713）：HOLD_LANE_BUSY 决策附 lane/holder/expiresAt，
       // 供 render/tick.ts 落「唯一观测面」行（hold 无台账事件；签名去重防刷屏）。

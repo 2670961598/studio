@@ -147,3 +147,42 @@ export function noopAggregatedLinesOf(report: TickReport, seen: Map<string, stri
   )
   return lines
 }
+
+/**
+ * HOLD_QUOTA_WAIT 观测行（task-157 / FIX-03；docs/quality/supply-quota-gating.md §3）。
+ *
+ * 背景：2026-11-26 GLM 周额度耗尽，同池源被逐个派发再 429（16 次 CIRCUIT_BREAK）。供给级配额
+ * hold 在决策级拦（不占泳道/不烧 attempt），阻塞期只在首见落一条 ESCALATE——其后每拍静默；
+ * 故每拍为每个 hold 决策落一行（池/窗口/reset/到期/在途探针票），**按签名去重**防刷屏
+ * （同 holdLaneBusyLinesOf 范式）。
+ */
+export function renderHoldQuota(seq: number, entry: TickDecisionEntry): string {
+  const quota = entry.quota
+  const iso = (ms: number | undefined): string => (ms === undefined ? '-' : new Date(ms).toISOString())
+  const face =
+    quota === undefined
+      ? 'tier=- provider=- quotaWindow=-'
+      : `tier=${quota.tier} provider=${quota.provider} quotaWindow=${quota.window} resetAt=${iso(quota.resetAt)} blockedUntil=${iso(quota.blockedUntil)}` +
+        `${quota.probeTicket !== undefined ? ` probe=${quota.probeTicket}` : ''} sources=${quota.sources.join(',')}`
+  return `[serve] tick#${String(seq)} hold：${entry.ticket} code=HOLD_QUOTA_WAIT ${face}（hold 无台账事件；此行=唯一逐拍观测面，签名去重）`
+}
+
+/** 一拍供给级配额 hold 观测行（签名=provider|window|resetAt|blockedUntil|probeTicket；决策集消失即清 seen） */
+export function holdQuotaLinesOf(report: TickReport, seen: Map<string, string>): string[] {
+  const current = new Map<string, string>()
+  const lines: string[] = []
+  for (const entry of report.phases.stateDiff.decisions) {
+    if (entry.actionType !== 'hold' || entry.code !== 'HOLD_QUOTA_WAIT') continue
+    const quota = entry.quota
+    const signature = quota === undefined
+      ? 'n/a'
+      : `${quota.provider}|${quota.window}|${String(quota.resetAt ?? '')}|${String(quota.blockedUntil)}|${quota.probeTicket ?? ''}`
+    current.set(entry.ticket, signature)
+    if (seen.get(entry.ticket) !== signature) lines.push(renderHoldQuota(report.seq, entry))
+  }
+  for (const ticket of [...seen.keys()]) {
+    if (!current.has(ticket)) seen.delete(ticket)
+  }
+  for (const [ticket, signature] of current) seen.set(ticket, signature)
+  return lines
+}

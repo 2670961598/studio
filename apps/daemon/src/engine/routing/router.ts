@@ -6,11 +6,32 @@
  * （冷却/熔断）+ **预算预检**；失败分类/冷却/half-open 状态由调用方持久化 daemon_kv。
  * 设计口径：预算不足默认 HOLD（不静默升贵源、不擅自降档）；400/拒答不换源；全部不可用
  * fail-closed 可读原因。审计事件由调用方复用既有事件词（本件不落账）。
+ * task-157（docs/quality/supply-quota-gating.md §1/§2.5）：失败分类委托 core `classifySupplyError`
+ * （显式分类表替字符串启发式；`classifyFailure` 为薄包装）；选择面按供给级配额池
+ * （`SelectInput.quota`）跳过同池源并记因；池状态机/认领生命周期在 routing/quota-gate.ts。
  */
+import { classifySupplyError, quotaBlockOf, quotaPoolKeyOf, quotaPoolVerdict, type ErrorClassification, type ErrorKind, type SupplyQuotaState } from '@studio-next/core'
 import type { ModelSourceSpec, TierId } from '@studio-next/core'
 import type { PriceEntry, TokenCounts } from '@studio-next/contract'
 
-export type FailureClass = 'quota' | 'rate_limit' | 'server' | 'timeout' | 'network' | 'auth' | 'parse' | 'bad_request' | 'refusal'
+export type FailureClass = 'quota' | 'rate_limit' | 'server' | 'timeout' | 'network' | 'auth' | 'config' | 'parse' | 'bad_request' | 'refusal'
+
+/** core ErrorKind → 路由 FailureClass（overload=5xx 族走 server 冷却档；worker_dead/quality 只在收割面） */
+const FAILURE_CLASS_OF: Readonly<Record<ErrorKind, FailureClass>> = {
+  auth: 'auth',
+  quota: 'quota',
+  rate_limit: 'rate_limit',
+  overload: 'server',
+  server: 'server',
+  timeout: 'timeout',
+  network: 'network',
+  config: 'config',
+  parse: 'parse',
+  bad_request: 'bad_request',
+  refusal: 'refusal',
+  worker_dead: 'server',
+  quality: 'server',
+}
 
 export interface SourceRuntimeState {
   consecutiveFailures: number
@@ -40,6 +61,10 @@ export interface SelectInput {
   /** 估算 token（与 budget-gate 同源；缺省按任务书保守估算由调用方给） */
   readonly tokens: TokenCounts
   readonly budget?: BudgetContext
+  /** 供给级配额池（task-157；docs/quality/supply-quota-gating.md §2.5）：缺省=不门控（现行为） */
+  readonly quota?: SupplyQuotaState
+  /** 本单持有的探针认领票（恢复期单探针：持票放行 probe-mine，他单 skip 记 quota-probe-pending） */
+  readonly probeTicket?: string
 }
 
 export type SelectOutcome =
@@ -144,7 +169,9 @@ function cooldownFor(source: ModelSourceSpec, failures: number, cls: FailureClas
  *   不静默跳到更贵/更便宜源；`allowBudgetDowngrade=true` 才继续尝试后续源，
  *   且**全源均因预算被跳过时收尾仍判 BUDGET_EXCEEDED**（§5「true 且全源超帽 → 仍 HOLD」
  *   ——不冒认 ALL_SOURCES_UNAVAILABLE；混合原因=冷却/额度耗尽+超帽除外）；
- * - 冷却到期源以 half-open 候选参与一次（由调用方在成功/失败后 record）。
+ * - 冷却到期源以 half-open 候选参与一次（由调用方在成功/失败后 record）；
+ * - 供给级配额池（task-157 §2.5）：源 provider 所在池窗口未到 → 跳过记 `quota-window`；
+ *   恢复期仅持票探针放行（他单记 `quota-probe-pending`）。
  */
 export function selectModelSource(input: SelectInput): SelectOutcome {
   const enabled = input.sources
@@ -165,6 +192,11 @@ export function selectModelSource(input: SelectInput): SelectOutcome {
     const st = stateOf(input.state, source.id)
     if (st.cooldownUntil > input.now) {
       skipped.push(`${source.id}:cooldown(until=${String(st.cooldownUntil)})`)
+      continue
+    }
+    const quotaSkip = quotaSkipOf(input, source)
+    if (quotaSkip !== undefined) {
+      skipped.push(quotaSkip)
       continue
     }
     const quotaRemaining = quotaRemainingOf(source, input.now)
@@ -201,64 +233,55 @@ export function selectModelSource(input: SelectInput): SelectOutcome {
 
 /** 失败分类映射冷却（429/额度优先用 retryAfter；400/拒答不产生冷却，用于“不换源”） */
 export function isFailoverClass(cls: FailureClass): boolean {
-  return cls === 'quota' || cls === 'rate_limit' || cls === 'server' || cls === 'timeout' || cls === 'network' || cls === 'parse' || cls === 'auth'
+  return cls === 'quota' || cls === 'rate_limit' || cls === 'server' || cls === 'timeout' || cls === 'network' || cls === 'parse' || cls === 'auth' || cls === 'config'
 }
 
-/** 网络类错误码（优先于 status/message；ECONNREFUSED 不得命中 refusal 正则） */
-const NETWORK_CODES: ReadonlySet<string> = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ECONNRESET', 'ENETUNREACH', 'ETIMEDOUT', 'EHOSTUNREACH', 'EPIPE'])
-
-/**
- * 失败分类（task-57 F1）：先 code（网络类），再 status（408→timeout、429→quota、
- * 401/403→auth、5xx→server、其余 4xx→bad_request），最后 message 关键词（收紧 refusal）。
- */
-export function classifyFailure(err: unknown): FailureClass {
-  if (typeof err === 'object' && err !== null) {
-    const e = err as { status?: unknown; code?: unknown; name?: unknown; message?: unknown }
-    const code = typeof e.code === 'string' ? e.code.toUpperCase() : undefined
-    if (code !== undefined && NETWORK_CODES.has(code)) return 'network'
-    const status = typeof e.status === 'number' ? e.status : undefined
-    if (status === 408) return 'timeout'
-    if (status === 429) return 'quota'
-    if (status === 401 || status === 403) return 'auth'
-    if (status !== undefined && status >= 500) return 'server'
-    if (status !== undefined && status >= 400) {
-      const msg400 = String(e.message ?? '')
-      if (/\b(refus(?:ed|al)|safety|安全拒答|内容审核|blocked by safety)\b/i.test(msg400)) return 'refusal'
-      return 'bad_request'
-    }
-    const msg = String(e.message ?? '')
-    if (/\b(quota|allowance|exhausted|rate limit|429)\b/i.test(msg) || /额度|配额/.test(msg)) return 'quota'
-    if (/\b(timeout|timed out)\b|ETIMEDOUT/i.test(msg) || e.name === 'TimeoutError') return 'timeout'
-    // 收紧 refusal：只认“refused/refusal/safety”，不认 ECONNREFUSED（code 已先判 network）
-    if (/\b(refus(?:ed|al)|safety)\b|安全拒答|内容审核/i.test(msg)) return 'refusal'
-    if (/\b(parse|JSON)\b/i.test(msg)) return 'parse'
+/** 供给级配额池跳过记因（未配池=open 不跳过；形状见 docs/quality/supply-quota-gating.md §2.5） */
+function quotaSkipOf(input: SelectInput, source: ModelSourceSpec): string | undefined {
+  if (input.quota === undefined) return undefined
+  const pool = quotaPoolKeyOf(source.provider)
+  const verdict = quotaPoolVerdict(input.quota, pool, input.probeTicket ?? '', input.now)
+  if (verdict === 'blocked') {
+    const block = quotaBlockOf(input.quota, pool, input.now)
+    if (block === undefined) return undefined
+    const resetAt = block.resetAt !== undefined ? `;resetAt=${new Date(block.resetAt).toISOString()}` : ''
+    return `${source.id}:quota-window(window=${block.window}${resetAt};until=${new Date(block.blockedUntil).toISOString()})`
   }
-  return 'server'
+  // probe-other：恢复期已有他单探针在途 → 跳过；open/probe-mine 放行；probe-claimable → 放行，认领在
+  // 决策级门控或派发即认领（quota-gate `quotaProbeNote`，同一 core 转移 claimQuotaProbe）二处之一成立
+  return verdict === 'probe-other' ? `${source.id}:quota-probe-pending(ticket=${input.quota.pools[pool]?.probe?.ticket ?? 'n/a'})` : undefined
 }
 
-const classFrom = classifyFailure
+/** 失败分类（task-57 F1；task-157 起为 core `classifySupplyError` 的薄包装——显式分类表见 docs/quality/supply-quota-gating.md §1.1） */
+export function classifyFailure(err: unknown): FailureClass {
+  return FAILURE_CLASS_OF[classifySupplyError(err, 0).kind]
+}
 
-/** 失败登记：返回**新**状态（不原地改）；400/拒答不冷却且不触发换源（调用方按 isFailoverClass 判断） */
-export function recordSourceFailure(state: RoutingState, source: ModelSourceSpec, err: unknown, now: number, retryAfterMs?: number): { state: RoutingState; class: FailureClass; cooldownMs: number } {
-  const cls = classFrom(err)
+/** 失败登记：返回**新**状态（不原地改）；400/拒答不冷却且不触发换源（调用方按 isFailoverClass 判断）。
+ *  返回 `cls`=core 全量分类（kind/retryability/quotaWindow/resetAt/providerCode/evidence——审计段与池登记用，task-157） */
+export function recordSourceFailure(state: RoutingState, source: ModelSourceSpec, err: unknown, now: number, retryAfterMs?: number): { state: RoutingState; class: FailureClass; cooldownMs: number; cls: ErrorClassification } {
+  const cls = classifySupplyError(err, now)
+  const failureClass = FAILURE_CLASS_OF[cls.kind]
   const prev = stateOf(state, source.id)
-  if (!isFailoverClass(cls)) {
-    return { state: { ...state, [source.id]: { ...prev, lastFailureClass: cls, lastFailureAt: now } }, class: cls, cooldownMs: 0 }
+  if (!isFailoverClass(failureClass)) {
+    return { state: { ...state, [source.id]: { ...prev, lastFailureClass: failureClass, lastFailureAt: now } }, class: failureClass, cooldownMs: 0, cls }
   }
   const failures = prev.consecutiveFailures + 1
   const circuitAfter = source.cooldown?.circuitAfter ?? DEFAULT_CIRCUIT_AFTER
-  const baseCooldown = cooldownFor(source, failures, cls)
-  const cooldownMax = source.cooldown?.maxMs ?? defaultCooldownFor(cls).maxMs
-  const cooldownMs = cls === 'quota' && retryAfterMs !== undefined ? Math.min(cooldownMax, retryAfterMs) : baseCooldown
+  const baseCooldown = cooldownFor(source, failures, failureClass)
+  const cooldownMax = source.cooldown?.maxMs ?? defaultCooldownFor(failureClass).maxMs
+  // Retry-After/reset 可缩短（task-157：显式 retryAfterMs 优先，其次分类解析出的 resetAt）
+  const retryAfter = retryAfterMs ?? (cls.resetAt !== undefined ? cls.resetAt - now : undefined)
+  const cooldownMs = (failureClass === 'quota' || failureClass === 'rate_limit') && retryAfter !== undefined ? Math.min(cooldownMax, retryAfter) : baseCooldown
   const next: SourceRuntimeState = {
     consecutiveFailures: failures,
     cooldownUntil: now + cooldownMs,
-    lastFailureClass: cls,
+    lastFailureClass: failureClass,
     lastFailureAt: now,
     halfOpen: failures >= circuitAfter,
     ...(prev.lastSuccessAt !== undefined ? { lastSuccessAt: prev.lastSuccessAt } : {}),
   }
-  return { state: { ...state, [source.id]: next }, class: cls, cooldownMs }
+  return { state: { ...state, [source.id]: next }, class: failureClass, cooldownMs, cls }
 }
 
 /** 成功登记：清零失败/冷却（half-open 成功即恢复） */
