@@ -23,7 +23,7 @@
  * 129-E 上移后的既有口径）；返回只读视图不复制数组；不读时钟（时点经 `seq`/锚点传入）。
  */
 import type { IssueRecord, InvokeIntent, TicketId } from '@studio-next/contract'
-import { flowAnchors, type StateFlow } from '@studio-next/core'
+import { flowAnchors, isArchivedState, type StateFlow } from '@studio-next/core'
 
 /** 一张单在决策候选中携带的意图（引擎内部 kind='ticket'——活动/镜像/意图三源同形） */
 export interface WorkIntentCandidate {
@@ -76,6 +76,9 @@ export function acceptRevivals(deps: RevivalDeps): RevivalAcceptance {
     if (flow === undefined) continue // 等级未登记流：终态锚点不可知，不复活
     const delivered = flowAnchors(flow).delivered
     if (issue.state === delivered) continue // 仍在终态=未复活（仅评论不触发）
+    // FIX-04 ③（docs/quality/idempotent-closeout.md §3）：归档=平台终态面——Archived 单不释放闭集、
+    // 不落 RESUME、不重进决策（复活语义=「离开流终态回到流内」，归档不在其列）
+    if (isArchivedState(issue.state)) continue
     deps.emit(
       issue,
       deps.attemptOf(ticket),
@@ -147,11 +150,11 @@ export function collectWorkIntents(deps: WorkIntakeDeps): WorkIntakeResult {
   if (rescanEvery > 0 && deps.seq % rescanEvery === 0) {
     for (const issue of [...deps.issues].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
       if (deps.closed.has(issue.id) || candidateSeen.has(issue.id)) continue
-      // studio-dev-884（P2 观测治理）：Archived 单**永不进 flow 状态集**（任何 flow 都无该态，
-      // decide 恒 NOOP_UNKNOWN_STATE——每拍 ~135 决策/日志、无任何可执行语义）。平台归档态
+      // studio-dev-884（P2 观测治理）：Archived 单**永不进 flow 状态集**（任何 flow 都无该态；
+      // FIX-04 ③ 起 decide 判 NOOP_ARCHIVED——归档终态，无执行语义）。平台归档态
       // 亦无 dispatch/transition 面；取消归档/改状态时的活动增量仍走 ① 活动驱动补回，状态漂移
       // 由 statusSetPatrol 覆盖。故 rescan 跳过 Archived（不动 collect/state-diff 其他语义）。
-      if (issue.state === 'Archived') continue
+      if (isArchivedState(issue.state)) continue
       deps.candidates.push({
         ticket: issue.id,
         intent: { kind: 'ticket', company: deps.company, ticket: issue.id, source: `mirror:${issue.updated}`, priority: 0 }, // 应急修(2026-11-02): 加 updated 使回滚后键变→可重派(P0#417)

@@ -551,3 +551,23 @@ describe('解析序与保留词（docs/18-§2.1.1 冻结）', () => {
     expect(out.action).toMatchObject({ type: 'noop', code: 'NOOP_UNKNOWN_STATE' })
   })
 })
+
+// FIX-04 ③（task-158；docs/quality/idempotent-closeout.md §3；docs/quality/reviews/2026-11-28 00-overall-review §2.1 P0-04）
+describe('Archived=可识别终态（归档；非未知态）', () => {
+  it('Archived → noop NOOP_ARCHIVED（不再判 NOOP_UNKNOWN_STATE）；大小写不敏感', () => {
+    expect(decide(makeInput({ issue: makeIssue({ state: 'Archived' }) })).action).toMatchObject({ type: 'noop', code: 'NOOP_ARCHIVED' })
+    expect(decide(makeInput({ issue: makeIssue({ state: 'archived' }) })).action).toMatchObject({ type: 'noop', code: 'NOOP_ARCHIVED' })
+  })
+
+  it('判定序：归档先于状态集成员校验与停摆判定——类型流/公司覆盖流同判；陈旧 updated 不触发停摆告警', () => {
+    const stale = makeIssue({ state: 'Archived', updated: '2020-01-01T00:00:00.000Z' })
+    expect(decide(makeInput({ flows: TYPE_FLOWS, issue: makeIssue({ state: 'Archived', type: 'spike', level: 0 }) })).action).toMatchObject({ type: 'noop', code: 'NOOP_ARCHIVED' })
+    expect(decide(makeInput({ issue: stale })).action).toMatchObject({ type: 'noop', code: 'NOOP_ARCHIVED' })
+    const custom = { L0: { mainline: ['Open', 'Running', 'Archived', 'Done'], anchors: { ...DEFAULT_FLOW_ANCHORS, fresh: 'Open', dispatched: 'Running', delivered: 'Done' } } }
+    expect(decide(makeInput({ flows: custom, issue: makeIssue({ state: 'Archived' }) })).action).toMatchObject({ type: 'noop', code: 'NOOP_ARCHIVED' })
+  })
+
+  it('流表状态集内的自定义态仍判 NOOP_UNKNOWN_STATE（归档吸收不扩大到其它未知态）', () => {
+    expect(decide(makeInput({ issue: makeIssue({ state: '制作人拖单态' }) })).action).toMatchObject({ type: 'noop', code: 'NOOP_UNKNOWN_STATE' })
+  })
+})

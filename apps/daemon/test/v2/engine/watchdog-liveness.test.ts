@@ -272,6 +272,9 @@ describe('A 面 kill 前活性复核（studio-dev-505）', () => {
       probeActivity: () => ({ lastActivityAt: 9_500, source: 'session-mtime', pidAlive: true, detail: 'sessionMtime=fresh' }),
       effectiveStallAfterMs: () => 5_000,
       reportProblem: () => undefined,
+      // FIX-04 ①：收口认领表（响置体直测=独立表；在册誓号=在途条目 attempt）
+      attemptCloseouts: new Map(),
+      closeoutAttemptOf: (_ticket, entry) => entry?.attempt ?? 0,
     }
     const action = {
       type: 'stall_alarm' as const,

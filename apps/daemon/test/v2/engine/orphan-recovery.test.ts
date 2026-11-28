@@ -77,6 +77,7 @@ describe('838 stale 拒收后的单票兜底（recoverStaleTicket）', () => {
       platform,
       lanes,
       inflight,
+      attemptCloseouts: new Map(), // FIX-04 ①：收口认领表（rt 必备字段）
       flowOf: (): StateFlow => ({}) as StateFlow,
       transitionHostOf: () => ({
         platform,
@@ -144,6 +145,7 @@ describe('838 F1：hosts 先判 inflight 再删（新 epoch 接管不被旧完�
       lanes,
       mergeLeases: undefined,
       inflight,
+      attemptCloseouts: new Map(), // FIX-04 ①：收口认领表（rt 必备字段）
       flowOf: (): StateFlow => ({}) as StateFlow,
       transitionHostOf: () => ({
         platform,
@@ -234,6 +236,7 @@ function multiRt(issues: IssueRecord[], opts: { laneHolder?: string } = {}) {
     platform,
     lanes,
     inflight: new Map(),
+    attemptCloseouts: new Map(), // FIX-04 ①：收口认领表（rt 必备字段）
     flowOf: (): StateFlow => ({}) as StateFlow,
     transitionHostOf: () => ({
       platform,

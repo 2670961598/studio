@@ -26,6 +26,10 @@
  *     工人已确定性消亡（台账终态、无在途句柄），不再等 60min 陈旧锚——阈值与告警计数
  *     不适用（nth 仅作留痕），收口语义仍守「接管≠收割」边界。
  * 未达阈/刀关/本拍刚派发=只叫（STALL 告警照落，零处置）。
+ * FIX-04 ①（task-158；docs/quality/idempotent-closeout.md §1）：两面回退一律经 recovery/closeout.ts
+ * 幂等键——认领先于 kill 等首个 await；同 attempt 的收割失败面/孤儿扫描/stale 兜底已生效 →
+ * duplicate 不迁移、不落收口事件、不连击（簿记 teardown 照做，动作结果 skipped 明报）；B 面另加
+ * 「仍=已派发」现读门（同拍收割成功单不得被看门狗回滚）。
  */
 import type { EventRecord, IssueRecord, TicketId } from '@studio-next/contract'
 import { classifyHarvestFailure, errorKindNote, flowAnchors, type Action, type StateFlow } from '@studio-next/core'
@@ -36,11 +40,12 @@ import type { EngineConfig, Inflight } from '../tick/types.ts'
 import type { TickActionResult } from '../tick-report/types.ts'
 import type { EventIndex } from '../sentinel/events-index.ts'
 import { STALL_KILL_CLOSE_ANCHOR, STALL_RENEW_ANCHOR } from '../sentinel/events-index.ts'
-import { applyWorkTransition, type WorkTransitionHost } from '../work/transition.ts'
+import { applyWorkTransition, type WorkTransitionHost, type WorkTransitionOrder } from '../work/transition.ts'
 import { removeInstructions } from '../instructions-store.ts'
 import { closeSessionArchive } from '../sessions/archive.ts'
 import type { InflightActivity } from './liveness.ts'
 import { releaseTicketLane } from '../lanes/release.ts'
+import { claimAttemptCloseout, closeoutAnchored, closeoutSkipNote, releaseAttemptCloseout, settleAttemptCloseout, type AttemptCloseoutRegistry } from '../recovery/closeout.ts'
 
 /** 响置宿主（引擎闭包注入；本件不持有可变全局态） */
 export interface StallResponseHost {
@@ -69,6 +74,21 @@ export interface StallResponseHost {
   readonly effectiveStallAfterMs: (executor: string | undefined) => number
   /** 问题明报（会话归档收口缺失/写失败进 tick errors；不静默吞） */
   readonly reportProblem: (message: string) => void
+  /** attempt 收口认领表（FIX-04 ①；= rt.attemptCloseouts，与收割失败面/孤儿扫描同表） */
+  readonly attemptCloseouts: AttemptCloseoutRegistry
+  /** 在册誓号求值（收口键第二槽：在途条目 → 最新工时行 → 0） */
+  readonly closeoutAttemptOf: (ticket: TicketId, entry?: { readonly attempt: number }) => number
+}
+
+/** 回退迁移单（有流=回首批位；等级未登记流=无迁移面只落事件——两种合法形态同出处） */
+function rollbackOrder(
+  ticket: TicketId,
+  attempt: number,
+  fresh: IssueRecord,
+  toState: string | undefined,
+  event: { readonly name: EventRecord['event']; readonly extra: { readonly note: string } },
+): WorkTransitionOrder {
+  return toState !== undefined ? { ticket, attempt, toState, event } : { ticket, attempt, carrier: fresh, event }
 }
 
 /** 执行一条 stall_alarm 动作（咬合/只叫/续租三态） */
@@ -118,6 +138,10 @@ export async function executeStallResponse(
   // —— 咬合（达阈 / B 面即时） ——
   const flow = host.flowOf(fresh)
   const freshAnchor = flow !== undefined ? flowAnchors(flow).fresh : undefined
+  const dispatched = flow !== undefined ? flowAnchors(flow).dispatched : undefined
+  // FIX-04 ①（docs/quality/idempotent-closeout.md §1）：收口认领位于各面首个 await 之前（同步即
+  // 原子）——同 attempt 的收割失败面/孤儿扫描/stale 兜底与本面只生效一次（LOCAL-437/442 双
+  // 「新单」病根：各凭快照直写）。续租面/epoch 陈旧拒收面在认领**之前**返回，不留悬挂认领。
   if (entry !== undefined) {
     const at = host.now()
     // studio-dev-812：stale epoch 预检（809 fence 残余面）——kill/endWorkRecord/迁移前先判
@@ -146,6 +170,8 @@ export async function executeStallResponse(
         detail: `咬合前复核续租（${recheck.source ?? 'probe'}，距now=${at - recheck.lastActivityAt}ms）`,
       }
     }
+    // FIX-04 ①：kill 面收口认领（续租/拒收面已在前文返回——此处才是真咬合）
+    const claim = claimAttemptCloseout(host.attemptCloseouts, ticket, host.closeoutAttemptOf(ticket, entry), 'stall-kill')
     // ② 进程已退出＝无可杀（不冒认杀死）；③ 复核不过＝整树杀（await=等死——与 dispose()/stop 同链）
     let killNote: string
     if (recheck.pidAlive === false) {
@@ -160,15 +186,21 @@ export async function executeStallResponse(
         killNote = `整树杀异常（executor=${entry.executor}：${msg}）——工位仍收口（句柄不可信即不可收割，如实留痕不冒认杀死）`
       }
     }
-    host.ledger.endWorkRecord(entry.workRecordId, { status: 'interrupted', ended_at: host.now() })
-    // 看护面会话同体收口（studio-dev-551）：被杀/消亡会话不留 ended_at=NULL；守护计时进 note 锚
-    const sessionClose = closeSessionArchive(host.ledger, { ticket, at: host.now(), sessionId: entry.handle.sessionId, entry, onProblem: host.reportProblem })
-    inflight.delete(ticket)
-    const stopResult = host.lanes.stop(entry.lane, ticket, entry.laneEpoch) // studio-dev-809/812：stop 闩幂等+epoch 栅栏
-    if (!stopResult.ok && stopResult.reason === 'stale-epoch') {
-      host.reportProblem(
-        `STALL 收口 stop 拒收 ${ticket}@${entry.lane}：epoch 陈旧（epoch=${String(stopResult.epoch)} current=${String(stopResult.currentEpoch)}）——租约未释放，交由 838 恢复/下拍处理`,
-      )
+    let sessionClose: ReturnType<typeof closeSessionArchive>
+    try {
+      host.ledger.endWorkRecord(entry.workRecordId, { status: 'interrupted', ended_at: host.now() })
+      // 看护面会话同体收口（studio-dev-551）：被杀/消亡会话不留 ended_at=NULL；守护计时进 note 锚
+      sessionClose = closeSessionArchive(host.ledger, { ticket, at: host.now(), sessionId: entry.handle.sessionId, entry, onProblem: host.reportProblem })
+      inflight.delete(ticket)
+      const stopResult = host.lanes.stop(entry.lane, ticket, entry.laneEpoch) // studio-dev-809/812：stop 闩幂等+epoch 栅栏
+      if (!stopResult.ok && stopResult.reason === 'stale-epoch') {
+        host.reportProblem(
+          `STALL 收口 stop 拒收 ${ticket}@${entry.lane}：epoch 陈旧（epoch=${String(stopResult.epoch)} current=${String(stopResult.currentEpoch)}）——租约未释放，交由 838 恢复/下拍处理`,
+        )
+      }
+    } catch (err) {
+      if (claim.kind === 'claimed') releaseAttemptCloseout(host.attemptCloseouts, ticket, claim.attempt)
+      throw err
     }
     // 回首批位（迁移与触发记录单一出口＝work/transition.ts）；等级未登记流=无迁移面
     const rollbackNote = freshAnchor ?? '跳过（等级未登记流）'
@@ -176,38 +208,72 @@ export async function executeStallResponse(
       `${silent}${anchorFace}（第 ${nth}/${threshold} 次达阈——咬合）：${killNote}；${STALL_KILL_CLOSE_ANCHOR}（R-B 在途语义：接管≠收割，四要件不可判）；` +
       `rollback=${rollbackNote}；重派=attempt+1 经 rescan 兜底（咬合收口即释放消费键——studio-dev-141 修订：原「activity 键未释放」口径致回退态单 rescan 兜底被 DEDUP_NOOP 压制 3.5h 实证；键释放≠收割结论，GATE_FAIL/预算面不动；预算沿用 adopt 不结算）` +
       `${host.workerKeysEnabled ? '；wkey=env-离场（凭据随被杀子进程终结；重派重签新 key——不吊销 ticket）' : ''}${sessionClose.noteSegment}`
-    await (freshAnchor !== undefined
-      ? applyWorkTransition(host.transitionHostOf(tickEvents), { ticket, attempt: workAttempt, toState: freshAnchor, event: { name: 'STALL', extra: { note: stallNote } } })
-      : applyWorkTransition(host.transitionHostOf(tickEvents), { ticket, attempt: workAttempt, carrier: fresh, event: { name: 'STALL', extra: { note: stallNote } } }))
-    // 断路入账（dispositions：STALL countsTowardBreaker=true）
-    await host.strikeBreaker(
-      ticket,
-      fresh,
-      workAttempt,
-      'stall:watchdog-kill',
-      `STALL 咬合（kill 面）：${silent} 第 ${nth}/${threshold} 次（${killNote}）`,
-      tickEvents,
-    )
+    const verdict = await settleAttemptCloseout({
+      registry: host.attemptCloseouts,
+      claim,
+      write: async (suffix) => {
+        await applyWorkTransition(host.transitionHostOf(tickEvents), rollbackOrder(ticket, workAttempt, fresh, freshAnchor, { name: 'STALL', extra: { note: `${stallNote}${suffix}` } }))
+      },
+    })
+    // 断路入账（dispositions：STALL countsTowardBreaker=true）——仅收口胜出者连击（同 attempt 不重复）
+    if (verdict === 'won') {
+      await host.strikeBreaker(
+        ticket,
+        fresh,
+        workAttempt,
+        'stall:watchdog-kill',
+        `STALL 咬合（kill 面）：${silent} 第 ${nth}/${threshold} 次（${killNote}）`,
+        tickEvents,
+      )
+    } else {
+      host.reportProblem(`STALL 收口（kill 面）${ticket}：${closeoutSkipNote(claim)}`)
+    }
     // bridge 通道指令临时文件：响置收口即删（重派会重写同路径）
     if (entry.instructionsPath !== undefined) removeInstructions(entry.instructionsPath)
-    return { ticket, actionType: action.type, ok: true, detail: `咬合（kill 面）第${nth}/${threshold}次：${killNote}` }
+    return verdict === 'won'
+      ? { ticket, actionType: action.type, ok: true, detail: `咬合（kill 面）第${nth}/${threshold}次：${killNote}` }
+      : { ticket, actionType: action.type, ok: true, skipped: true, detail: `kill 面已处置（${killNote}）；${closeoutSkipNote(claim)}` }
   }
   // B 面：消亡（无可杀）。immediateGone=work_record 终态即时收口面；否则=阈值达阈面。
+  // FIX-04 ①：消亡面收口认领（无在途条目→在册誓号=最新工时行；函数首至今零 await=原子）
+  const claim = claimAttemptCloseout(host.attemptCloseouts, ticket, host.closeoutAttemptOf(ticket), 'stall-worker-dead')
   const reason = immediateGone
     ? 'work_record=interrupted 即时收口（工人确定性消亡，不等阈值/陈旧锚——studio-dev-505）'
     : `第 ${nth}/${threshold} 次达阈——咬合`
   const detail = `WORKER_DEAD：${silent}${anchorFace}（${reason}）且无在途句柄（工人消亡面：2026-10-20 三例 studio-dev-20/25/71 同型）`
   const deadRollback = freshAnchor ?? '跳过（等级未登记流）'
   const deadNote = `${silent}${anchorFace}（${reason}）：无在途句柄（工人消亡面）→ GATE_FAIL 收口；rollback=${deadRollback}；重派=attempt+1（activity 键已释放——活动驱动+rescan 双兜底）`
-  const deadStall = await (freshAnchor !== undefined
-    ? applyWorkTransition(host.transitionHostOf(tickEvents), { ticket, attempt: workAttempt, toState: freshAnchor, event: { name: 'STALL', extra: { note: deadNote } } })
-    : applyWorkTransition(host.transitionHostOf(tickEvents), { ticket, attempt: workAttempt, carrier: fresh, event: { name: 'STALL', extra: { note: deadNote } } }))
-  host.makeEvent('GATE_FAIL', deadStall.issue, workAttempt, tickEvents, {
-    // task-157（supply-quota-gating.md §1.2/§3）：尾段携 errorKind=worker_dead（消亡面无路由源=provider/-）
-    note: `${detail};rollback=${deadRollback}${host.workerKeysEnabled ? ';wkey=env-离场（无活进程；重派重签新 credentials）' : ''}${errorKindNote(classifyHarvestFailure({ detail, now: host.now() }))}`,
+  // FIX-04 ①：现读门——函数首已取 fresh 且其间零 await；平台态已非已派发（本拍收割失败面已回滚/
+  // 收割成功已迁证据就绪/孤儿扫描已回退）→ 幂等跳过，不回滚、不落 WORKER_DEAD、不连击
+  const verdict = await settleAttemptCloseout({
+    registry: host.attemptCloseouts,
+    claim,
+    ...(dispatched !== undefined ? { read: async () => fresh, expectedState: dispatched } : {}),
+    write: async (suffix) => {
+      const deadStall = await applyWorkTransition(host.transitionHostOf(tickEvents), rollbackOrder(ticket, workAttempt, fresh, freshAnchor, { name: 'STALL', extra: { note: `${deadNote}${suffix}` } }))
+      host.makeEvent('GATE_FAIL', deadStall.issue, workAttempt, tickEvents, {
+        // task-157（supply-quota-gating.md §1.2/§3）：尾段携 errorKind=worker_dead（消亡面无路由源=provider/-）
+        note: closeoutAnchored(`${detail};rollback=${deadRollback}${host.workerKeysEnabled ? ';wkey=env-离场（无活进程；重派重签新 credentials）' : ''}${errorKindNote(classifyHarvestFailure({ detail, now: host.now() }))}`, suffix),
+      })
+    },
   })
-  // 遗留 running 工位收口（进程内正常链路不产生 running 无 inflight——此面来自 dispose 后
-  // 继续推拍等；R-B 启动接管已收口过的查无即跳过。判定面收口=failed，与 failHarvest 同款）
+  // 消亡面簿记 teardown（胜出/幂等跳过同款——本就幂等）：遗留 running 工位/会话归档收口 + lane 释放
+  settleDeadBookkeeping(host, ticket, fresh)
+  if (verdict !== 'won') {
+    return { ticket, actionType: action.type, ok: true, skipped: true, detail: closeoutSkipNote(claim) }
+  }
+  // 断路入账（dispositions：STALL countsTowardBreaker=true）——仅收口胜出者连击（同 attempt 不重复）
+  await host.strikeBreaker(ticket, fresh, workAttempt, 'stall:worker-dead', detail, tickEvents)
+  return { ticket, actionType: action.type, ok: true, detail: `咬合（消亡面）第${nth}/${threshold}次：GATE_FAIL WORKER_DEAD 收口` }
+}
+
+/**
+ * 消亡面簿记：遗留 running 工位收口（进程内正常链路不产生 running 无 inflight——此面来自
+ * dispose 后继续推拍等；R-B 启动接管已收口过的查无即跳过。判定面收口=failed，与 failHarvest
+ * 同款）＋ studio-dev-812：消亡面（无 inflight）统一规则——仅 holder===ticket 用 state.epoch，
+ * 否则跳过（他单持有/无租约=幂等零行为）；结果 stale 时审计（不误放）。
+ */
+function settleDeadBookkeeping(host: StallResponseHost, ticket: TicketId, fresh: IssueRecord): void {
   for (const rec of host.ledger.listWorkRecords({ issue: ticket })) {
     if (rec.status === 'running') {
       host.ledger.endWorkRecord(rec.id, { status: 'failed', ended_at: host.now() })
@@ -216,14 +282,10 @@ export async function executeStallResponse(
       }
     }
   }
-  // studio-dev-812：消亡面（无 inflight）统一规则——仅 holder===ticket 用 state.epoch，
-  // 否则跳过（他单持有/无租约=幂等零行为）；结果 stale 时审计（不误放）。
-  const bStop = releaseTicketLane(host.lanes, inflight, ticket, fresh.lane ?? config.defaultLane)
+  const bStop = releaseTicketLane(host.lanes, host.inflight, ticket, fresh.lane ?? host.config.defaultLane)
   if (bStop !== undefined && !bStop.ok && bStop.reason === 'stale-epoch') {
     host.reportProblem(
-      `STALL 消亡面 stop 拒收 ${ticket}@${String(fresh.lane ?? config.defaultLane)}：epoch 陈旧（epoch=${String(bStop.epoch)} current=${String(bStop.currentEpoch)}）`,
+      `STALL 消亡面 stop 拒收 ${ticket}@${String(fresh.lane ?? host.config.defaultLane)}：epoch 陈旧（epoch=${String(bStop.epoch)} current=${String(bStop.currentEpoch)}）`,
     )
   }
-  await host.strikeBreaker(ticket, fresh, workAttempt, 'stall:worker-dead', detail, tickEvents)
-  return { ticket, actionType: action.type, ok: true, detail: `咬合（消亡面）第${nth}/${threshold}次：GATE_FAIL WORKER_DEAD 收口` }
 }

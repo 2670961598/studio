@@ -10,6 +10,10 @@
  *
  * docs/17-§6 末 收割成功契约四要件：终态事件 completed + 输出非空 + REPORT 落盘 + 闸门
  * exit=0——前两要件由引擎消费 adapter.stream() 判定，后两要件由可注入 gateRunner 执行。
+ *
+ * task-158 / FIX-04（docs/quality/idempotent-closeout.md）：②已有证据原位复验——判定体在
+ * harvest/reverify.ts（仅缺终态自述且真验收闸复跑绿 → 补终态，零模型调用；本件只接线）；
+ * ①失败面回退经 recovery/closeout.ts 幂等键（同 attempt 只回退一次、只连击一次）。
  */
 import type { EventRecord, ExecutorAdapter } from '@studio-next/contract'
 import { classifyHarvestFailure, errorKindNote, flowAnchors, onSuccess } from '@studio-next/core'
@@ -36,6 +40,8 @@ import type { Inflight } from '../tick/types.ts'
 import { applyWorkTransition } from '../work/transition.ts'
 import { recordSourceSuccess, serializeRoutingState } from '../routing/router.ts'
 import { recordRoutedFailure, resolveRoutedPool, routedProviderOf } from '../routing/quota-gate.ts'
+import { TERMINAL_BACKFILL_GAP, reverifyTerminalByEvidence, terminalBackfillIneligibility, type TerminalBackfill } from './reverify.ts'
+import { claimAttemptCloseout, closeoutAnchored, closeoutSkipNote, releaseAttemptCloseout, settleAttemptCloseout } from '../recovery/closeout.ts'
 
 /** 判定体（原收割后半零改动迁移）：折算态（要件 1/2）→ gateRunner（要件 3/4）→ 收口 */
 export async function finalizeHarvest(
@@ -87,6 +93,19 @@ export async function finalizeHarvest(
     terminalObserved: entry.foldCompleted !== undefined,
     terminalError,
   })
+  // —— FIX-04 ② 已有证据原位复验（docs/quality/idempotent-closeout.md §2）：仅缺「终态自述」而
+  //    其余三要件齐 → 注入的真验收闸独立复跑一次（零模型调用）：过=补终态走成功链，不过=照旧
+  //    GATE_FAIL（detail 尾段留复验结果）。无资格（占位闸门/另有缺项）=backfill=undefined 零行为。——
+  const reverifier = rt.reverifyGate
+  const backfill: TerminalBackfill | undefined =
+    reverifier !== undefined && terminalBackfillIneligibility(requirements, reverifier) === undefined
+      ? await reverifyTerminalByEvidence({
+          reverifier,
+          input: { ticket, attempt: entry.attempt, workspace: entry.workspace, briefPath: entry.briefPath },
+          reportPath: gate.reportPath,
+        })
+      : undefined
+  const passed = requirements.fourOk || backfill?.ok === true
   // —— task-56 多源路由回填：按本次在途单选中的源记录成功/失败（冷却下一 attempt 选下一源）——
   //    task-157（docs/quality/supply-quota-gating.md §2.2/§2.4/§3）：成功=探针放开池；失败=quota 类另记
   //    池阻塞、非 quota 释放本单探针认领；FAILOVER 尾段携 errorKind 审计段。
@@ -119,16 +138,18 @@ export async function finalizeHarvest(
       attempt: entry.attempt,
       personId: entry.personId,
       at: now(),
+      // FIX-04 ②：补终态单自述槽不改写（terminal 仍记 error）——来源另记于 gaps
       terminal: requirements.fourOk ? 'completed' : 'error',
+      ...(backfill?.ok === true ? { gaps: [TERMINAL_BACKFILL_GAP] } : {}),
       ...(entry.workspace !== undefined ? { workspace: entry.workspace } : {}),
       ...(entry.briefPath !== undefined ? { briefRef: entry.briefPath } : {}),
     })
   }
   rt.crash.harvestVerdict() // 崩溃注入③（F3-11）：收割四要件判定后、GATE_PASS 落账前——受控测试缝，默认零行为
   if (flow === undefined) {
-    return failHarvest(rt, entry, tickEvents, 'CONFIG_INVALID：等级未登记状态流（收割去向不可定）', requirements)
+    return failHarvest(rt, entry, tickEvents, 'CONFIG_INVALID：等级未登记状态流（收割去向不可定）', requirements, errors)
   }
-  if (requirements.fourOk) {
+  if (passed) {
     const anchors = flowAnchors(flow)
     const transitioned = await platform.issues.transition(ticket, anchors.evidenceReady)
     // 记录族生产写面·相位 4 收割（docs/17-§2）：证据就绪迁移→REC-WORK-06（前置不齐即拒）
@@ -215,12 +236,16 @@ export async function finalizeHarvest(
       ledger, company: config.company, personId: entry.personId, workRecordId: entry.workRecordId,
       model: stats.model, tokens: stats.tokens, endedAt, makeId, onError: (message) => errors.push(message),
     })
+    // FIX-04 ②：补终态单的 completed 槽明示来源（来源=证据复验；原自述/复验闸留痕 + errorKind 段——供给错不掩）
+    const completedSlot = backfill?.ok === true
+      ? `completed=补终态[来源=证据复验；原自述 completed=false${terminalError !== undefined ? `；error=${terminalError}` : ''}；REPORT size=${String(backfill.reportSize)}；${backfill.note}]${errorKindNote(classifyHarvestFailure({ detail: harvestFailureDetail(requirements, { terminalError, gateNote: gate.note }), terminalError, now: now() }), { provider: routedProviderOf(rt, entry) })}`
+      : 'completed'
     makeEvent('GATE_PASS', transitioned, entry.attempt, tickEvents, {
       tokens: tokenBuckets(stats),
       cost_usd: harvestCost.usd,
       duration_ms: stats.duration,
       // model 留痕走 note 后缀（132-§6.1 单A：events 列集冻结不动——`model=…` 尾缀）
-      note: `四要件齐（completed/非空/REPORT/exit0）；report=${gate.reportPath}${gate.summaryPath !== undefined ? `;summary=${gate.summaryPath}` : ''}${budgetNote}${harvestCost.noteSuffix}${usageNote}${account.noteSuffix}${pricingNote}${account.sidecarSuffix}${sentinelNote}${sessionClose.noteSegment}${stats.model !== undefined ? `;model=${stats.model}` : ''}`,
+      note: `四要件齐（${completedSlot}/非空/REPORT/exit0）；report=${gate.reportPath}${gate.summaryPath !== undefined ? `;summary=${gate.summaryPath}` : ''}${budgetNote}${harvestCost.noteSuffix}${usageNote}${account.noteSuffix}${pricingNote}${account.sidecarSuffix}${sentinelNote}${sessionClose.noteSegment}${stats.model !== undefined ? `;model=${stats.model}` : ''}`,
     })
     // bridge 通道指令临时文件：保留至收割完成→此刻删（v1.5#1 清理策略；内容指纹已在
     // DISPATCH note/payload_hash 落账——证据不依赖文件存活）
@@ -231,17 +256,25 @@ export async function finalizeHarvest(
     lanes.release(entry.lane, ticket, entry.laneEpoch) // studio-dev-809：epoch 栅栏
     return 'completed'
   }
+  // FIX-04 ②：具资格但复验不过——detail 尾段留复验结果（四要件缺项文案不动；无资格单零变化）
   const detail = harvestFailureDetail(requirements, { terminalError, gateNote: gate.note })
-  return failHarvest(rt, entry, tickEvents, detail, requirements)
+    + (backfill !== undefined && !backfill.ok ? `；补终态复验不过（${backfill.reason}）` : '')
+  return failHarvest(rt, entry, tickEvents, detail, requirements, errors)
 }
 
-/** 收割失败面：回滚首批位 + GATE_FAIL 落账 + work_records 收口 failed + 断路连击（熔断开 bug 单） */
+/**
+ * 收割失败面：回滚首批位 + GATE_FAIL 落账 + work_records 收口 failed + 断路连击（熔断开 bug 单）
+ * FIX-04 ①（docs/quality/idempotent-closeout.md §1）：回退与连击经 recovery/closeout.ts 幂等键——
+ * 同 attempt 已由 STALL 面/孤儿扫描/stale 兜底收口 → duplicate：不迁移、不落 GATE_FAIL、不连击，
+ * 明报进拍 errors；本面簿记（工位/会话/泳道释放/指令清理）照做（本就幂等）。
+ */
 export async function failHarvest(
   rt: EngineRuntime,
   entry: Inflight,
   tickEvents: EventRecord[],
   detail: string,
   requirements: HarvestRequirements,
+  errors: string[] = [],
 ): Promise<'completed' | 'failed'> {
   // 逐字迁移的宿主别名（闭包名不变，语义=同一实例/同一绑定）
   const { platform, ledger, workerKeys, inflight, lanes, now } = rt
@@ -252,7 +285,15 @@ export async function failHarvest(
   const strikeBreaker = rt.strikeBreaker
   if (entry.mergeRun !== undefined) return failMergeHarvest(mergeHost, entry, detail, tickEvents) // 202-P2 位别分支：无回滚无断路
   const ticket = entry.ticket
-  const fresh = await platform.issues.get(ticket)
+  // FIX-04 ①：收口认领先于首个 await（同步即原子）——同 attempt 只生效一次；现读抛错释放本方认领
+  const closeout = claimAttemptCloseout(rt.attemptCloseouts, ticket, entry.attempt, 'harvest-fail')
+  let fresh
+  try {
+    fresh = await platform.issues.get(ticket)
+  } catch (err) {
+    if (closeout.kind === 'claimed') releaseAttemptCloseout(rt.attemptCloseouts, ticket, entry.attempt)
+    throw err
+  }
   const flow = flowOf(fresh)
   // worker wkey 撤离（17-§7）：GATE_FAIL 重派=凭据随子进程 env 离场（结构性撤离——
   // 进程终结即离场，无文件面）+重签（一 attempt 一 key，新 TaskBrief 新 credentials）
@@ -262,23 +303,35 @@ export async function failHarvest(
   const wkeyDiscarded = workerKeys !== undefined
   // 断路签名：四要件失败形态（同形态连击才熔断——breaker streak 语义）
   const signature = harvestFailureSignature(requirements)
-  ledger.endWorkRecord(entry.workRecordId, { status: 'failed', ended_at: now(), ...(entry.handle.executorSessionId !== undefined ? { executor_session_id: entry.handle.executorSessionId } : {}) })
-  // 相位 4 收割失败：会话归档同体收口（失败面同样不留 ended_at=NULL；行缺失明报进 GATE_FAIL note）
-  const sessionClose = closeSessionArchive(ledger, { ticket, at: now(), sessionId: entry.handle.sessionId, entry })
-  inflight.delete(ticket)
-  lanes.release(entry.lane, ticket, entry.laneEpoch) // studio-dev-809：epoch 栅栏
+  let sessionClose: ReturnType<typeof closeSessionArchive>
+  try {
+    ledger.endWorkRecord(entry.workRecordId, { status: 'failed', ended_at: now(), ...(entry.handle.executorSessionId !== undefined ? { executor_session_id: entry.handle.executorSessionId } : {}) })
+    // 相位 4 收割失败：会话归档同体收口（失败面同样不留 ended_at=NULL；行缺失明报进 GATE_FAIL note）
+    sessionClose = closeSessionArchive(ledger, { ticket, at: now(), sessionId: entry.handle.sessionId, entry })
+    inflight.delete(ticket)
+    lanes.release(entry.lane, ticket, entry.laneEpoch) // studio-dev-809：epoch 栅栏
+  } catch (err) {
+    if (closeout.kind === 'claimed') releaseAttemptCloseout(rt.attemptCloseouts, ticket, entry.attempt)
+    throw err
+  }
   // 回首批位（DEFAULT_ROLLBACK_EDGES：已派发→新单；断路器停重派语义，breaker.ts 头注）——
   // 迁移与触发记录单一出口＝work/transition.ts（等级未登记流=无迁移面：只落 GATE_FAIL 留痕）
   const rollbackAnchor = flow !== undefined ? flowAnchors(flow).fresh : undefined
   const wkeyNote = wkeyDiscarded ? ';wkey=env-离场（凭据随子进程终结；重派重签新 credentials）' : ''
   // task-157（supply-quota-gating.md §1.2/§3）：GATE_FAIL 尾段携错误分类——四要件/回滚/断路语义不动
-  const gateFailEvent = {
-    name: 'GATE_FAIL' as const,
-    extra: { note: `${detail};rollback=${rollbackAnchor ?? '跳过（等级未登记流）'}${wkeyNote}${sessionClose.noteSegment}${errorKindNote(classifyHarvestFailure({ detail, terminalError: entry.foldTerminalError, now: now() }), { provider: routedProviderOf(rt, entry) })}` },
-  }
-  await (rollbackAnchor !== undefined
-    ? applyWorkTransition(transitionHostOf(tickEvents), { ticket, attempt: entry.attempt, toState: rollbackAnchor, event: gateFailEvent })
-    : applyWorkTransition(transitionHostOf(tickEvents), { ticket, attempt: entry.attempt, carrier: fresh, event: gateFailEvent }))
+  const gateFailNote = `${detail};rollback=${rollbackAnchor ?? '跳过（等级未登记流）'}${wkeyNote}${sessionClose.noteSegment}${errorKindNote(classifyHarvestFailure({ detail, terminalError: entry.foldTerminalError, now: now() }), { provider: routedProviderOf(rt, entry) })}`
+  // FIX-04 ①：迁移+事件经幂等键结算（closeout 锚落 errorKind 尾段之前——task-157 尾锚不动）；同 attempt 已被他方收口=零写
+  const verdict = await settleAttemptCloseout({
+    registry: rt.attemptCloseouts,
+    claim: closeout,
+    write: async (suffix) => {
+      const gateFailEvent = { name: 'GATE_FAIL' as const, extra: { note: closeoutAnchored(gateFailNote, suffix) } }
+      await (rollbackAnchor !== undefined
+        ? applyWorkTransition(transitionHostOf(tickEvents), { ticket, attempt: entry.attempt, toState: rollbackAnchor, event: gateFailEvent })
+        : applyWorkTransition(transitionHostOf(tickEvents), { ticket, attempt: entry.attempt, carrier: fresh, event: gateFailEvent }))
+    },
+  })
+  if (verdict !== 'won') errors.push(`收割失败面 ${ticket}：${closeoutSkipNote(closeout)}`)
   // —— P3-③ 悬空面可见（studio-dev-100 §4.3-1，94 号工况/E10）：缺 REPORT 而工位已有
   //    交付物 → HARVEST_INCOMPLETE 事件——半成品证据（deliverables 清单）进重派/回收
   //    决策视野；**不自动补收、不代写 REPORT**（补收治「写错位」不治「没写」，病根归因
@@ -296,8 +349,8 @@ export async function failHarvest(
     }
   }
   // 断路器：worker 错误入账（同单同签名连击；达阈值熔断→open_bug）——共享件见
-  // strikeBreakerAndMaybeTrip（DEV-44 起 STALL 响置体同链，防双源漂移）
-  await strikeBreaker(ticket, fresh, entry.attempt, signature, detail, tickEvents)
+  // strikeBreakerAndMaybeTrip（DEV-44 起 STALL 响置体同链，防双源漂移）；FIX-04 ①：仅收口胜出者连击
+  if (verdict === 'won') await strikeBreaker(ticket, fresh, entry.attempt, signature, detail, tickEvents)
   // bridge 通道指令临时文件：收割失败面同样「收割完成即删」（回首批位重派会重写）
   if (entry.instructionsPath !== undefined) removeInstructions(entry.instructionsPath)
   return 'failed'

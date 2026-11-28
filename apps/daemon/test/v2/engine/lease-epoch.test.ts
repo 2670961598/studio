@@ -90,6 +90,7 @@ describe('809 迟到完成拒收（harvestHostOf 栅栏）', () => {
       inflight,
       lanes,
       mergeLeases,
+      attemptCloseouts: new Map(), // FIX-04 ①：收口认领表（rt 必备字段）
       harvestBatches: {},
       config: { harvestSliceMs: 1 },
       now: () => 0,
@@ -202,6 +203,8 @@ describe('812 stall-response A 面 stale 预检（kill 前拒收）', () => {
       transitionHostOf: () => ({ platform: { issues: { transition: async () => ({ id: 't-1' }) } }, syncMirror: () => {}, emit: () => ({}) }),
       ledger: { endWorkRecord: () => { ended += 1 } },
       reportProblem: (m: string) => problems.push(m),
+      attemptCloseouts: new Map(), // FIX-04 ①：收口认领表（响置体依赖）
+      closeoutAttemptOf: (_t: string, e?: { attempt: number }) => e?.attempt ?? 0,
       strikeBreaker: async () => { transitioned += 1 },
       now: () => 2_000,
       currentSeq: () => 2,

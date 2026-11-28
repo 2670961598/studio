@@ -31,7 +31,7 @@
  *   - declared 输入缺省=面关（无 fields 文件的部署零行为变化——localfile/fake 不比）
  */
 import type { FieldSchema, IssueRecord, TicketId } from '@studio-next/contract'
-import { DEFAULT_FLOW_TABLE, flowStates, type FlowTable, type StateFlow } from '@studio-next/core'
+import { DEFAULT_FLOW_TABLE, flowStates, isArchivedState, type FlowTable, type StateFlow } from '@studio-next/core'
 
 /** 哨事件落账口（引擎闭包 makeEvent 的窄投影：词表/账面细节留在引擎） */
 export type SentinelEmit = (issue: IssueRecord, attempt: number, note: string) => void
@@ -121,6 +121,8 @@ export async function runDev49Sentinels(deps: Dev49SentinelDeps): Promise<Dev49S
     const flow = deps.flowOf(issue)
     if (flow === undefined) continue // 流不可解析归 NOOP_UNKNOWN_FLOW 观测面（哨只管流外态）
     if (flowStates(flow).includes(issue.state)) continue
+    // FIX-04 ③（docs/quality/idempotent-closeout.md §3）：Archived=平台归档终态，可识别不告警
+    if (isArchivedState(issue.state)) continue
     if (knownForeign.has(issue.state)) {
       if (deps.foreignKnownKeys.has(`${issue.id}|${issue.state}`)) continue
       deps.emitForeignKnown(issue, deps.attemptOf(issue.id), `FOREIGN_KNOWN;state=${issue.state};type=${issue.type ?? '-'};level=${String(issue.level ?? '-')}`)
@@ -148,8 +150,9 @@ export async function runDev49Sentinels(deps: Dev49SentinelDeps): Promise<Dev49S
         for (const s of flowStates(flow)) declared.add(s)
       }
       for (const name of platformStates) {
-        // 127-C：白名单态是「已知外来态」不是漂移——并集吸收（吞不掉未声明新漂移）
-        if (declared.has(name) || knownForeign.has(name) || deps.driftKeys.has(name)) continue
+        // 127-C：白名单态是「已知外来态」不是漂移——并集吸收（吞不掉未声明新漂移）；
+        // FIX-04 ③：Archived=平台归档终态，同入吸收集（不报 UNKNOWN_STATUS）
+        if (declared.has(name) || knownForeign.has(name) || deps.driftKeys.has(name) || isArchivedState(name)) continue
         deps.emit(
           heartbeatSentinelRecord(deps.patrol.heartbeatIssue, deps.patrol.deptFallback, deps.patrol.at),
           1,

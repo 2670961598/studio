@@ -43,6 +43,7 @@ import type { HarvestRecordingPort } from '../harvest/records-port.ts'
 import type { PromptAssembler } from '../prompt-assembly.ts'
 import type { QueueCarry } from '../todoqueue/queue.ts'
 import type { RecordWirePort } from '../records/index.ts'
+import type { AttemptCloseoutRegistry } from '../recovery/closeout.ts'
 import type { RelayWorkSignal } from '../intents/relay-resume-sources.ts'
 import type { RoomDuty } from '../rooms/room-duty.ts'
 import type { SplitDirectiveInput } from '../split/materialize.ts'
@@ -106,6 +107,8 @@ export interface EngineRuntime {
   readonly ledger: Ledger
   readonly registry: ExecutorRegistry
   readonly gateRunner: GateRunner
+  /** 证据复验闸（FIX-04 ②；undefined=无补终态资格——见 EngineDeps.reverifyGate） */
+  readonly reverifyGate: GateRunner | undefined
   readonly config: EngineConfig
   readonly catalog: ModelCatalog | undefined
   /** 验收口径门（task-39）：派发/CLOSE 前读；warned=告警去重集 */
@@ -197,6 +200,8 @@ export interface EngineRuntime {
   readonly lanes: LaneRegistry
   readonly mergeLeases: MergeLeaseRegistry
   readonly harvestBatches: HarvestBatchLedger
+  /** attempt 收口认领表（FIX-04 ①；recovery/closeout.ts——每单至多一条在册项） */
+  readonly attemptCloseouts: AttemptCloseoutRegistry
   /** 收割证据落库端口（REC-EVD-01/02；缺省注入＝纯内存簿，见 harvest/records-port.ts） */
   readonly harvestPort: HarvestRecordingPort
   readonly budgetDeps: BudgetGateDeps

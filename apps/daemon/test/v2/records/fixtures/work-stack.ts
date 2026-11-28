@@ -19,13 +19,13 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createRegistry } from '@studio-next/adapters'
-import type { EventRecord, FlowPlatform, IssueRecord, TicketId } from '@studio-next/contract'
+import type { EventRecord, ExecutorAdapter, FlowPlatform, IssueRecord, TaskBrief, TicketId } from '@studio-next/contract'
 import { openLedger, type Ledger } from '@studio-next/store'
 import { createEngine, ENGINE_CONFIG_DEFAULTS, type Engine, type EngineConfig, type EngineSignatureDraft, type TickReport } from '../../../../src/engine/engine.ts'
 import type { RecordWirePort } from '../../../../src/engine/records/index.ts'
 import type { HarvestRecordSink } from '../../../../src/engine/harvest/records.ts'
 import { createFakeAdapter, createFakePlatform, type FakeAdapterMode } from '../../../../src/engine/fakes.ts'
-import { createDefaultGateRunner } from '../../../../src/engine/gate.ts'
+import { createDefaultGateRunner, type GateRunner } from '../../../../src/engine/gate.ts'
 import { createDefaultAssembler } from '../../../../src/engine/prompt-assembly.ts'
 import { DEMO_SNAPSHOT } from '../../../../src/assembly/demo/demo-snapshot.ts'
 
@@ -44,6 +44,8 @@ export interface WorkTestStack {
   readonly clock: { now(): number; advance(ms: number): void }
   /** 执行体形态开关（函数形态模式：`() => mode.value` 现取——运行期切换） */
   readonly mode: { value: FakeAdapterMode }
+  /** fake 执行体本体（task-158 FIX-04 ① 追加面：测试可直呼 kill 放行驻留流——工人中途消亡注入） */
+  readonly adapter: ExecutorAdapter
 }
 
 /**
@@ -52,7 +54,12 @@ export interface WorkTestStack {
  */
 export type RecordWireFactory = (args: { readonly ledger: Ledger; readonly company: string }) => RecordWirePort
 
-/** 建真栈（一用例一库一目录；overrides 仅测试面按需覆盖引擎配置——缺省=基线零行为） */
+/**
+ * 建真栈（一用例一库一目录；overrides 仅测试面按需覆盖引擎配置——缺省=基线零行为）
+ *
+ * 引擎装配抽成 buildEngine：restartWorkStack（daemon 重启模拟）在同平台/同台账/同时钟上
+ * 重建引擎——两处配置口径唯一。
+ */
 export async function createWorkStack(
   label: string,
   overrides: Partial<EngineConfig> = {},
@@ -61,6 +68,13 @@ export async function createWorkStack(
     readonly signature?: EngineSignatureDraft
     /** 收割证据落库口注入器（studio-dev-536 追加面；缺省不注入＝面关零行为，既有用例不动） */
     readonly harvestRecordsOf?: (ledger: Ledger) => HarvestRecordSink
+    /**
+     * 闸门注入（task-158 FIX-04 ② 追加面）：gateRunner=收割闸；reverifyGate=补终态复验闸
+     * （缺省不注入＝v0 占位闸、无补终态资格——既有用例口径不变）。
+     */
+    readonly gate?: { readonly gateRunner: GateRunner; readonly reverifyGate?: GateRunner }
+    /** 执行体 launch 计数钩子（模型调用次数断言面；缺省不挂） */
+    readonly onLaunch?: (task: TaskBrief) => void
   } = {},
 ): Promise<WorkTestStack> {
   const root = await mkdtemp(path.join(tmpdir(), `sn-work-${label}-`))
@@ -75,8 +89,36 @@ export async function createWorkStack(
   }
   const platform = createFakePlatform({ now: () => new Date(clock.now()).toISOString() })
   const mode: { value: FakeAdapterMode } = { value: 'ok' }
+  const built = buildEngine({ root, ledger, clock, platform, mode, overrides, extra })
+  return { platform, ledger, engine: built.engine, adapter: built.adapter, root, clock, mode }
+}
+
+/** 引擎装配入参的可注入面（闸门/launch 钩子——buildEngine 与 restartWorkStack 共用类型） */
+export interface StackInjection {
+  readonly gate?: { readonly gateRunner: GateRunner; readonly reverifyGate?: GateRunner }
+  readonly onLaunch?: (task: TaskBrief) => void
+}
+
+interface StackParts {
+  readonly root: string
+  readonly ledger: Ledger
+  readonly clock: { now(): number }
+  readonly platform: FlowPlatform
+  readonly mode: { value: FakeAdapterMode }
+  readonly overrides: Partial<EngineConfig>
+  readonly extra: {
+    readonly recordsOf?: RecordWireFactory
+    readonly signature?: EngineSignatureDraft
+    readonly harvestRecordsOf?: (ledger: Ledger) => HarvestRecordSink
+  } & StackInjection
+}
+
+/** 引擎装配（createWorkStack / restartWorkStack 共用——配置口径唯一） */
+function buildEngine(parts: StackParts): { engine: Engine; adapter: ExecutorAdapter } {
+  const { root, ledger, clock, platform, mode, overrides, extra } = parts
   const registry = createRegistry()
-  registry.register(createFakeAdapter({ mode: () => mode.value, name: 'fake-work' }), { default: true })
+  const adapter = createFakeAdapter({ mode: () => mode.value, name: 'fake-work', ...(extra.onLaunch !== undefined ? { onLaunch: extra.onLaunch } : {}) })
+  registry.register(adapter, { default: true })
   const records = extra.recordsOf?.({ ledger, company: DEMO_SNAPSHOT.slug })
   const harvestRecords = extra.harvestRecordsOf?.(ledger)
   const engine = createEngine({
@@ -93,7 +135,8 @@ export async function createWorkStack(
       acceptance: ['echo demo-ok'],
       docRefs: ['docs/17-§2（主循环七相位）'],
     }),
-    gateRunner: createDefaultGateRunner(),
+    gateRunner: extra.gate?.gateRunner ?? createDefaultGateRunner(),
+    ...(extra.gate?.reverifyGate !== undefined ? { reverifyGate: extra.gate.reverifyGate } : {}),
     clock: clock.now,
     config: {
       ...ENGINE_CONFIG_DEFAULTS,
@@ -109,7 +152,17 @@ export async function createWorkStack(
     },
     people: DEMO_SNAPSHOT.people,
   })
-  return { platform, ledger, engine, root, clock, mode }
+  return { engine, adapter }
+}
+
+/**
+ * daemon 重启模拟（task-158 FIX-04 ① 追加面）：同平台/同台账/同假时钟上重建引擎——进程内存态
+ * （inflight／泳道租约／收口认领表／断路器）全部归零＝真重启语义；调用方先 dispose 旧引擎。
+ * 记录面注入器不随重启重建（本面用例不涉记录面）。
+ */
+export function restartWorkStack(stack: WorkTestStack, overrides: Partial<EngineConfig> = {}, injection: StackInjection = {}): WorkTestStack {
+  const built = buildEngine({ root: stack.root, ledger: stack.ledger, clock: stack.clock, platform: stack.platform, mode: stack.mode, overrides, extra: injection })
+  return { ...stack, engine: built.engine, adapter: built.adapter }
 }
 
 /** 整根删除全部 tmp 台账/工位目录（afterAll 调） */

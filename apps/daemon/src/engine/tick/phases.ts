@@ -120,6 +120,8 @@ export async function runPhases(
       actionResults.push(result)
       // task-157（supply-quota-gating.md §2.4）：探针单被看门狗咬合（kill/消亡面）=探针作废 → 释放认领（下拍可再认领；续租面不动）
       if (result.ok && result.detail !== undefined && result.detail.startsWith('咬合（')) settleQuotaProbe(rt, action.ticket, false)
+      // FIX-04 ①：幂等跳过（同 attempt 收口已由他方生效）=有账面结果但零写——不计 mutation、不报错
+      if (result.skipped === true) continue
       if (result.ok) {
         ctx.mutations += 1
       } else {

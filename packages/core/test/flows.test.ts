@@ -15,6 +15,7 @@ import {
   flowLevelKey,
   flowStates,
   forwardStates,
+  isArchivedState,
   nextStates,
   resolveFlow,
   resolveTicketFlow,
@@ -229,5 +230,18 @@ describe('无审批环哨兵（NO_APPROVAL_ANCHOR）', () => {
     expect(NO_APPROVAL_ANCHOR).toBe('')
     expect(SPIKE_FLOW.anchors.approval).toBe(NO_APPROVAL_ANCHOR)
     expect(forwardStates(SPIKE_FLOW, '待探索')).not.toContain(NO_APPROVAL_ANCHOR)
+  })
+})
+
+// FIX-04 ③（task-158；docs/quality/idempotent-closeout.md §3）
+describe('归档态识别（isArchivedState）', () => {
+  it('Archived/大小写变体=true；undefined/空串/其它态=false', () => {
+    expect(isArchivedState('Archived')).toBe(true)
+    expect(isArchivedState('ARCHIVED')).toBe(true)
+    expect(isArchivedState('archived')).toBe(true)
+    expect(isArchivedState(undefined)).toBe(false)
+    expect(isArchivedState('')).toBe(false)
+    expect(isArchivedState('已归档')).toBe(false)
+    expect(isArchivedState(delivered)).toBe(false)
   })
 })

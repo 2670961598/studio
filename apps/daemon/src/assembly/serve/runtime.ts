@@ -296,6 +296,15 @@ export function buildServeRuntime(
   // —— 制作人-岗位持久对话装配（docs/21-§七，studio-dev-646 Phase 1；关=零装配零注入）——
   //    装配体拆至 assembly/serve/conversation-face.ts（先拆后增：runtime 只留一行调用）
   const wiredConversation = wireServeConversation({ config, wrappedNotifyFace, ledger, people: () => companyState.snapshot.people, log })
+  // 闸门双形态（v0.5 真单刀）：真单=逐条真执行冻结验收命令；demo=exit0 模拟占位。验收闸门超时透传
+  // （task-138）：daemon.yaml acceptanceTimeoutMs 单一生效值双消费（收割闸门+合并跑门禁——缺省 undefined
+  // 由 gate.ts/default-deps.ts 兜底 60s，不复制真源）；FIX-04 ②（task-158）证据复验闸复用同一实例独立复跑。
+  const acceptanceGate = realGate
+    ? createAcceptanceGateRunner(acceptance, {
+      ...conversationAcceptanceOptions(wiredConversation),
+      ...(config.acceptanceTimeoutMs !== undefined ? { timeoutMs: config.acceptanceTimeoutMs } : {}),
+    })
+    : undefined
   // cost 警戒出口（181 EngineDeps.notify 注入件）：面注入=IM 即时广播叠加（129 批示项④）
   const costNotifyOutlet = wiredNotify?.costNoticeOutlet ?? createCostNotifyOutlet(log)
   // 平台写出站闸（exits.ts platform-write）：gated 代理外再包出站扫描（写文本过闸后才出站）
@@ -331,15 +340,9 @@ export function buildServeRuntime(
     registry,
     ...(judgeHook !== undefined ? { judge: judgeHook } : {}), // 160-B 两址精序（缺省不注入=规则缺省档）
     assembler: makeAssembler(),
-    // 闸门双形态（v0.5 真单刀）：真单=逐条真执行冻结验收命令；demo=exit0 模拟占位。
-    // 验收闸门超时透传（task-138）：daemon.yaml acceptanceTimeoutMs 单一生效值双消费
-    // （收割闸门+合并跑门禁——缺省 undefined 由 gate.ts/default-deps.ts 兜底 60s，不复制真源）。
-    gateRunner: realGate
-      ? createAcceptanceGateRunner(acceptance, {
-        ...conversationAcceptanceOptions(wiredConversation),
-        ...(config.acceptanceTimeoutMs !== undefined ? { timeoutMs: config.acceptanceTimeoutMs } : {}),
-      })
-      : createDefaultGateRunner(),
+    gateRunner: acceptanceGate ?? createDefaultGateRunner(),
+    // FIX-04 ②（task-158；docs/quality/idempotent-closeout.md §2）：证据复验闸=同一真验收闸实例独立复跑（同口径同超时、单值不增源）；占位闸门不注入=无补终态资格（fail-closed）
+    ...(acceptanceGate !== undefined ? { reverifyGate: acceptanceGate } : {}),
     ...(realGate
       ? { mergeRun: createDefaultMergeRunDeps({ gateCommand: acceptance, ...(config.acceptanceTimeoutMs !== undefined ? { timeoutMs: config.acceptanceTimeoutMs } : {}) }) }
       : {}), // 202-P2 相位 5 合并跑（面关=v0 模拟轨）

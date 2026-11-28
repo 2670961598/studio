@@ -57,6 +57,12 @@ export interface EngineDeps extends HarvestRecordingDeps {
   assembler: PromptAssembler
   /** 闸门执行器（v0 默认占位实现见 src/engine/gate.ts；真验收命令版归 v0.5 真单刀） */
   gateRunner: GateRunner
+  /**
+   * 证据复验闸（task-158 / FIX-04 ②；docs/quality/idempotent-closeout.md §2）：收割仅缺
+   * 「终态自述」而其余三要件齐时，补终态前**独立复跑**真验收命令的闸。缺省不注入＝无补终态
+   * 资格（占位闸门 exit0=模拟，fail-closed）；serve 仅在真验收闸门在场时注入同一验收口径。
+   */
+  reverifyGate?: GateRunner
   clock: () => number
   config: EngineConfig
   /**

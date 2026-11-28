@@ -61,6 +61,7 @@ import { startSessionArchive } from '../sessions/archive.ts' // 会话归档接�
 import { mintWorkerKey, workerKeyCredentials, WORKER_WKEY_ENV_KEY } from '../worker-key.ts'
 import type { EngineRuntime } from '../runtime/types.ts'
 import { releaseWithEpoch } from '../lanes/release.ts'
+import { yieldAttemptCloseout } from '../recovery/closeout.ts'
 import { evaluateDispatchAcceptance } from '../acceptance/index.ts'
 import { selectModelSource, classifyFailure, isFailoverClass, type SelectOutcome } from '../routing/router.ts'
 import { quotaProbeNote, recordRoutedFailure } from '../routing/quota-gate.ts'
@@ -541,17 +542,16 @@ export async function executeDispatch(
         dispatchedAtSeq: seq,
         ...(bound.instructionsPath !== undefined ? { instructionsPath: bound.instructionsPath } : {}),
       })
+      yieldAttemptCloseout(rt.attemptCloseouts, ticket, attempt) // FIX-04 ①：新派发让位同号/降号旧认领（T7 誓号复用不卡死）
       syncMirror(transitioned)
       // 记录族生产写面·相位 3 派发（docs/17-§2）：迁移→REC-WORK-06（前置不齐即拒，不臆造）
       if (records !== undefined) {
         const facts = rt.deps.recordPhaseFacts?.start({ ticket, attempt, at, actor: person.id, fromState: fresh.state, toState: action.toState })
         recordStartChain({ records, ticket, attempt, fromState: fresh.state, toState: action.toState, at, actor: person.id, ...(facts !== undefined ? { facts } : {}) })
       }
-      // 队列等待锚（129-§6.2-R4）：DISPATCH note 尾携 wait/prio/boost（锚形冻结；
-      // 计算体拆入 todoqueue/queue.ts queueDispatchAnchor——轨2 R1① 本单「先拆再增」行基线清偿）
+      // 队列等待锚（129-§6.2-R4）：DISPATCH note 尾携 wait/prio/boost（锚形冻结；计算体拆入 todoqueue/queue.ts）
       const queueAnchorInfo = queueDispatchAnchor(queueCarry, ticket, at)
-      // 档位锚：未配 executor / 绑定即档位候选=档位既有锚；源 executor 换绑（适配器≠档位候选）
-      //=改述为源 executor 绑定，不冒称档位位名（task-141）
+      // 档位锚：未配 executor / 绑定即档位候选=档位既有锚；源 executor 换绑=改述源 executor 绑定（task-141）
       const tierAnchor = (): string => {
         if (!executorArmed || bound.adapter === tierCandidate) return tierFace?.noteAnchor ?? ''
         return `;tier=${tierResolve?.tier}@${bound.adapter.name}（${bound.chainLocked ? '选择链改派，不按源 executor 换绑' : `源 executor=${routedSource !== undefined ? sourceRef(routedSource) : 'n/a'}`}，task-141）`

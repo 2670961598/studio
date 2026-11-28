@@ -282,12 +282,32 @@ describe('127-C 州表卫生白名单（studio-dev-127 §4.7）：FOREIGN_KNOWN 
     expect(r2.phases.collect.foreignKnown).toBe(0)
     expect(r2.phases.account.heartbeat).toBe(true)
 
-    // 同单换新白名单态 = 新键 = 再观察一次（换非白名单态走 ESCALATE 见负对照用例）
-    await stack.platform.issues.transition(a.id, 'Archived')
+    // 同单换新白名单态 = 新键 = 再观察一次（换非白名单态走 ESCALATE 见负对照用例；
+    // FIX-04 ③ 起 Archived=归档终态另路吸收——样本换 In progress，白名单语义不变）
+    await stack.platform.issues.transition(a.id, 'In progress')
     stack.clock.advance(1000)
     const r3: TickReport = await stack.engine.tick()
     expect(r3.phases.collect.foreignKnown).toBe(1)
+    expect(r3.phases.collect.unknownStateAlarmed).toBe(0)
     expect(stack.ledger.queryEvents({ issue: a.id })).toHaveLength(2)
+    expect(stack.ledger.queryEvents({ issue: a.id }).filter((e) => e.note?.includes('state=In progress'))).toHaveLength(1)
+    await stack.engine.dispose()
+    stack.ledger.close()
+  })
+
+  it('FIX-04 ③（task-158）：Archived=归档终态——单级哨/巡逻核双吸收：不 FOREIGN_KNOWN、不 UNKNOWN_STATE/UNKNOWN_STATUS、零事件零重派', async () => {
+    // 平台 schema 含 Archived（真机态集）；白名单也含 Archived（原 7 次 UNKNOWN_STATE 的现场口径）
+    const stack = buildStack('archived-terminal', ['新单', '已派发', '证据就绪', '复验通过', '已交付', 'Archived'], 1, undefined, KNOWN)
+    const a = await stack.platform.issues.create({ title: '归档单', type: 'task', level: 0, initialState: 'Archived' })
+    stack.clock.advance(1000)
+    const r1: TickReport = await stack.engine.tick()
+    expect(r1.phases.collect.foreignKnown).toBe(0) // 观察级也不降——终态无需观察
+    expect(r1.phases.collect.unknownStateAlarmed).toBe(0)
+    expect(r1.phases.collect.statusSetDrift).toBe(0) // 巡逻核并集吸收
+    expect(stack.ledger.queryEvents({ issue: a.id })).toHaveLength(0) // 无 RESUME/DISPATCH/回滚
+    expect(stack.ledger.queryEvents({ issue: '-' }).filter((e) => e.event === 'ESCALATE')).toHaveLength(0)
+    // 决策面：NOOP_ARCHIVED（noop 观测面仍可见——码可辨，不再混入「未知态」）
+    expect(r1.phases.stateDiff.decisions.find((d) => d.ticket === a.id)).toMatchObject({ actionType: 'noop', code: 'NOOP_ARCHIVED' })
     await stack.engine.dispose()
     stack.ledger.close()
   })

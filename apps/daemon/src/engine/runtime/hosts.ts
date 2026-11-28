@@ -12,6 +12,7 @@ import { effectiveStallAfterMs, probeInflightActivity } from '../watchdog/livene
 import type { StallResponseHost } from '../watchdog/stall-response.ts'
 import { failHarvest, finalizeHarvest } from '../harvest/finalize.ts'
 import { recoverStaleTicket } from '../recovery/orphan-recovery.ts'
+import { closeoutAttemptOf } from '../recovery/closeout.ts'
 import type { EngineRuntime } from './types.ts'
 
 /** 租约 epoch 陈旧检测（studio-dev-809）：完成面携带 epoch ≠ registry 当前 epoch → 拒收 */
@@ -107,7 +108,7 @@ export function harvestHostOf(rt: EngineRuntime, tickEvents: EventRecord[], erro
     fault: (entry, detail, requirements) => {
       const stale = staleLeaseOf(rt, entry)
       if (stale !== undefined) return rejectStaleCompletion(rt, entry, stale, tickEvents, errors)
-      return failHarvest(rt, entry, tickEvents, detail, requirements)
+      return failHarvest(rt, entry, tickEvents, detail, requirements, errors)
     },
   }
 }
@@ -135,5 +136,8 @@ export function stallHostOf(rt: EngineRuntime, errors: string[]): StallResponseH
     effectiveStallAfterMs: (executor) => effectiveStallAfterMs(rt.config.stallAfterMs, rt.config.stallAfterMsByExecutor, executor),
     // 会话归档收口问题进 tick errors（studio-dev-551：缺失/写失败明报，不静默）
     reportProblem: (message) => errors.push(message),
+    // FIX-04 ①：attempt 收口认领表与在册誓号求值（与收割失败面/孤儿扫描同表同源）
+    attemptCloseouts: rt.attemptCloseouts,
+    closeoutAttemptOf: (ticket, entry) => closeoutAttemptOf(rt, ticket, entry),
   }
 }

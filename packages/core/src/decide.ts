@@ -58,6 +58,7 @@ import {
   flowAnchors,
   flowStates,
   forwardStates,
+  isArchivedState,
   resolveTicketFlow,
   type FlowTable,
 } from './flows.ts'
@@ -89,7 +90,7 @@ import {
  *   BREAKER_TRIPPED        断路熔断，自动开 bug 单（breaker 产生）
  *   BREAKER_RESET          成功信号复位断路器（breaker 产生，事件性码）
  *   NOOP_UNKNOWN_FLOW      等级未登记状态流（镜像数据质量，明报不动单）
- *   NOOP_UNKNOWN_STATE     状态不在流表状态集内（平台侧自定义态，daemon 不动）
+ *   NOOP_UNKNOWN_STATE     状态不在流表状态集内（平台侧自定义态，daemon 不动）；Archived 终态另判 NOOP_ARCHIVED
  *   NOOP_IDLE              自定义中间态：本拍无机器动作
  */
 export type DecisionCode =
@@ -114,8 +115,8 @@ export type DecisionCode =
   | 'BREAKER_RESET'
   | 'NOOP_UNKNOWN_FLOW'
   | 'NOOP_UNKNOWN_STATE'
+  | 'NOOP_ARCHIVED'
   | 'NOOP_IDLE'
-
 // ————————————————————————— Action 联合（拟升 contract）—————————————————————————
 
 interface ActionBase {
@@ -124,7 +125,6 @@ interface ActionBase {
   /** 动作目标单（open_bug 为触发单，新 bug 单由 daemon 创建） */
   ticket: TicketId
 }
-
 export interface DispatchAction extends ActionBase {
   type: 'dispatch'
   code: 'DISPATCH'
@@ -233,7 +233,7 @@ export interface WorkerLiveness {
 
 export interface NoopAction extends ActionBase {
   type: 'noop'
-  code: 'DEDUP_NOOP' | 'WAIT_APPROVAL' | 'NOOP_UNKNOWN_FLOW' | 'NOOP_UNKNOWN_STATE' | 'NOOP_IDLE'
+  code: 'DEDUP_NOOP' | 'WAIT_APPROVAL' | 'NOOP_UNKNOWN_FLOW' | 'NOOP_UNKNOWN_STATE' | 'NOOP_ARCHIVED' | 'NOOP_IDLE'
 }
 
 /** 结构化 Action 联合（拟升 contract；tick 聚合后落账，17-§2「tick 返回结构化 actions」） */
@@ -421,7 +421,8 @@ export function decide(input: DecisionInput): DecisionOutput {
   }
   const anchors = flowAnchors(flow)
   const states = flowStates(flow)
-
+  // 3a. 归档终态（FIX-04 ③；docs/quality/idempotent-closeout.md §3）：Archived=平台关闭面可识别终态——按终态处理，不报未知态/不重派/不回退
+  if (isArchivedState(issue.state)) return { intentKey, action: noop(issue.id, 'NOOP_ARCHIVED') }
   // 3. 状态合法性（平台权威：未知态不猜不动）
   if (!states.includes(issue.state)) {
     return { intentKey, action: noop(issue.id, 'NOOP_UNKNOWN_STATE') }

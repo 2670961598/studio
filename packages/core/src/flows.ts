@@ -255,3 +255,14 @@ export function canTransition(flow: StateFlow, from: string, to: string): boolea
 export function resolveFlow(table: FlowTable, key: string): StateFlow | undefined {
   return table[key]
 }
+
+/**
+ * 归档终态（task-158 / FIX-04 ③；docs/quality/idempotent-closeout.md §3）：YouTrack 平台关闭面
+ * 「Archived」——单据归档后平台即报此态，不在各等级 flow 状态集内。它是**可识别终态**而非未知态：
+ * decide 判 NOOP_ARCHIVED、哨兵不报 UNKNOWN_STATE、引擎不重派不回退（与 flow/单据终态同待）。
+ * 大小写不敏感（平台返回大小写不保证；仅此一态特认，不泛化「不在流内=终态」）。
+ */
+export const ARCHIVED_STATE = 'Archived'
+export function isArchivedState(state: string | undefined): boolean {
+  return state !== undefined && state.toLowerCase() === ARCHIVED_STATE.toLowerCase()
+}

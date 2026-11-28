@@ -99,6 +99,11 @@ export interface TickActionResult {
   ticket: TicketId
   actionType: Action['type']
   ok: boolean
+  /**
+   * 幂等跳过（FIX-04 ①；docs/quality/idempotent-closeout.md §1）：动作已达其目的（同 attempt
+   * 收口已由他方生效/平台态已非目标前态）——零平台写、不计 mutation、不进 errors；detail 明报。
+   */
+  skipped?: boolean
   detail?: string
 }
 
